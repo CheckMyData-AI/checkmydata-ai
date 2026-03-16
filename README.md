@@ -55,10 +55,10 @@ AI-powered database query agent that analyzes Git repositories, understands data
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-The system has **three main flows**:
+The system has **four main flows**:
 
 1. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-2. **Chat flow**: Ask a question in natural language -> orchestrator builds SQL -> executes on your DB -> returns results with visualization. Uses SSE streaming for real-time progress updates. Chat history is token-budget-managed and older messages are summarized to stay within limits.
+2. **Chat flow**: Ask a question in natural language -> the **ConversationalAgent** decides whether to chat, search knowledge, or query the database -> results returned with visualization. Uses SSE streaming for real-time progress updates. Chat history is token-budget-managed and older messages are summarized to stay within limits.
 3. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
 4. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
 
@@ -180,31 +180,44 @@ After indexing, the **Knowledge Docs** section in the sidebar shows all indexed 
 
 ### 7. Chat — Ask Questions
 
-With a project and connection selected:
+With a project selected (and optionally a connection):
 
 1. Open a chat session (or create one via the session list in the sidebar)
-2. Type your question in natural language:
+2. Type your question in natural language. The **ConversationalAgent** handles different types of interactions:
+
+   **Data questions** (requires a database connection):
    - _"How many active plans were created last month?"_
    - _"Show me the top 10 users by transaction volume"_
    - _"What's the average order value by country?"_
-3. The orchestrator runs the full pipeline:
+
+   **Knowledge questions** (uses indexed Git repository):
+   - _"How does the authentication flow work?"_
+   - _"What ORM models define the users table?"_
+   - _"Where are the migration files?"_
+
+   **Conversational** (no tools needed):
+   - _"Hi, what can you help me with?"_
+   - _"Can you explain that result in more detail?"_
+   - _"Thanks, that's very helpful"_
+
+3. The agent decides which tools to call based on the question:
 
 ```
 Your question
     ↓
-[Schema introspection] — Reads table structure, columns, FKs, indexes, comments
+[ConversationalAgent] — LLM with tools decides what to do
     ↓
-[Load rules] — Merges file-based rules (./rules/) + DB rules you created in UI
-    ↓
-[RAG context] — Searches ChromaDB for relevant code docs about your tables
-    ↓
-[Build query] — LLM generates SQL (dialect-aware prompts)
-    ↓
-[Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute → Post-validate
-    ↓  (if error: Classify → Enrich context → LLM repairs → retry, up to 3 attempts)
-[Interpret results] — LLM explains results and recommends visualization
-    ↓
-Table / Chart / Text + Export buttons (CSV, JSON, XLSX)
+├── Data question → calls get_schema_info, get_custom_rules, execute_query
+│   ↓
+│   [Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute
+│   ↓  (if error: Classify → Enrich → Repair → retry, up to 3 attempts)
+│   [Interpret results] → Table / Chart / Text + Export
+│
+├── Knowledge question → calls search_knowledge
+│   ↓
+│   Returns answer with source citations
+│
+└── Conversation → responds directly (no tool calls)
 ```
 
 4. Each assistant message shows:
@@ -274,7 +287,11 @@ Project owners can invite other users to collaborate on a project via email:
 app/
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
 ├── core/               ← Business logic
-│   ├── orchestrator.py ← Main agent loop (delegates to validation loop)
+│   ├── agent.py        ← ConversationalAgent: multi-tool loop (replaces rigid orchestrator for chat)
+│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules)
+│   ├── tool_executor.py← Executes tool calls, wraps ValidationLoop / VectorStore / SchemaIndexer
+│   ├── prompt_builder.py← Dynamic system prompt builder (role-aware, capability-aware)
+│   ├── orchestrator.py ← Original SQL pipeline (preserved, used by tool_executor)
 │   ├── query_builder.py← LLM prompt construction + tool calling
 │   ├── validation_loop.py ← Self-healing query loop (pre/execute/post/repair)
 │   ├── query_validation.py ← Data models (QueryAttempt, QueryError, etc.)
@@ -289,7 +306,7 @@ app/
 │   ├── sql_parser.py   ← Lightweight SQL parser for pre-validation
 │   ├── safety.py       ← Query safety validation
 │   ├── workflow_tracker.py ← Event bus for pipeline tracking
-│   ├── history_trimmer.py ← Token-budget-aware chat history summarization
+│   ├── history_trimmer.py ← Token-budget-aware chat history summarization (handles tool messages)
 │   ├── query_cache.py ← LRU result cache (connection_key + query_hash)
 │   ├── retry.py        ← Async retry decorator with backoff
 │   ├── rate_limit.py   ← slowapi rate limiting config
@@ -345,9 +362,60 @@ app/
     └── export.py       ← CSV, JSON, XLSX export
 ```
 
-### How the Orchestrator Works
+### How the Conversational Agent Works
 
-The `Orchestrator` is the brain of the system. When a user asks a question:
+The `ConversationalAgent` (`backend/app/core/agent.py`) is the brain of the system.  It replaced the rigid "always-generate-SQL" pipeline with a **multi-tool agent loop** where the LLM decides which tools (if any) to call.
+
+```
+User Message
+    ↓
+[ConversationalAgent.run()]
+    ↓
+Build system prompt (role-aware, capability-aware)
+    ↓
+┌──────────── Tool Loop (max 5 iterations) ────────────┐
+│                                                        │
+│  Send messages + available tools to LLM                │
+│    ↓                                                   │
+│  LLM responds with:                                    │
+│    • Tool call → execute tool → feed result back       │
+│    • Text → final answer → exit loop                   │
+│                                                        │
+│  Available tools (conditional):                        │
+│    • execute_query  (if DB connected)                  │
+│    • get_schema_info (if DB connected)                 │
+│    • get_custom_rules (if DB connected)                │
+│    • search_knowledge (if knowledge base indexed)      │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+    ↓
+[If SQL results: interpret + recommend visualization]
+    ↓
+Return AgentResponse (text | sql_result | knowledge | error)
+```
+
+**Key architectural decisions:**
+- **Tools are lazy**: Schema, RAG, and rules are only fetched when the LLM explicitly requests them, not on every message.
+- **Conversation is natural**: The LLM can respond without calling any tool for greetings, follow-ups, and discussions about previous results.
+- **Knowledge-only mode**: Users can chat without a database connection — only `search_knowledge` is available.
+- **Response types**: Each response is tagged as `text`, `sql_result`, `knowledge`, or `error` — the frontend renders each type differently.
+- **Backward compatible**: The original `Orchestrator` is preserved and used internally by the `ToolExecutor` for SQL execution.
+
+### Multi-Tool Agent Architecture
+
+```
+backend/app/core/
+├── agent.py           ← ConversationalAgent: main loop, tool iteration, response building
+├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules)
+├── tool_executor.py   ← Executes tool calls, wraps existing ValidationLoop / VectorStore / SchemaIndexer
+├── prompt_builder.py  ← Dynamic system prompt (capability-aware, dialect-aware)
+├── orchestrator.py    ← Original pipeline (preserved, used by tool_executor for SQL)
+└── ...
+```
+
+### How the Original Orchestrator Works (used by ToolExecutor)
+
+The `Orchestrator` handles SQL query execution. When the agent calls `execute_query`:
 
 1. **Schema context** — Live DB introspection + RAG search in ChromaDB
 2. **Rules context** — Merge file-based + DB-based custom rules
@@ -485,9 +553,10 @@ src/
 └── components/
     ├── auth/AuthGate.tsx   ← Login/register form, wraps entire app
     ├── chat/
-    │   ├── ChatPanel.tsx   ← Message list + input box
-    │   ├── ChatMessage.tsx ← Individual message with metadata badges
-    │   └── ChatSessionList.tsx ← Session switcher in sidebar
+    │   ├── ChatPanel.tsx   ← Message list + input box (supports knowledge-only mode)
+    │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering
+    │   ├── ChatSessionList.tsx ← Session switcher in sidebar
+    │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
     │   ├── ProjectSelector.tsx  ← CRUD + edit + role badges
     │   └── InviteManager.tsx    ← Invite users, manage members
@@ -640,10 +709,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 356 across 39 files
-- Backend integration tests: 59 across 10 files
+- Backend unit tests: 380 across 42 files
+- Backend integration tests: 69 across 11 files
 - Frontend tests: 11 across 3 files
-- **Total: 426 tests**
+- **Total: 460 tests**
 
 ### Test Coverage by Module
 
@@ -680,6 +749,9 @@ make test-frontend    # frontend vitest
 | Schema Indexer | 4 (markdown, prompt context, relationships) | — |
 | Custom Rules | 6 (file loading, YAML, context generation) | 4 |
 | Retry | 5 (success, retry, max attempts, callback) | — |
+| ConversationalAgent | 10 (text reply, SQL tool call, knowledge search, multi-tool, no-connection, error handling) | 10 (full chat: text/SQL/knowledge flow, optional connection, stream events) |
+| ToolExecutor | 8 (execute_query, search_knowledge, get_schema_info, get_custom_rules, unknown tool) | — |
+| Prompt Builder | 6 (all combinations of connection/knowledge flags) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
 | API Routes | 9 (projects, connections, viz routes) | — |
 | Membership Service | 12 (add, get_role, require_role, remove, list, accessible) | — |
@@ -713,13 +785,58 @@ Both services are containerized with health checks. The backend runs Alembic mig
 App spec at `.do/app.yaml`. Set secrets in the dashboard:
 - `MASTER_ENCRYPTION_KEY`, `JWT_SECRET`, `OPENAI_API_KEY`
 
-### Heroku
+### Heroku (Docker Container Deploy)
+
+The project deploys as two Heroku apps (backend + frontend) using Docker containers.
+
+**Live URLs:**
+- Backend API: `https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api`
+- Frontend: `https://esim-db-agent-web-e3dda1811661.herokuapp.com`
+
+**Setup from scratch:**
 
 ```bash
-heroku create myapp
-heroku config:set MASTER_ENCRYPTION_KEY=... JWT_SECRET=... OPENAI_API_KEY=...
-git push heroku main
+# 1. Create apps with container stack
+heroku create esim-db-agent-api --stack container
+heroku create esim-db-agent-web --stack container
+
+# 2. Add Postgres to backend (replaces SQLite)
+heroku addons:create heroku-postgresql:essential-0 --app esim-db-agent-api
+
+# 3. Set backend env vars
+heroku config:set \
+  MASTER_ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  DEFAULT_LLM_PROVIDER=openai \
+  OPENAI_API_KEY=sk-... \
+  CORS_ORIGINS='["https://your-frontend-app.herokuapp.com"]' \
+  --app esim-db-agent-api
+
+# 4. Set frontend env vars
+heroku config:set \
+  NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
+  NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
+  --app esim-db-agent-web
+
+# 5. Build and push containers (linux/amd64 required on Apple Silicon)
+heroku container:login
+docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-api/web -f Dockerfile.backend .
+docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-web/web \
+  --build-arg NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
+  --build-arg NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
+  -f Dockerfile.frontend .
+
+# 6. Push and release
+docker push registry.heroku.com/esim-db-agent-api/web
+docker push registry.heroku.com/esim-db-agent-web/web
+heroku container:release web --app esim-db-agent-api
+heroku container:release web --app esim-db-agent-web
 ```
+
+**Notes:**
+- Heroku provides `DATABASE_URL` automatically via the Postgres addon; `config.py` converts `postgres://` to `postgresql+asyncpg://`
+- Alembic migrations run automatically on container startup
+- Frontend `NEXT_PUBLIC_*` vars must be passed as `--build-arg` since Next.js bakes them into the bundle at build time
 
 ### CI/CD
 

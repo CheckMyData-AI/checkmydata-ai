@@ -112,6 +112,7 @@ export interface ChatResponse {
   error: string | null;
   workflow_id: string | null;
   staleness_warning: string | null;
+  response_type?: "text" | "sql_result" | "knowledge" | "error";
 }
 
 export interface RepoStatus {
@@ -227,7 +228,7 @@ export const api = {
       request<ChatMessageDTO[]>(`/chat/sessions/${sessionId}/messages`),
     ask: (data: {
       project_id: string;
-      connection_id: string;
+      connection_id?: string;
       message: string;
       session_id?: string;
       preferred_provider?: string;
@@ -240,13 +241,14 @@ export const api = {
     askStream: (
       data: {
         project_id: string;
-        connection_id: string;
+        connection_id?: string;
         message: string;
         session_id?: string;
       },
       onStep: (event: Record<string, unknown>) => void,
       onResult: (result: ChatResponse) => void,
       onError: (error: string) => void,
+      onToolCall?: (event: Record<string, unknown>) => void,
     ) => {
       const ctrl = new AbortController();
       fetch(`${API_BASE}/chat/ask/stream`, {
@@ -275,6 +277,7 @@ export const api = {
             try {
               const parsed = JSON.parse(jsonStr);
               if (eventType === "step") onStep(parsed);
+              else if (eventType === "tool_call") onToolCall?.(parsed);
               else if (eventType === "result") onResult(parsed as ChatResponse);
               else if (eventType === "error") onError(parsed.error);
             } catch { /* skip malformed */ }

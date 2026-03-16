@@ -30,6 +30,8 @@ interface MessageMetadata {
   attempts?: AttemptInfo[];
   total_attempts?: number;
   rag_sources?: RAGSourceInfo[];
+  response_type?: string;
+  token_usage?: Record<string, number>;
 }
 
 interface ChatMessageProps {
@@ -40,6 +42,7 @@ interface ChatMessageProps {
 export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   const [userRating, setUserRating] = useState<number | null>(null);
 
   const handleFeedback = async (rating: number) => {
@@ -60,6 +63,10 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
     }
   }
 
+  const responseType = message.responseType || metadata?.response_type || "text";
+  const hasKnowledgeSources =
+    metadata?.rag_sources && metadata.rag_sources.length > 0;
+
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
@@ -73,9 +80,25 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
           </div>
         )}
 
+        {/* Response type badge for non-text responses */}
+        {!isUser && responseType !== "text" && responseType !== "error" && (
+          <div className="mb-1.5">
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                responseType === "sql_result"
+                  ? "bg-blue-900/30 text-blue-400"
+                  : "bg-purple-900/30 text-purple-400"
+              }`}
+            >
+              {responseType === "sql_result" ? "SQL Result" : "Knowledge"}
+            </span>
+          </div>
+        )}
+
         <p className="text-sm whitespace-pre-wrap">{message.content}</p>
 
-        {message.query && (
+        {/* SQL Query — only for sql_result responses */}
+        {message.query && responseType === "sql_result" && (
           <details className="mt-3 text-xs">
             <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300">
               View SQL Query
@@ -89,9 +112,47 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
           </details>
         )}
 
-        {message.visualization && (
+        {/* Visualization — only for sql_result responses */}
+        {message.visualization && responseType === "sql_result" && (
           <div className="mt-3">
             <VizRenderer data={message.visualization} />
+          </div>
+        )}
+
+        {/* Knowledge sources — prominent for knowledge responses */}
+        {!isUser && hasKnowledgeSources && responseType === "knowledge" && (
+          <div className="mt-3 border-t border-zinc-700/50 pt-2">
+            <button
+              onClick={() => setShowSources((v) => !v)}
+              className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              {showSources ? "Hide" : "Show"} {metadata!.rag_sources!.length} source{metadata!.rag_sources!.length !== 1 ? "s" : ""}
+            </button>
+            {showSources && (
+              <div className="mt-2 space-y-1">
+                {metadata!.rag_sources!.map((src, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-1.5 py-1 px-2 rounded bg-zinc-900/50 text-[11px] text-zinc-400"
+                  >
+                    <span className="text-[9px] uppercase px-1 py-px rounded bg-purple-900/30 text-purple-400">
+                      {src.doc_type || "doc"}
+                    </span>
+                    <span className="truncate flex-1">
+                      {src.source_path}
+                    </span>
+                    {src.distance != null && (
+                      <span className="ml-auto text-zinc-600 tabular-nums">
+                        {(1 - src.distance).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -158,7 +219,7 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
-            {metadata.token_usage?.total_tokens > 0 && (
+            {metadata.token_usage && metadata.token_usage.total_tokens > 0 && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
                 {metadata.token_usage.total_tokens.toLocaleString()} tokens
               </span>
@@ -176,6 +237,7 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
         {showDetails && metadata && (
           <div className="mt-2 p-2 bg-zinc-900/50 rounded text-[10px] text-zinc-500 space-y-1">
             {metadata.workflow_id && <div>Workflow: {metadata.workflow_id}</div>}
+            {metadata.response_type && <div>Response type: {metadata.response_type}</div>}
             {metadata.execution_time_ms != null && (
               <div>Execution: {metadata.execution_time_ms.toFixed(1)}ms</div>
             )}
@@ -192,7 +254,7 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
               </div>
             )}
 
-            {metadata.rag_sources && metadata.rag_sources.length > 0 && (
+            {metadata.rag_sources && metadata.rag_sources.length > 0 && responseType !== "knowledge" && (
               <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
                 <div className="font-medium text-zinc-400 mb-1">
                   Code Context ({metadata.rag_sources.length} sources)

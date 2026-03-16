@@ -9,9 +9,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
-if _db_path and not _db_path.startswith(":"):
-    Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
+if settings.database_url.startswith("sqlite"):
+    _db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
+    if _db_path and not _db_path.startswith(":"):
+        Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_async_engine(settings.database_url, echo=settings.debug)
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

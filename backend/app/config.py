@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +9,18 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
+
+    @model_validator(mode="after")
+    def _fix_database_url(self) -> "Settings":
+        """Heroku provides postgres:// but SQLAlchemy 2+ requires postgresql://."""
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            self.database_url = url
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            self.database_url = url
+        return self
 
     master_encryption_key: str = ""
 

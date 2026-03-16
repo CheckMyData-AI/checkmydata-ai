@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.agent import ConversationalAgent
 from app.core.orchestrator import Orchestrator
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
@@ -23,6 +24,7 @@ router = APIRouter()
 _chat_svc = ChatService()
 _conn_svc = ConnectionService()
 _orchestrator = Orchestrator()
+_agent = ConversationalAgent()
 _rag_feedback_svc = RAGFeedbackService()
 _membership_svc = MembershipService()
 
@@ -30,7 +32,7 @@ _membership_svc = MembershipService()
 class ChatRequest(BaseModel):
     session_id: str | None = None
     project_id: str
-    connection_id: str
+    connection_id: str | None = None
     message: str
     preferred_provider: str | None = None
     model: str | None = None
@@ -45,6 +47,7 @@ class ChatResponse(BaseModel):
     error: str | None = None
     workflow_id: str | None = None
     staleness_warning: str | None = None
+    response_type: str = "text"
 
 
 class SessionCreate(BaseModel):
@@ -266,11 +269,13 @@ async def ask(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
-    conn_model = await _conn_svc.get(db, body.connection_id)
-    if not conn_model:
-        raise HTTPException(status_code=404, detail="Connection not found")
 
-    config = await _conn_svc.to_config(db, conn_model)
+    config = None
+    if body.connection_id:
+        conn_model = await _conn_svc.get(db, body.connection_id)
+        if not conn_model:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        config = await _conn_svc.to_config(db, conn_model)
 
     session_id = body.session_id
     if not session_id:
@@ -280,10 +285,9 @@ async def ask(
         session_id = chat_session.id
 
     await _chat_svc.add_message(db, session_id, "user", body.message)
-
     history = await _chat_svc.get_history_as_messages(db, session_id)
 
-    result = await _orchestrator.process_question(
+    result = await _agent.run(
         question=body.message,
         project_id=body.project_id,
         connection_config=config,
@@ -307,7 +311,7 @@ async def ask(
             "distance": s.distance,
             "doc_type": s.doc_type,
         }
-        for s in result.rag_sources
+        for s in result.knowledge_sources
     ]
 
     await _chat_svc.add_message(
@@ -320,17 +324,13 @@ async def ask(
             "viz_type": result.viz_type,
             "error": result.error,
             "workflow_id": result.workflow_id,
-            "row_count": (
-                result.results.row_count if result.results else None
-            ),
+            "row_count": result.results.row_count if result.results else None,
             "execution_time_ms": (
-                result.results.execution_time_ms
-                if result.results else None
+                result.results.execution_time_ms if result.results else None
             ),
-            "attempts": result.attempts,
-            "total_attempts": result.total_attempts,
             "rag_sources": rag_source_dicts,
             "token_usage": result.token_usage or None,
+            "response_type": result.response_type,
         },
     )
 
@@ -355,6 +355,7 @@ async def ask(
         error=result.error,
         workflow_id=result.workflow_id,
         staleness_warning=result.staleness_warning,
+        response_type=result.response_type,
     )
 
 
@@ -368,11 +369,13 @@ async def ask_stream(
 ):
     """SSE streaming endpoint that sends workflow progress + final answer."""
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
-    conn_model = await _conn_svc.get(db, body.connection_id)
-    if not conn_model:
-        raise HTTPException(status_code=404, detail="Connection not found")
 
-    config = await _conn_svc.to_config(db, conn_model)
+    config = None
+    if body.connection_id:
+        conn_model = await _conn_svc.get(db, body.connection_id)
+        if not conn_model:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        config = await _conn_svc.to_config(db, conn_model)
 
     session_id = body.session_id
     if not session_id:
@@ -389,7 +392,7 @@ async def ask_stream(
         queue = tracker.subscribe()
 
         async def _process():
-            res = await _orchestrator.process_question(
+            res = await _agent.run(
                 question=body.message,
                 project_id=body.project_id,
                 connection_config=config,
@@ -411,7 +414,20 @@ async def ask_stream(
                 wf_id = event.workflow_id
             if wf_id and event.workflow_id != wf_id:
                 continue
-            yield f"event: step\ndata: {json.dumps(event.to_dict())}\n\n"
+
+            event_data = {
+                "workflow_id": event.workflow_id,
+                "step": event.step,
+                "status": event.status,
+                "detail": event.detail,
+                "elapsed_ms": event.elapsed_ms,
+            }
+
+            if event.step.startswith("tool:"):
+                yield f"event: tool_call\ndata: {json.dumps(event_data)}\n\n"
+            else:
+                yield f"event: step\ndata: {json.dumps(event_data)}\n\n"
+
             if event.step == "pipeline_end":
                 break
 
@@ -437,7 +453,7 @@ async def ask_stream(
                 "distance": s.distance,
                 "doc_type": s.doc_type,
             }
-            for s in result.rag_sources
+            for s in result.knowledge_sources
         ]
 
         await _chat_svc.add_message(
@@ -447,18 +463,13 @@ async def ask_stream(
                 "viz_type": result.viz_type,
                 "error": result.error,
                 "workflow_id": result.workflow_id,
-                "row_count": (
-                    result.results.row_count
-                    if result.results else None
-                ),
+                "row_count": result.results.row_count if result.results else None,
                 "execution_time_ms": (
-                    result.results.execution_time_ms
-                    if result.results else None
+                    result.results.execution_time_ms if result.results else None
                 ),
-                "attempts": result.attempts,
-                "total_attempts": result.total_attempts,
                 "rag_sources": stream_rag,
                 "token_usage": result.token_usage or None,
+                "response_type": result.response_type,
             },
         )
 
@@ -482,11 +493,10 @@ async def ask_stream(
             "visualization": viz_data,
             "error": result.error,
             "workflow_id": result.workflow_id,
-            "attempts": result.attempts,
-            "total_attempts": result.total_attempts,
             "rag_sources": stream_rag,
             "staleness_warning": result.staleness_warning,
             "token_usage": result.token_usage or None,
+            "response_type": result.response_type,
         }
         yield f"event: result\ndata: {json.dumps(final)}\n\n"
 
@@ -531,7 +541,6 @@ async def chat_websocket(
     async def _relay_events(
         queue: asyncio.Queue[WorkflowEvent],
     ) -> None:
-        """Forward tracker events over the WebSocket, discovering wf_id from first event."""
         wf_id: str | None = None
         try:
             while True:
@@ -540,8 +549,9 @@ async def chat_websocket(
                     wf_id = event.workflow_id
                 if wf_id and event.workflow_id != wf_id:
                     continue
+                msg_type = "tool_call" if event.step.startswith("tool:") else "step"
                 await websocket.send_json({
-                    "type": "step",
+                    "type": msg_type,
                     "step": event.step,
                     "status": event.status,
                     "detail": event.detail,
@@ -559,12 +569,16 @@ async def chat_websocket(
                 await websocket.send_json({"error": "Not a member of this project"})
                 await websocket.close()
                 return
-            conn_model = await _conn_svc.get(db, connection_id)
-            if not conn_model:
-                await websocket.send_json({"error": "Connection not found"})
-                await websocket.close()
-                return
-            config = await _conn_svc.to_config(db, conn_model)
+
+            config = None
+            if connection_id and connection_id != "_none":
+                conn_model = await _conn_svc.get(db, connection_id)
+                if not conn_model:
+                    await websocket.send_json({"error": "Connection not found"})
+                    await websocket.close()
+                    return
+                config = await _conn_svc.to_config(db, conn_model)
+
             chat_session = await _chat_svc.create_session(
                 db, project_id, user_id=user_id,
             )
@@ -583,15 +597,13 @@ async def chat_websocket(
 
             async with async_session_factory() as db:
                 await _chat_svc.add_message(db, session_id, "user", message)
-                history = await _chat_svc.get_history_as_messages(
-                    db, session_id,
-                )
+                history = await _chat_svc.get_history_as_messages(db, session_id)
 
             queue = tracker.subscribe()
             relay_task = asyncio.create_task(_relay_events(queue))
 
             try:
-                result = await _orchestrator.process_question(
+                result = await _agent.run(
                     question=message,
                     project_id=project_id,
                     connection_config=config,
@@ -609,28 +621,25 @@ async def chat_websocket(
                         summary=result.answer,
                     )
 
+                rag_dicts = [
+                    {"source_path": s.source_path, "distance": s.distance, "doc_type": s.doc_type}
+                    for s in result.knowledge_sources
+                ]
+
                 async with async_session_factory() as db:
                     await _chat_svc.add_message(
-                        db,
-                        session_id,
-                        "assistant",
-                        result.answer,
+                        db, session_id, "assistant", result.answer,
                         metadata={
                             "query": result.query,
                             "viz_type": result.viz_type,
                             "workflow_id": result.workflow_id,
-                            "row_count": (
-                                result.results.row_count
-                                if result.results else None
-                            ),
+                            "row_count": result.results.row_count if result.results else None,
                             "execution_time_ms": (
-                                result.results.execution_time_ms
-                                if result.results else None
+                                result.results.execution_time_ms if result.results else None
                             ),
-                            "attempts": result.attempts,
-                            "total_attempts": (
-                                result.total_attempts
-                            ),
+                            "rag_sources": rag_dicts,
+                            "token_usage": result.token_usage or None,
+                            "response_type": result.response_type,
                         },
                     )
 
@@ -642,6 +651,9 @@ async def chat_websocket(
                     "visualization": viz_data,
                     "error": result.error,
                     "workflow_id": result.workflow_id,
+                    "response_type": result.response_type,
+                    "rag_sources": rag_dicts,
+                    "staleness_warning": result.staleness_warning,
                 })
             finally:
                 if not relay_task.done():

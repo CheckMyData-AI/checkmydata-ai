@@ -6,6 +6,7 @@ import { api, type ChatResponse } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
+import { ToolCallIndicator } from "./ToolCallIndicator";
 import { StreamWorkflowProgress } from "../workflow/StreamWorkflowProgress";
 
 export function ChatPanel() {
@@ -15,10 +16,14 @@ export function ChatPanel() {
     activeSession,
     messages,
     isThinking,
+    chatMode,
+    activeToolCalls,
     setActiveSession,
     addMessage,
     setThinking,
     setLoading,
+    addToolCall,
+    clearToolCalls,
   } = useAppStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -29,9 +34,11 @@ export function ChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const canChat = activeProject && (activeConnection || chatMode === "knowledge_only");
+
   const handleSend = useCallback(
     async (content: string) => {
-      if (!activeProject || !activeConnection) return;
+      if (!activeProject) return;
 
       const userMsg = {
         id: crypto.randomUUID(),
@@ -43,11 +50,12 @@ export function ChatPanel() {
       setThinking(true);
       setLoading(true);
       setStreamSteps([]);
+      clearToolCalls();
 
       const ctrl = api.chat.askStream(
         {
           project_id: activeProject.id,
-          connection_id: activeConnection.id,
+          connection_id: activeConnection?.id,
           message: content,
           session_id: activeSession?.id,
         },
@@ -70,17 +78,11 @@ export function ChatPanel() {
             }).catch(() => { /* keep truncated title */ });
           }
 
-          const ragSources = (result as Record<string, unknown>).rag_sources as
+          const ragSources = (result as unknown as Record<string, unknown>).rag_sources as
             | Array<{ source_path: string; distance?: number; doc_type?: string }>
             | undefined;
-          const attempts = (result as Record<string, unknown>).attempts as
-            | Array<Record<string, unknown>>
-            | undefined;
-          const totalAttempts = (result as Record<string, unknown>).total_attempts as
-            | number
-            | undefined;
 
-          const tokenUsage = (result as Record<string, unknown>).token_usage as
+          const tokenUsage = (result as unknown as Record<string, unknown>).token_usage as
             | Record<string, number>
             | undefined;
 
@@ -90,9 +92,8 @@ export function ChatPanel() {
             error: result.error,
             workflow_id: result.workflow_id,
             rag_sources: ragSources,
-            attempts,
-            total_attempts: totalAttempts,
             token_usage: tokenUsage,
+            response_type: result.response_type,
           };
 
           addMessage({
@@ -104,6 +105,7 @@ export function ChatPanel() {
             visualization: result.visualization,
             error: result.error,
             stalenessWarning: result.staleness_warning,
+            responseType: result.response_type,
             metadataJson: JSON.stringify(metadataObj),
             timestamp: Date.now(),
           });
@@ -111,6 +113,7 @@ export function ChatPanel() {
           setThinking(false);
           setLoading(false);
           setStreamSteps([]);
+          clearToolCalls();
         },
         (error: string) => {
           addMessage({
@@ -118,16 +121,25 @@ export function ChatPanel() {
             role: "assistant",
             content: `Error: ${error}`,
             error,
+            responseType: "error",
             timestamp: Date.now(),
           });
           setThinking(false);
           setLoading(false);
           setStreamSteps([]);
+          clearToolCalls();
+        },
+        (toolEvent) => {
+          addToolCall({
+            step: (toolEvent as Record<string, string>).step ?? "",
+            status: (toolEvent as Record<string, string>).status ?? "",
+            detail: (toolEvent as Record<string, string>).detail ?? "",
+          });
         },
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, addMessage, setThinking, setLoading, setActiveSession],
+    [activeProject, activeConnection, activeSession, chatMode, addMessage, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall],
   );
 
   useEffect(() => {
@@ -144,10 +156,10 @@ export function ChatPanel() {
     );
   }
 
-  if (!activeConnection) {
+  if (!canChat) {
     return (
       <div className="flex-1 flex items-center justify-center text-zinc-500">
-        Configure a database connection for this project
+        Configure a database connection or switch to Knowledge-Only mode
       </div>
     );
   }
@@ -157,13 +169,19 @@ export function ChatPanel() {
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-zinc-500 text-sm mt-20">
-            <p className="text-lg font-medium mb-2">Ready to query</p>
-            <p>
-              Connected to{" "}
-              <span className="text-zinc-300">{activeConnection.name}</span>{" "}
-              ({activeConnection.db_type})
+            <p className="text-lg font-medium mb-2">
+              {activeConnection ? "Ready to query" : "Knowledge Base Mode"}
             </p>
-            <p className="mt-1">Ask a question about your data...</p>
+            {activeConnection ? (
+              <p>
+                Connected to{" "}
+                <span className="text-zinc-300">{activeConnection.name}</span>{" "}
+                ({activeConnection.db_type})
+              </p>
+            ) : (
+              <p>Ask questions about your project documentation</p>
+            )}
+            <p className="mt-1">Ask a question about your data…</p>
           </div>
         )}
         {messages.map((msg) => (
@@ -172,7 +190,9 @@ export function ChatPanel() {
         {isThinking && (
           <div className="flex gap-3">
             <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2">
-              {streamSteps.length > 0 ? (
+              {activeToolCalls.length > 0 ? (
+                <ToolCallIndicator events={activeToolCalls} />
+              ) : streamSteps.length > 0 ? (
                 <StreamWorkflowProgress events={streamSteps} compact />
               ) : (
                 <div className="flex gap-1">

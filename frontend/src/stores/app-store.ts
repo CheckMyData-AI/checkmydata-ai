@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { ChatSession, Connection, Project, SshKey } from "@/lib/api";
 
+type ChatMode = "full" | "knowledge_only";
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -11,7 +13,14 @@ interface ChatMessage {
   error?: string | null;
   metadataJson?: string | null;
   stalenessWarning?: string | null;
+  responseType?: "text" | "sql_result" | "knowledge" | "error";
   timestamp: number;
+}
+
+interface ToolCallEvent {
+  step: string;
+  status: string;
+  detail: string;
 }
 
 interface AppState {
@@ -26,6 +35,8 @@ interface AppState {
   isLoading: boolean;
   isThinking: boolean;
   userRole: string | null;
+  chatMode: ChatMode;
+  activeToolCalls: ToolCallEvent[];
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -40,6 +51,9 @@ interface AppState {
   setLoading: (loading: boolean) => void;
   setThinking: (thinking: boolean) => void;
   setUserRole: (role: string | null) => void;
+  setChatMode: (mode: ChatMode) => void;
+  addToolCall: (event: ToolCallEvent) => void;
+  clearToolCalls: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -54,6 +68,8 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: false,
   isThinking: false,
   userRole: null,
+  chatMode: "full",
+  activeToolCalls: [],
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
@@ -69,6 +85,10 @@ export const useAppStore = create<AppState>((set) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setThinking: (thinking) => set({ isThinking: thinking }),
   setUserRole: (role) => set({ userRole: role }),
+  setChatMode: (mode) => set({ chatMode: mode }),
+  addToolCall: (event) =>
+    set((state) => ({ activeToolCalls: [...state.activeToolCalls, event] })),
+  clearToolCalls: () => set({ activeToolCalls: [] }),
 }));
 
-export type { ChatMessage };
+export type { ChatMessage, ChatMode, ToolCallEvent };
