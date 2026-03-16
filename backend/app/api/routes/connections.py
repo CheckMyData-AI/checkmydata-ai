@@ -1,0 +1,164 @@
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user, get_db
+from app.services.connection_service import ConnectionService
+from app.services.membership_service import MembershipService
+
+router = APIRouter()
+_svc = ConnectionService()
+_membership_svc = MembershipService()
+
+
+class ConnectionCreate(BaseModel):
+    project_id: str
+    name: str
+    db_type: str
+    ssh_host: str | None = None
+    ssh_port: int = 22
+    ssh_user: str | None = None
+    ssh_key_id: str | None = None
+    db_host: str = "127.0.0.1"
+    db_port: int = 5432
+    db_name: str = ""
+    db_user: str | None = None
+    db_password: str | None = None
+    connection_string: str | None = None
+    is_read_only: bool = True
+
+
+class ConnectionUpdate(BaseModel):
+    name: str | None = None
+    db_type: str | None = None
+    ssh_host: str | None = None
+    ssh_port: int | None = None
+    ssh_user: str | None = None
+    ssh_key_id: str | None = None
+    db_host: str | None = None
+    db_port: int | None = None
+    db_name: str | None = None
+    db_user: str | None = None
+    db_password: str | None = None
+    connection_string: str | None = None
+    is_read_only: bool | None = None
+
+
+class ConnectionResponse(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    db_type: str
+    ssh_host: str | None
+    ssh_port: int
+    ssh_key_id: str | None
+    db_host: str
+    db_port: int
+    db_name: str
+    db_user: str | None
+    is_read_only: bool
+    is_active: bool
+
+
+@router.post("", response_model=ConnectionResponse)
+async def create_connection(
+    body: ConnectionCreate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
+    conn = await _svc.create(db, **body.model_dump())
+    return conn
+
+
+@router.get("/project/{project_id}", response_model=list[ConnectionResponse])
+async def list_connections(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    return await _svc.list_by_project(db, project_id)
+
+
+@router.get("/{connection_id}", response_model=ConnectionResponse)
+async def get_connection(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    return conn
+
+
+@router.patch("/{connection_id}", response_model=ConnectionResponse)
+async def update_connection(
+    connection_id: str,
+    body: ConnectionUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+    updates = body.model_dump(exclude_unset=True)
+    conn = await _svc.update(db, connection_id, **updates)
+    return conn
+
+
+@router.delete("/{connection_id}")
+async def delete_connection(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+    await _svc.delete(db, connection_id)
+    return {"ok": True}
+
+
+@router.post("/{connection_id}/test")
+async def test_connection(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    result = await _svc.test_connection(db, connection_id)
+    return result
+
+
+@router.post("/{connection_id}/refresh-schema")
+async def refresh_schema(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Invalidate the cached schema for this connection and re-introspect."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+
+    config = await _svc.to_config(db, conn)
+    try:
+        from app.core.orchestrator import Orchestrator
+        orch = Orchestrator()
+        schema = await orch.refresh_schema(config)
+        return {
+            "ok": True,
+            "tables": len(schema.tables),
+            "db_type": schema.db_type,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema refresh failed: {e}")

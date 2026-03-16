@@ -1,0 +1,31 @@
+from app.connectors.base import QueryResult
+
+
+def format_text(result: QueryResult, summary: str = "") -> dict:
+    if result.row_count == 0:
+        return {
+            "type": "text",
+            "content": summary or "No results found.",
+        }
+
+    if result.row_count == 1 and len(result.columns) == 1:
+        return {
+            "type": "number",
+            "value": result.rows[0][0],
+            "label": result.columns[0],
+            "summary": summary,
+        }
+
+    if result.row_count == 1:
+        kv_pairs = {col: result.rows[0][i] for i, col in enumerate(result.columns)}
+        return {
+            "type": "key_value",
+            "data": kv_pairs,
+            "summary": summary,
+        }
+
+    return {
+        "type": "text",
+        "content": summary,
+        "row_count": result.row_count,
+    }

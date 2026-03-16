@@ -1,0 +1,86 @@
+import logging
+import subprocess
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
+if _db_path and not _db_path.startswith(":"):
+    Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
+
+engine = create_async_engine(settings.database_url, echo=settings.debug)
+async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def run_migrations() -> None:
+    """Run Alembic migrations programmatically (sync, called at startup)."""
+    import os
+
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    try:
+        subprocess.run(
+            ["alembic", "upgrade", "head"],
+            cwd=str(backend_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(backend_dir)},
+        )
+        logger.info("Alembic migrations applied successfully")
+    except FileNotFoundError:
+        logger.warning("alembic CLI not found — falling back to create_all")
+        _fallback_create_all()
+    except subprocess.CalledProcessError as exc:
+        logger.error("Alembic migration failed: %s", exc.stderr)
+        raise
+
+
+def _fallback_create_all() -> None:
+    """Fallback for environments without Alembic CLI (e.g. minimal Docker)."""
+    import asyncio
+
+    from app.models import (  # noqa: F401
+        chat_session,
+        commit_index,
+        connection,
+        custom_rule,
+        knowledge_doc,
+        project,
+        project_cache,
+        project_invite,
+        project_member,
+        ssh_key,
+        user,
+    )
+
+    async def _create():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_create())
+
+
+async def init_db():
+    """Called at app startup. Runs migrations then imports models."""
+    from app.models import (  # noqa: F401
+        chat_session,
+        commit_index,
+        connection,
+        custom_rule,
+        knowledge_doc,
+        project,
+        project_cache,
+        project_invite,
+        project_member,
+        ssh_key,
+        user,
+    )

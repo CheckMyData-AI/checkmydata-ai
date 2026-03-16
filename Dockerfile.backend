@@ -1,0 +1,18 @@
+FROM python:3.12-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git openssh-client gcc libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY backend/pyproject.toml .
+RUN pip install --no-cache-dir "."
+
+COPY backend/ .
+
+RUN mkdir -p data rules
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "PYTHONPATH=/app alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

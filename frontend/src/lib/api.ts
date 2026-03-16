@@ -1,0 +1,375 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+function getAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = localStorage.getItem("auth_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+      ...options?.headers,
+    },
+    ...options,
+  });
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("auth_user");
+      window.location.reload();
+      throw new Error("Session expired. Please log in again.");
+    }
+    if (res.status === 429) {
+      throw new Error("Too many requests. Please wait a moment and try again.");
+    }
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  repo_url: string | null;
+  repo_branch: string;
+  ssh_key_id: string | null;
+  default_llm_provider: string | null;
+  default_llm_model: string | null;
+  owner_id: string | null;
+  user_role: string | null;
+}
+
+export interface ProjectInvite {
+  id: string;
+  project_id: string;
+  email: string;
+  role: string;
+  status: string;
+  invited_by: string;
+  created_at: string | null;
+  accepted_at: string | null;
+}
+
+export interface ProjectMember {
+  id: string;
+  project_id: string;
+  user_id: string;
+  role: string;
+  email: string | null;
+  display_name: string | null;
+}
+
+export interface Connection {
+  id: string;
+  project_id: string;
+  name: string;
+  db_type: string;
+  ssh_host: string | null;
+  ssh_port: number;
+  ssh_key_id: string | null;
+  db_host: string;
+  db_port: number;
+  db_name: string;
+  db_user: string | null;
+  is_read_only: boolean;
+  is_active: boolean;
+}
+
+export interface SshKey {
+  id: string;
+  name: string;
+  fingerprint: string;
+  key_type: string;
+  created_at: string;
+}
+
+export interface ChatSession {
+  id: string;
+  project_id: string;
+  title: string;
+}
+
+export interface ChatMessageDTO {
+  id: string;
+  role: string;
+  content: string;
+  metadata_json: string | null;
+  user_rating: number | null;
+  created_at: string;
+}
+
+export interface ChatResponse {
+  session_id: string;
+  answer: string;
+  query: string | null;
+  query_explanation: string | null;
+  visualization: Record<string, unknown> | null;
+  error: string | null;
+  workflow_id: string | null;
+  staleness_warning: string | null;
+}
+
+export interface RepoStatus {
+  project_id: string;
+  repo_url: string;
+  last_indexed_commit: string | null;
+  last_indexed_at: string | null;
+  branch: string;
+  indexed_files_count: number;
+  total_documents: number;
+  is_indexing: boolean;
+}
+
+export interface UpdateCheck {
+  has_updates: boolean;
+  commits_behind: number;
+  message: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export const api = {
+  auth: {
+    register: (email: string, password: string, displayName?: string) =>
+      request<AuthResponse>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email, password, display_name: displayName || "" }),
+      }),
+    login: (email: string, password: string) =>
+      request<AuthResponse>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    googleLogin: (credential: string) =>
+      request<AuthResponse>("/auth/google", {
+        method: "POST",
+        body: JSON.stringify({ credential }),
+      }),
+  },
+
+  projects: {
+    list: () => request<Project[]>("/projects"),
+    get: (id: string) => request<Project>(`/projects/${id}`),
+    create: (data: Partial<Project>) =>
+      request<Project>("/projects", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<Project>) =>
+      request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+  },
+
+  connections: {
+    listByProject: (projectId: string) =>
+      request<Connection[]>(`/connections/project/${projectId}`),
+    get: (id: string) => request<Connection>(`/connections/${id}`),
+    create: (data: Record<string, unknown>) =>
+      request<Connection>("/connections", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, unknown>) =>
+      request<Connection>(`/connections/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/connections/${id}`, { method: "DELETE" }),
+    test: (id: string) =>
+      request<{ success: boolean; error?: string }>(`/connections/${id}/test`, {
+        method: "POST",
+      }),
+    refreshSchema: (id: string) =>
+      request<{ ok: boolean; tables: number; db_type: string }>(`/connections/${id}/refresh-schema`, {
+        method: "POST",
+      }),
+  },
+
+  chat: {
+    createSession: (projectId: string, title?: string) =>
+      request<ChatSession>("/chat/sessions", {
+        method: "POST",
+        body: JSON.stringify({ project_id: projectId, title }),
+      }),
+    listSessions: (projectId: string) =>
+      request<ChatSession[]>(`/chat/sessions/${projectId}`),
+    updateSession: (sessionId: string, data: { title: string }) =>
+      request<ChatSession>(`/chat/sessions/${sessionId}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    generateTitle: (sessionId: string) =>
+      request<ChatSession>(`/chat/sessions/${sessionId}/generate-title`, {
+        method: "POST",
+      }),
+    deleteSession: (sessionId: string) =>
+      request<{ ok: boolean }>(`/chat/sessions/${sessionId}`, { method: "DELETE" }),
+    submitFeedback: (messageId: string, rating: number) =>
+      request<{ ok: boolean; message_id: string; rating: number }>("/chat/feedback", {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId, rating }),
+      }),
+    getFeedbackAnalytics: (projectId: string) =>
+      request<{ total_rated: number; positive: number; negative: number }>(
+        `/chat/analytics/feedback/${projectId}`,
+      ),
+    getMessages: (sessionId: string) =>
+      request<ChatMessageDTO[]>(`/chat/sessions/${sessionId}/messages`),
+    ask: (data: {
+      project_id: string;
+      connection_id: string;
+      message: string;
+      session_id?: string;
+      preferred_provider?: string;
+      model?: string;
+    }) =>
+      request<ChatResponse>("/chat/ask", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    askStream: (
+      data: {
+        project_id: string;
+        connection_id: string;
+        message: string;
+        session_id?: string;
+      },
+      onStep: (event: Record<string, unknown>) => void,
+      onResult: (result: ChatResponse) => void,
+      onError: (error: string) => void,
+    ) => {
+      const ctrl = new AbortController();
+      fetch(`${API_BASE}/chat/ask/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(data),
+        signal: ctrl.signal,
+      }).then(async (res) => {
+        if (!res.ok || !res.body) {
+          onError(`Stream failed: ${res.status}`);
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const eventMatch = part.match(/^event:\s*(\w+)\ndata:\s*(.+)$/s);
+            if (!eventMatch) continue;
+            const [, eventType, jsonStr] = eventMatch;
+            try {
+              const parsed = JSON.parse(jsonStr);
+              if (eventType === "step") onStep(parsed);
+              else if (eventType === "result") onResult(parsed as ChatResponse);
+              else if (eventType === "error") onError(parsed.error);
+            } catch { /* skip malformed */ }
+          }
+        }
+      }).catch((err) => {
+        if (err.name !== "AbortError") onError(String(err));
+      });
+      return ctrl;
+    },
+  },
+
+  sshKeys: {
+    list: () => request<SshKey[]>("/ssh-keys"),
+    create: (data: { name: string; private_key: string; passphrase?: string }) =>
+      request<SshKey>("/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/ssh-keys/${id}`, { method: "DELETE" }),
+  },
+
+  repos: {
+    index: (projectId: string, forceFull = false) =>
+      request<{ status: string; commit_sha: string; files_indexed: number; schemas_found: number; workflow_id: string | null }>(
+        `/repos/${projectId}/index`,
+        { method: "POST", body: JSON.stringify({ force_full: forceFull }) }
+      ),
+    docs: (projectId: string) =>
+      request<{ id: string; doc_type: string; source_path: string; commit_sha: string | null; updated_at: string | null }[]>(
+        `/repos/${projectId}/docs`,
+      ),
+    doc: (projectId: string, docId: string) =>
+      request<{ id: string; doc_type: string; source_path: string; content: string }>(
+        `/repos/${projectId}/docs/${docId}`,
+      ),
+    status: (projectId: string) =>
+      request<RepoStatus>(`/repos/${projectId}/status`),
+    checkUpdates: (projectId: string) =>
+      request<UpdateCheck>(`/repos/${projectId}/check-updates`, { method: "POST" }),
+  },
+
+  rules: {
+    list: (projectId?: string) =>
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string }[]>(
+        `/rules${projectId ? `?project_id=${projectId}` : ""}`,
+      ),
+    create: (data: { project_id?: string; name: string; content: string; format?: string }) =>
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string }>(
+        "/rules",
+        { method: "POST", body: JSON.stringify(data) },
+      ),
+    update: (id: string, data: Record<string, unknown>) =>
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string }>(
+        `/rules/${id}`,
+        { method: "PATCH", body: JSON.stringify(data) },
+      ),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/rules/${id}`, { method: "DELETE" }),
+  },
+
+  invites: {
+    create: (projectId: string, email: string, role: string = "editor") =>
+      request<ProjectInvite>(`/invites/${projectId}/invites`, {
+        method: "POST",
+        body: JSON.stringify({ email, role }),
+      }),
+    list: (projectId: string) =>
+      request<ProjectInvite[]>(`/invites/${projectId}/invites`),
+    revoke: (projectId: string, inviteId: string) =>
+      request<{ ok: boolean }>(`/invites/${projectId}/invites/${inviteId}`, {
+        method: "DELETE",
+      }),
+    listPending: () =>
+      request<ProjectInvite[]>("/invites/pending"),
+    accept: (inviteId: string) =>
+      request<{ ok: boolean; project_id: string; role: string }>(
+        `/invites/accept/${inviteId}`,
+        { method: "POST" },
+      ),
+    listMembers: (projectId: string) =>
+      request<ProjectMember[]>(`/invites/${projectId}/members`),
+    removeMember: (projectId: string, userId: string) =>
+      request<{ ok: boolean }>(`/invites/${projectId}/members/${userId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  viz: {
+    export: async (columns: string[], rows: unknown[][], format: string) => {
+      const res = await fetch(`${API_BASE}/visualizations/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns, rows, format }),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      return res.blob();
+    },
+  },
+};
