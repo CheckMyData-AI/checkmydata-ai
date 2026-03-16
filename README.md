@@ -95,10 +95,11 @@ Before connecting to servers, you need to register your SSH keys:
 
 1. In the sidebar, find the **SSH Keys** section
 2. Click **+ Add**
-3. Paste your **private key** (PEM format, the contents of `~/.ssh/id_ed25519` or similar)
-4. Give it a **name** (e.g. "production-server")
-5. Optionally enter a **passphrase** if the key is encrypted
-6. Click **Save** — the system validates the key, shows its type (`ssh-ed25519`) and fingerprint
+3. If you're not sure where to find your key, click **"Need help finding your SSH key?"** — an inline guide walks you through checking for existing keys, generating a new one, and copying the private key
+4. Paste your **private key** (PEM format, the contents of `~/.ssh/id_ed25519` or similar)
+5. Give it a **name** (e.g. "production-server")
+6. Optionally enter a **passphrase** if the key is encrypted
+7. Click **Save** — the system validates the key, shows its type (`ssh-ed25519`) and fingerprint
 
 The key is encrypted at rest with AES (Fernet). The API never returns the raw private key — only metadata.
 
@@ -108,13 +109,16 @@ A **Project** groups together a Git repository, an LLM configuration, and a set 
 
 1. In the sidebar **Projects** section, click **+ New**
 2. Enter a **name** (e.g. "eSIM Analytics")
-3. Optionally set:
-   - **Git repo URL** (SSH URL like `git@github.com:org/repo.git`)
-   - **Branch** (defaults to `main`)
-   - **SSH key** for Git access (select from dropdown)
+3. Optionally set a **Git repo URL** — when you paste it, the system automatically:
+   - **Detects SSH URLs** (`git@...`) and auto-selects an SSH key if only one is available
+   - **Verifies access** by running `git ls-remote` in the background (debounced 800ms)
+   - Shows a green **"Access verified"** badge with the branch count, or a red error
+   - **Populates the branch dropdown** with all remote branches
+   - **Auto-selects** `main` (or `master` if `main` doesn't exist) as the default branch
+4. Optionally set:
    - **LLM provider** (`openai`, `anthropic`, or `openrouter`)
    - **LLM model** (e.g. `gpt-4o`, `claude-sonnet-4-20250514`)
-4. Click **Create**
+5. Click **Create**
 
 The project appears in the sidebar. Click it to make it active.
 
@@ -156,7 +160,8 @@ The agent will SSH into `64.188.10.62`, then connect to MySQL at `127.0.0.1:3306
 If your project has a Git repo URL configured:
 
 1. Click the **Index Repository** button in the sidebar
-2. The **WorkflowProgress** component shows each step in real-time:
+2. The backend immediately returns `202 Accepted` with a `workflow_id` and runs the pipeline as a background task (avoids Heroku's 30s request timeout)
+3. The **WorkflowProgress** component shows each step in real-time via SSE:
    - `SSH Key` — Decrypting SSH key for Git access
    - `Git Clone/Pull` — Cloning or pulling the repo
    - `Detect Changes` — Computing which files changed since last index (per-branch)
@@ -543,34 +548,49 @@ DocStore — one row per (project_id, source_path), updated in-place
 Next.js 15 / React 19 / TypeScript / Tailwind CSS
 
 src/
-├── app/page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel
+├── app/
+│   ├── page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel
+│   ├── layout.tsx         ← Root layout: wraps app in ClientShell (ErrorBoundary + Toast + ConfirmModal)
+│   └── globals.css        ← Global styles + animation keyframes
 ├── stores/
-│   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages
-│   └── auth-store.ts      ← Zustand: user, token, login/register/logout
+│   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
+│   ├── auth-store.ts      ← Zustand: user, token, login/register/logout
+│   └── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
 ├── lib/
-│   ├── api.ts             ← REST client (fetch wrapper + auth headers)
+│   ├── api.ts             ← REST client (fetch wrapper + auth headers + 422 error parsing)
 │   └── sse.ts             ← Server-Sent Events subscription helper
 └── components/
-    ├── auth/AuthGate.tsx   ← Login/register form, wraps entire app
+    ├── ui/
+    │   ├── ClientShell.tsx    ← Client wrapper: ErrorBoundary + ToastContainer + ConfirmModal
+    │   ├── ErrorBoundary.tsx  ← Global React error boundary (prevents white-screen crashes)
+    │   ├── ToastContainer.tsx ← Toast notification renderer (bottom-right corner)
+    │   ├── ConfirmModal.tsx   ← Reusable confirmation modal (replaces native confirm())
+    │   └── Spinner.tsx        ← Reusable loading spinner
+    ├── auth/AuthGate.tsx   ← Login/register form with password hint, Google loading state
+    ├── Sidebar.tsx         ← Collapsible sections, onboarding guide, section toggles with localStorage persistence
     ├── chat/
-    │   ├── ChatPanel.tsx   ← Message list + input box (supports knowledge-only mode)
-    │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering
-    │   ├── ChatSessionList.tsx ← Session switcher in sidebar
+    │   ├── ChatPanel.tsx   ← Message list + knowledge-only mode toggle + error retry
+    │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering + retry button
+    │   ├── ChatSessionList.tsx ← Session switcher with loading states
     │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
-    │   ├── ProjectSelector.tsx  ← CRUD + edit + role badges
-    │   └── InviteManager.tsx    ← Invite users, manage members
-    ├── invites/PendingInvites.tsx ← Accept/decline incoming invites
-    ├── connections/ConnectionSelector.tsx ← CRUD + edit + test
-    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys
-    ├── rules/RulesManager.tsx ← CRUD for custom rules
-    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs
+    │   ├── ProjectSelector.tsx  ← CRUD + inline name validation + error toasts
+    │   └── InviteManager.tsx    ← Invite users, manage members, error toasts
+    ├── invites/PendingInvites.tsx ← Accept/decline incoming invites with error toasts
+    ├── connections/ConnectionSelector.tsx ← CRUD + test error details + SSH tunnel guidance
+    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with loading state
+    ├── rules/RulesManager.tsx ← CRUD with try-catch + error toasts
+    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs + empty state message
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
     └── viz/ ← DataTable, ChartRenderer, ExportButtons
 ```
 
-**State management**: Zustand stores persist the active project, connection, chat session, and messages. Auth state is synced with `localStorage` for persistence across refreshes.
+**State management**: Zustand stores persist the active project, connection, chat session, and messages. Auth state is synced with `localStorage` for persistence across refreshes. Sidebar collapse state is persisted in `localStorage`.
+
+**Error handling**: All API errors flow through a centralized parser that handles FastAPI 422 validation arrays. Destructive actions use a custom confirmation modal. Errors are surfaced via toast notifications instead of `console.error` or `alert()`. A global `ErrorBoundary` prevents white-screen crashes.
+
+**Loading states**: All data-fetching components show loading spinners during initial load. Empty states display helpful guidance messages.
 
 ### API Endpoints Reference
 
@@ -596,11 +616,13 @@ src/
 | `POST` | `/api/chat/ask` | Send question (blocking) |
 | `POST` | `/api/chat/ask/stream` | Send question (SSE streaming) |
 | `WS` | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat |
-| `POST` | `/api/repos/{project_id}/index` | Trigger repo indexing |
+| `POST` | `/api/repos/check-access` | Verify repo access + list branches (no project needed) |
+| `POST` | `/api/repos/{project_id}/index` | Trigger repo indexing (returns 202, runs in background) |
 | `GET` | `/api/repos/{project_id}/status` | Indexing status (commit, time, branch, doc count, is_indexing) |
 | `POST` | `/api/repos/{project_id}/check-updates` | Check for new commits without indexing |
 | `GET` | `/api/repos/{project_id}/docs` | List indexed docs |
 | `GET` | `/api/repos/{project_id}/docs/{doc_id}` | Get doc content |
+| `GET` | `/api/models?provider={name}` | List available LLM models for provider (openrouter fetched live, others static) |
 | `POST/GET/PATCH/DELETE` | `/api/rules` | Custom rules CRUD |
 | `POST` | `/api/invites/{project_id}/invites` | Invite a user by email (owner only) |
 | `GET` | `/api/invites/{project_id}/invites` | List invites (owner only) |
@@ -680,6 +702,8 @@ Copy `backend/.env.example` to `backend/.env` and set:
 
 ## Development Commands
 
+### Local (no Docker)
+
 | Command | Description |
 |---|---|
 | `make setup` | Full setup: venv, deps, .env, encryption key, migrations |
@@ -693,9 +717,26 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `make lint` | Run ruff linter |
 | `make check` | Run lint + all backend tests |
 | `make migrate` | Apply Alembic migrations |
-| `make docker-up` | Build and start Docker containers |
-| `make docker-down` | Stop Docker containers |
 | `make clean` | Remove logs, caches, .next |
+
+### Docker (OrbStack / Docker Desktop)
+
+Requires [OrbStack](https://orbstack.dev) (recommended on macOS) or Docker Desktop.
+
+| Command | Description |
+|---|---|
+| `make docker-up` | Build images, start containers, wait for healthchecks, print URLs |
+| `make docker-down` | Stop and remove containers |
+| `make docker-clean` | Stop containers **and remove volumes** (DB, repos, vectors) |
+| `make docker-logs` | Tail backend + frontend container logs |
+
+You can also run the scripts directly:
+
+```bash
+./scripts/dev-up.sh              # start
+./scripts/dev-down.sh            # stop
+./scripts/dev-down.sh --volumes  # stop + wipe data
+```
 
 ---
 
@@ -709,10 +750,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 380 across 42 files
-- Backend integration tests: 69 across 11 files
+- Backend unit tests: 399 across 43 files
+- Backend integration tests: 76 across 12 files
 - Frontend tests: 11 across 3 files
-- **Total: 460 tests**
+- **Total: 486 tests**
 
 ### Test Coverage by Module
 
@@ -737,7 +778,7 @@ make test-frontend    # frontend vitest
 | Viz/Export | 14 (table, chart, text, CSV, JSON) | — |
 | Workflow Tracker | 11 (events, subscribe, step, queue) | — |
 | Workflow Routes | 4 (SSE format, filtering, pipeline) | — |
-| Repo Analyzer | 7 (SQL files, ORM models, migrations) | — |
+| Repo Analyzer | 15 (SQL files, ORM models, migrations, list_remote_refs: branches, default selection, access denied, timeout, empty) | 7 (check-access: success, denied, bad key, validation, auth, empty, many branches) |
 | Project Profiler | 10 (Django, FastAPI, Express, Prisma, language, dirs, skip) | — |
 | Entity Extractor | 15 (SQLAlchemy, Django, Prisma, TypeORM, Sequelize, Mongoose, Drizzle, entity map, dead tables, enums, usage, incremental) | — |
 | File Splitter | 9 (Python, Prisma, JS/TS, Drizzle, generic, syntax error, names) | — |
@@ -754,6 +795,7 @@ make test-frontend    # frontend vitest
 | Prompt Builder | 6 (all combinations of connection/knowledge flags) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
 | API Routes | 9 (projects, connections, viz routes) | — |
+| Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
 | Membership Service | 12 (add, get_role, require_role, remove, list, accessible) | — |
 | Invite Service | 11 (create, duplicate, reject, revoke, accept, pending, auto-accept) | — |
 | Auth | — | 11 (register, login, duplicate, wrong password, Google login, account linking, token validation) |
@@ -772,28 +814,43 @@ make test-frontend    # frontend vitest
 
 ## Deployment
 
-### Docker
+### Production — Heroku (primary)
 
-```bash
-docker compose up --build
-```
-
-Both services are containerized with health checks. The backend runs Alembic migrations before starting.
-
-### DigitalOcean App Platform
-
-App spec at `.do/app.yaml`. Set secrets in the dashboard:
-- `MASTER_ENCRYPTION_KEY`, `JWT_SECRET`, `OPENAI_API_KEY`
-
-### Heroku (Docker Container Deploy)
-
-The project deploys as two Heroku apps (backend + frontend) using Docker containers.
+The production environment runs on **Heroku** as two Docker container apps with Heroku Postgres.
 
 **Live URLs:**
-- Backend API: `https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api`
-- Frontend: `https://esim-db-agent-web-e3dda1811661.herokuapp.com`
 
-**Setup from scratch:**
+| Service | URL |
+|---|---|
+| Backend API | https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api |
+| Frontend | https://esim-db-agent-web-e3dda1811661.herokuapp.com |
+| Health check | https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/health |
+
+**Architecture on Heroku:**
+- `esim-db-agent-api` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
+- `esim-db-agent-web` — container stack, `Dockerfile.frontend`, connects to the API app
+
+**Redeploying after code changes:**
+
+```bash
+# Login to container registry
+heroku container:login
+
+# Build for linux/amd64 (required on Apple Silicon)
+docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-api/web -f Dockerfile.backend .
+docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-web/web \
+  --build-arg NEXT_PUBLIC_API_URL=https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api \
+  --build-arg NEXT_PUBLIC_WS_URL=wss://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/chat/ws \
+  -f Dockerfile.frontend .
+
+# Push and release
+docker push registry.heroku.com/esim-db-agent-api/web
+docker push registry.heroku.com/esim-db-agent-web/web
+heroku container:release web --app esim-db-agent-api
+heroku container:release web --app esim-db-agent-web
+```
+
+**Setting up a new Heroku deployment from scratch:**
 
 ```bash
 # 1. Create apps with container stack
@@ -818,25 +875,27 @@ heroku config:set \
   NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
   --app esim-db-agent-web
 
-# 5. Build and push containers (linux/amd64 required on Apple Silicon)
-heroku container:login
-docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-api/web -f Dockerfile.backend .
-docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-web/web \
-  --build-arg NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
-  --build-arg NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
-  -f Dockerfile.frontend .
-
-# 6. Push and release
-docker push registry.heroku.com/esim-db-agent-api/web
-docker push registry.heroku.com/esim-db-agent-web/web
-heroku container:release web --app esim-db-agent-api
-heroku container:release web --app esim-db-agent-web
+# 5. Build, push, and release (see "Redeploying" above)
 ```
 
-**Notes:**
+**Heroku-specific details:**
 - Heroku provides `DATABASE_URL` automatically via the Postgres addon; `config.py` converts `postgres://` to `postgresql+asyncpg://`
-- Alembic migrations run automatically on container startup
+- Alembic migrations run automatically on every container startup
 - Frontend `NEXT_PUBLIC_*` vars must be passed as `--build-arg` since Next.js bakes them into the bundle at build time
+- Both Dockerfiles respect Heroku's dynamic `$PORT` environment variable
+
+### Local Docker
+
+```bash
+docker compose up --build
+```
+
+Both services are containerized with health checks. The backend runs Alembic migrations before starting.
+
+### DigitalOcean App Platform
+
+App spec at `.do/app.yaml`. Set secrets in the dashboard:
+- `MASTER_ENCRYPTION_KEY`, `JWT_SECRET`, `OPENAI_API_KEY`
 
 ### CI/CD
 
@@ -857,3 +916,4 @@ GitHub Actions workflow at `.github/workflows/ci.yml` runs on every push/PR:
 | LLM health check fails | Set at least one API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`) |
 | Connection test fails | Verify SSH tunnel config: SSH host/user/key must reach the server, DB host should be `127.0.0.1` for tunneled connections |
 | 429 Too Many Requests | Rate limiting active. Wait and retry. Limits: 20 chat/min, 5 register/min |
+| Indexing returns 409 | Indexing is already running as a background task. Wait for it to finish (check `/status` endpoint or SSE events) |
