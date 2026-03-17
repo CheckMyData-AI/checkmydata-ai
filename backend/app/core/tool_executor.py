@@ -13,7 +13,13 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, SchemaInfo, connector_key
+from app.connectors.base import (
+    BaseConnector,
+    ConnectionConfig,
+    QueryResult,
+    SchemaInfo,
+    connector_key,
+)
 from app.connectors.registry import get_connector
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier

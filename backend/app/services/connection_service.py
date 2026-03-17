@@ -168,19 +168,19 @@ class ConnectionService:
             key = asyncssh.import_private_key(ssh_key_content.strip(), ssh_key_passphrase)
             connect_kwargs["client_keys"] = [key]
 
-        _MARKER = "__SSH_TEST_OK__"
+        _marker = "__SSH_TEST_OK__"
         try:
             async with asyncssh.connect(**connect_kwargs) as ssh_conn:
                 result = await ssh_conn.run(
-                    f"echo {_MARKER} && hostname", timeout=10, check=False,
+                    f"echo {_marker} && hostname", timeout=10, check=False,
                 )
                 stdout = (result.stdout or "").strip()
-                ok = _MARKER in stdout
+                ok = _marker in stdout
                 hostname = "unknown"
                 if ok:
                     for line in stdout.splitlines():
                         stripped = line.strip()
-                        if stripped and stripped != _MARKER:
+                        if stripped and stripped != _marker:
                             hostname = stripped
                     logger.info("SSH test OK for '%s' -> %s", conn.name, hostname)
                 else:

@@ -11,7 +11,12 @@ class DbIndex(Base):
     """Per-table database index entry with LLM-generated analysis."""
 
     __tablename__ = "db_index"
-    __table_args__ = (UniqueConstraint("connection_id", "table_name", name="uq_db_index_conn_table"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id", "table_name",
+            name="uq_db_index_conn_table",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())

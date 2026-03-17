@@ -18,9 +18,9 @@ from app.knowledge.repo_analyzer import RepoAnalyzer
 from app.knowledge.vector_store import VectorStore
 from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
+from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
-from app.services.connection_service import ConnectionService
 from app.services.project_service import ProjectService
 from app.services.ssh_key_service import SshKeyService
 

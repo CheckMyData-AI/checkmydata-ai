@@ -2,9 +2,7 @@
 
 import json
 
-import pytest
-
-from app.connectors.base import ColumnInfo, ForeignKeyInfo, QueryResult, TableInfo
+from app.connectors.base import ColumnInfo, QueryResult, TableInfo
 from app.knowledge.db_index_pipeline import (
     _detect_latest_record,
     _find_ordering_column,

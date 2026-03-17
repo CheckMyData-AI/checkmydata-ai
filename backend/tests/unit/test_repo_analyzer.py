@@ -275,7 +275,8 @@ class TestRepoAnalyzer:
         sql_file.write_text(
             "CREATE TABLE users (id INT PRIMARY KEY);\n"
             "CREATE OR REPLACE VIEW active_users AS SELECT * FROM users WHERE active = 1;\n"
-            "CREATE FUNCTION get_user_count() RETURNS INT AS $$ SELECT count(*) FROM users; $$ LANGUAGE SQL;\n"
+            "CREATE FUNCTION get_user_count() RETURNS INT"
+            " AS $$ SELECT count(*) FROM users; $$ LANGUAGE SQL;\n"
         )
         results = self.analyzer.analyze(repo_dir, files=["views.sql"])
         assert len(results) == 1

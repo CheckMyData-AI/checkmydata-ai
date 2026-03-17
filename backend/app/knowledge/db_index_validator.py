@@ -33,22 +33,34 @@ ANALYZE_TABLE_TOOL = Tool(
         ToolParameter(
             name="business_description",
             type="string",
-            description="One-sentence description of what this table stores and its business purpose",
+            description=(
+                "One-sentence description of what this table stores"
+                " and its business purpose"
+            ),
         ),
         ToolParameter(
             name="data_patterns",
             type="string",
-            description="Notable data patterns: enum-like columns, null patterns, date formats, value ranges",
+            description=(
+                "Notable data patterns: enum-like columns,"
+                " null patterns, date formats, value ranges"
+            ),
         ),
         ToolParameter(
             name="column_notes",
             type="string",
-            description="JSON object with per-column notes: observed enum values, null rates, type observations",
+            description=(
+                "JSON object with per-column notes: observed"
+                " enum values, null rates, type observations"
+            ),
         ),
         ToolParameter(
             name="query_hints",
             type="string",
-            description="Tips for the query agent: recommended filters, join keys, date column to use, gotchas",
+            description=(
+                "Tips for the query agent: recommended filters,"
+                " join keys, date column to use, gotchas"
+            ),
         ),
         ToolParameter(
             name="code_match_status",
@@ -59,7 +71,10 @@ ANALYZE_TABLE_TOOL = Tool(
         ToolParameter(
             name="code_match_details",
             type="string",
-            description="Explanation of any discrepancies between live schema and code expectations",
+            description=(
+                "Explanation of any discrepancies between"
+                " live schema and code expectations"
+            ),
             required=False,
         ),
     ],
@@ -72,12 +87,19 @@ GENERATE_SUMMARY_TOOL = Tool(
         ToolParameter(
             name="summary_text",
             type="string",
-            description="2-4 sentence overview of the database: what domain, key entity groups, data volume",
+            description=(
+                "2-4 sentence overview of the database:"
+                " what domain, key entity groups, data volume"
+            ),
         ),
         ToolParameter(
             name="recommendations",
             type="string",
-            description="Bullet-point recommendations for the query agent: common join patterns, date handling, naming conventions, key tables for analytics",
+            description=(
+                "Bullet-point recommendations for the query agent:"
+                " common join patterns, date handling,"
+                " naming conventions, key tables for analytics"
+            ),
         ),
     ],
 )
@@ -176,7 +198,11 @@ class DbIndexValidator:
             "Analyze each of the following tables and call `table_analysis` once per table.\n"
         ]
         for table, sample in tables:
-            prompt_parts.append(self._build_table_prompt(table, sample, code_context, rules_context))
+            prompt_parts.append(
+                self._build_table_prompt(
+                    table, sample, code_context, rules_context,
+                )
+            )
             prompt_parts.append("---\n")
 
         messages = [
@@ -250,7 +276,10 @@ class DbIndexValidator:
         if orphan:
             prompt_parts.append(f"Orphan tables (in DB, not in code): {', '.join(sorted(orphan))}")
         if phantom:
-            prompt_parts.append(f"Phantom tables (in code, not in DB): {', '.join(sorted(phantom))}")
+            prompt_parts.append(
+                "Phantom tables (in code, not in DB): "
+                f"{', '.join(sorted(phantom))}"
+            )
 
         prompt_parts.append("\nPer-table summaries:")
         for a in sorted(analyses, key=lambda x: -x.relevance_score):

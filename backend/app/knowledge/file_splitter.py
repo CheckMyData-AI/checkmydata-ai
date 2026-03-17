@@ -46,7 +46,10 @@ def split_large_file(
 
         return _split_generic(content, file_path, max_segment_chars)
     except Exception:
-        logger.warning("File split failed for %s, returning single segment", file_path, exc_info=True)
+        logger.warning(
+            "File split failed for %s, returning single segment",
+            file_path, exc_info=True,
+        )
         return [FileSegment(name=file_path, content=content[:max_segment_chars])]
 
 

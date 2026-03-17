@@ -45,7 +45,10 @@ class TestParseTsvWithHeaders:
         assert rows == []
 
     def test_with_mysql_warning(self):
-        stdout = "Warning: Using a password on the command line interface can be insecure.\nid\tname\n1\talice\n"
+        stdout = (
+            "Warning: Using a password on the command line"
+            " interface can be insecure.\nid\tname\n1\talice\n"
+        )
         columns, rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         assert columns == ["id", "name"]
         assert rows == [["1", "alice"]]

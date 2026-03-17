@@ -146,7 +146,9 @@ class SSHExecConnector(BaseConnector):
             async with self._reconnect_lock:
                 if self._conn is None or not self._config:
                     if not self._config:
-                        raise RuntimeError("SSH connection lost and no config to reconnect") from exc
+                        raise RuntimeError(
+                            "SSH connection lost and no config to reconnect"
+                        ) from exc
                     await self.connect(self._config)
                 elif self._conn:
                     try:
@@ -383,17 +385,17 @@ class SSHExecConnector(BaseConnector):
         """Test SSH connectivity without testing the database."""
         if not self._conn:
             return {"success": False, "error": "Not connected"}
-        _MARKER = "__SSH_EXEC_TEST__"
+        _marker = "__SSH_EXEC_TEST__"
         try:
             stdout, _, _ = await self._run_command(
-                f"echo {_MARKER} && hostname", timeout=10,
+                f"echo {_marker} && hostname", timeout=10,
             )
-            ok = _MARKER in stdout
+            ok = _marker in stdout
             hostname = "unknown"
             if ok:
                 for line in stdout.strip().splitlines():
                     stripped = line.strip()
-                    if stripped and stripped != _MARKER:
+                    if stripped and stripped != _marker:
                         hostname = stripped
             return {"success": ok, "hostname": hostname}
         except Exception as e:

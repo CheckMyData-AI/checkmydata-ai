@@ -558,9 +558,10 @@ class IndexingPipelineRunner:
         connections as ``code_stale`` so the agent knows the code_match_status
         values may be outdated."""
         try:
+            from sqlalchemy import update as sa_update
+
             from app.models.db_index import DbIndex
             from app.services.connection_service import ConnectionService
-            from sqlalchemy import update as sa_update
 
             conn_svc = ConnectionService()
             connections = await conn_svc.list_by_project(db, project_id)

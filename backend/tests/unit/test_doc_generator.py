@@ -106,7 +106,10 @@ class TestDiffAwareGeneration:
         gen = DocGenerator(llm_router=mock_router)
 
         old_content = "class User(Base):\n    id = Column(Integer)\n    name = Column(String)\n"
-        new_content = "class User(Base):\n    id = Column(Integer)\n    name = Column(String)\n    email = Column(String)\n"
+        new_content = (
+            "class User(Base):\n    id = Column(Integer)\n"
+            "    name = Column(String)\n    email = Column(String)\n"
+        )
 
         result = await gen.generate(
             file_path="models/user.py",

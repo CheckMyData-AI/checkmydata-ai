@@ -107,7 +107,10 @@ async def create_connection(
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
     conn = await _svc.create(db, **body.model_dump())
-    logger.info("Connection created: name=%s type=%s project=%s", body.name, body.db_type, body.project_id[:8])
+    logger.info(
+        "Connection created: name=%s type=%s project=%s",
+        body.name, body.db_type, body.project_id[:8],
+    )
     return conn
 
 
@@ -204,7 +207,10 @@ async def test_connection(
                     )
                     _db_index_tasks[connection_id] = task
                     result["auto_indexing"] = True
-                    logger.info("Auto-indexing triggered after test: connection=%s", connection_id[:8])
+                    logger.info(
+                        "Auto-indexing triggered after test: connection=%s",
+                        connection_id[:8],
+                    )
                 except Exception:
                     logger.debug("Auto-index trigger failed", exc_info=True)
 

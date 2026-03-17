@@ -6,8 +6,6 @@ from urllib.parse import urlparse
 
 import clickhouse_connect
 
-logger = logging.getLogger(__name__)
-
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -18,6 +16,8 @@ from app.connectors.base import (
     TableInfo,
 )
 from app.connectors.ssh_tunnel import SSHTunnelManager
+
+logger = logging.getLogger(__name__)
 
 _tunnel_mgr = SSHTunnelManager()
 

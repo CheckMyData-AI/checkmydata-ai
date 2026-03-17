@@ -5,8 +5,6 @@ from typing import Any
 
 import asyncpg
 
-logger = logging.getLogger(__name__)
-
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -18,6 +16,8 @@ from app.connectors.base import (
     TableInfo,
 )
 from app.connectors.ssh_tunnel import SSHTunnelManager
+
+logger = logging.getLogger(__name__)
 
 _tunnel_mgr = SSHTunnelManager()
 
@@ -103,7 +103,8 @@ class PostgresConnector(BaseConnector):
                     OSError) as exc:
                 if attempt == 0 and self._config:
                     logger.warning(
-                        "Postgres introspect_schema lost connection (attempt %d): %s — reconnecting",
+                        "Postgres introspect_schema lost connection "
+                        "(attempt %d): %s — reconnecting",
                         attempt + 1, exc,
                     )
                     await self._reconnect()

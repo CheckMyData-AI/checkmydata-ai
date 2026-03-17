@@ -157,11 +157,11 @@ def format_template(template: str, config_vars: dict[str, str]) -> str:
     the value is escaped for double-quote context. Otherwise it is
     single-quoted for bare shell context.
     """
-    _ESCAPE_KEYS = {"db_name", "db_user", "db_host", "db_password"}
+    _escape_keys = {"db_name", "db_user", "db_host", "db_password"}
     result = template
     for key, value in config_vars.items():
         placeholder = f"{{{key}}}"
-        if key not in _ESCAPE_KEYS:
+        if key not in _escape_keys:
             result = result.replace(placeholder, value)
             continue
         dq_placeholder = f'"{placeholder}"'

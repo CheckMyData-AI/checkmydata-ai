@@ -62,7 +62,7 @@ class ChatService:
             session_id=session_id,
             role=role,
             content=content,
-            metadata_json=json.dumps(metadata) if metadata else None,
+            metadata_json=json.dumps(metadata, default=str) if metadata else None,
             tool_calls_json=tool_calls_json,
         )
         session.add(msg)

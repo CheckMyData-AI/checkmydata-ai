@@ -322,12 +322,18 @@ class TestToolCallsPropagation:
     """Agent includes tool_calls on assistant messages sent back to the LLM."""
 
     @pytest.mark.asyncio
-    async def test_tool_calls_included_in_assistant_message(self, agent, mock_llm, mock_vector_store):
+    async def test_tool_calls_included_in_assistant_message(
+        self, agent, mock_llm, mock_vector_store,
+    ):
         collection = MagicMock()
         collection.count = MagicMock(return_value=10)
         mock_vector_store.get_or_create_collection = MagicMock(return_value=collection)
         mock_vector_store.query = MagicMock(return_value=[
-            {"document": "test doc", "metadata": {"source_path": "test.py", "doc_type": "code"}, "distance": 0.1},
+            {
+                "document": "test doc",
+                "metadata": {"source_path": "test.py", "doc_type": "code"},
+                "distance": 0.1,
+            },
         ])
 
         tool_call = ToolCall(id="tc-1", name="search_knowledge", arguments={"query": "test"})
