@@ -439,7 +439,12 @@ async def ask_stream(
             if event.step == "pipeline_end":
                 break
 
-        await task
+        try:
+            await task
+        except Exception as exc:
+            tracker.unsubscribe(queue)
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            return
         tracker.unsubscribe(queue)
         result = result_holder[0] if result_holder else None
         if not result:

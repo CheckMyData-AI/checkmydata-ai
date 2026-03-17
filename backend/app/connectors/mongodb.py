@@ -60,6 +60,11 @@ class MongoDBConnector(BaseConnector):
         start = time.monotonic()
         try:
             spec = json.loads(query)
+            if "collection" not in spec:
+                return QueryResult(
+                    error="Query spec must include a 'collection' key, e.g. "
+                          '{"collection": "my_coll", "operation": "find", "filter": {}}',
+                )
             collection = self._db[spec["collection"]]
             operation = spec.get("operation", "find")
 

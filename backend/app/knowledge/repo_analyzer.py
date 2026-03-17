@@ -427,6 +427,11 @@ class RepoAnalyzer:
     ) -> list[ExtractedSchema]:
         """Analyze the repo (or specific files) for database-related code.
 
+        When *files* comes from git diff it contains ALL changed blobs with no
+        extension filtering.  We apply the same relevance + binary checks that
+        ``_find_db_relevant_files`` uses so that compiled binaries, images, and
+        other non-code files are excluded early.
+
         When *profile* is given, files from model_dirs are analyzed first
         so their results appear earlier (useful if the pipeline applies
         short-circuit logic or ordering later).
@@ -434,7 +439,18 @@ class RepoAnalyzer:
         results: list[ExtractedSchema] = []
 
         if files:
-            file_paths = [repo_dir / f for f in files]
+            extra_dirs: set[str] = set()
+            if profile:
+                extra_dirs.update(profile.model_dirs)
+                extra_dirs.update(profile.migration_dirs)
+
+            file_paths: list[Path] = []
+            for f in files:
+                fp = repo_dir / f
+                if fp.suffix.lower() in DB_RELEVANT_EXTENSIONS:
+                    file_paths.append(fp)
+                elif extra_dirs and any(f.startswith(ed) for ed in extra_dirs):
+                    file_paths.append(fp)
         else:
             file_paths = self._find_db_relevant_files(repo_dir, profile)
 
@@ -455,6 +471,10 @@ class RepoAnalyzer:
             try:
                 content = fp.read_text(encoding="utf-8", errors="ignore")
             except Exception:
+                continue
+
+            if "\x00" in content:
+                logger.debug("Skipping %s: content contains null bytes", fp)
                 continue
 
             rel_path = str(fp.relative_to(repo_dir))

@@ -89,7 +89,9 @@ export function SshKeyManager() {
   const [listLoading, setListLoading] = useState(true);
 
   useEffect(() => {
-    api.sshKeys.list().then(setSshKeys).catch(() => {}).finally(() => setListLoading(false));
+    api.sshKeys.list().then(setSshKeys).catch((err) => {
+      toast(err instanceof Error ? err.message : "Failed to load SSH keys", "error");
+    }).finally(() => setListLoading(false));
   }, [setSshKeys]);
 
   const handleCreate = async () => {

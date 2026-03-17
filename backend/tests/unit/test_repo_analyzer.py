@@ -198,3 +198,61 @@ class TestRepoAnalyzer:
         qp = [r for r in results if r.doc_type == "query_pattern"]
         assert len(qp) == 1
         assert "filter" in qp[0].content
+
+    def test_analyze_filters_extensionless_binary_from_changed_files(self):
+        """Binary files without extensions (e.g. ELF executables) passed via
+        the ``files`` argument from git diff should be excluded by extension
+        filtering before even reaching is_binary_file().
+        """
+        repo_dir = Path(self.tmpdir) / "test_binary_filter"
+        repo_dir.mkdir()
+        (repo_dir / "docker").mkdir()
+        binary_file = repo_dir / "docker" / "myBinary"
+        binary_file.write_bytes(b"\x7fELF\x00\x00\x00\x00" + b"\x00" * 8000)
+        (repo_dir / "models.py").write_text(
+            "from sqlalchemy import Column, Integer\n"
+            "class User:\n    id = Column(Integer)\n"
+        )
+
+        results = self.analyzer.analyze(
+            repo_dir, files=["docker/myBinary", "models.py"]
+        )
+        paths = [r.file_path for r in results]
+        assert "docker/myBinary" not in paths
+        assert "models.py" in paths
+
+    def test_analyze_skips_content_with_null_bytes(self):
+        """Even if a file has a valid extension, null bytes in its content
+        should cause it to be skipped (defense-in-depth after read_text).
+        """
+        repo_dir = Path(self.tmpdir) / "test_null_bytes"
+        repo_dir.mkdir()
+        trick_file = repo_dir / "sneaky.py"
+        trick_file.write_bytes(
+            b"from sqlalchemy import Column\x00\x00\x00class Foo: pass\n"
+        )
+
+        results = self.analyzer.analyze(repo_dir, files=["sneaky.py"])
+        assert len(results) == 0
+
+    def test_analyze_allows_extra_dirs_from_profile(self):
+        """Files in model_dirs with valid text content should still be analyzed
+        even if their extension isn't in DB_RELEVANT_EXTENSIONS.
+        """
+        from app.knowledge.project_profiler import ProjectProfile
+
+        repo_dir = Path(self.tmpdir) / "test_extra_dirs"
+        repo_dir.mkdir()
+        (repo_dir / "custom_models").mkdir()
+        model_file = repo_dir / "custom_models" / "schema.txt"
+        model_file.write_text(
+            "CREATE TABLE users (id INT PRIMARY KEY);\n"
+        )
+
+        profile = ProjectProfile(model_dirs=["custom_models"])
+        results = self.analyzer.analyze(
+            repo_dir,
+            files=["custom_models/schema.txt"],
+            profile=profile,
+        )
+        assert len(results) == 0

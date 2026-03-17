@@ -62,15 +62,31 @@ class MySQLConnector(BaseConnector):
             await self._pool.wait_closed()
             self._pool = None
 
+    @staticmethod
+    def _dict_to_positional(query: str, params: dict[str, Any]) -> tuple[str, tuple]:
+        """Convert :name style params to %s positional params for aiomysql."""
+        import re
+        ordered: list[Any] = []
+        def _replacer(m: re.Match) -> str:
+            name = m.group(1)
+            ordered.append(params[name])
+            return "%s"
+        converted = re.sub(r":(\w+)", _replacer, query)
+        return converted, tuple(ordered)
+
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._pool:
             return QueryResult(error="Not connected")
 
         start = time.monotonic()
         try:
+            exec_params: Any = params
+            exec_query = query
+            if isinstance(params, dict):
+                exec_query, exec_params = self._dict_to_positional(query, params)
             async with self._pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
-                    await cur.execute(query, params)
+                    await cur.execute(exec_query, exec_params)
                     rows = await cur.fetchall()
                     elapsed = (time.monotonic() - start) * 1000
 

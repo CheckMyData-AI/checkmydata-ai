@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.knowledge.doc_generator import DocGenerator
+from app.knowledge.doc_generator import (
+    DocGenerator,
+    _is_binary_content,
+    _sanitize_content,
+)
 from app.llm.base import LLMResponse
 
 
@@ -55,3 +59,62 @@ class TestDocGenerator:
         call_args = mock_router.complete.call_args
         prompt_content = call_args[1]["messages"][0].content
         assert "truncated" in prompt_content
+
+    @pytest.mark.asyncio
+    async def test_fallback_returns_placeholder_for_binary_content(self):
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+        gen = DocGenerator(llm_router=mock_router)
+
+        binary_ish = "\x01\x02\x03\x04\x05" * 300
+        result = await gen.generate("binary.dat", binary_ish, "orm_model")
+        assert "Binary or non-text content" in result
+
+    @pytest.mark.asyncio
+    async def test_fallback_truncates_oversized_content(self):
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+        gen = DocGenerator(llm_router=mock_router)
+
+        huge = "x" * 100_000
+        result = await gen.generate("huge.py", huge, "orm_model")
+        assert len(result) == 50_000
+
+    @pytest.mark.asyncio
+    async def test_null_bytes_stripped_before_llm_call(self):
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock(return_value=LLMResponse(content="Clean doc"))
+        gen = DocGenerator(llm_router=mock_router)
+
+        content_with_nulls = "class User:\x00\x00    pass"
+        result = await gen.generate("models.py", content_with_nulls, "orm_model")
+        assert result == "Clean doc"
+        call_args = mock_router.complete.call_args
+        prompt = call_args[1]["messages"][0].content
+        assert "\x00" not in prompt
+
+
+class TestBinaryContentDetection:
+    def test_normal_text_is_not_binary(self):
+        assert _is_binary_content("class User(Base):\n    pass\n") is False
+
+    def test_high_non_printable_ratio_is_binary(self):
+        assert _is_binary_content("\x01\x02\x03\x04\x05" * 200) is True
+
+    def test_empty_string_is_not_binary(self):
+        assert _is_binary_content("") is False
+
+    def test_mixed_content_below_threshold(self):
+        text = "Hello world! " * 100 + "\x01\x02"
+        assert _is_binary_content(text) is False
+
+
+class TestSanitizeContent:
+    def test_strips_null_bytes(self):
+        assert _sanitize_content("hello\x00world") == "helloworld"
+
+    def test_no_change_for_clean_text(self):
+        assert _sanitize_content("clean text") == "clean text"
+
+    def test_strips_multiple_null_bytes(self):
+        assert _sanitize_content("\x00\x00abc\x00") == "abc"

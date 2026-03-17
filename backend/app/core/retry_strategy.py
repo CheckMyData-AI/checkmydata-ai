@@ -39,7 +39,7 @@ class RetryStrategy:
 
         if et == QueryErrorType.COLUMN_NOT_FOUND:
             target = error.suggested_columns[0] if error.suggested_columns else ""
-            if target:
+            if target and isinstance(target, str):
                 similar = find_similar_columns(target, schema)
                 if similar:
                     parts.append("Did you mean one of these columns?")
@@ -52,7 +52,7 @@ class RetryStrategy:
 
         elif et == QueryErrorType.TABLE_NOT_FOUND:
             target = error.suggested_tables[0] if error.suggested_tables else ""
-            if target:
+            if target and isinstance(target, str):
                 similar = find_similar_tables(target, schema)
                 if similar:
                     parts.append("Did you mean one of these tables?")

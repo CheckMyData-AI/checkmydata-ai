@@ -288,6 +288,11 @@ export const api = {
         body: JSON.stringify(data),
         signal: ctrl.signal,
       }).then(async (res) => {
+        if (res.status === 401) {
+          onError("Session expired");
+          window.location.reload();
+          return;
+        }
         if (!res.ok || !res.body) {
           onError(`Stream failed: ${res.status}`);
           return;

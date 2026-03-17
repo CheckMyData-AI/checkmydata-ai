@@ -1,6 +1,7 @@
 import asyncio
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import clickhouse_connect
 
@@ -31,18 +32,25 @@ class ClickHouseConnector(BaseConnector):
         self._config = config
 
         if config.connection_string:
-            host = config.db_host
-            port = config.db_port
+            parsed = urlparse(config.connection_string)
+            host = parsed.hostname or config.db_host
+            port = parsed.port or config.db_port
+            database = (parsed.path or "").lstrip("/") or config.db_name
+            username = parsed.username or config.db_user or "default"
+            password = parsed.password or config.db_password or ""
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
+            database = config.db_name
+            username = config.db_user or "default"
+            password = config.db_password or ""
 
         self._client = await asyncio.to_thread(
             clickhouse_connect.get_client,
             host=host,
             port=port,
-            database=config.db_name,
-            username=config.db_user or "default",
-            password=config.db_password or "",
+            database=database,
+            username=username,
+            password=password,
         )
 
     async def disconnect(self) -> None:

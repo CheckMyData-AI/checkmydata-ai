@@ -15,8 +15,9 @@ from app.connectors.base import ConnectionConfig, QueryResult
 from app.core.history_trimmer import trim_history
 from app.core.prompt_builder import build_agent_system_prompt
 from app.core.query_builder import QueryBuilder
-from app.core.tool_executor import RAGSource, ToolExecutor
+from app.core.tool_executor import ToolExecutor
 from app.core.tools import get_available_tools
+from app.core.types import RAGSource
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
@@ -118,6 +119,10 @@ class ConversationalAgent:
                 schema_indexer=self._schema_indexer,
                 rules_engine=self._custom_rules,
                 tracker=self._tracker,
+                user_question=question,
+                chat_history=chat_history,
+                preferred_provider=preferred_provider,
+                model=model,
             )
 
             messages: list[Message] = [Message(role="system", content=system_prompt)]

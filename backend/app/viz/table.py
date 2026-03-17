@@ -6,8 +6,8 @@ from app.viz.utils import serialize_value
 
 def format_table(result: QueryResult, config: dict | None = None) -> dict[str, Any]:
     config = config or {}
-    page = config.get("page", 1)
-    page_size = config.get("page_size", 50)
+    page = max(1, config.get("page", 1))
+    page_size = max(1, config.get("page_size", 50))
 
     start = (page - 1) * page_size
     end = start + page_size

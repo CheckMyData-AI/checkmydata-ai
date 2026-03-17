@@ -13,6 +13,7 @@ from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
 from app.core.query_validation import ValidationConfig
 from app.core.retry_strategy import RetryStrategy
+from app.core.types import RAGSource
 from app.core.validation_loop import ValidationLoop
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
@@ -25,14 +26,6 @@ from app.llm.router import LLMRouter
 logger = logging.getLogger(__name__)
 
 SCHEMA_CACHE_TTL_SECONDS = 300
-
-
-@dataclass
-class RAGSource:
-    source_path: str
-    distance: float | None = None
-    doc_type: str = ""
-    chunk_index: str = ""
 
 
 @dataclass
@@ -68,6 +61,7 @@ class Orchestrator:
         self._query_builder = QueryBuilder(self._llm_router)
         self._schema_indexer = SchemaIndexer()
         self._connectors: dict[str, BaseConnector] = {}
+        self._connector_lock = asyncio.Lock()
         self._schema_cache: dict[str, tuple[SchemaInfo, float]] = {}
         self._query_result_cache = QueryCache()
         self._tracker = workflow_tracker or default_tracker
@@ -80,14 +74,15 @@ class Orchestrator:
 
     async def get_or_create_connector(self, connection_config: ConnectionConfig) -> BaseConnector:
         key = self._connector_key(connection_config)
-        if key not in self._connectors:
-            connector = get_connector(
-                connection_config.db_type,
-                ssh_exec_mode=connection_config.ssh_exec_mode,
-            )
-            await connector.connect(connection_config)
-            self._connectors[key] = connector
-        return self._connectors[key]
+        async with self._connector_lock:
+            if key not in self._connectors:
+                connector = get_connector(
+                    connection_config.db_type,
+                    ssh_exec_mode=connection_config.ssh_exec_mode,
+                )
+                await connector.connect(connection_config)
+                self._connectors[key] = connector
+            return self._connectors[key]
 
     async def _get_cached_schema(self, connection_config: ConnectionConfig) -> SchemaInfo:
         key = self._connector_key(connection_config)
@@ -421,14 +416,14 @@ class Orchestrator:
                     )
                 )
 
-        live_context += self._build_cross_reference(project_id, schema)
+        live_context += await self._build_cross_reference(project_id, schema)
 
         if staleness_warning:
             live_context += f"\n\n## ⚠️ Staleness Warning\n{staleness_warning}\n"
 
         return live_context, rag_sources
 
-    def _build_cross_reference(
+    async def _build_cross_reference(
         self,
         project_id: str,
         schema: SchemaInfo,
@@ -437,9 +432,10 @@ class Orchestrator:
         try:
             from app.knowledge.project_summarizer import build_schema_cross_reference
 
-            summary_results = self._vector_store.query(
-                project_id=project_id,
-                query_text="project data model summary entities",
+            summary_results = await asyncio.to_thread(
+                self._vector_store.query,
+                project_id,
+                "project data model summary entities",
                 n_results=1,
             )
             if not summary_results:

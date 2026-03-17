@@ -21,6 +21,7 @@ from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
 from app.core.query_validation import ValidationConfig
 from app.core.retry_strategy import RetryStrategy
+from app.core.types import RAGSource
 from app.core.validation_loop import ValidationLoop
 from app.core.workflow_tracker import WorkflowTracker
 from app.knowledge.custom_rules import CustomRulesEngine
@@ -32,14 +33,6 @@ from app.llm.router import LLMRouter
 logger = logging.getLogger(__name__)
 
 SCHEMA_CACHE_TTL_SECONDS = 300
-
-
-@dataclass
-class RAGSource:
-    source_path: str
-    distance: float | None = None
-    doc_type: str = ""
-    chunk_index: str = ""
 
 
 @dataclass
@@ -67,6 +60,11 @@ class ToolExecutor:
         schema_indexer: SchemaIndexer,
         rules_engine: CustomRulesEngine,
         tracker: WorkflowTracker,
+        *,
+        user_question: str = "",
+        chat_history: list | None = None,
+        preferred_provider: str | None = None,
+        model: str | None = None,
     ) -> None:
         self._project_id = project_id
         self._connection_config = connection_config
@@ -75,8 +73,13 @@ class ToolExecutor:
         self._schema_indexer = schema_indexer
         self._rules_engine = rules_engine
         self._tracker = tracker
+        self._user_question = user_question
+        self._chat_history = chat_history
+        self._preferred_provider = preferred_provider
+        self._model = model
 
         self._connectors: dict[str, BaseConnector] = {}
+        self._connector_lock = asyncio.Lock()
         self._schema_cache: dict[str, tuple[SchemaInfo, float]] = {}
         self._query_cache = QueryCache()
 
@@ -136,10 +139,13 @@ class ToolExecutor:
             initial_explanation=explanation,
             connector=connector,
             schema=schema,
-            question=query,
+            question=self._user_question or query,
             project_id=self._project_id,
             workflow_id=wf_id,
             connection_config=self._connection_config,
+            chat_history=self._chat_history,
+            preferred_provider=self._preferred_provider,
+            model=self._model,
         )
 
         if not loop_result.success:
@@ -239,11 +245,12 @@ class ToolExecutor:
 
     async def _get_or_create_connector(self, cfg: ConnectionConfig) -> BaseConnector:
         key = self._connector_key(cfg)
-        if key not in self._connectors:
-            connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
-            await connector.connect(cfg)
-            self._connectors[key] = connector
-        return self._connectors[key]
+        async with self._connector_lock:
+            if key not in self._connectors:
+                connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
+                await connector.connect(cfg)
+                self._connectors[key] = connector
+            return self._connectors[key]
 
     async def _get_cached_schema(self, cfg: ConnectionConfig) -> SchemaInfo:
         key = self._connector_key(cfg)

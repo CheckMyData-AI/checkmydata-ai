@@ -73,7 +73,9 @@ export function ProjectSelector() {
   const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
-    api.projects.list().then(setProjects).catch(() => {}).finally(() => setListLoading(false));
+    api.projects.list().then(setProjects).catch((err) => {
+      toast(err instanceof Error ? err.message : "Failed to load projects", "error");
+    }).finally(() => setListLoading(false));
   }, [setProjects]);
 
   useEffect(() => {

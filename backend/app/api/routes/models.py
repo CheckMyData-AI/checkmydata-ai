@@ -2,9 +2,10 @@ import logging
 import time
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from app.api.deps import get_current_user
 from app.config import settings
 
 router = APIRouter()
@@ -94,7 +95,10 @@ async def _fetch_openrouter_models() -> list[dict]:
 
 
 @router.get("", response_model=list[ModelInfo])
-async def list_models(provider: str = Query(default="openrouter")):
+async def list_models(
+    provider: str = Query(default="openrouter"),
+    _user: dict = Depends(get_current_user),
+):
     """Return available models for the given LLM provider."""
     if provider == "openrouter":
         try:

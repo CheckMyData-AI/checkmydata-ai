@@ -25,6 +25,8 @@ class DocStore:
         commit_sha: str | None = None,
         embedding_id: str | None = None,
     ) -> KnowledgeDoc:
+        content = content.replace("\x00", "")
+
         existing = await session.execute(
             select(KnowledgeDoc).where(
                 and_(

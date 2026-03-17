@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -117,7 +118,8 @@ class ContextEnricher:
         all_docs: list[str] = []
         for term in search_terms[:3]:
             try:
-                results = self._vector_store.query(
+                results = await asyncio.to_thread(
+                    self._vector_store.query,
                     project_id,
                     term,
                     n_results=2,

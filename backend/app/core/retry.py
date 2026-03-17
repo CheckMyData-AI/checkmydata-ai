@@ -14,6 +14,7 @@ def retry(
     backoff_seconds: float = 1.0,
     backoff_multiplier: float = 2.0,
     retryable_exceptions: tuple[type[Exception], ...] = (Exception,),
+    non_retryable: tuple[type[BaseException], ...] = (KeyboardInterrupt, SystemExit, GeneratorExit),
     on_retry: Callable[..., Any] | None = None,
 ):
     """Async retry decorator with exponential backoff.
@@ -34,6 +35,8 @@ def retry(
             for attempt in range(1, max_attempts + 1):
                 try:
                     return await func(*args, **kwargs)
+                except non_retryable:
+                    raise
                 except retryable_exceptions as exc:
                     last_exc = exc
                     if attempt >= max_attempts:

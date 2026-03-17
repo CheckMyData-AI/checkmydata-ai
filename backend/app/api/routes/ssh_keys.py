@@ -30,7 +30,10 @@ async def create_ssh_key(
     user: dict = Depends(get_current_user),
 ):
     try:
-        key = await _svc.create(db, body.name, body.private_key, body.passphrase)
+        key = await _svc.create(
+            db, body.name, body.private_key, body.passphrase,
+            user_id=user["user_id"],
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -53,7 +56,7 @@ async def list_ssh_keys(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    keys = await _svc.list_all(db)
+    keys = await _svc.list_all(db, user_id=user["user_id"])
     return [
         SshKeyResponse(
             id=k.id,
@@ -72,7 +75,7 @@ async def get_ssh_key(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    key = await _svc.get(db, key_id)
+    key = await _svc.get(db, key_id, user_id=user["user_id"])
     if not key:
         raise HTTPException(status_code=404, detail="SSH key not found")
     return SshKeyResponse(
@@ -90,6 +93,9 @@ async def delete_ssh_key(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    key = await _svc.get(db, key_id, user_id=user["user_id"])
+    if not key:
+        raise HTTPException(status_code=404, detail="SSH key not found")
     try:
         deleted = await _svc.delete(db, key_id)
     except SshKeyInUseError as e:

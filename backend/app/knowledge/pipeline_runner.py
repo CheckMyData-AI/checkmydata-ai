@@ -16,12 +16,14 @@ from git import Repo
 
 from app.core.workflow_tracker import tracker
 from app.knowledge.chunker import chunk_document
+from app.knowledge.doc_generator import _is_binary_content
 from app.knowledge.indexing_pipeline import (
     generate_summary_doc,
     run_pass1_profile,
     run_pass2_3_knowledge,
     run_pass4_enrich,
 )
+from app.knowledge.repo_analyzer import is_binary_file
 from app.services.checkpoint_service import CheckpointService
 
 if TYPE_CHECKING:
@@ -190,6 +192,22 @@ class IndexingPipelineRunner:
                 changed_files=state.changed_files,
                 deleted_files=state.deleted_files,
             )
+
+        # --- Pre-filter: remove binary files from changed_files early ---
+        if state.repo_dir and state.changed_files:
+            before = len(state.changed_files)
+            state.changed_files = [
+                f
+                for f in state.changed_files
+                if (state.repo_dir / f).exists()
+                and (state.repo_dir / f).is_file()
+                and not is_binary_file(state.repo_dir / f)
+            ]
+            filtered = before - len(state.changed_files)
+            if filtered:
+                logger.info(
+                    "Pre-filtered %d binary/missing files from changed_files", filtered
+                )
 
         # --- Step 4: cleanup_deleted ---
         if "cleanup_deleted" not in done:
@@ -387,6 +405,17 @@ class IndexingPipelineRunner:
                     "started",
                     f"Processing {edoc.file_path} ({i + 1}/{total})",
                 )
+
+                if _is_binary_content(edoc.content):
+                    logger.warning(
+                        "Skipping binary-looking doc %s", edoc.file_path,
+                    )
+                    skipped += 1
+                    pending_paths.append(edoc.file_path)
+                    if len(pending_paths) >= batch_flush_size:
+                        await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
+                        pending_paths = []
+                    continue
 
                 if edoc.file_path == "__project_summary__":
                     new_hash = hashlib.md5(edoc.content.encode()).hexdigest()

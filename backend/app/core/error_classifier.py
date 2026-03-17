@@ -233,11 +233,20 @@ class ErrorClassifier:
                             if pat.entity_group and pat.entity_group <= len(match.groups())
                             else None
                         )
+                        is_table = pat.error_type in (
+                            QueryErrorType.TABLE_NOT_FOUND,
+                        )
+                        is_col = pat.error_type in (
+                            QueryErrorType.COLUMN_NOT_FOUND,
+                            QueryErrorType.AMBIGUOUS_COLUMN,
+                        )
                         return QueryError(
                             error_type=pat.error_type,
                             message=self._build_message(pat.error_type, entity),
                             raw_error=raw_error,
                             is_retryable=pat.error_type not in NON_RETRYABLE_ERRORS,
+                            suggested_tables=([entity] if entity and is_table else []),
+                            suggested_columns=([entity] if entity and is_col else []),
                         )
 
         logger.warning("Unclassified DB error (%s): %s", db_type, raw_error[:200])

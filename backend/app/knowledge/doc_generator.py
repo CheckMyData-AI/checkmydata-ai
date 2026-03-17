@@ -1,6 +1,7 @@
 """LLM-powered documentation generator for extracted source code."""
 
 import logging
+import string
 
 from app.llm.base import Message
 from app.llm.router import LLMRouter
@@ -31,6 +32,22 @@ DOC TYPE: {doc_type}
 ```"""
 
 MAX_CONTENT_LENGTH = 12_000
+MAX_FALLBACK_LENGTH = 50_000
+_PRINTABLE = set(string.printable)
+
+
+def _is_binary_content(text: str, sample_size: int = 1024) -> bool:
+    """Return True if *text* looks like binary data (high non-printable ratio)."""
+    sample = text[:sample_size]
+    if not sample:
+        return False
+    non_printable = sum(1 for ch in sample if ch not in _PRINTABLE)
+    return non_printable / len(sample) > 0.3
+
+
+def _sanitize_content(text: str) -> str:
+    """Strip null bytes that PostgreSQL TEXT columns cannot store."""
+    return text.replace("\x00", "")
 
 
 class DocGenerator:
@@ -54,8 +71,10 @@ class DocGenerator:
         enum values, usage data) that helps the LLM produce richer docs.
 
         Returns the generated markdown documentation.
-        Falls back to raw content if LLM is unavailable.
+        Falls back to sanitized raw content if LLM is unavailable.
         """
+        content = _sanitize_content(content)
+
         truncated = content[:MAX_CONTENT_LENGTH]
         if len(content) > MAX_CONTENT_LENGTH:
             truncated += f"\n... (truncated, {len(content) - MAX_CONTENT_LENGTH} chars omitted)"
@@ -94,5 +113,17 @@ class DocGenerator:
                 file_path,
                 exc_info=True,
             )
+
+        if _is_binary_content(content):
+            logger.warning("Skipping binary-looking fallback content for %s", file_path)
+            return f"# {file_path}\n\n*Binary or non-text content — no documentation generated.*"
+
+        if len(content) > MAX_FALLBACK_LENGTH:
+            logger.warning(
+                "Truncating oversized fallback content for %s (%d chars)",
+                file_path,
+                len(content),
+            )
+            return content[:MAX_FALLBACK_LENGTH]
 
         return content

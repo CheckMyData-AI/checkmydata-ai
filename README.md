@@ -727,7 +727,7 @@ src/
 | **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing |
 | **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat |
 | **CORS** | Configurable origins via `CORS_ORIGINS` env var |
-| **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API |
+| **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). |
 | **WebSocket auth** | JWT token passed as query parameter, validated before connection acceptance |
 
 ### Database Schema (Internal)
@@ -738,7 +738,7 @@ The agent uses SQLite (default) or PostgreSQL (recommended for production) to st
 users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, created_at
 projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, llm_provider, llm_model
 connections      — id, project_id, name, db_type, ssh_*, db_*, ssh_exec_mode, ssh_command_template, ssh_pre_commands, is_read_only, is_active
-ssh_keys         — id, name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type
+ssh_keys         — id, user_id (FK→users), name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type
 project_members  — id, project_id, user_id, role (owner|editor|viewer), created_at  [UNIQUE(project_id, user_id)]
 project_invites  — id, project_id, email, invited_by, role, status (pending|accepted|revoked), created_at, accepted_at
 chat_sessions    — id, project_id, user_id, title, created_at
@@ -831,10 +831,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 461 across 26 test files
+- Backend unit tests: 474 across 26 test files
 - Backend integration tests: 79 across 13 test files
 - Frontend tests: 27 across 5 test files
-- **Total: 567 tests**
+- **Total: 580 tests**
 
 ### Test Coverage by Module
 
@@ -863,14 +863,14 @@ make test-frontend    # frontend vitest
 | Viz/Export | 14 (table, chart, text, CSV, JSON) | — |
 | Workflow Tracker | 11 (events, subscribe, step, queue) | — |
 | Workflow Routes | 4 (SSE format, filtering, pipeline) | — |
-| Repo Analyzer | 15 (SQL files, ORM models, migrations, list_remote_refs: branches, default selection, access denied, timeout, empty) | 7 (check-access: success, denied, bad key, validation, auth, empty, many branches) |
+| Repo Analyzer | 18 (SQL files, ORM models, migrations, binary file filter, null-byte content guard, extra dirs, list_remote_refs: branches, default selection, access denied, timeout, empty) | 7 (check-access: success, denied, bad key, validation, auth, empty, many branches) |
 | Project Profiler | 10 (Django, FastAPI, Express, Prisma, language, dirs, skip) | — |
 | Entity Extractor | 15 (SQLAlchemy, Django, Prisma, TypeORM, Sequelize, Mongoose, Drizzle, entity map, dead tables, enums, usage, incremental) | — |
 | File Splitter | 9 (Python, Prisma, JS/TS, Drizzle, generic, syntax error, names) | — |
 | Indexing Pipeline | 9 (profile, knowledge, enrichment, dead warnings, service funcs, summary) | — |
 | Project Summarizer | 12 (entities, tables, dead tables, enums, services, profile, cross-ref) | — |
 | Incremental Indexing | 10 (knowledge serialization, profile serialization, deleted file handling, cache logic) | — |
-| Doc Generator | 3 (LLM output, fallback, truncation) | — |
+| Doc Generator | 13 (LLM output, fallback, truncation, binary fallback placeholder, oversized fallback truncation, null-byte sanitization, binary detection, content sanitization) | — |
 | Chunker | 5 (small doc, large doc, headings, empty) | — |
 | Schema Indexer | 4 (markdown, prompt context, relationships) | — |
 | Custom Rules | 6 (file loading, YAML, context generation) | 4 |
@@ -1021,4 +1021,4 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 | Indexing returns 409 | Indexing is already running as a background task. Wait for it to finish (check `/status` endpoint or SSE events) |
 | Indexing interrupted, want to restart fresh | Click "Index Repository" with `force_full=true` to discard the checkpoint and start from scratch |
 | Stale checkpoint blocking indexing | Checkpoints older than 24h are auto-cleaned on startup. You can also use `force_full=true` to discard manually |
-| `CharacterNotInRepertoireError` during indexing | Binary files (ELF, images) were previously not filtered. Now fixed: `is_binary_file()` checks extension and null bytes before processing |
+| `CharacterNotInRepertoireError` during indexing | Binary files (ELF, images) could leak null bytes into PostgreSQL. Multi-layer fix: (1) git-sourced `changed_files` now filtered by `DB_RELEVANT_EXTENSIONS` matching `_find_db_relevant_files()`, (2) `is_binary_file()` checks extension + null bytes, (3) post-read null-byte content guard in `analyze()`, (4) `doc_store.upsert()` strips `\x00` before INSERT, (5) `doc_generator` fallback detects binary content and returns placeholder, (6) `pipeline_runner` pre-filters binary files from `changed_files` before analysis and skips binary-looking enriched docs |

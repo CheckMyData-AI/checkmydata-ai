@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -9,6 +10,8 @@ from app.connectors.registry import get_connector
 from app.models.connection import Connection
 from app.services.encryption import decrypt, encrypt
 from app.services.ssh_key_service import SshKeyService
+
+logger = logging.getLogger(__name__)
 
 _ssh_key_svc = SshKeyService()
 
@@ -31,7 +34,16 @@ _UPDATABLE_FIELDS = {
 
 
 class ConnectionService:
+    @staticmethod
+    def _sanitize_strings(kwargs: dict) -> dict:
+        """Strip whitespace/tabs from string fields that go into SSH."""
+        for field in ("ssh_host", "ssh_user", "db_host", "db_user", "db_name", "name"):
+            if field in kwargs and isinstance(kwargs[field], str):
+                kwargs[field] = kwargs[field].strip()
+        return kwargs
+
     async def create(self, session: AsyncSession, **kwargs) -> Connection:
+        kwargs = self._sanitize_strings(kwargs)
         if "db_password" in kwargs and kwargs["db_password"]:
             kwargs["db_password_encrypted"] = encrypt(kwargs.pop("db_password"))
         if "connection_string" in kwargs and kwargs["connection_string"]:
@@ -58,6 +70,7 @@ class ConnectionService:
         if not conn:
             return None
 
+        kwargs = self._sanitize_strings(kwargs)
         if "db_password" in kwargs:
             pw = kwargs.pop("db_password")
             conn.db_password_encrypted = encrypt(pw) if pw else None
@@ -130,14 +143,14 @@ class ConnectionService:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
         connect_kwargs: dict = {
-            "host": conn.ssh_host,
+            "host": (conn.ssh_host or "").strip(),
             "port": conn.ssh_port,
-            "username": conn.ssh_user,
+            "username": (conn.ssh_user or "").strip(),
             "known_hosts": None,
             "login_timeout": 15,
         }
         if ssh_key_content:
-            key = asyncssh.import_private_key(ssh_key_content, ssh_key_passphrase)
+            key = asyncssh.import_private_key(ssh_key_content.strip(), ssh_key_passphrase)
             connect_kwargs["client_keys"] = [key]
 
         try:
@@ -152,13 +165,20 @@ class ConnectionService:
             return {"success": False, "error": str(e)}
 
     async def to_config(self, session: AsyncSession, conn: Connection) -> ConnectionConfig:
-        db_password = None
-        if conn.db_password_encrypted:
-            db_password = decrypt(conn.db_password_encrypted)
+        try:
+            db_password = None
+            if conn.db_password_encrypted:
+                db_password = decrypt(conn.db_password_encrypted)
 
-        connection_string = None
-        if conn.connection_string_encrypted:
-            connection_string = decrypt(conn.connection_string_encrypted)
+            connection_string = None
+            if conn.connection_string_encrypted:
+                connection_string = decrypt(conn.connection_string_encrypted)
+        except Exception as exc:
+            logger.error("Failed to decrypt connection '%s' credentials: %s", conn.name, exc)
+            raise ValueError(
+                f"Cannot decrypt credentials for connection '{conn.name}'. "
+                "The encryption key may have changed."
+            ) from exc
 
         ssh_key_content = None
         ssh_key_passphrase = None

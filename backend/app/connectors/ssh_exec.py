@@ -96,15 +96,17 @@ class SSHExecConnector(BaseConnector):
             raise ValueError("SSH host is required for exec mode")
 
         connect_kwargs: dict[str, Any] = {
-            "host": config.ssh_host,
+            "host": (config.ssh_host or "").strip(),
             "port": config.ssh_port,
-            "username": config.ssh_user,
+            "username": (config.ssh_user or "").strip(),
             "known_hosts": None,
             "login_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": 15,
         }
         if config.ssh_key_content:
-            key = asyncssh.import_private_key(config.ssh_key_content, config.ssh_key_passphrase)
+            key = asyncssh.import_private_key(
+                config.ssh_key_content.strip(), config.ssh_key_passphrase,
+            )
             connect_kwargs["client_keys"] = [key]
 
         self._conn = await asyncssh.connect(**connect_kwargs)

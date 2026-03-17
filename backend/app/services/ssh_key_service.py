@@ -45,11 +45,14 @@ class SshKeyService:
         name: str,
         private_key_pem: str,
         passphrase: str | None = None,
+        user_id: str | None = None,
     ) -> SshKey:
+        private_key_pem = private_key_pem.strip()
         key_type, fingerprint = self._validate_and_extract(private_key_pem, passphrase)
 
         ssh_key = SshKey(
             name=name,
+            user_id=user_id,
             private_key_encrypted=encrypt(private_key_pem),
             passphrase_encrypted=encrypt(passphrase) if passphrase else None,
             fingerprint=fingerprint,
@@ -61,12 +64,20 @@ class SshKeyService:
         logger.info("Created SSH key '%s' (type=%s)", name, key_type)
         return ssh_key
 
-    async def list_all(self, session: AsyncSession) -> list[SshKey]:
-        result = await session.execute(select(SshKey).order_by(SshKey.created_at.desc()))
+    async def list_all(self, session: AsyncSession, user_id: str | None = None) -> list[SshKey]:
+        stmt = select(SshKey)
+        if user_id:
+            stmt = stmt.where((SshKey.user_id == user_id) | (SshKey.user_id.is_(None)))
+        result = await session.execute(stmt.order_by(SshKey.created_at.desc()))
         return list(result.scalars().all())
 
-    async def get(self, session: AsyncSession, key_id: str) -> SshKey | None:
-        result = await session.execute(select(SshKey).where(SshKey.id == key_id))
+    async def get(
+        self, session: AsyncSession, key_id: str, user_id: str | None = None,
+    ) -> SshKey | None:
+        stmt = select(SshKey).where(SshKey.id == key_id)
+        if user_id:
+            stmt = stmt.where((SshKey.user_id == user_id) | (SshKey.user_id.is_(None)))
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_decrypted(
@@ -76,8 +87,19 @@ class SshKeyService:
         ssh_key = await self.get(session, key_id)
         if not ssh_key:
             return None
-        private_key_pem = decrypt(ssh_key.private_key_encrypted)
-        passphrase = decrypt(ssh_key.passphrase_encrypted) if ssh_key.passphrase_encrypted else None
+        try:
+            private_key_pem = decrypt(ssh_key.private_key_encrypted).strip()
+            passphrase = (
+                decrypt(ssh_key.passphrase_encrypted)
+                if ssh_key.passphrase_encrypted
+                else None
+            )
+        except Exception as exc:
+            logger.error("Failed to decrypt SSH key '%s': %s", ssh_key.name, exc)
+            raise ValueError(
+                f"Cannot decrypt SSH key '{ssh_key.name}'."
+                " The encryption key may have changed."
+            ) from exc
         return private_key_pem, passphrase
 
     async def delete(self, session: AsyncSession, key_id: str) -> bool:

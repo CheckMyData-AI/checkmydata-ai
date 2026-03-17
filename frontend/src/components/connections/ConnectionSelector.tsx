@@ -206,6 +206,11 @@ export function ConnectionSelector() {
     try {
       const result = await api.connections.test(id);
       setTestResult((prev) => ({ ...prev, [id]: result }));
+    } catch (err) {
+      setTestResult((prev) => ({
+        ...prev,
+        [id]: { success: false, error: err instanceof Error ? err.message : "Connection test failed" },
+      }));
     } finally {
       setTesting(null);
     }
