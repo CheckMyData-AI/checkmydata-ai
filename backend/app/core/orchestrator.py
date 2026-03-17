@@ -73,8 +73,7 @@ class Orchestrator:
         self._tracker = workflow_tracker or default_tracker
 
     def _connector_key(self, cfg: ConnectionConfig) -> str:
-        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name,
-                 str(cfg.ssh_exec_mode)]
+        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name, str(cfg.ssh_exec_mode)]
         if cfg.ssh_host:
             parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
         return ":".join(parts)
@@ -105,6 +104,7 @@ class Orchestrator:
 
     def _build_validation_config(self) -> ValidationConfig:
         from app.config import settings as app_settings
+
         return ValidationConfig(
             max_retries=app_settings.query_max_retries,
             enable_explain=app_settings.query_enable_explain,
@@ -133,6 +133,7 @@ class Orchestrator:
 
             if chat_history:
                 from app.config import settings as app_settings
+
                 chat_history = await trim_history(
                     chat_history,
                     max_tokens=app_settings.max_history_tokens,
@@ -144,14 +145,20 @@ class Orchestrator:
             ):
                 schema = await self._get_cached_schema(connection_config)
                 schema_context, rag_sources = await self._get_schema_context(
-                    project_id, connection_config, question,
+                    project_id,
+                    connection_config,
+                    question,
                     staleness_warning=staleness_warning,
                 )
 
             async with self._tracker.step(wf_id, "load_rules", "Loading custom rules"):
                 rules_context = await self._get_rules_context(project_id, question)
 
-            total_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            total_usage: dict[str, int] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
 
             def _accum(usage: dict) -> None:
                 for k in total_usage:
@@ -185,14 +192,22 @@ class Orchestrator:
             cached = self._query_result_cache.get(conn_key, initial_query)
             if cached is not None:
                 async with self._tracker.step(
-                    wf_id, "execute_query", "Using cached result",
+                    wf_id,
+                    "execute_query",
+                    "Using cached result",
                 ):
                     results = cached
                 await self._tracker.end(
-                    wf_id, "query", "completed",
+                    wf_id,
+                    "query",
+                    "completed",
                     f"{results.row_count} rows (cached)",
                 )
-                cache_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                cache_usage: dict[str, int] = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                }
                 results_summary = self._summarize_results(results)
                 interpretation = await self._query_builder.interpret_results(
                     question=question,
@@ -257,8 +272,7 @@ class Orchestrator:
                 await self._tracker.end(wf_id, "query", "failed", error_msg)
                 return OrchestratorResponse(
                     answer=(
-                        f"Query failed after {loop_result.total_attempts}"
-                        f" attempt(s): {error_msg}"
+                        f"Query failed after {loop_result.total_attempts} attempt(s): {error_msg}"
                     ),
                     query=loop_result.query,
                     query_explanation=loop_result.explanation,
@@ -335,7 +349,8 @@ class Orchestrator:
             git_tracker = GitTracker()
             async with async_session_factory() as session:
                 last_sha = await git_tracker.get_last_indexed_sha(
-                    session, project_id,
+                    session,
+                    project_id,
                 )
             if not last_sha:
                 return "Knowledge base has not been indexed yet."
@@ -374,10 +389,12 @@ class Orchestrator:
                     connection_config,
                 )
                 samples = await self._schema_indexer.fetch_sample_data(
-                    connector, schema,
+                    connector,
+                    schema,
                 )
                 live_context = self._schema_indexer.append_sample_data_context(
-                    live_context, samples,
+                    live_context,
+                    samples,
                 )
             except Exception:
                 logger.debug("Sample data fetch failed", exc_info=True)
@@ -395,24 +412,26 @@ class Orchestrator:
                 meta = r.get("metadata", {})
                 source = meta.get("source_path", "unknown")
                 live_context += f"\n### {source}\n{r['document']}\n"
-                rag_sources.append(RAGSource(
-                    source_path=source,
-                    distance=r.get("distance"),
-                    doc_type=meta.get("doc_type", ""),
-                    chunk_index=meta.get("chunk_index", ""),
-                ))
+                rag_sources.append(
+                    RAGSource(
+                        source_path=source,
+                        distance=r.get("distance"),
+                        doc_type=meta.get("doc_type", ""),
+                        chunk_index=meta.get("chunk_index", ""),
+                    )
+                )
 
         live_context += self._build_cross_reference(project_id, schema)
 
         if staleness_warning:
-            live_context += (
-                f"\n\n## ⚠️ Staleness Warning\n{staleness_warning}\n"
-            )
+            live_context += f"\n\n## ⚠️ Staleness Warning\n{staleness_warning}\n"
 
         return live_context, rag_sources
 
     def _build_cross_reference(
-        self, project_id: str, schema: SchemaInfo,
+        self,
+        project_id: str,
+        schema: SchemaInfo,
     ) -> str:
         """Append schema cross-reference when code knowledge is available."""
         try:
@@ -434,6 +453,7 @@ class Orchestrator:
                 return ""
 
             from app.knowledge.entity_extractor import ProjectKnowledge, TableUsage
+
             knowledge = ProjectKnowledge()
             doc_text = summary_results[0].get("document", "")
             for line in doc_text.splitlines():
@@ -452,7 +472,9 @@ class Orchestrator:
             return ""
 
     async def _get_rules_context(
-        self, project_id: str, question: str,
+        self,
+        project_id: str,
+        question: str,
     ) -> str:
         file_rules = self._custom_rules.load_rules(
             project_rules_dir=f"./rules/{project_id}",

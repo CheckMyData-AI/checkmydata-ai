@@ -163,7 +163,9 @@ class ToolExecutor:
         query: str = args.get("query", "")
         max_results: int = int(args.get("max_results", 5))
 
-        async with self._tracker.step(wf_id, "search_knowledge", f"Searching knowledge base: {query[:60]}"):
+        async with self._tracker.step(
+            wf_id, "search_knowledge", f"Searching knowledge base: {query[:60]}"
+        ):
             results = await asyncio.to_thread(
                 self._vector_store.query,
                 project_id=self._project_id,
@@ -230,8 +232,7 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _connector_key(self, cfg: ConnectionConfig) -> str:
-        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name,
-                 str(cfg.ssh_exec_mode)]
+        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name, str(cfg.ssh_exec_mode)]
         if cfg.ssh_host:
             parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
         return ":".join(parts)
@@ -327,7 +328,9 @@ class ToolExecutor:
             nullable = "YES" if col.is_nullable else "NO"
             default = str(col.default) if col.default else ""
             comment = col.comment or ""
-            lines.append(f"| {col.name} | {col.data_type} | {pk} | {nullable} | {default} | {comment} |")
+            lines.append(
+                f"| {col.name} | {col.data_type} | {pk} | {nullable} | {default} | {comment} |"
+            )
 
         if table.foreign_keys:
             lines.append("")

@@ -31,7 +31,11 @@ class AuthService:
             return None
 
     async def register(
-        self, session: AsyncSession, email: str, password: str, display_name: str = "",
+        self,
+        session: AsyncSession,
+        email: str,
+        password: str,
+        display_name: str = "",
     ) -> User:
         existing = await session.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none():
@@ -49,7 +53,10 @@ class AuthService:
         return user
 
     async def authenticate(
-        self, session: AsyncSession, email: str, password: str,
+        self,
+        session: AsyncSession,
+        email: str,
+        password: str,
     ) -> User | None:
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
@@ -86,7 +93,9 @@ class AuthService:
         return payload
 
     async def find_or_create_google_user(
-        self, session: AsyncSession, google_payload: dict,
+        self,
+        session: AsyncSession,
+        google_payload: dict,
     ) -> User:
         """Find existing user by google_id or email, or create a new one.
 

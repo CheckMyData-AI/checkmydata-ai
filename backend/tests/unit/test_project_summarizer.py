@@ -66,11 +66,13 @@ class TestBuildProjectSummary:
 
     def test_service_functions_section(self):
         knowledge = ProjectKnowledge()
-        knowledge.service_functions.append({
-            "name": "create_user",
-            "file_path": "services/users.py",
-            "tables": ["users"],
-        })
+        knowledge.service_functions.append(
+            {
+                "name": "create_user",
+                "file_path": "services/users.py",
+                "tables": ["users"],
+            }
+        )
         result = build_project_summary(knowledge)
         assert "`create_user`" in result
 
@@ -127,10 +129,12 @@ class TestBuildSchemaCrossReference:
     def test_mixed_orphan_and_phantom(self):
         knowledge = ProjectKnowledge()
         knowledge.entities["User"] = EntityInfo(
-            name="User", table_name="users",
+            name="User",
+            table_name="users",
         )
         result = build_schema_cross_reference(
-            knowledge, ["users", "audit_log"],
+            knowledge,
+            ["users", "audit_log"],
         )
         assert "Orphan Tables" in result
         assert "`audit_log`" in result

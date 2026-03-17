@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useLogStore } from "@/stores/log-store";
+import { useLogStore, type LogEntry } from "@/stores/log-store";
 
-function makeEntry(overrides: Partial<Parameters<typeof useLogStore.getState>["0"]["addEntry"]> = {}) {
+function makeEntry(overrides: Partial<Omit<LogEntry, "id">> = {}) {
   return {
     timestamp: Date.now() / 1000,
     pipeline: "index_repo",

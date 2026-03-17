@@ -17,6 +17,7 @@ MAX_SINGLE_SEGMENT = 12_000
 @dataclass
 class FileSegment:
     """A slice of a source file representing one logical unit (class/model/section)."""
+
     name: str
     content: str
     start_line: int = 0
@@ -46,7 +47,9 @@ def split_large_file(
 
 
 def _split_python(
-    content: str, file_path: str, max_chars: int,
+    content: str,
+    file_path: str,
+    max_chars: int,
 ) -> list[FileSegment]:
     """Split Python file at class boundaries, preserving imports as preamble."""
     try:
@@ -55,10 +58,7 @@ def _split_python(
         return _split_generic(content, file_path, max_chars)
 
     lines = content.splitlines(keepends=True)
-    class_nodes = [
-        node for node in ast.iter_child_nodes(tree)
-        if isinstance(node, ast.ClassDef)
-    ]
+    class_nodes = [node for node in ast.iter_child_nodes(tree) if isinstance(node, ast.ClassDef)]
 
     if not class_nodes:
         return _split_generic(content, file_path, max_chars)
@@ -80,18 +80,22 @@ def _split_python(
         if len(segment_content) > max_chars:
             segment_content = segment_content[:max_chars] + "\n# ... truncated"
 
-        segments.append(FileSegment(
-            name=node.name,
-            content=segment_content,
-            start_line=start + 1,
-            end_line=end,
-        ))
+        segments.append(
+            FileSegment(
+                name=node.name,
+                content=segment_content,
+                start_line=start + 1,
+                end_line=end,
+            )
+        )
 
     return segments if segments else [FileSegment(name=file_path, content=content[:max_chars])]
 
 
 def _split_prisma(
-    content: str, file_path: str, max_chars: int,
+    content: str,
+    file_path: str,
+    max_chars: int,
 ) -> list[FileSegment]:
     """Split Prisma schema at model boundaries."""
     model_pattern = re.compile(r"^(model\s+(\w+)\s*\{)", re.MULTILINE)
@@ -117,16 +121,20 @@ def _split_prisma(
         if len(segment_content) > max_chars:
             segment_content = segment_content[:max_chars]
 
-        segments.append(FileSegment(
-            name=m.group(2),
-            content=segment_content,
-        ))
+        segments.append(
+            FileSegment(
+                name=m.group(2),
+                content=segment_content,
+            )
+        )
 
     return segments
 
 
 def _split_js_ts(
-    content: str, file_path: str, max_chars: int,
+    content: str,
+    file_path: str,
+    max_chars: int,
 ) -> list[FileSegment]:
     """Split JS/TS at class/export boundaries."""
     boundary = re.compile(
@@ -160,7 +168,9 @@ def _split_js_ts(
 
 
 def _split_generic(
-    content: str, file_path: str, max_chars: int,
+    content: str,
+    file_path: str,
+    max_chars: int,
 ) -> list[FileSegment]:
     """Fallback: split at blank-line boundaries."""
     if len(content) <= max_chars:
@@ -173,19 +183,23 @@ def _split_generic(
 
     for part in parts:
         if buffer and len(buffer) + len(part) + 2 > max_chars:
-            segments.append(FileSegment(
-                name=f"{file_path}#part{idx}",
-                content=buffer,
-            ))
+            segments.append(
+                FileSegment(
+                    name=f"{file_path}#part{idx}",
+                    content=buffer,
+                )
+            )
             buffer = part
             idx += 1
         else:
             buffer = buffer + "\n\n" + part if buffer else part
 
     if buffer:
-        segments.append(FileSegment(
-            name=f"{file_path}#part{idx}",
-            content=buffer,
-        ))
+        segments.append(
+            FileSegment(
+                name=f"{file_path}#part{idx}",
+                content=buffer,
+            )
+        )
 
     return segments

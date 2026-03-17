@@ -100,7 +100,9 @@ class BaseConnector(ABC):
         """Test if the connection is alive."""
 
     async def sample_data(
-        self, table_name: str, limit: int = 3,
+        self,
+        table_name: str,
+        limit: int = 3,
     ) -> QueryResult:
         """Fetch a few sample rows from a table for LLM context."""
         return await self.execute_query(

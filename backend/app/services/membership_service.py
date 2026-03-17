@@ -13,7 +13,10 @@ ROLE_HIERARCHY = {"owner": 3, "editor": 2, "viewer": 1}
 
 class MembershipService:
     async def get_role(
-        self, db: AsyncSession, project_id: str, user_id: str,
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
     ) -> str | None:
         """Return the user's role in the project, or None if not a member."""
         result = await db.execute(
@@ -43,7 +46,11 @@ class MembershipService:
         return role
 
     async def add_member(
-        self, db: AsyncSession, project_id: str, user_id: str, role: str = "viewer",
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
+        role: str = "viewer",
     ) -> ProjectMember:
         existing = await db.execute(
             select(ProjectMember).where(
@@ -56,7 +63,9 @@ class MembershipService:
             member.role = role
         else:
             member = ProjectMember(
-                project_id=project_id, user_id=user_id, role=role,
+                project_id=project_id,
+                user_id=user_id,
+                role=role,
             )
             db.add(member)
         await db.commit()
@@ -64,7 +73,10 @@ class MembershipService:
         return member
 
     async def remove_member(
-        self, db: AsyncSession, project_id: str, user_id: str,
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
     ) -> bool:
         result = await db.execute(
             select(ProjectMember).where(
@@ -82,7 +94,9 @@ class MembershipService:
         return True
 
     async def list_members(
-        self, db: AsyncSession, project_id: str,
+        self,
+        db: AsyncSession,
+        project_id: str,
     ) -> list[ProjectMember]:
         result = await db.execute(
             select(ProjectMember)
@@ -92,7 +106,9 @@ class MembershipService:
         return list(result.scalars().all())
 
     async def get_accessible_projects(
-        self, db: AsyncSession, user_id: str,
+        self,
+        db: AsyncSession,
+        user_id: str,
     ) -> list[Project]:
         result = await db.execute(
             select(Project)

@@ -51,9 +51,7 @@ class RAGFeedbackService:
             select(
                 RAGFeedback.source_path,
                 func.count().label("total"),
-                func.sum(
-                    RAGFeedback.query_succeeded.cast(sa.Integer)
-                ).label("successes"),
+                func.sum(RAGFeedback.query_succeeded.cast(sa.Integer)).label("successes"),
             )
             .where(and_(RAGFeedback.project_id == project_id))
             .group_by(RAGFeedback.source_path)

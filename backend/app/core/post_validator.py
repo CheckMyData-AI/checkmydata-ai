@@ -52,8 +52,7 @@ class PostValidator:
         timeout_ms = config.query_timeout_seconds * 1000
         if result.execution_time_ms > timeout_ms:
             warnings.append(
-                f"Slow query: {result.execution_time_ms:.0f}ms "
-                f"(threshold: {timeout_ms}ms)."
+                f"Slow query: {result.execution_time_ms:.0f}ms (threshold: {timeout_ms}ms)."
             )
 
         return ValidationResult(is_valid=True, warnings=warnings)

@@ -38,9 +38,7 @@ class ChatService:
     ) -> list[ChatSession]:
         stmt = select(ChatSession).where(ChatSession.project_id == project_id)
         if user_id:
-            stmt = stmt.where(
-                (ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None))
-            )
+            stmt = stmt.where((ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None)))
         stmt = stmt.order_by(ChatSession.created_at.desc())
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -75,7 +73,10 @@ class ChatService:
         return [Message(role=m.role, content=m.content) for m in recent]
 
     async def update_session_title(
-        self, session: AsyncSession, session_id: str, title: str,
+        self,
+        session: AsyncSession,
+        session_id: str,
+        title: str,
     ) -> ChatSession | None:
         chat = await self.get_session(session, session_id)
         if not chat:

@@ -49,7 +49,11 @@ async def create_invite(
     if body.role not in ("editor", "viewer"):
         raise HTTPException(status_code=400, detail="Role must be 'editor' or 'viewer'")
     invite = await _invite_svc.create_invite(
-        db, project_id, body.email, body.role, user["user_id"],
+        db,
+        project_id,
+        body.email,
+        body.role,
+        user["user_id"],
     )
     return InviteResponse(
         id=invite.id,
@@ -150,14 +154,16 @@ async def list_members(
         if m.user:
             email = m.user.email
             display_name = m.user.display_name
-        result.append(MemberResponse(
-            id=m.id,
-            project_id=m.project_id,
-            user_id=m.user_id,
-            role=m.role,
-            email=email,
-            display_name=display_name,
-        ))
+        result.append(
+            MemberResponse(
+                id=m.id,
+                project_id=m.project_id,
+                user_id=m.user_id,
+                role=m.role,
+                email=email,
+                display_name=display_name,
+            )
+        )
     return result
 
 

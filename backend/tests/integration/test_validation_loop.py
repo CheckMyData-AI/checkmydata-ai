@@ -27,7 +27,8 @@ def _schema() -> SchemaInfo:
                 name="users",
                 columns=[
                     ColumnInfo(
-                        name="id", data_type="INTEGER",
+                        name="id",
+                        data_type="INTEGER",
                         is_primary_key=True,
                     ),
                     ColumnInfo(name="username", data_type="TEXT"),
@@ -38,7 +39,8 @@ def _schema() -> SchemaInfo:
                 name="orders",
                 columns=[
                     ColumnInfo(
-                        name="id", data_type="INTEGER",
+                        name="id",
+                        data_type="INTEGER",
                         is_primary_key=True,
                     ),
                     ColumnInfo(name="user_id", data_type="INTEGER"),
@@ -54,7 +56,9 @@ def _schema() -> SchemaInfo:
 
 def _conn_config() -> ConnectionConfig:
     return ConnectionConfig(
-        db_type="postgresql", db_name="testdb", is_read_only=True,
+        db_type="postgresql",
+        db_name="testdb",
+        is_read_only=True,
     )
 
 
@@ -69,16 +73,20 @@ def _make_repairer(
 ) -> MagicMock:
     mock = MagicMock(spec=QueryRepairer)
     if fail:
-        mock.repair = AsyncMock(return_value={
-            "query": "",
-            "explanation": "",
-            "error": "LLM failed",
-        })
+        mock.repair = AsyncMock(
+            return_value={
+                "query": "",
+                "explanation": "",
+                "error": "LLM failed",
+            }
+        )
     else:
-        mock.repair = AsyncMock(return_value={
-            "query": fixed_query,
-            "explanation": explanation,
-        })
+        mock.repair = AsyncMock(
+            return_value={
+                "query": fixed_query,
+                "explanation": explanation,
+            }
+        )
     return mock
 
 
@@ -157,7 +165,8 @@ class TestIntegrationValidationLoop:
             execution_time_ms=8.0,
         )
         connector.execute_query.side_effect = [
-            error_result, success_result,
+            error_result,
+            success_result,
         ]
 
         wf_id = await _make_tracker().begin("query")
@@ -256,7 +265,9 @@ class TestIntegrationValidationLoop:
         connector = AsyncMock()
 
         empty_result = QueryResult(
-            columns=["id"], rows=[], row_count=0,
+            columns=["id"],
+            rows=[],
+            row_count=0,
             execution_time_ms=5,
         )
         full_result = QueryResult(
@@ -266,14 +277,13 @@ class TestIntegrationValidationLoop:
             execution_time_ms=10,
         )
         connector.execute_query.side_effect = [
-            empty_result, full_result,
+            empty_result,
+            full_result,
         ]
 
         wf_id = await _make_tracker().begin("query")
         result = await loop.execute(
-            initial_query=(
-                "SELECT * FROM users WHERE username = 'nonexistent'"
-            ),
+            initial_query=("SELECT * FROM users WHERE username = 'nonexistent'"),
             initial_explanation="test",
             connector=connector,
             schema=_schema(),
@@ -323,7 +333,4 @@ class TestIntegrationValidationLoop:
         assert result.success
         assert result.total_attempts == 2
         assert result.attempts[0].error is not None
-        assert (
-            result.attempts[0].error.error_type
-            == QueryErrorType.TABLE_NOT_FOUND
-        )
+        assert result.attempts[0].error.error_type == QueryErrorType.TABLE_NOT_FOUND

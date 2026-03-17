@@ -1,4 +1,3 @@
-
 import pytest
 
 from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker

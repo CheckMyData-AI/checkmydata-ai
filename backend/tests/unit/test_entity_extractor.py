@@ -131,14 +131,16 @@ class TestBuildProjectKnowledge:
         return tmp
 
     def test_entity_extraction(self):
-        repo = self._make_repo({
-            "models/user.py": (
-                "from sqlalchemy.orm import Mapped, mapped_column\n"
-                "class User(Base):\n"
-                "    __tablename__ = 'users'\n"
-                "    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n"
-            ),
-        })
+        repo = self._make_repo(
+            {
+                "models/user.py": (
+                    "from sqlalchemy.orm import Mapped, mapped_column\n"
+                    "class User(Base):\n"
+                    "    __tablename__ = 'users'\n"
+                    "    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n"
+                ),
+            }
+        )
         schemas = [
             ExtractedSchema(
                 file_path="models/user.py",
@@ -152,9 +154,11 @@ class TestBuildProjectKnowledge:
         assert knowledge.entities["User"].table_name == "users"
 
     def test_dead_table_detection(self):
-        repo = self._make_repo({
-            "migrations/001.sql": "CREATE TABLE legacy_users (id INT);",
-        })
+        repo = self._make_repo(
+            {
+                "migrations/001.sql": "CREATE TABLE legacy_users (id INT);",
+            }
+        )
         schemas = [
             ExtractedSchema(
                 file_path="migrations/001.sql",
@@ -167,33 +171,41 @@ class TestBuildProjectKnowledge:
         assert "legacy_users" in knowledge.dead_tables
 
     def test_enum_extraction(self):
-        repo = self._make_repo({
-            "enums.py": (
-                "from enum import Enum\n"
-                "class UserStatus(Enum):\n"
-                "    ACTIVE = 'active'\n"
-                "    INACTIVE = 'inactive'\n"
-            ),
-        })
+        repo = self._make_repo(
+            {
+                "enums.py": (
+                    "from enum import Enum\n"
+                    "class UserStatus(Enum):\n"
+                    "    ACTIVE = 'active'\n"
+                    "    INACTIVE = 'inactive'\n"
+                ),
+            }
+        )
         knowledge = build_project_knowledge(
-            repo, [], all_files=["enums.py"],
+            repo,
+            [],
+            all_files=["enums.py"],
         )
         assert len(knowledge.enums) >= 1
         names = [e.name for e in knowledge.enums]
         assert "UserStatus" in names
 
     def test_table_usage_readers_writers(self):
-        repo = self._make_repo({
-            "queries.py": (
-                "def get_users(db):\n"
-                "    return db.execute(text('SELECT * FROM users WHERE active = 1'))\n"
-                "\n"
-                "def add_user(db):\n"
-                "    db.execute(text('INSERT INTO users (name) VALUES (:n)'))\n"
-            ),
-        })
+        repo = self._make_repo(
+            {
+                "queries.py": (
+                    "def get_users(db):\n"
+                    "    return db.execute(text('SELECT * FROM users WHERE active = 1'))\n"
+                    "\n"
+                    "def add_user(db):\n"
+                    "    db.execute(text('INSERT INTO users (name) VALUES (:n)'))\n"
+                ),
+            }
+        )
         knowledge = build_project_knowledge(
-            repo, [], all_files=["queries.py"],
+            repo,
+            [],
+            all_files=["queries.py"],
         )
         assert "users" in knowledge.table_usage
         usage = knowledge.table_usage["users"]
@@ -201,14 +213,14 @@ class TestBuildProjectKnowledge:
         assert "queries.py" in usage.writers
 
     def test_service_function_extraction(self):
-        repo = self._make_repo({
-            "models/user.py": "class User: pass\n",
-            "services/user_svc.py": (
-                "def create_user(name):\n"
-                "    u = User(name=name)\n"
-                "    return u\n"
-            ),
-        })
+        repo = self._make_repo(
+            {
+                "models/user.py": "class User: pass\n",
+                "services/user_svc.py": (
+                    "def create_user(name):\n    u = User(name=name)\n    return u\n"
+                ),
+            }
+        )
         schemas = [
             ExtractedSchema(
                 file_path="models/user.py",
@@ -218,20 +230,21 @@ class TestBuildProjectKnowledge:
             ),
         ]
         knowledge = build_project_knowledge(
-            repo, schemas, all_files=["models/user.py", "services/user_svc.py"],
+            repo,
+            schemas,
+            all_files=["models/user.py", "services/user_svc.py"],
         )
         func_names = [sf["name"] for sf in knowledge.service_functions]
         assert "create_user" in func_names
 
     def test_word_boundary_entity_detection(self):
         """Entity name 'User' should not match 'UserManager' or 'userCount'."""
-        repo = self._make_repo({
-            "models/user.py": "class User: pass\n",
-            "utils/helpers.py": (
-                "from sqlalchemy.orm import relationship\n"
-                "userCount = 42\n"
-            ),
-        })
+        repo = self._make_repo(
+            {
+                "models/user.py": "class User: pass\n",
+                "utils/helpers.py": ("from sqlalchemy.orm import relationship\nuserCount = 42\n"),
+            }
+        )
         schemas = [
             ExtractedSchema(
                 file_path="models/user.py",
@@ -241,24 +254,29 @@ class TestBuildProjectKnowledge:
             ),
         ]
         knowledge = build_project_knowledge(
-            repo, schemas,
+            repo,
+            schemas,
             all_files=["models/user.py", "utils/helpers.py"],
         )
         entity = knowledge.entities["User"]
         assert "utils/helpers.py" not in entity.used_in_files
 
     def test_incremental_update_preserves_cached(self):
-        repo = self._make_repo({
-            "models/user.py": "class User: pass\n",
-            "services/auth.py": "def create_user(): pass\n",
-        })
+        repo = self._make_repo(
+            {
+                "models/user.py": "class User: pass\n",
+                "services/auth.py": "def create_user(): pass\n",
+            }
+        )
         cached = ProjectKnowledge()
-        cached.service_functions.append({
-            "name": "old_func",
-            "file_path": "services/old.py",
-            "tables": ["users"],
-            "snippet": "...",
-        })
+        cached.service_functions.append(
+            {
+                "name": "old_func",
+                "file_path": "services/old.py",
+                "tables": ["users"],
+                "snippet": "...",
+            }
+        )
         schemas = [
             ExtractedSchema(
                 file_path="models/user.py",
@@ -268,7 +286,8 @@ class TestBuildProjectKnowledge:
             ),
         ]
         knowledge = build_project_knowledge(
-            repo, schemas,
+            repo,
+            schemas,
             changed_files=["models/user.py"],
             cached_knowledge=cached,
         )

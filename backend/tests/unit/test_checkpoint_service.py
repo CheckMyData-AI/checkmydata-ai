@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from app.models.indexing_checkpoint import IndexingCheckpoint
 from app.services.checkpoint_service import (
     CheckpointService,
@@ -13,7 +11,6 @@ from app.services.checkpoint_service import (
 
 
 class TestCheckpointService:
-
     def _make_cp(self, **overrides) -> IndexingCheckpoint:
         defaults = dict(
             project_id="proj-1",
@@ -63,7 +60,6 @@ class TestCheckpointService:
 
 
 class TestSafeJsonHelpers:
-
     def test_safe_json_loads_list_valid(self):
         assert _safe_json_loads_list('["a", "b"]') == ["a", "b"]
 
@@ -87,20 +83,32 @@ class TestSafeJsonHelpers:
 
     def test_completed_steps_corrupted_returns_empty(self):
         cp = IndexingCheckpoint(
-            project_id="p", workflow_id="w", head_sha="h", status="running",
+            project_id="p",
+            workflow_id="w",
+            head_sha="h",
+            status="running",
             completed_steps="CORRUPTED",
-            changed_files_json="[]", deleted_files_json="[]",
-            profile_json="{}", knowledge_json="{}", processed_doc_paths="[]",
+            changed_files_json="[]",
+            deleted_files_json="[]",
+            profile_json="{}",
+            knowledge_json="{}",
+            processed_doc_paths="[]",
             total_docs=0,
         )
         assert CheckpointService.get_completed_steps(cp) == set()
 
     def test_processed_doc_paths_corrupted_returns_empty(self):
         cp = IndexingCheckpoint(
-            project_id="p", workflow_id="w", head_sha="h", status="running",
+            project_id="p",
+            workflow_id="w",
+            head_sha="h",
+            status="running",
             completed_steps="[]",
-            changed_files_json="[]", deleted_files_json="[]",
-            profile_json="{}", knowledge_json="{}", processed_doc_paths="CORRUPTED",
+            changed_files_json="[]",
+            deleted_files_json="[]",
+            profile_json="{}",
+            knowledge_json="{}",
+            processed_doc_paths="CORRUPTED",
             total_docs=0,
         )
         assert CheckpointService.get_processed_doc_paths(cp) == set()

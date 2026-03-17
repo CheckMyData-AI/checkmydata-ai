@@ -22,10 +22,12 @@ class QueryErrorType(StrEnum):
     UNKNOWN = "unknown"
 
 
-NON_RETRYABLE_ERRORS = frozenset({
-    QueryErrorType.PERMISSION_DENIED,
-    QueryErrorType.CONNECTION_ERROR,
-})
+NON_RETRYABLE_ERRORS = frozenset(
+    {
+        QueryErrorType.PERMISSION_DENIED,
+        QueryErrorType.CONNECTION_ERROR,
+    }
+)
 
 
 @dataclass

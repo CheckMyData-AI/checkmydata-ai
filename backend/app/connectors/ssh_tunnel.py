@@ -41,9 +41,7 @@ class SSHTunnel:
             "keepalive_interval": SSH_KEEPALIVE_INTERVAL,
         }
         if config.ssh_key_content:
-            key = asyncssh.import_private_key(
-                config.ssh_key_content, config.ssh_key_passphrase
-            )
+            key = asyncssh.import_private_key(config.ssh_key_content, config.ssh_key_passphrase)
             connect_kwargs["client_keys"] = [key]
 
         self._conn = await asyncssh.connect(**connect_kwargs)
@@ -101,7 +99,10 @@ class SSHTunnelManager:
         self._tunnels: dict[str, SSHTunnel] = {}
 
     def _key(self, config: ConnectionConfig) -> str:
-        return f"{config.ssh_host}:{config.ssh_port}:{config.ssh_user}:{config.db_host}:{config.db_port}"
+        return (
+            f"{config.ssh_host}:{config.ssh_port}:{config.ssh_user}"
+            f":{config.db_host}:{config.db_port}"
+        )
 
     async def get_or_create(self, config: ConnectionConfig) -> tuple[str, int]:
         if not config.ssh_host:

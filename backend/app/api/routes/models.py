@@ -76,15 +76,17 @@ async def _fetch_openrouter_models() -> list[dict]:
     models = []
     for item in raw.get("data", []):
         pricing = item.get("pricing")
-        models.append({
-            "id": item["id"],
-            "name": item.get("name", item["id"]),
-            "context_length": item.get("context_length"),
-            "pricing": {
-                "prompt": pricing.get("prompt", "0") if pricing else "0",
-                "completion": pricing.get("completion", "0") if pricing else "0",
-            },
-        })
+        models.append(
+            {
+                "id": item["id"],
+                "name": item.get("name", item["id"]),
+                "context_length": item.get("context_length"),
+                "pricing": {
+                    "prompt": pricing.get("prompt", "0") if pricing else "0",
+                    "completion": pricing.get("completion", "0") if pricing else "0",
+                },
+            }
+        )
 
     sorted_models = _sort_openrouter_models(models)
     _cache["openrouter"] = (now, sorted_models)

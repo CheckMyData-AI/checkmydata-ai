@@ -36,12 +36,14 @@ def condense_tool_results(messages: list[Message]) -> list[Message]:
             if len(preview) > TOOL_RESULT_MAX_CHARS:
                 preview = preview[:TOOL_RESULT_MAX_CHARS]
             condensed = f"{preview}\n... (truncated, {len(m.content)} chars total)"
-            out.append(Message(
-                role=m.role,
-                content=condensed,
-                tool_call_id=m.tool_call_id,
-                name=m.name,
-            ))
+            out.append(
+                Message(
+                    role=m.role,
+                    content=condensed,
+                    tool_call_id=m.tool_call_id,
+                    name=m.name,
+                )
+            )
         else:
             out.append(m)
     return out
@@ -101,9 +103,7 @@ async def trim_history(
 
 async def _summarise(messages: list[Message], llm_router) -> str:
     non_tool = [m for m in messages if m.role != "tool"]
-    conversation = "\n".join(
-        f"{m.role}: {m.content[:300]}" for m in non_tool
-    )
+    conversation = "\n".join(f"{m.role}: {m.content[:300]}" for m in non_tool)
     prompt_messages = [
         Message(
             role="system",

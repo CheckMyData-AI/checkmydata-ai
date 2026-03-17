@@ -86,12 +86,16 @@ class DocStore:
         count = result.rowcount  # type: ignore[union-attr]
         logger.info(
             "Deleted %d knowledge docs for %d paths in project %s",
-            count, len(source_paths), project_id,
+            count,
+            len(source_paths),
+            project_id,
         )
         return count
 
     async def get_latest_docs(
-        self, session: AsyncSession, project_id: str,
+        self,
+        session: AsyncSession,
+        project_id: str,
     ) -> list[KnowledgeDoc]:
         """Return all docs for a project.
 

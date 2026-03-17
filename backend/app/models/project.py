@@ -19,7 +19,9 @@ class Project(Base):
         String(36), ForeignKey("ssh_keys.id", ondelete="SET NULL"), nullable=True
     )
     owner_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     default_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     default_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -29,15 +31,39 @@ class Project(Base):
     )
 
     connections: Mapped[list["Connection"]] = relationship(  # noqa: F821
-        back_populates="project", cascade="all, delete-orphan"
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     chat_sessions: Mapped[list["ChatSession"]] = relationship(  # noqa: F821
-        back_populates="project", cascade="all, delete-orphan"
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     members: Mapped[list["ProjectMember"]] = relationship(  # noqa: F821
-        back_populates="project", cascade="all, delete-orphan"
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     invites: Mapped[list["ProjectInvite"]] = relationship(  # noqa: F821
-        back_populates="project", cascade="all, delete-orphan"
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    knowledge_docs: Mapped[list["KnowledgeDoc"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    commit_indices: Mapped[list["CommitIndex"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    caches: Mapped[list["ProjectCache"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    rag_feedbacks: Mapped[list["RAGFeedback"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     owner: Mapped["User | None"] = relationship()  # noqa: F821

@@ -73,7 +73,6 @@ class _PipelineState:
 
 
 class IndexingPipelineRunner:
-
     def __init__(
         self,
         ssh_key_svc: SshKeyService,
@@ -112,7 +111,9 @@ class IndexingPipelineRunner:
         if resuming:
             result.resumed_from_step = sorted(done)[-1] if done else None
             await tracker.emit(
-                wf_id, "pipeline_resume", "started",
+                wf_id,
+                "pipeline_resume",
+                "started",
                 f"Resuming from checkpoint ({len(done)} steps done, "
                 f"{len(CheckpointService.get_processed_doc_paths(checkpoint))} docs processed)",
             )
@@ -126,7 +127,9 @@ class IndexingPipelineRunner:
 
         # --- Step 2: clone_or_pull (always re-run, pull is fast) ---
         async with tracker.step(
-            wf_id, "clone_or_pull", f"Cloning/pulling {project.repo_url}",
+            wf_id,
+            "clone_or_pull",
+            f"Cloning/pulling {project.repo_url}",
         ):
             state.repo_dir = await asyncio.to_thread(
                 self._repo_analyzer.clone_or_pull,
@@ -144,33 +147,44 @@ class IndexingPipelineRunner:
             state.changed_files = CheckpointService.get_changed_files(checkpoint)
             state.deleted_files = CheckpointService.get_deleted_files(checkpoint)
             await tracker.emit(
-                wf_id, "detect_changes", "skipped",
+                wf_id,
+                "detect_changes",
+                "skipped",
                 f"Restored from checkpoint: {len(state.changed_files)} changed, "
                 f"{len(state.deleted_files)} deleted",
             )
         else:
             async with tracker.step(wf_id, "detect_changes", "Computing changed files"):
                 state.head_sha = await asyncio.to_thread(
-                    self._git_tracker.get_head_sha, state.repo_dir,
+                    self._git_tracker.get_head_sha,
+                    state.repo_dir,
                 )
                 if force_full:
                     state.last_sha = None
                 else:
                     state.last_sha = await self._git_tracker.get_last_indexed_sha(
-                        db, project_id, branch=project.repo_branch,
+                        db,
+                        project_id,
+                        branch=project.repo_branch,
                     )
                 diff = await asyncio.to_thread(
                     self._git_tracker.get_changed_files,
-                    state.repo_dir, state.last_sha, state.head_sha,
+                    state.repo_dir,
+                    state.last_sha,
+                    state.head_sha,
                 )
                 state.changed_files = diff.changed
                 state.deleted_files = diff.deleted
             await tracker.emit(
-                wf_id, "detect_changes", "completed",
+                wf_id,
+                "detect_changes",
+                "completed",
                 f"{len(state.changed_files)} changed, {len(state.deleted_files)} deleted",
             )
             await self._cp_svc.complete_step(
-                db, cp_id, "detect_changes",
+                db,
+                cp_id,
+                "detect_changes",
                 head_sha=state.head_sha,
                 last_sha=state.last_sha,
                 changed_files=state.changed_files,
@@ -181,34 +195,44 @@ class IndexingPipelineRunner:
         if "cleanup_deleted" not in done:
             if state.deleted_files:
                 async with tracker.step(
-                    wf_id, "cleanup_deleted",
+                    wf_id,
+                    "cleanup_deleted",
                     f"Removing {len(state.deleted_files)} deleted file(s) from knowledge base",
                 ):
                     await self._doc_store.delete_docs_for_paths(
-                        db, project_id, state.deleted_files,
+                        db,
+                        project_id,
+                        state.deleted_files,
                     )
                     for dpath in state.deleted_files:
                         await asyncio.to_thread(
-                            self._vector_store.delete_by_source_path, project_id, dpath,
+                            self._vector_store.delete_by_source_path,
+                            project_id,
+                            dpath,
                         )
             await self._cp_svc.complete_step(db, cp_id, "cleanup_deleted")
 
         # --- Step 5: project_profile ---
         if "project_profile" in done and checkpoint.profile_json != "{}":
-            from app.knowledge.project_profiler import ProjectProfile as PP
+            from app.knowledge.project_profiler import ProjectProfile as PProf
+
             try:
-                state.profile = PP.from_json(checkpoint.profile_json)
+                state.profile = PProf.from_json(checkpoint.profile_json)
             except Exception:
                 state.profile = None
             if state.profile:
                 await tracker.emit(
-                    wf_id, "project_profile", "skipped",
+                    wf_id,
+                    "project_profile",
+                    "skipped",
                     f"Restored from checkpoint: {state.profile.summary}",
                 )
 
         if state.profile is None:
             async with tracker.step(
-                wf_id, "project_profile", "Detecting project framework and structure",
+                wf_id,
+                "project_profile",
+                "Detecting project framework and structure",
             ):
                 cached_profile = await self._cache_svc.load_profile(db, project_id)
                 marker_overlap = False
@@ -221,20 +245,29 @@ class IndexingPipelineRunner:
                 else:
                     state.profile = await asyncio.to_thread(run_pass1_profile, state.repo_dir)
             await tracker.emit(
-                wf_id, "project_profile", "completed", state.profile.summary,
+                wf_id,
+                "project_profile",
+                "completed",
+                state.profile.summary,
             )
             await self._cp_svc.complete_step(
-                db, cp_id, "project_profile",
+                db,
+                cp_id,
+                "project_profile",
                 profile_json=state.profile.to_json(),
             )
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
         async with tracker.step(
-            wf_id, "analyze_files", f"Analyzing {len(state.changed_files)} files",
+            wf_id,
+            "analyze_files",
+            f"Analyzing {len(state.changed_files)} files",
         ):
             raw_schemas = await asyncio.to_thread(
                 self._repo_analyzer.analyze,
-                state.repo_dir, state.changed_files, state.profile,
+                state.repo_dir,
+                state.changed_files,
+                state.profile,
             )
             merged: dict[str, Any] = {}
             for s in raw_schemas:
@@ -254,20 +287,24 @@ class IndexingPipelineRunner:
 
         # --- Step 7: cross_file_analysis ---
         if "cross_file_analysis" in done and checkpoint.knowledge_json != "{}":
-            from app.knowledge.entity_extractor import ProjectKnowledge as PK
+            from app.knowledge.entity_extractor import ProjectKnowledge as PKnow
+
             try:
-                state.knowledge = PK.from_json(checkpoint.knowledge_json)
+                state.knowledge = PKnow.from_json(checkpoint.knowledge_json)
             except Exception:
                 state.knowledge = None
             if state.knowledge:
                 await tracker.emit(
-                    wf_id, "cross_file_analysis", "skipped",
+                    wf_id,
+                    "cross_file_analysis",
+                    "skipped",
                     f"Restored from checkpoint: {len(state.knowledge.entities)} entities",
                 )
 
         if state.knowledge is None:
             async with tracker.step(
-                wf_id, "cross_file_analysis",
+                wf_id,
+                "cross_file_analysis",
                 "Building entity map, usage tracking, and enum extraction",
             ):
                 cached_knowledge = None
@@ -283,26 +320,39 @@ class IndexingPipelineRunner:
                     cached_knowledge=cached_knowledge,
                 )
             await tracker.emit(
-                wf_id, "cross_file_analysis", "completed",
+                wf_id,
+                "cross_file_analysis",
+                "completed",
                 f"{len(state.knowledge.entities)} entities, "
                 f"{len(state.knowledge.dead_tables)} dead tables, "
                 f"{len(state.knowledge.enums)} enums"
-                + (" (incremental)" if (cached_knowledge is not None and state.last_sha is not None) else " (full)"),
+                + (
+                    " (incremental)"
+                    if (cached_knowledge is not None and state.last_sha is not None)
+                    else " (full)"
+                ),
             )
             await self._cp_svc.complete_step(
-                db, cp_id, "cross_file_analysis",
+                db,
+                cp_id,
+                "cross_file_analysis",
                 knowledge_json=state.knowledge.to_json(),
             )
 
         # --- Step 8: enrich + summary (always re-run; fast, in-memory) ---
         state.enriched_docs = await asyncio.to_thread(
-            run_pass4_enrich, state.schemas, state.knowledge, state.profile,
+            run_pass4_enrich,
+            state.schemas,
+            state.knowledge,
+            state.profile,
         )
         summary_doc = generate_summary_doc(state.knowledge, state.profile)
         state.enriched_docs.append(summary_doc)
 
         existing_summary = await self._doc_store.get_docs_for_project(
-            db, project_id, doc_type="project_summary",
+            db,
+            project_id,
+            doc_type="project_summary",
         )
         existing_summary_hash = ""
         if existing_summary:
@@ -319,7 +369,8 @@ class IndexingPipelineRunner:
         await self._cp_svc.complete_step(db, cp_id, "enrich_docs", total_docs=total)
 
         async with tracker.step(
-            wf_id, "generate_docs",
+            wf_id,
+            "generate_docs",
             f"Generating docs for {total} items"
             + (f" ({len(processed_paths)} already done)" if processed_paths else ""),
         ):
@@ -331,7 +382,9 @@ class IndexingPipelineRunner:
                     continue
 
                 await tracker.emit(
-                    wf_id, "generate_docs", "started",
+                    wf_id,
+                    "generate_docs",
+                    "started",
                     f"Processing {edoc.file_path} ({i + 1}/{total})",
                 )
 
@@ -365,7 +418,8 @@ class IndexingPipelineRunner:
 
                 await asyncio.to_thread(
                     self._vector_store.delete_by_source_path,
-                    project_id, edoc.file_path,
+                    project_id,
+                    edoc.file_path,
                 )
 
                 chunks = chunk_document(
@@ -379,9 +433,7 @@ class IndexingPipelineRunner:
                     },
                 )
                 if chunks:
-                    chunk_ids = [
-                        f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks
-                    ]
+                    chunk_ids = [f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks]
                     chunk_docs = [c.content for c in chunks]
                     chunk_metas = [c.metadata for c in chunks]
                     await asyncio.to_thread(
@@ -416,14 +468,19 @@ class IndexingPipelineRunner:
             )
             await self._git_tracker.cleanup_old_records(db, project_id, keep=10)
             await self._cache_svc.save(
-                db, project_id, knowledge=state.knowledge, profile=state.profile,
+                db,
+                project_id,
+                knowledge=state.knowledge,
+                profile=state.profile,
             )
 
         # --- Cleanup checkpoint ---
         await self._cp_svc.delete(db, cp_id)
 
         await tracker.end(
-            wf_id, "index_repo", "completed",
+            wf_id,
+            "index_repo",
+            "completed",
             f"Indexed {len(state.changed_files)} files, {len(state.schemas)} schemas"
             + (f" (resumed, {skipped} docs skipped)" if resuming else ""),
         )

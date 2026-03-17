@@ -15,10 +15,7 @@ def format_table(result: QueryResult, config: dict | None = None) -> dict[str, A
 
     serialized_rows = []
     for row in page_rows:
-        serialized_rows.append({
-            col: serialize_value(val)
-            for col, val in zip(result.columns, row)
-        })
+        serialized_rows.append({col: serialize_value(val) for col, val in zip(result.columns, row)})
 
     return {
         "columns": result.columns,

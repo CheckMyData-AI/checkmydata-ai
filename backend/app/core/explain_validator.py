@@ -96,8 +96,7 @@ class ExplainValidator:
         if node_type == "Seq Scan" and rows > self._row_threshold:
             table = node.get("Relation Name", "?")
             warnings.append(
-                f"Sequential scan on '{table}' (~{rows:,} rows). "
-                f"Consider adding an index."
+                f"Sequential scan on '{table}' (~{rows:,} rows). Consider adding an index."
             )
 
         for child in node.get("Plans", []):

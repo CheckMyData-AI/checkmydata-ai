@@ -75,7 +75,9 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
 @router.post("/google", response_model=AuthResponse)
 @limiter.limit("10/minute")
 async def google_login(
-    request: Request, body: GoogleLoginRequest, db: AsyncSession = Depends(get_db),
+    request: Request,
+    body: GoogleLoginRequest,
+    db: AsyncSession = Depends(get_db),
 ):
     try:
         payload = _auth.verify_google_token(body.credential)

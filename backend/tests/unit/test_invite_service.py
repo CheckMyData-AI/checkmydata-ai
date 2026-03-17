@@ -37,7 +37,9 @@ async def db():
 
 
 async def _make_user(db: AsyncSession, email: str | None = None) -> User:
-    u = User(email=email or f"u-{uuid.uuid4().hex[:8]}@test.com", password_hash="x", display_name="T")
+    u = User(
+        email=email or f"u-{uuid.uuid4().hex[:8]}@test.com", password_hash="x", display_name="T"
+    )
     db.add(u)
     await db.commit()
     await db.refresh(u)
@@ -166,7 +168,13 @@ class TestListPendingForEmail:
         proj = await _make_project(db)
         email = f"pending-{uuid.uuid4().hex[:6]}@test.com"
         await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
-        inv2 = await inv_svc.create_invite(db, await _make_project(db).then(lambda p: p.id) if False else (await _make_project(db)).id, email, "viewer", owner.id)  # noqa: E501
+        inv2 = await inv_svc.create_invite(
+            db,
+            await _make_project(db).then(lambda p: p.id) if False else (await _make_project(db)).id,
+            email,
+            "viewer",
+            owner.id,
+        )  # noqa: E501
         await inv_svc.revoke_invite(db, inv2.id, owner.id)
         pending = await inv_svc.list_pending_for_email(db, email)
         assert len(pending) == 1

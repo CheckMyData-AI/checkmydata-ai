@@ -47,17 +47,23 @@ class TestShouldRetry:
 
     def test_permission_denied_not_retryable(self):
         assert not self.strategy.should_retry(
-            _error(QueryErrorType.PERMISSION_DENIED, retryable=False), 1, 3,
+            _error(QueryErrorType.PERMISSION_DENIED, retryable=False),
+            1,
+            3,
         )
 
     def test_connection_error_not_retryable(self):
         assert not self.strategy.should_retry(
-            _error(QueryErrorType.CONNECTION_ERROR, retryable=False), 1, 3,
+            _error(QueryErrorType.CONNECTION_ERROR, retryable=False),
+            1,
+            3,
         )
 
     def test_max_attempts_exceeded(self):
         assert not self.strategy.should_retry(
-            _error(QueryErrorType.COLUMN_NOT_FOUND), 3, 3,
+            _error(QueryErrorType.COLUMN_NOT_FOUND),
+            3,
+            3,
         )
 
     def test_not_retryable_flag(self):

@@ -52,6 +52,7 @@ ORM_MARKERS: list[tuple[str, str, list[str]]] = [
 @dataclass
 class ProjectProfile:
     """Detected project characteristics."""
+
     frameworks: list[str] = field(default_factory=list)
     orms: list[str] = field(default_factory=list)
     primary_language: str = ""
@@ -83,9 +84,17 @@ class ProjectProfile:
     def marker_files(self) -> set[str]:
         """Files whose change should invalidate the cached profile."""
         markers = {
-            "package.json", "requirements.txt", "pyproject.toml",
-            "Gemfile", "go.mod", "pom.xml", "build.gradle",
-            "composer.json", "mix.exs", "manage.py", "settings.py",
+            "package.json",
+            "requirements.txt",
+            "pyproject.toml",
+            "Gemfile",
+            "go.mod",
+            "pom.xml",
+            "build.gradle",
+            "composer.json",
+            "mix.exs",
+            "manage.py",
+            "settings.py",
             "prisma/schema.prisma",
         }
         return markers
@@ -118,8 +127,17 @@ MODEL_DIR_PATTERNS = re.compile(
 )
 
 SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    "dist", "build", ".next", ".nuxt", "vendor", "target",
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "vendor",
+    "target",
 }
 
 

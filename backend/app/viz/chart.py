@@ -22,10 +22,12 @@ def generate_bar_chart(result: QueryResult, config: dict) -> dict[str, Any]:
     for col in data_cols:
         if col in result.columns:
             col_idx = result.columns.index(col)
-            datasets.append({
-                "label": col,
-                "data": [row[col_idx] for row in result.rows],
-            })
+            datasets.append(
+                {
+                    "label": col,
+                    "data": [row[col_idx] for row in result.rows],
+                }
+            )
 
     return {
         "type": "bar",
@@ -48,11 +50,13 @@ def generate_line_chart(result: QueryResult, config: dict) -> dict[str, Any]:
     for col in data_cols:
         if col in result.columns:
             col_idx = result.columns.index(col)
-            datasets.append({
-                "label": col,
-                "data": [row[col_idx] for row in result.rows],
-                "fill": False,
-            })
+            datasets.append(
+                {
+                    "label": col,
+                    "data": [row[col_idx] for row in result.rows],
+                    "fill": False,
+                }
+            )
 
     return {
         "type": "line",

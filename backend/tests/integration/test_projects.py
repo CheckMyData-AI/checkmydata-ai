@@ -61,11 +61,15 @@ class TestProjectAccessControl:
     """Test role-based access control on projects endpoints."""
 
     async def _setup_project_with_member(self, client, owner_token, role):
-        """Create project as owner, register member, invite+accept, return (project_id, member_token)."""
+        """Create project as owner, register+invite+accept member.
+
+        Returns (project_id, member_token).
+        """
         member = await register_user(client)
 
         resp = await client.post(
-            "/api/projects", json={"name": "RBAC Proj"},
+            "/api/projects",
+            json={"name": "RBAC Proj"},
             headers=auth_headers(owner_token),
         )
         pid = resp.json()["id"]
@@ -88,11 +92,13 @@ class TestProjectAccessControl:
         user1 = await register_user(client)
         user2 = await register_user(client)
         await client.post(
-            "/api/projects", json={"name": "User1 Proj"},
+            "/api/projects",
+            json={"name": "User1 Proj"},
             headers=auth_headers(user1["token"]),
         )
         await client.post(
-            "/api/projects", json={"name": "User2 Proj"},
+            "/api/projects",
+            json={"name": "User2 Proj"},
             headers=auth_headers(user2["token"]),
         )
         resp = await client.get("/api/projects", headers=auth_headers(user1["token"]))
@@ -103,14 +109,17 @@ class TestProjectAccessControl:
     async def test_viewer_can_get_but_not_update_or_delete(self, client):
         owner = await register_user(client)
         pid, viewer_token = await self._setup_project_with_member(
-            client, owner["token"], "viewer",
+            client,
+            owner["token"],
+            "viewer",
         )
 
         resp = await client.get(f"/api/projects/{pid}", headers=auth_headers(viewer_token))
         assert resp.status_code == 200
 
         resp = await client.patch(
-            f"/api/projects/{pid}", json={"name": "Hacked"},
+            f"/api/projects/{pid}",
+            json={"name": "Hacked"},
             headers=auth_headers(viewer_token),
         )
         assert resp.status_code == 403
@@ -122,7 +131,8 @@ class TestProjectAccessControl:
         owner = await register_user(client)
         outsider = await register_user(client)
         resp = await client.post(
-            "/api/projects", json={"name": "Private"},
+            "/api/projects",
+            json={"name": "Private"},
             headers=auth_headers(owner["token"]),
         )
         pid = resp.json()["id"]

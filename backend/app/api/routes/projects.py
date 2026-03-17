@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -33,6 +34,7 @@ class ProjectUpdate(BaseModel):
     @classmethod
     def strip_name(cls, v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) else v
+
     description: str | None = None
     repo_url: str | None = None
     repo_branch: str | None = None
@@ -79,18 +81,20 @@ async def list_projects(
     result = []
     for p in projects:
         role = await _membership_svc.get_role(db, p.id, user["user_id"])
-        result.append(ProjectResponse(
-            id=p.id,
-            name=p.name,
-            description=p.description,
-            repo_url=p.repo_url,
-            repo_branch=p.repo_branch,
-            ssh_key_id=p.ssh_key_id,
-            default_llm_provider=p.default_llm_provider,
-            default_llm_model=p.default_llm_model,
-            owner_id=p.owner_id,
-            user_role=role,
-        ))
+        result.append(
+            ProjectResponse(
+                id=p.id,
+                name=p.name,
+                description=p.description,
+                repo_url=p.repo_url,
+                repo_branch=p.repo_branch,
+                ssh_key_id=p.ssh_key_id,
+                default_llm_provider=p.default_llm_provider,
+                default_llm_model=p.default_llm_model,
+                owner_id=p.owner_id,
+                user_role=role,
+            )
+        )
     return result
 
 
@@ -139,7 +143,13 @@ async def delete_project(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
-    deleted = await _svc.delete(db, project_id)
+    try:
+        deleted = await _svc.delete(db, project_id)
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail="Project still has dependent resources that prevent deletion",
+        )
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}

@@ -148,10 +148,7 @@ class TestRepoAnalyzer:
         repo_dir = Path(self.tmpdir) / "test_repo3"
         (repo_dir / "migrations").mkdir(parents=True)
         mig_file = repo_dir / "migrations" / "001_create_users.py"
-        mig_file.write_text(
-            "def upgrade():\n"
-            "    op.create_table('users', ...)\n"
-        )
+        mig_file.write_text("def upgrade():\n    op.create_table('users', ...)\n")
 
         results = self.analyzer.analyze(repo_dir)
         assert len(results) == 1
@@ -179,9 +176,9 @@ class TestRepoAnalyzer:
         repo_dir = Path(self.tmpdir) / "test_repo6"
         repo_dir.mkdir()
         (repo_dir / "service.py").write_text(
-            'def get_users(db):\n'
+            "def get_users(db):\n"
             '    result = db.execute("SELECT id, name FROM users WHERE active = 1")\n'
-            '    return result\n'
+            "    return result\n"
         )
 
         results = self.analyzer.analyze(repo_dir)
@@ -193,8 +190,8 @@ class TestRepoAnalyzer:
         repo_dir = Path(self.tmpdir) / "test_repo7"
         repo_dir.mkdir()
         (repo_dir / "repo.py").write_text(
-            'def find_active(session):\n'
-            '    return session.query(User).filter(User.active == True).all()\n'
+            "def find_active(session):\n"
+            "    return session.query(User).filter(User.active == True).all()\n"
         )
 
         results = self.analyzer.analyze(repo_dir)

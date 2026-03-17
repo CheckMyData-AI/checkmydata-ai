@@ -750,7 +750,9 @@ rag_feedback     — id, project_id, chunk_id, source_path, doc_type, distance, 
 project_cache    — id, project_id, knowledge_json, profile_json, created_at, updated_at
 ```
 
-Managed via **Alembic migrations** (10 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode).
+Managed via **Alembic migrations** (12 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks).
+
+All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints).
 
 ---
 

@@ -115,6 +115,7 @@ async def module_health():
     # Internal database
     try:
         from app.models.base import async_session_factory
+
         async with async_session_factory() as session:
             await session.execute(__import__("sqlalchemy").text("SELECT 1"))
         results["database"] = {"status": "ok"}
@@ -124,6 +125,7 @@ async def module_health():
     # Vector store (ChromaDB)
     try:
         from app.knowledge.vector_store import VectorStore
+
         vs = VectorStore()
         vs._client.heartbeat()
         results["vector_store"] = {"status": "ok"}

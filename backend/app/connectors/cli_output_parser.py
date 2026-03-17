@@ -66,7 +66,8 @@ class CLIOutputParser:
 
     @staticmethod
     def detect_and_parse(
-        stdout: str, db_type: str,
+        stdout: str,
+        db_type: str,
     ) -> tuple[list[str], list[list[str]]]:
         """Auto-detect the right parser based on db_type."""
         if db_type in ("mysql", "clickhouse"):

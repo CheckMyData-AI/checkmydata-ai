@@ -59,19 +59,15 @@ class ValidationLoop:
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> ValidationLoopResult:
-        pre_validator = (
-            PreValidator(schema)
-            if self._config.enable_schema_validation else None
-        )
+        pre_validator = PreValidator(schema) if self._config.enable_schema_validation else None
         explain_validator = (
             ExplainValidator(self._config.explain_row_warning_threshold)
-            if self._config.enable_explain else None
+            if self._config.enable_explain
+            else None
         )
         post_validator = PostValidator()
         safety_level = (
-            SafetyLevel.READ_ONLY
-            if connection_config.is_read_only
-            else SafetyLevel.ALLOW_DML
+            SafetyLevel.READ_ONLY if connection_config.is_read_only else SafetyLevel.ALLOW_DML
         )
         safety_guard = SafetyGuard(level=safety_level)
 
@@ -91,7 +87,8 @@ class ValidationLoop:
             # --- Pre-validation ---
             if pre_validator:
                 async with self._tracker.step(
-                    workflow_id, "pre_validate",
+                    workflow_id,
+                    "pre_validate",
                     f"Schema validation (attempt {attempt_num}/{self._config.max_retries})",
                 ):
                     pre_result = pre_validator.validate(current_query, schema.db_type)
@@ -102,17 +99,26 @@ class ValidationLoop:
                     attempts.append(attempt)
 
                     repair = await self._try_repair(
-                        pre_result.error, question, current_query,
-                        attempts, project_id, workflow_id, schema,
-                        connection_config, attempt_num,
+                        pre_result.error,
+                        question,
+                        current_query,
+                        attempts,
+                        project_id,
+                        workflow_id,
+                        schema,
+                        connection_config,
+                        attempt_num,
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
                     if repair is None:
                         return self._fail(
-                            current_query, current_explanation,
-                            attempts, pre_result.error, all_warnings,
+                            current_query,
+                            current_explanation,
+                            attempts,
+                            pre_result.error,
+                            all_warnings,
                         )
                     current_query, current_explanation = repair
                     continue
@@ -133,18 +139,24 @@ class ValidationLoop:
                 attempt.elapsed_ms = (time.monotonic() - t0) * 1000
                 attempts.append(attempt)
                 return self._fail(
-                    current_query, current_explanation, attempts,
-                    attempt.error, all_warnings,
+                    current_query,
+                    current_explanation,
+                    attempts,
+                    attempt.error,
+                    all_warnings,
                 )
 
             # --- EXPLAIN dry-run ---
             if explain_validator:
                 async with self._tracker.step(
-                    workflow_id, "explain_check",
+                    workflow_id,
+                    "explain_check",
                     f"EXPLAIN dry-run (attempt {attempt_num}/{self._config.max_retries})",
                 ):
                     explain_result = await explain_validator.validate(
-                        connector, current_query, schema.db_type,
+                        connector,
+                        current_query,
+                        schema.db_type,
                     )
 
                 if not explain_result.is_valid and explain_result.error:
@@ -153,17 +165,25 @@ class ValidationLoop:
                     attempts.append(attempt)
 
                     repair = await self._try_repair(
-                        explain_result.error, question, current_query,
-                        attempts, project_id, workflow_id, schema,
-                        connection_config, attempt_num,
+                        explain_result.error,
+                        question,
+                        current_query,
+                        attempts,
+                        project_id,
+                        workflow_id,
+                        schema,
+                        connection_config,
+                        attempt_num,
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
                     if repair is None:
                         return self._fail(
-                            current_query, current_explanation,
-                            attempts, explain_result.error,
+                            current_query,
+                            current_explanation,
+                            attempts,
+                            explain_result.error,
                             all_warnings,
                         )
                     current_query, current_explanation = repair
@@ -173,7 +193,8 @@ class ValidationLoop:
 
             # --- Execute ---
             async with self._tracker.step(
-                workflow_id, "execute_query",
+                workflow_id,
+                "execute_query",
                 f"Running query (attempt {attempt_num}/{self._config.max_retries})",
             ):
                 try:
@@ -181,24 +202,34 @@ class ValidationLoop:
                 except Exception as exc:
                     logger.warning("execute_query raised: %s", exc)
                     classified = self._classifier.classify(
-                        str(exc), connection_config.db_type,
+                        str(exc),
+                        connection_config.db_type,
                     )
                     attempt.error = classified
                     attempt.elapsed_ms = (time.monotonic() - t0) * 1000
                     attempts.append(attempt)
 
                     repair = await self._try_repair(
-                        classified, question, current_query,
-                        attempts, project_id, workflow_id, schema,
-                        connection_config, attempt_num,
+                        classified,
+                        question,
+                        current_query,
+                        attempts,
+                        project_id,
+                        workflow_id,
+                        schema,
+                        connection_config,
+                        attempt_num,
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
                     if repair is None:
                         return self._fail(
-                            current_query, current_explanation,
-                            attempts, classified, all_warnings,
+                            current_query,
+                            current_explanation,
+                            attempts,
+                            classified,
+                            all_warnings,
                         )
                     current_query, current_explanation = repair
                     continue
@@ -208,11 +239,15 @@ class ValidationLoop:
 
             # --- Post-validation ---
             async with self._tracker.step(
-                workflow_id, "post_validate",
+                workflow_id,
+                "post_validate",
                 f"Result validation (attempt {attempt_num}/{self._config.max_retries})",
             ):
                 post_result = post_validator.validate(
-                    results, current_query, schema, self._config,
+                    results,
+                    current_query,
+                    schema,
+                    self._config,
                 )
 
             if not post_result.is_valid and post_result.error:
@@ -220,17 +255,26 @@ class ValidationLoop:
                 attempts.append(attempt)
 
                 repair = await self._try_repair(
-                    post_result.error, question, current_query,
-                    attempts, project_id, workflow_id, schema,
-                    connection_config, attempt_num,
+                    post_result.error,
+                    question,
+                    current_query,
+                    attempts,
+                    project_id,
+                    workflow_id,
+                    schema,
+                    connection_config,
+                    attempt_num,
                     chat_history=chat_history,
                     preferred_provider=preferred_provider,
                     model=model,
                 )
                 if repair is None:
                     return self._fail(
-                        current_query, current_explanation,
-                        attempts, post_result.error, all_warnings,
+                        current_query,
+                        current_explanation,
+                        attempts,
+                        post_result.error,
+                        all_warnings,
                     )
                 current_query, current_explanation = repair
                 continue
@@ -240,7 +284,9 @@ class ValidationLoop:
             # --- Success ---
             attempts.append(attempt)
             await self._tracker.emit(
-                workflow_id, "execute_query", "completed",
+                workflow_id,
+                "execute_query",
+                "completed",
                 f"{results.row_count} rows in {results.execution_time_ms:.0f}ms",
             )
             return ValidationLoopResult(
@@ -254,8 +300,11 @@ class ValidationLoop:
             )
 
         return self._fail(
-            current_query, current_explanation, attempts,
-            attempts[-1].error if attempts else None, all_warnings,
+            current_query,
+            current_explanation,
+            attempts,
+            attempts[-1].error if attempts else None,
+            all_warnings,
         )
 
     async def _try_repair(
@@ -278,13 +327,15 @@ class ValidationLoop:
             return None
 
         async with self._tracker.step(
-            workflow_id, "error_classify",
+            workflow_id,
+            "error_classify",
             f"Analyzing error: {error.error_type.value}",
         ):
             pass  # classification already done, step is for UI feedback
 
         async with self._tracker.step(
-            workflow_id, "query_repair",
+            workflow_id,
+            "query_repair",
             f"Repairing query (attempt {current_attempt}/{self._config.max_retries})",
         ):
             repair_context = await self._enricher.build_repair_context(
@@ -304,7 +355,8 @@ class ValidationLoop:
 
         if repair_result.get("error") or not repair_result.get("query"):
             logger.warning(
-                "Query repair failed: %s", repair_result.get("error"),
+                "Query repair failed: %s",
+                repair_result.get("error"),
             )
             return None
 

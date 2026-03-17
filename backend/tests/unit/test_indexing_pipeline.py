@@ -28,12 +28,10 @@ class TestRunPass1Profile:
         assert "fastapi" in profile.frameworks
 
 
-class TestRunPass2_3Knowledge:
+class TestRunPassTwoThreeKnowledge:
     def test_returns_knowledge(self):
         tmp = Path(tempfile.mkdtemp())
-        (tmp / "models.py").write_text(
-            "class User(Base):\n    __tablename__ = 'users'\n"
-        )
+        (tmp / "models.py").write_text("class User(Base):\n    __tablename__ = 'users'\n")
         schemas = [
             ExtractedSchema(
                 file_path="models.py",
@@ -116,13 +114,16 @@ class TestRunPass4Enrich:
             table_name="users",
         )
         knowledge.table_usage["users"] = TableUsage(
-            table_name="users", orm_refs=["models/user.py"],
+            table_name="users",
+            orm_refs=["models/user.py"],
         )
-        knowledge.service_functions.append({
-            "name": "create_user",
-            "file_path": "services/users.py",
-            "tables": ["users"],
-        })
+        knowledge.service_functions.append(
+            {
+                "name": "create_user",
+                "file_path": "services/users.py",
+                "tables": ["users"],
+            }
+        )
         docs = run_pass4_enrich(schemas, knowledge)
         assert any("create_user" in d.enrichment_context for d in docs)
 
@@ -149,7 +150,8 @@ class TestGenerateSummaryDoc:
     def test_summary_content_is_markdown(self):
         knowledge = ProjectKnowledge()
         knowledge.entities["User"] = EntityInfo(
-            name="User", table_name="users",
+            name="User",
+            table_name="users",
         )
         doc = generate_summary_doc(knowledge)
         assert doc.content.startswith("# Project Data Model Summary")

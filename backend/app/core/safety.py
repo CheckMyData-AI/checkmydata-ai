@@ -2,12 +2,12 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class SafetyLevel(str, Enum):
+class SafetyLevel(StrEnum):
     READ_ONLY = "read_only"
     ALLOW_DML = "allow_dml"
     UNRESTRICTED = "unrestricted"

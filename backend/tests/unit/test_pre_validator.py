@@ -33,14 +33,16 @@ class TestPreValidator:
     def test_valid_query(self):
         v = PreValidator(_schema())
         result = v.validate(
-            "SELECT users.username FROM users", "postgresql",
+            "SELECT users.username FROM users",
+            "postgresql",
         )
         assert result.is_valid
 
     def test_wrong_table(self):
         v = PreValidator(_schema())
         result = v.validate(
-            "SELECT * FROM userz", "postgresql",
+            "SELECT * FROM userz",
+            "postgresql",
         )
         assert not result.is_valid
         assert result.error is not None
@@ -49,7 +51,8 @@ class TestPreValidator:
     def test_wrong_column_qualified(self):
         v = PreValidator(_schema())
         result = v.validate(
-            "SELECT users.user_name FROM users", "postgresql",
+            "SELECT users.user_name FROM users",
+            "postgresql",
         )
         assert not result.is_valid
         assert result.error is not None
@@ -85,7 +88,8 @@ class TestPreValidator:
     def test_fuzzy_suggestions(self):
         v = PreValidator(_schema())
         result = v.validate(
-            "SELECT users.user_name FROM users", "postgresql",
+            "SELECT users.user_name FROM users",
+            "postgresql",
         )
         assert not result.is_valid
         assert result.error is not None
@@ -95,7 +99,8 @@ class TestPreValidator:
     def test_table_not_found_suggestions(self):
         v = PreValidator(_schema())
         result = v.validate(
-            "SELECT * FROM userss", "postgresql",
+            "SELECT * FROM userss",
+            "postgresql",
         )
         assert not result.is_valid
         assert result.error is not None

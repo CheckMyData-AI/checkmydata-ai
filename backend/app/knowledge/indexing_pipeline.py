@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IndexingContext:
     """Carries state across pipeline passes."""
+
     repo_dir: Path
     project_id: str
     profile: ProjectProfile = field(default_factory=ProjectProfile)
@@ -37,6 +38,7 @@ class IndexingContext:
 @dataclass
 class EnrichedDoc:
     """A document ready for LLM doc generation, enriched with cross-file context."""
+
     file_path: str
     doc_type: str
     content: str
@@ -64,7 +66,9 @@ def run_pass2_3_knowledge(
     changed files are re-scanned (incremental mode).
     """
     return build_project_knowledge(
-        repo_dir, schemas, all_files,
+        repo_dir,
+        schemas,
+        all_files,
         changed_files=changed_files,
         deleted_files=deleted_files,
         cached_knowledge=cached_knowledge,
@@ -98,32 +102,28 @@ def run_pass4_enrich(
 
                 if entity.relationships:
                     context_parts.append(
-                        f"Relationships for {model_name}: "
-                        + ", ".join(entity.relationships)
+                        f"Relationships for {model_name}: " + ", ".join(entity.relationships)
                     )
 
                 for col in entity.columns:
                     if col.enum_values:
                         context_parts.append(
-                            f"Column {col.name} allowed values: "
-                            + ", ".join(col.enum_values[:10])
+                            f"Column {col.name} allowed values: " + ", ".join(col.enum_values[:10])
                         )
 
                 if entity.used_in_files:
                     context_parts.append(
-                        f"{model_name} is used in: "
-                        + ", ".join(entity.used_in_files[:5])
+                        f"{model_name} is used in: " + ", ".join(entity.used_in_files[:5])
                     )
 
             for tbl in schema.tables:
                 usage = knowledge.table_usage.get(tbl)
                 if usage and not usage.is_active:
-                    context_parts.append(
-                        f"WARNING: Table '{tbl}' has no active references in code"
-                    )
+                    context_parts.append(f"WARNING: Table '{tbl}' has no active references in code")
 
             related_services = [
-                sf for sf in knowledge.service_functions
+                sf
+                for sf in knowledge.service_functions
                 if any(t in sf["tables"] for t in schema.tables)
                 or any(m in sf.get("name", "") for m in schema.models)
             ]
@@ -135,18 +135,18 @@ def run_pass4_enrich(
 
             enrichment = "\n".join(context_parts) if context_parts else ""
 
-            docs.append(EnrichedDoc(
-                file_path=(
-                    schema.file_path
-                    if len(segments) == 1
-                    else f"{schema.file_path}#{seg.name}"
-                ),
-                doc_type=schema.doc_type,
-                content=seg.content,
-                models=schema.models,
-                tables=schema.tables,
-                enrichment_context=enrichment,
-            ))
+            docs.append(
+                EnrichedDoc(
+                    file_path=(
+                        schema.file_path if len(segments) == 1 else f"{schema.file_path}#{seg.name}"
+                    ),
+                    doc_type=schema.doc_type,
+                    content=seg.content,
+                    models=schema.models,
+                    tables=schema.tables,
+                    enrichment_context=enrichment,
+                )
+            )
 
     return docs
 

@@ -24,53 +24,74 @@ FAKE_GOOGLE_PAYLOAD = {
 class TestAuth:
     async def test_register_and_login(self, client):
         email = _email()
-        resp = await client.post("/api/auth/register", json={
-            "email": email,
-            "password": "secret123",
-            "display_name": "Tester",
-        })
+        resp = await client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": "secret123",
+                "display_name": "Tester",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["token"]
         assert data["user"]["email"] == email
         assert data["user"]["display_name"] == "Tester"
 
-        resp = await client.post("/api/auth/login", json={
-            "email": email,
-            "password": "secret123",
-        })
+        resp = await client.post(
+            "/api/auth/login",
+            json={
+                "email": email,
+                "password": "secret123",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["token"]
 
     async def test_duplicate_register(self, client):
         email = _email()
-        await client.post("/api/auth/register", json={
-            "email": email,
-            "password": "pass1234",
-        })
-        resp = await client.post("/api/auth/register", json={
-            "email": email,
-            "password": "pass1234",
-        })
+        await client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": "pass1234",
+            },
+        )
+        resp = await client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": "pass1234",
+            },
+        )
         assert resp.status_code == 409
 
     async def test_login_wrong_password(self, client):
         email = _email()
-        await client.post("/api/auth/register", json={
-            "email": email,
-            "password": "correct",
-        })
-        resp = await client.post("/api/auth/login", json={
-            "email": email,
-            "password": "incorrect",
-        })
+        await client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": "correct",
+            },
+        )
+        resp = await client.post(
+            "/api/auth/login",
+            json={
+                "email": email,
+                "password": "incorrect",
+            },
+        )
         assert resp.status_code == 401
 
     async def test_login_nonexistent(self, client):
-        resp = await client.post("/api/auth/login", json={
-            "email": _email(),
-            "password": "anything",
-        })
+        resp = await client.post(
+            "/api/auth/login",
+            json={
+                "email": _email(),
+                "password": "anything",
+            },
+        )
         assert resp.status_code == 401
 
     async def test_invalid_token_returns_401(self, client):
@@ -142,8 +163,11 @@ class TestGoogleAuth:
         ):
             await client.post("/api/auth/google", json={"credential": "fake"})
 
-        resp = await client.post("/api/auth/login", json={
-            "email": email,
-            "password": "anything",
-        })
+        resp = await client.post(
+            "/api/auth/login",
+            json={
+                "email": email,
+                "password": "anything",
+            },
+        )
         assert resp.status_code == 401

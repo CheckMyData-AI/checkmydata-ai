@@ -13,9 +13,20 @@ from app.services.ssh_key_service import SshKeyService
 _ssh_key_svc = SshKeyService()
 
 _UPDATABLE_FIELDS = {
-    "name", "db_type", "ssh_host", "ssh_port", "ssh_user", "ssh_key_id",
-    "db_host", "db_port", "db_name", "db_user", "is_read_only",
-    "ssh_exec_mode", "ssh_command_template", "ssh_pre_commands",
+    "name",
+    "db_type",
+    "ssh_host",
+    "ssh_port",
+    "ssh_user",
+    "ssh_key_id",
+    "db_host",
+    "db_port",
+    "db_name",
+    "db_user",
+    "is_read_only",
+    "ssh_exec_mode",
+    "ssh_command_template",
+    "ssh_pre_commands",
 }
 
 
@@ -38,7 +49,10 @@ class ConnectionService:
         return connection
 
     async def update(
-        self, session: AsyncSession, connection_id: str, **kwargs,
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        **kwargs,
     ) -> Connection | None:
         conn = await self.get(session, connection_id)
         if not conn:
@@ -64,9 +78,7 @@ class ConnectionService:
         return conn
 
     async def get(self, session: AsyncSession, connection_id: str) -> Connection | None:
-        result = await session.execute(
-            select(Connection).where(Connection.id == connection_id)
-        )
+        result = await session.execute(select(Connection).where(Connection.id == connection_id))
         return result.scalar_one_or_none()
 
     async def list_by_project(self, session: AsyncSession, project_id: str) -> list[Connection]:
@@ -103,7 +115,6 @@ class ConnectionService:
     async def test_ssh(self, session: AsyncSession, connection_id: str) -> dict:
         """Test SSH connectivity independently from the database."""
         import asyncssh
-
 
         conn = await self.get(session, connection_id)
         if not conn:

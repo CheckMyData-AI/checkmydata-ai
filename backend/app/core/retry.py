@@ -40,7 +40,10 @@ def retry(
                         break
                     logger.warning(
                         "Retry %d/%d for %s: %s",
-                        attempt, max_attempts, func.__qualname__, exc,
+                        attempt,
+                        max_attempts,
+                        func.__qualname__,
+                        exc,
                     )
                     if on_retry:
                         try:

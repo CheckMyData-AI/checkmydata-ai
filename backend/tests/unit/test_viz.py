@@ -39,9 +39,7 @@ class TestText:
         assert "No data" in result["content"]
 
     def test_single_number(self):
-        result = format_text(
-            QueryResult(columns=["total"], rows=[[42]], row_count=1)
-        )
+        result = format_text(QueryResult(columns=["total"], rows=[[42]], row_count=1))
         assert result["type"] == "number"
         assert result["value"] == 42
 

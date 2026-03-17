@@ -22,12 +22,8 @@ class TestFileSplitter:
     def test_prisma_split_at_model_boundary(self):
         models = []
         for i in range(5):
-            models.append(
-                f"model Entity{i} {{\n"
-                + "  id Int @id\n" * 100
-                + "}\n"
-            )
-        preamble = "generator client {\n  provider = \"prisma-client-js\"\n}\n\n"
+            models.append(f"model Entity{i} {{\n" + "  id Int @id\n" * 100 + "}\n")
+        preamble = 'generator client {\n  provider = "prisma-client-js"\n}\n\n'
         content = preamble + "\n".join(models)
         segments = split_large_file(content, "schema.prisma", max_segment_chars=800)
         assert len(segments) >= 2
@@ -38,9 +34,7 @@ class TestFileSplitter:
         blocks = []
         for i in range(5):
             blocks.append(
-                f"export class Service{i} {{\n"
-                + f"  method{i}() {{ return {i}; }}\n" * 200
-                + "}\n"
+                f"export class Service{i} {{\n" + f"  method{i}() {{ return {i}; }}\n" * 200 + "}\n"
             )
         preamble = "import {{ Injectable }} from '@nestjs/common';\n\n"
         content = preamble + "\n".join(blocks)

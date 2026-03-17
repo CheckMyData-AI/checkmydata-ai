@@ -20,5 +20,7 @@ def get_connector(db_type: str, *, ssh_exec_mode: bool = False) -> BaseConnector
         return SSHExecConnector()
     cls = CONNECTOR_REGISTRY.get(db_type.lower())
     if cls is None:
-        raise ValueError(f"Unsupported database type: {db_type}. Available: {list(CONNECTOR_REGISTRY.keys())}")
+        raise ValueError(
+            f"Unsupported database type: {db_type}. Available: {list(CONNECTOR_REGISTRY.keys())}"
+        )
     return cls()

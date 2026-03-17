@@ -36,23 +36,14 @@ def build_project_summary(
             if entity.file_path:
                 sections.append(f"Defined in: `{entity.file_path}`")
             if entity.columns:
-                sections.append(
-                    "| Column | Type | FK | Enum Values |"
-                )
-                sections.append(
-                    "|--------|------|----|-------------|"
-                )
+                sections.append("| Column | Type | FK | Enum Values |")
+                sections.append("|--------|------|----|-------------|")
                 for col in entity.columns:
                     fk = col.fk_target if col.is_fk else ""
                     enums = ", ".join(col.enum_values[:8]) if col.enum_values else ""
-                    sections.append(
-                        f"| {col.name} | {col.col_type} | {fk} | {enums} |"
-                    )
+                    sections.append(f"| {col.name} | {col.col_type} | {fk} | {enums} |")
             if entity.relationships:
-                sections.append(
-                    "**Relationships:** "
-                    + ", ".join(entity.relationships)
-                )
+                sections.append("**Relationships:** " + ", ".join(entity.relationships))
             if entity.used_in_files:
                 sections.append(
                     f"**Used in:** {len(entity.used_in_files)} file(s) — "
@@ -90,18 +81,14 @@ def build_project_summary(
         sections.append("## Enum / Constant Definitions\n")
         for enum_def in knowledge.enums[:30]:
             vals = ", ".join(enum_def.values[:10])
-            sections.append(
-                f"- **{enum_def.name}** (`{enum_def.file_path}`): {vals}"
-            )
+            sections.append(f"- **{enum_def.name}** (`{enum_def.file_path}`): {vals}")
         sections.append("")
 
     if knowledge.service_functions:
         sections.append("## Key Service Functions\n")
         for sf in knowledge.service_functions[:20]:
             tables = ", ".join(sf["tables"])
-            sections.append(
-                f"- `{sf['name']}` in `{sf['file_path']}` → tables: {tables}"
-            )
+            sections.append(f"- `{sf['name']}` in `{sf['file_path']}` → tables: {tables}")
         sections.append("")
 
     return "\n".join(sections)

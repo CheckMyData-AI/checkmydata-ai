@@ -17,7 +17,8 @@ class TestInviteRoutes:
         """Register a user, create a project, return (owner_info, project_id)."""
         owner = await register_user(client)
         resp = await client.post(
-            "/api/projects", json={"name": "Invite Proj"},
+            "/api/projects",
+            json={"name": "Invite Proj"},
             headers=auth_headers(owner["token"]),
         )
         assert resp.status_code == 200

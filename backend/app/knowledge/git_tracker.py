@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ChangedFilesResult:
     """Separates changed/added files from deleted files."""
+
     changed: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
 
@@ -28,10 +29,7 @@ class GitTracker:
         project_id: str,
         branch: str | None = None,
     ) -> str | None:
-        stmt = (
-            select(CommitIndex)
-            .where(CommitIndex.project_id == project_id)
-        )
+        stmt = select(CommitIndex).where(CommitIndex.project_id == project_id)
         if branch:
             stmt = stmt.where(CommitIndex.branch == branch)
         stmt = stmt.order_by(CommitIndex.created_at.desc()).limit(1)
@@ -44,15 +42,16 @@ class GitTracker:
         return repo.head.commit.hexsha
 
     def get_changed_files(
-        self, repo_dir: Path, from_sha: str | None, to_sha: str,
+        self,
+        repo_dir: Path,
+        from_sha: str | None,
+        to_sha: str,
     ) -> ChangedFilesResult:
         repo = Repo(str(repo_dir))
 
         if from_sha is None:
             all_files = [
-                item.path
-                for item in repo.commit(to_sha).tree.traverse()
-                if item.type == "blob"
+                item.path for item in repo.commit(to_sha).tree.traverse() if item.type == "blob"
             ]
             return ChangedFilesResult(changed=all_files)
 
@@ -61,12 +60,11 @@ class GitTracker:
         except Exception:
             logger.warning(
                 "Could not diff %s..%s, falling back to full index",
-                from_sha, to_sha,
+                from_sha,
+                to_sha,
             )
             all_files = [
-                item.path
-                for item in repo.commit(to_sha).tree.traverse()
-                if item.type == "blob"
+                item.path for item in repo.commit(to_sha).tree.traverse() if item.type == "blob"
             ]
             return ChangedFilesResult(changed=all_files)
 
@@ -114,10 +112,7 @@ class GitTracker:
         branch: str | None = None,
     ) -> CommitIndex | None:
         """Return the full CommitIndex row for the last indexed commit."""
-        stmt = (
-            select(CommitIndex)
-            .where(CommitIndex.project_id == project_id)
-        )
+        stmt = select(CommitIndex).where(CommitIndex.project_id == project_id)
         if branch:
             stmt = stmt.where(CommitIndex.branch == branch)
         stmt = stmt.order_by(CommitIndex.created_at.desc()).limit(1)
@@ -162,6 +157,7 @@ class GitTracker:
             await session.commit()
             logger.info(
                 "Cleaned up %d old commit_index records for project %s",
-                deleted, project_id,
+                deleted,
+                project_id,
             )
         return deleted

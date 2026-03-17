@@ -11,22 +11,28 @@ class TestSSHExecConnectionCrud:
 
     async def test_create_exec_mode_connection(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "MySQL via SSH Exec",
-            "db_type": "mysql",
-            "db_host": "127.0.0.1",
-            "db_port": 3306,
-            "db_name": "testdb",
-            "db_user": "admin",
-            "db_password": "secret",
-            "ssh_host": "10.0.0.1",
-            "ssh_port": 22,
-            "ssh_user": "deploy",
-            "ssh_exec_mode": True,
-            "ssh_command_template": 'MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch',
-            "ssh_pre_commands": ["source ~/.bashrc", "export PATH=/opt/mysql/bin:$PATH"],
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "MySQL via SSH Exec",
+                "db_type": "mysql",
+                "db_host": "127.0.0.1",
+                "db_port": 3306,
+                "db_name": "testdb",
+                "db_user": "admin",
+                "db_password": "secret",
+                "ssh_host": "10.0.0.1",
+                "ssh_port": 22,
+                "ssh_user": "deploy",
+                "ssh_exec_mode": True,
+                "ssh_command_template": (
+                    'MYSQL_PWD="{db_password}" mysql -h {db_host}'
+                    " -P {db_port} -u {db_user} {db_name} --batch"
+                ),
+                "ssh_pre_commands": ["source ~/.bashrc", "export PATH=/opt/mysql/bin:$PATH"],
+            },
+        )
         assert resp.status_code == 200
         conn = resp.json()
         assert conn["ssh_exec_mode"] is True
@@ -37,14 +43,17 @@ class TestSSHExecConnectionCrud:
     async def test_create_normal_connection_defaults(self, auth_client):
         """Normal connections default to ssh_exec_mode=False."""
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "Normal PG",
-            "db_type": "postgres",
-            "db_host": "127.0.0.1",
-            "db_port": 5432,
-            "db_name": "mydb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "Normal PG",
+                "db_type": "postgres",
+                "db_host": "127.0.0.1",
+                "db_port": 5432,
+                "db_name": "mydb",
+            },
+        )
         assert resp.status_code == 200
         conn = resp.json()
         assert conn["ssh_exec_mode"] is False
@@ -52,23 +61,29 @@ class TestSSHExecConnectionCrud:
 
     async def test_update_to_exec_mode(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "Will Switch",
-            "db_type": "mysql",
-            "db_host": "127.0.0.1",
-            "db_port": 3306,
-            "db_name": "testdb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "Will Switch",
+                "db_type": "mysql",
+                "db_host": "127.0.0.1",
+                "db_port": 3306,
+                "db_name": "testdb",
+            },
+        )
         cid = resp.json()["id"]
         assert resp.json()["ssh_exec_mode"] is False
 
-        resp = await auth_client.patch(f"/api/connections/{cid}", json={
-            "ssh_exec_mode": True,
-            "ssh_host": "jump.example.com",
-            "ssh_user": "deployer",
-            "ssh_command_template": "mysql -h {db_host} --batch",
-        })
+        resp = await auth_client.patch(
+            f"/api/connections/{cid}",
+            json={
+                "ssh_exec_mode": True,
+                "ssh_host": "jump.example.com",
+                "ssh_user": "deployer",
+                "ssh_command_template": "mysql -h {db_host} --batch",
+            },
+        )
         assert resp.status_code == 200
         updated = resp.json()
         assert updated["ssh_exec_mode"] is True
@@ -77,16 +92,19 @@ class TestSSHExecConnectionCrud:
     async def test_ssh_user_in_response(self, auth_client):
         """Verify ssh_user is returned in the connection response (Gap 8 fix)."""
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "With SSH User",
-            "db_type": "mysql",
-            "db_host": "127.0.0.1",
-            "db_port": 3306,
-            "db_name": "testdb",
-            "ssh_host": "10.0.0.1",
-            "ssh_user": "my-ssh-user",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "With SSH User",
+                "db_type": "mysql",
+                "db_host": "127.0.0.1",
+                "db_port": 3306,
+                "db_name": "testdb",
+                "ssh_host": "10.0.0.1",
+                "ssh_user": "my-ssh-user",
+            },
+        )
         assert resp.status_code == 200
         conn = resp.json()
         assert conn["ssh_user"] == "my-ssh-user"
@@ -94,14 +112,17 @@ class TestSSHExecConnectionCrud:
     async def test_test_ssh_no_host(self, auth_client):
         """Test SSH endpoint should return error when no SSH host configured."""
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "No SSH",
-            "db_type": "postgres",
-            "db_host": "127.0.0.1",
-            "db_port": 5432,
-            "db_name": "testdb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "No SSH",
+                "db_type": "postgres",
+                "db_host": "127.0.0.1",
+                "db_port": 5432,
+                "db_name": "testdb",
+            },
+        )
         cid = resp.json()["id"]
 
         resp = await auth_client.post(f"/api/connections/{cid}/test-ssh")

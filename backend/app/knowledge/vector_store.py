@@ -84,7 +84,9 @@ class VectorStore:
         return docs
 
     def delete_by_source_path(
-        self, project_id: str, source_path: str,
+        self,
+        project_id: str,
+        source_path: str,
     ) -> int:
         """Delete all chunks whose metadata.source_path matches *source_path*.
 
@@ -101,13 +103,17 @@ class VectorStore:
                 collection.delete(ids=ids_to_delete)
                 logger.info(
                     "Deleted %d stale chunks for source_path=%s in project %s",
-                    len(ids_to_delete), source_path, project_id,
+                    len(ids_to_delete),
+                    source_path,
+                    project_id,
                 )
             return len(ids_to_delete)
         except Exception:
             logger.warning(
                 "Failed to delete chunks for source_path=%s in project %s",
-                source_path, project_id, exc_info=True,
+                source_path,
+                project_id,
+                exc_info=True,
             )
             return 0
 

@@ -76,12 +76,22 @@ class TestOrchestratorConnectorKey:
 
     def test_different_ssh_different_keys(self, orchestrator):
         config_a = ConnectionConfig(
-            db_type="postgres", db_host="db", db_port=5432, db_name="mydb",
-            ssh_host="jump1.example.com", ssh_port=22, ssh_user="a",
+            db_type="postgres",
+            db_host="db",
+            db_port=5432,
+            db_name="mydb",
+            ssh_host="jump1.example.com",
+            ssh_port=22,
+            ssh_user="a",
         )
         config_b = ConnectionConfig(
-            db_type="postgres", db_host="db", db_port=5432, db_name="mydb",
-            ssh_host="jump2.example.com", ssh_port=22, ssh_user="b",
+            db_type="postgres",
+            db_host="db",
+            db_port=5432,
+            db_name="mydb",
+            ssh_host="jump2.example.com",
+            ssh_port=22,
+            ssh_user="b",
         )
         assert orchestrator._connector_key(config_a) != orchestrator._connector_key(config_b)
 
@@ -89,24 +99,45 @@ class TestOrchestratorConnectorKey:
 class TestOrchestratorProcessQuestion:
     @pytest.mark.asyncio
     async def test_successful_query(self, orchestrator, mock_llm_router, config):
-        mock_llm_router.complete = AsyncMock(side_effect=[
-            LLMResponse(
-                content="",
-                tool_calls=[ToolCall(id="1", name="execute_query", arguments={"query": "SELECT 1", "explanation": "test"})],
-            ),
-            LLMResponse(
-                content="",
-                tool_calls=[ToolCall(id="2", name="recommend_visualization", arguments={
-                    "viz_type": "table", "config": "{}", "summary": "Result is 1"
-                })],
-            ),
-        ])
+        mock_llm_router.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="1",
+                            name="execute_query",
+                            arguments={"query": "SELECT 1", "explanation": "test"},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="2",
+                            name="recommend_visualization",
+                            arguments={
+                                "viz_type": "table",
+                                "config": "{}",
+                                "summary": "Result is 1",
+                            },
+                        )
+                    ],
+                ),
+            ]
+        )
 
         mock_connector = AsyncMock()
         mock_connector.connect = AsyncMock()
-        mock_connector.execute_query = AsyncMock(return_value=QueryResult(
-            columns=["?column?"], rows=[[1]], row_count=1, execution_time_ms=1.0,
-        ))
+        mock_connector.execute_query = AsyncMock(
+            return_value=QueryResult(
+                columns=["?column?"],
+                rows=[[1]],
+                row_count=1,
+                execution_time_ms=1.0,
+            )
+        )
         mock_connector.introspect_schema = AsyncMock(return_value=SchemaInfo(db_type="postgres"))
 
         with patch("app.core.orchestrator.get_connector", return_value=mock_connector):
@@ -122,12 +153,18 @@ class TestOrchestratorProcessQuestion:
 
     @pytest.mark.asyncio
     async def test_safety_blocks_dangerous_query(self, orchestrator, mock_llm_router, config):
-        mock_llm_router.complete = AsyncMock(return_value=LLMResponse(
-            content="",
-            tool_calls=[ToolCall(id="1", name="execute_query", arguments={
-                "query": "DROP TABLE users", "explanation": "drop"
-            })],
-        ))
+        mock_llm_router.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="execute_query",
+                        arguments={"query": "DROP TABLE users", "explanation": "drop"},
+                    )
+                ],
+            )
+        )
 
         mock_connector = AsyncMock()
         mock_connector.introspect_schema = AsyncMock(return_value=SchemaInfo(db_type="postgres"))
@@ -144,9 +181,11 @@ class TestOrchestratorProcessQuestion:
 
     @pytest.mark.asyncio
     async def test_no_query_generated(self, orchestrator, mock_llm_router, config):
-        mock_llm_router.complete = AsyncMock(return_value=LLMResponse(
-            content="I cannot generate a query for this.",
-        ))
+        mock_llm_router.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="I cannot generate a query for this.",
+            )
+        )
 
         mock_connector = AsyncMock()
         mock_connector.introspect_schema = AsyncMock(return_value=SchemaInfo(db_type="postgres"))

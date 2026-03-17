@@ -36,7 +36,9 @@ async def db():
 
 
 async def _make_user(db: AsyncSession, email: str | None = None) -> User:
-    u = User(email=email or f"u-{uuid.uuid4().hex[:8]}@test.com", password_hash="x", display_name="T")
+    u = User(
+        email=email or f"u-{uuid.uuid4().hex[:8]}@test.com", password_hash="x", display_name="T"
+    )
     db.add(u)
     await db.commit()
     await db.refresh(u)

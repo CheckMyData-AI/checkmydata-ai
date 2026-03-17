@@ -69,7 +69,10 @@ async def create_session(
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
     session = await _chat_svc.create_session(
-        db, body.project_id, body.title, user_id=user["user_id"],
+        db,
+        body.project_id,
+        body.title,
+        user_id=user["user_id"],
     )
     return session
 
@@ -137,7 +140,11 @@ async def generate_session_title(
             messages=[
                 LLMMessage(
                     role="system",
-                    content="Generate a short title (max 6 words) for a database chat session based on the user's first question. Reply with ONLY the title, no quotes.",
+                    content=(
+                        "Generate a short title (max 6 words) for a database chat session"
+                        " based on the user's first question."
+                        " Reply with ONLY the title, no quotes."
+                    ),
                 ),
                 LLMMessage(role="user", content=first_user[:300]),
             ],
@@ -210,12 +217,8 @@ async def get_feedback_analytics(
     stmt = (
         select(
             func.count().label("total_rated"),
-            func.sum(
-                (ChatMessageModel.user_rating == 1).cast(int)
-            ).label("positive"),
-            func.sum(
-                (ChatMessageModel.user_rating == -1).cast(int)
-            ).label("negative"),
+            func.sum((ChatMessageModel.user_rating == 1).cast(int)).label("positive"),
+            func.sum((ChatMessageModel.user_rating == -1).cast(int)).label("negative"),
         )
         .join(ChatSession, ChatMessageModel.session_id == ChatSession.id)
         .where(
@@ -283,7 +286,9 @@ async def ask(
     session_id = body.session_id
     if not session_id:
         chat_session = await _chat_svc.create_session(
-            db, body.project_id, user_id=user["user_id"],
+            db,
+            body.project_id,
+            user_id=user["user_id"],
         )
         session_id = chat_session.id
 
@@ -328,9 +333,7 @@ async def ask(
             "error": result.error,
             "workflow_id": result.workflow_id,
             "row_count": result.results.row_count if result.results else None,
-            "execution_time_ms": (
-                result.results.execution_time_ms if result.results else None
-            ),
+            "execution_time_ms": (result.results.execution_time_ms if result.results else None),
             "rag_sources": rag_source_dicts,
             "token_usage": result.token_usage or None,
             "response_type": result.response_type,
@@ -383,7 +386,9 @@ async def ask_stream(
     session_id = body.session_id
     if not session_id:
         chat_session = await _chat_svc.create_session(
-            db, body.project_id, user_id=user["user_id"],
+            db,
+            body.project_id,
+            user_id=user["user_id"],
         )
         session_id = chat_session.id
 
@@ -460,16 +465,17 @@ async def ask_stream(
         ]
 
         await _chat_svc.add_message(
-            db, session_id, "assistant", result.answer,
+            db,
+            session_id,
+            "assistant",
+            result.answer,
             metadata={
                 "query": result.query,
                 "viz_type": result.viz_type,
                 "error": result.error,
                 "workflow_id": result.workflow_id,
                 "row_count": result.results.row_count if result.results else None,
-                "execution_time_ms": (
-                    result.results.execution_time_ms if result.results else None
-                ),
+                "execution_time_ms": (result.results.execution_time_ms if result.results else None),
                 "rag_sources": stream_rag,
                 "token_usage": result.token_usage or None,
                 "response_type": result.response_type,
@@ -553,13 +559,15 @@ async def chat_websocket(
                 if wf_id and event.workflow_id != wf_id:
                     continue
                 msg_type = "tool_call" if event.step.startswith("tool:") else "step"
-                await websocket.send_json({
-                    "type": msg_type,
-                    "step": event.step,
-                    "status": event.status,
-                    "detail": event.detail,
-                    "elapsed_ms": event.elapsed_ms,
-                })
+                await websocket.send_json(
+                    {
+                        "type": msg_type,
+                        "step": event.step,
+                        "status": event.status,
+                        "detail": event.detail,
+                        "elapsed_ms": event.elapsed_ms,
+                    }
+                )
                 if event.step == "pipeline_end":
                     break
         except (TimeoutError, Exception):
@@ -583,14 +591,18 @@ async def chat_websocket(
                 config = await _conn_svc.to_config(db, conn_model)
 
             chat_session = await _chat_svc.create_session(
-                db, project_id, user_id=user_id,
+                db,
+                project_id,
+                user_id=user_id,
             )
             session_id = chat_session.id
 
-        await websocket.send_json({
-            "type": "session_created",
-            "session_id": session_id,
-        })
+        await websocket.send_json(
+            {
+                "type": "session_created",
+                "session_id": session_id,
+            }
+        )
 
         while True:
             data = await websocket.receive_json()
@@ -631,7 +643,10 @@ async def chat_websocket(
 
                 async with async_session_factory() as db:
                     await _chat_svc.add_message(
-                        db, session_id, "assistant", result.answer,
+                        db,
+                        session_id,
+                        "assistant",
+                        result.answer,
                         metadata={
                             "query": result.query,
                             "viz_type": result.viz_type,
@@ -646,18 +661,20 @@ async def chat_websocket(
                         },
                     )
 
-                await websocket.send_json({
-                    "type": "response",
-                    "answer": result.answer,
-                    "query": result.query,
-                    "query_explanation": result.query_explanation,
-                    "visualization": viz_data,
-                    "error": result.error,
-                    "workflow_id": result.workflow_id,
-                    "response_type": result.response_type,
-                    "rag_sources": rag_dicts,
-                    "staleness_warning": result.staleness_warning,
-                })
+                await websocket.send_json(
+                    {
+                        "type": "response",
+                        "answer": result.answer,
+                        "query": result.query,
+                        "query_explanation": result.query_explanation,
+                        "visualization": viz_data,
+                        "error": result.error,
+                        "workflow_id": result.workflow_id,
+                        "response_type": result.response_type,
+                        "rag_sources": rag_dicts,
+                        "staleness_warning": result.staleness_warning,
+                    }
+                )
             finally:
                 if not relay_task.done():
                     relay_task.cancel()

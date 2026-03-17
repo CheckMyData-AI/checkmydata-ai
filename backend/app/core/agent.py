@@ -87,6 +87,7 @@ class ConversationalAgent:
 
             if chat_history:
                 from app.config import settings as app_settings
+
                 chat_history = await trim_history(
                     chat_history,
                     max_tokens=app_settings.max_history_tokens,
@@ -153,9 +154,7 @@ class ConversationalAgent:
                     break
 
                 assistant_content = llm_resp.content or ""
-                messages.append(
-                    Message(role="assistant", content=assistant_content)
-                )
+                messages.append(Message(role="assistant", content=assistant_content))
 
                 for tc in llm_resp.tool_calls:
                     async with self._tracker.step(
@@ -163,11 +162,13 @@ class ConversationalAgent:
                     ):
                         result_text = await executor.execute(tc, wf_id)
 
-                    tool_call_log.append({
-                        "tool": tc.name,
-                        "arguments": tc.arguments,
-                        "result_preview": result_text[:200],
-                    })
+                    tool_call_log.append(
+                        {
+                            "tool": tc.name,
+                            "arguments": tc.arguments,
+                            "result_preview": result_text[:200],
+                        }
+                    )
 
                     messages.append(
                         Message(
@@ -236,7 +237,7 @@ class ConversationalAgent:
     # ------------------------------------------------------------------
 
     def _has_knowledge_base(self, project_id: str) -> bool:
-        """Quick heuristic: check whether the project's ChromaDB collection exists and has documents."""
+        """Check whether the project's ChromaDB collection has documents."""
         try:
             collection = self._vector_store.get_or_create_collection(project_id)
             return collection.count() > 0

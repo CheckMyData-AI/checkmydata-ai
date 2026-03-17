@@ -17,12 +17,9 @@ class PreValidator:
 
     def __init__(self, schema: SchemaInfo):
         self._schema = schema
-        self._table_names: set[str] = {
-            t.name.lower() for t in schema.tables
-        }
+        self._table_names: set[str] = {t.name.lower() for t in schema.tables}
         self._column_map: dict[str, set[str]] = {
-            t.name.lower(): {c.name.lower() for c in t.columns}
-            for t in schema.tables
+            t.name.lower(): {c.name.lower() for c in t.columns} for t in schema.tables
         }
 
     def validate(self, query: str, db_type: str) -> ValidationResult:
@@ -52,27 +49,23 @@ class PreValidator:
         for col, qualifier in pairs:
             if qualifier:
                 resolved_table = table_alias_map.get(
-                    qualifier.lower(), qualifier.lower(),
+                    qualifier.lower(),
+                    qualifier.lower(),
                 )
                 if resolved_table in self._column_map:
                     if col.lower() not in self._column_map[resolved_table]:
                         similar = find_similar_columns(col, self._schema)
-                        table_cols = [
-                            s[1] for s in similar
-                            if s[0].lower() == resolved_table
-                        ]
+                        table_cols = [s[1] for s in similar if s[0].lower() == resolved_table]
                         all_suggestions = table_cols or [s[1] for s in similar[:3]]
                         return ValidationResult(
                             is_valid=False,
                             error=QueryError(
                                 error_type=QueryErrorType.COLUMN_NOT_FOUND,
                                 message=(
-                                    f"Column '{col}' does not exist in table "
-                                    f"'{resolved_table}'"
+                                    f"Column '{col}' does not exist in table '{resolved_table}'"
                                 ),
                                 raw_error=(
-                                    f"pre_validation: column '{col}' not in "
-                                    f"'{resolved_table}'"
+                                    f"pre_validation: column '{col}' not in '{resolved_table}'"
                                 ),
                                 is_retryable=True,
                                 suggested_columns=all_suggestions,
@@ -88,10 +81,13 @@ class PreValidator:
         return ValidationResult(is_valid=True)
 
     def _resolve_aliases(
-        self, query: str, tables: list[str],
+        self,
+        query: str,
+        tables: list[str],
     ) -> dict[str, str]:
         """Build alias -> real_table map from query."""
         import re
+
         alias_map: dict[str, str] = {}
         for table in tables:
             pattern = re.compile(
@@ -101,9 +97,21 @@ class PreValidator:
             for m in pattern.finditer(query):
                 alias = m.group(1).lower()
                 if alias.upper() not in {
-                    "ON", "WHERE", "SET", "JOIN", "INNER", "LEFT",
-                    "RIGHT", "CROSS", "GROUP", "ORDER", "LIMIT",
-                    "HAVING", "UNION", "SELECT", "FROM",
+                    "ON",
+                    "WHERE",
+                    "SET",
+                    "JOIN",
+                    "INNER",
+                    "LEFT",
+                    "RIGHT",
+                    "CROSS",
+                    "GROUP",
+                    "ORDER",
+                    "LIMIT",
+                    "HAVING",
+                    "UNION",
+                    "SELECT",
+                    "FROM",
                 }:
                     alias_map[alias] = table.lower()
             alias_map[table.lower()] = table.lower()
@@ -129,14 +137,11 @@ class PreValidator:
                     error=QueryError(
                         error_type=QueryErrorType.AMBIGUOUS_COLUMN,
                         message=(
-                            f"Column '{col}' is ambiguous — found in tables: "
-                            f"{', '.join(found_in)}"
+                            f"Column '{col}' is ambiguous — found in tables: {', '.join(found_in)}"
                         ),
                         raw_error=f"pre_validation: ambiguous column '{col}'",
                         is_retryable=True,
-                        schema_hint=(
-                            f"Qualify the column as table.{col} to resolve."
-                        ),
+                        schema_hint=(f"Qualify the column as table.{col} to resolve."),
                     ),
                 )
         return None

@@ -17,13 +17,16 @@ logger = logging.getLogger(__name__)
 
 ORM_PATTERNS = {
     "sqlalchemy": re.compile(
-        r"(?:Column|mapped_column|relationship|ForeignKey)", re.MULTILINE,
+        r"(?:Column|mapped_column|relationship|ForeignKey)",
+        re.MULTILINE,
     ),
     "django": re.compile(
-        r"class\s+\w+\(.*models\.Model\)", re.MULTILINE,
+        r"class\s+\w+\(.*models\.Model\)",
+        re.MULTILINE,
     ),
     "tortoise": re.compile(
-        r"class\s+\w+\(.*Model\).*fields\.", re.DOTALL,
+        r"class\s+\w+\(.*Model\).*fields\.",
+        re.DOTALL,
     ),
     "prisma": re.compile(r"model\s+\w+\s*\{", re.MULTILINE),
     "typeorm": re.compile(
@@ -58,26 +61,79 @@ ORM_PATTERNS = {
 
 SQL_FILE_EXTENSIONS = {".sql"}
 MIGRATION_DIRS = {
-    "migrations", "alembic", "migrate", "db/migrate",
-    "prisma/migrations", "drizzle",
+    "migrations",
+    "alembic",
+    "migrate",
+    "db/migrate",
+    "prisma/migrations",
+    "drizzle",
 }
 
 DB_RELEVANT_EXTENSIONS = {
-    ".py", ".js", ".ts", ".tsx", ".jsx",
-    ".rb", ".java", ".go", ".rs", ".kt",
-    ".sql", ".prisma", ".graphql",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".rb",
+    ".java",
+    ".go",
+    ".rs",
+    ".kt",
+    ".sql",
+    ".prisma",
+    ".graphql",
 }
 
 BINARY_EXTENSIONS = {
-    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
-    ".pyc", ".pyo", ".class", ".jar", ".war",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar", ".7z",
-    ".woff", ".woff2", ".ttf", ".otf", ".eot",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".db", ".sqlite", ".sqlite3",
-    ".wasm", ".map",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".o",
+    ".a",
+    ".lib",
+    ".pyc",
+    ".pyo",
+    ".class",
+    ".jar",
+    ".war",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".svg",
+    ".webp",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".rar",
+    ".7z",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".wasm",
+    ".map",
 }
 
 
@@ -91,6 +147,7 @@ def is_binary_file(path: Path) -> bool:
         return b"\x00" in chunk
     except Exception:
         return True
+
 
 RAW_SQL_IN_CODE = re.compile(
     r"(?:execute|query|raw|text)\s*\(\s*"
@@ -155,14 +212,17 @@ class RepoAnalyzer:
         try:
             if ssh_key_content:
                 import asyncssh
+
                 parsed = asyncssh.import_private_key(
-                    ssh_key_content, ssh_key_passphrase,
+                    ssh_key_content,
+                    ssh_key_passphrase,
                 )
                 unprotected_pem = parsed.export_private_key("openssh").decode()
 
                 try:
                     agent_out = subprocess.check_output(
-                        ["ssh-agent", "-s"], text=True,
+                        ["ssh-agent", "-s"],
+                        text=True,
                     )
                     for line in agent_out.splitlines():
                         if "SSH_AUTH_SOCK" in line:
@@ -181,9 +241,7 @@ class RepoAnalyzer:
                         )
                         proc.communicate(input=unprotected_pem.encode())
                         env["SSH_AUTH_SOCK"] = agent_sock
-                        env["GIT_SSH_COMMAND"] = (
-                            "ssh -o StrictHostKeyChecking=no"
-                        )
+                        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
                 except Exception:
                     logger.debug(
                         "ssh-agent failed, falling back to temp file",
@@ -197,9 +255,7 @@ class RepoAnalyzer:
                     with os.fdopen(fd, "w") as f:
                         f.write(unprotected_pem)
                     os.chmod(temp_key_file, 0o600)
-                    env["GIT_SSH_COMMAND"] = (
-                        f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
-                    )
+                    env["GIT_SSH_COMMAND"] = f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
 
             result = subprocess.run(
                 ["git", "ls-remote", "--heads", repo_url],
@@ -227,7 +283,7 @@ class RepoAnalyzer:
                 if len(parts) == 2:
                     ref = parts[1]
                     if ref.startswith("refs/heads/"):
-                        branches.append(ref[len("refs/heads/"):])
+                        branches.append(ref[len("refs/heads/") :])
 
             branches.sort()
 
@@ -288,14 +344,17 @@ class RepoAnalyzer:
         try:
             if ssh_key_content:
                 import asyncssh
+
                 parsed = asyncssh.import_private_key(
-                    ssh_key_content, ssh_key_passphrase,
+                    ssh_key_content,
+                    ssh_key_passphrase,
                 )
                 unprotected_pem = parsed.export_private_key("openssh").decode()
 
                 try:
                     agent_out = subprocess.check_output(
-                        ["ssh-agent", "-s"], text=True,
+                        ["ssh-agent", "-s"],
+                        text=True,
                     )
                     for line in agent_out.splitlines():
                         if "SSH_AUTH_SOCK" in line:
@@ -331,9 +390,7 @@ class RepoAnalyzer:
                     with os.fdopen(fd, "w") as f:
                         f.write(unprotected_pem)
                     os.chmod(temp_key_file, 0o600)
-                    env["GIT_SSH_COMMAND"] = (
-                        f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
-                    )
+                    env["GIT_SSH_COMMAND"] = f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
 
             if repo_dir.exists() and (repo_dir / ".git").exists():
                 repo = Repo(str(repo_dir))
@@ -385,9 +442,8 @@ class RepoAnalyzer:
             model_set = set(profile.model_dirs)
             file_paths = sorted(
                 file_paths,
-                key=lambda fp: not any(
-                    str(fp.relative_to(repo_dir)).startswith(md)
-                    for md in model_set
+                key=lambda fp: (
+                    not any(str(fp.relative_to(repo_dir)).startswith(md) for md in model_set)
                 ),
             )
 
@@ -467,7 +523,8 @@ class RepoAnalyzer:
         if is_migration:
             tables = re.findall(
                 r"(?:create_table|CreateTable|CREATE TABLE)\s+['\"`]?(\w+)",
-                content, re.IGNORECASE,
+                content,
+                re.IGNORECASE,
             )
             results.append(
                 ExtractedSchema(
@@ -494,12 +551,14 @@ class RepoAnalyzer:
                     r'create_table\s+["\'](\w+)',
                     content,
                 )
-                results.append(ExtractedSchema(
-                    file_path=rel_path,
-                    doc_type="raw_sql",
-                    content=content,
-                    tables=tables,
-                ))
+                results.append(
+                    ExtractedSchema(
+                        file_path=rel_path,
+                        doc_type="raw_sql",
+                        content=content,
+                        tables=tables,
+                    )
+                )
                 return results
 
         if profile and "rails" in profile.frameworks:
@@ -508,12 +567,14 @@ class RepoAnalyzer:
                     r'create_table\s+["\'](\w+)',
                     content,
                 )
-                results.append(ExtractedSchema(
-                    file_path=rel_path,
-                    doc_type="raw_sql",
-                    content=content,
-                    tables=tables,
-                ))
+                results.append(
+                    ExtractedSchema(
+                        file_path=rel_path,
+                        doc_type="raw_sql",
+                        content=content,
+                        tables=tables,
+                    )
+                )
                 return results
 
         for orm_name, pattern in ORM_PATTERNS.items():

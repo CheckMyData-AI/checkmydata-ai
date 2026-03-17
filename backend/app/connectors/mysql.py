@@ -127,7 +127,9 @@ class MySQLConnector(BaseConnector):
                     columns = [
                         ColumnInfo(
                             name=c.get("COLUMN_NAME", c.get("column_name", "")),
-                            data_type=c.get("COLUMN_TYPE", c.get("column_type", c.get("DATA_TYPE", ""))),
+                            data_type=c.get(
+                                "COLUMN_TYPE", c.get("column_type", c.get("DATA_TYPE", ""))
+                            ),
                             is_nullable=c.get("IS_NULLABLE", c.get("is_nullable", "YES")) == "YES",
                             is_primary_key=c.get("COLUMN_KEY", c.get("column_key", "")) == "PRI",
                             default=c.get("COLUMN_DEFAULT", c.get("column_default")),
@@ -149,8 +151,12 @@ class MySQLConnector(BaseConnector):
                     foreign_keys = [
                         ForeignKeyInfo(
                             column=fk.get("COLUMN_NAME", fk.get("column_name", "")),
-                            references_table=fk.get("REFERENCED_TABLE_NAME", fk.get("referenced_table_name", "")),
-                            references_column=fk.get("REFERENCED_COLUMN_NAME", fk.get("referenced_column_name", "")),
+                            references_table=fk.get(
+                                "REFERENCED_TABLE_NAME", fk.get("referenced_table_name", "")
+                            ),
+                            references_column=fk.get(
+                                "REFERENCED_COLUMN_NAME", fk.get("referenced_column_name", "")
+                            ),
                         )
                         for fk in fk_rows
                     ]
@@ -178,14 +184,16 @@ class MySQLConnector(BaseConnector):
                         for name, (cols, unique) in idx_map.items()
                     ]
 
-                    tables.append(TableInfo(
-                        name=tname,
-                        columns=columns,
-                        foreign_keys=foreign_keys,
-                        indexes=indexes,
-                        row_count=int(approx_rows) if approx_rows is not None else None,
-                        comment=table_comment,
-                    ))
+                    tables.append(
+                        TableInfo(
+                            name=tname,
+                            columns=columns,
+                            foreign_keys=foreign_keys,
+                            indexes=indexes,
+                            row_count=int(approx_rows) if approx_rows is not None else None,
+                            comment=table_comment,
+                        )
+                    )
 
         return SchemaInfo(tables=tables, db_type=self.db_type, db_name=db_name)
 

@@ -11,19 +11,28 @@ class CustomRule(Base):
     __tablename__ = "custom_rules"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     project_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True, index=True,
+        String(36),
+        nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="markdown",
+        String(20),
+        nullable=False,
+        default="markdown",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(),
+        DateTime,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(),
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

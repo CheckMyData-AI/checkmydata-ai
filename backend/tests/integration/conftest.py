@@ -75,11 +75,14 @@ async def client(db_session: AsyncSession):
 async def auth_client(client: AsyncClient):
     """Authenticated client — registers a fresh user and sets the Bearer header."""
     email = f"test-{uuid.uuid4().hex[:8]}@test.com"
-    resp = await client.post("/api/auth/register", json={
-        "email": email,
-        "password": "testpass123",
-        "display_name": "Test User",
-    })
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": "testpass123",
+            "display_name": "Test User",
+        },
+    )
     assert resp.status_code == 200, f"Registration failed: {resp.text}"
     token = resp.json()["token"]
     client.headers["Authorization"] = f"Bearer {token}"
@@ -90,10 +93,13 @@ async def auth_client(client: AsyncClient):
 async def register_user(client: AsyncClient, email: str | None = None) -> dict:
     """Helper: register a user and return {token, user_id, email}."""
     email = email or f"user-{uuid.uuid4().hex[:8]}@test.com"
-    resp = await client.post("/api/auth/register", json={
-        "email": email,
-        "password": "testpass123",
-    })
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": "testpass123",
+        },
+    )
     assert resp.status_code == 200
     data = resp.json()
     return {"token": data["token"], "user_id": data["user"]["id"], "email": email}

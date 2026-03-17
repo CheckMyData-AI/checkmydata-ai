@@ -28,7 +28,7 @@ class TestPostgresClassification:
 
     def test_syntax_error(self):
         err = self.clf.classify(
-            "ERROR: syntax error at or near \"SELCT\"",
+            'ERROR: syntax error at or near "SELCT"',
             "postgresql",
         )
         assert err.error_type == QueryErrorType.SYNTAX_ERROR

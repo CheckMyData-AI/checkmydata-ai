@@ -10,9 +10,14 @@ class TestDocGenerator:
     @pytest.mark.asyncio
     async def test_generate_returns_llm_output(self):
         mock_router = MagicMock()
-        mock_router.complete = AsyncMock(return_value=LLMResponse(
-            content="## users\nStores user accounts.\n\n| Column | Description |\n|---|---|\n| id | Primary key |",
-        ))
+        mock_router.complete = AsyncMock(
+            return_value=LLMResponse(
+                content=(
+                    "## users\nStores user accounts.\n\n"
+                    "| Column | Description |\n|---|---|\n| id | Primary key |"
+                ),
+            )
+        )
         gen = DocGenerator(llm_router=mock_router)
 
         result = await gen.generate(

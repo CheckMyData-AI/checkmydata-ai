@@ -51,7 +51,10 @@ class TestCustomRules:
         assert context == ""
 
     def test_project_rules_dir(self):
-        with tempfile.TemporaryDirectory() as global_dir, tempfile.TemporaryDirectory() as project_dir:
+        with (
+            tempfile.TemporaryDirectory() as global_dir,
+            tempfile.TemporaryDirectory() as project_dir,
+        ):
             (Path(global_dir) / "global.md").write_text("Global rule")
             (Path(project_dir) / "project.md").write_text("Project rule")
 

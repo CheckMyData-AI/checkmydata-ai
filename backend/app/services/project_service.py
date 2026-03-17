@@ -1,8 +1,13 @@
+import logging
+
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.project import Project
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -40,6 +45,11 @@ class ProjectService:
         project = await self.get(session, project_id)
         if not project:
             return False
-        await session.delete(project)
-        await session.commit()
+        try:
+            await session.delete(project)
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.error("Cannot delete project %s: still referenced by child rows", project_id)
+            raise
         return True

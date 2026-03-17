@@ -48,15 +48,21 @@ class TestProjectKnowledgeSerialization:
             writers=["services/auth.py"],
             orm_refs=["models/user.py"],
         )
-        pk.enums.append(EnumDefinition(
-            name="Status", values=["active", "inactive"], file_path="enums.py",
-        ))
-        pk.service_functions.append({
-            "name": "create_user",
-            "file_path": "services/auth.py",
-            "tables": ["users"],
-            "snippet": "def create_user(): pass",
-        })
+        pk.enums.append(
+            EnumDefinition(
+                name="Status",
+                values=["active", "inactive"],
+                file_path="enums.py",
+            )
+        )
+        pk.service_functions.append(
+            {
+                "name": "create_user",
+                "file_path": "services/auth.py",
+                "tables": ["users"],
+                "snippet": "def create_user(): pass",
+            }
+        )
 
         raw = pk.to_json()
         restored = ProjectKnowledge.from_json(raw)
@@ -75,7 +81,8 @@ class TestProjectKnowledgeSerialization:
         pk = ProjectKnowledge()
         pk.table_usage["orphan"] = TableUsage(table_name="orphan")
         pk.table_usage["active"] = TableUsage(
-            table_name="active", readers=["some.py"],
+            table_name="active",
+            readers=["some.py"],
         )
         assert "orphan" in pk.dead_tables
         assert "active" not in pk.dead_tables
@@ -123,25 +130,37 @@ class TestIncrementalUpdateWithDeletedFiles:
         return d
 
     def test_deleted_file_entities_removed(self):
-        repo = self._make_repo({
-            "models/order.py": "class Order: pass\n",
-        })
+        repo = self._make_repo(
+            {
+                "models/order.py": "class Order: pass\n",
+            }
+        )
         cached = ProjectKnowledge()
         cached.entities["User"] = EntityInfo(
-            name="User", table_name="users", file_path="models/user.py",
+            name="User",
+            table_name="users",
+            file_path="models/user.py",
         )
         cached.entities["Order"] = EntityInfo(
-            name="Order", table_name="orders", file_path="models/order.py",
+            name="Order",
+            table_name="orders",
+            file_path="models/order.py",
         )
-        cached.enums.append(EnumDefinition(
-            name="UserStatus", values=["active"], file_path="models/user.py",
-        ))
-        cached.service_functions.append({
-            "name": "register_user",
-            "file_path": "models/user.py",
-            "tables": ["users"],
-            "snippet": "...",
-        })
+        cached.enums.append(
+            EnumDefinition(
+                name="UserStatus",
+                values=["active"],
+                file_path="models/user.py",
+            )
+        )
+        cached.service_functions.append(
+            {
+                "name": "register_user",
+                "file_path": "models/user.py",
+                "tables": ["users"],
+                "snippet": "...",
+            }
+        )
 
         knowledge = build_project_knowledge(
             repo,
@@ -180,19 +199,24 @@ class TestIncrementalUpdateWithDeletedFiles:
         assert "models/user.py" not in usage.writers
 
     def test_no_deleted_files_unchanged_behavior(self):
-        repo = self._make_repo({
-            "models/user.py": "class User: pass\n",
-        })
+        repo = self._make_repo(
+            {
+                "models/user.py": "class User: pass\n",
+            }
+        )
         cached = ProjectKnowledge()
         cached.entities["User"] = EntityInfo(
-            name="User", file_path="models/user.py",
+            name="User",
+            file_path="models/user.py",
         )
-        cached.service_functions.append({
-            "name": "old_func",
-            "file_path": "services/old.py",
-            "tables": [],
-            "snippet": "...",
-        })
+        cached.service_functions.append(
+            {
+                "name": "old_func",
+                "file_path": "services/old.py",
+                "tables": [],
+                "snippet": "...",
+            }
+        )
 
         knowledge = build_project_knowledge(
             repo,

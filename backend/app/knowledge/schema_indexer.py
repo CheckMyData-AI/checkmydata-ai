@@ -13,7 +13,10 @@ class SchemaIndexer:
         return await connector.introspect_schema()
 
     async def fetch_sample_data(
-        self, connector: BaseConnector, schema: SchemaInfo, limit: int = 3,
+        self,
+        connector: BaseConnector,
+        schema: SchemaInfo,
+        limit: int = 3,
     ) -> dict[str, QueryResult]:
         """Fetch sample rows per table (best-effort, swallows errors)."""
         samples: dict[str, QueryResult] = {}
@@ -27,7 +30,9 @@ class SchemaIndexer:
         return samples
 
     def append_sample_data_context(
-        self, context: str, samples: dict[str, QueryResult],
+        self,
+        context: str,
+        samples: dict[str, QueryResult],
     ) -> str:
         if not samples:
             return context
@@ -63,8 +68,7 @@ class SchemaIndexer:
         for table in schema.tables:
             for fk in table.foreign_keys:
                 all_fks.append(
-                    f"  {table.name}.{fk.column} -> "
-                    f"{fk.references_table}.{fk.references_column}"
+                    f"  {table.name}.{fk.column} -> {fk.references_table}.{fk.references_column}"
                 )
 
         if all_fks:
@@ -95,8 +99,7 @@ class SchemaIndexer:
             default = str(col.default) if col.default else ""
             comment = col.comment or ""
             lines.append(
-                f"| {col.name} | {col.data_type} | {pk} | {nullable} | "
-                f"{default} | {comment} |"
+                f"| {col.name} | {col.data_type} | {pk} | {nullable} | {default} | {comment} |"
             )
 
         if table.foreign_keys:
@@ -117,11 +120,7 @@ class SchemaIndexer:
 
     def _table_to_markdown(self, table: TableInfo) -> list[str]:
         lines = []
-        header = (
-            f"## Table: {table.schema}.{table.name}"
-            if table.schema
-            else f"## {table.name}"
-        )
+        header = f"## Table: {table.schema}.{table.name}" if table.schema else f"## {table.name}"
         lines.append(header)
         if table.comment:
             lines.append(f"_{table.comment}_")
@@ -136,8 +135,7 @@ class SchemaIndexer:
             default = col.default or ""
             comment = col.comment or ""
             lines.append(
-                f"| {col.name} | {col.data_type} | {nullable} | {pk} | "
-                f"{default} | {comment} |"
+                f"| {col.name} | {col.data_type} | {nullable} | {pk} | {default} | {comment} |"
             )
         lines.append("")
 

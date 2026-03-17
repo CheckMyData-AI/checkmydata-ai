@@ -1,4 +1,3 @@
-
 from app.connectors.cli_output_parser import CLIOutputParser, _strip_lines
 
 

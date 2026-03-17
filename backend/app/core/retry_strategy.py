@@ -38,11 +38,7 @@ class RetryStrategy:
         parts: list[str] = []
 
         if et == QueryErrorType.COLUMN_NOT_FOUND:
-            target = (
-                error.suggested_columns[0]
-                if error.suggested_columns
-                else ""
-            )
+            target = error.suggested_columns[0] if error.suggested_columns else ""
             if target:
                 similar = find_similar_columns(target, schema)
                 if similar:
@@ -52,16 +48,10 @@ class RetryStrategy:
                 for tbl, col, _ in similar[:2]:
                     parts.append(get_table_detail(tbl, schema))
             else:
-                parts.append(
-                    "A column was not found. Check the schema for correct names."
-                )
+                parts.append("A column was not found. Check the schema for correct names.")
 
         elif et == QueryErrorType.TABLE_NOT_FOUND:
-            target = (
-                error.suggested_tables[0]
-                if error.suggested_tables
-                else ""
-            )
+            target = error.suggested_tables[0] if error.suggested_tables else ""
             if target:
                 similar = find_similar_tables(target, schema)
                 if similar:
@@ -115,9 +105,6 @@ class RetryStrategy:
             )
 
         else:
-            parts.append(
-                f"An error occurred: {error.message}. "
-                "Review the query and try again."
-            )
+            parts.append(f"An error occurred: {error.message}. Review the query and try again.")
 
         return "\n".join(parts)

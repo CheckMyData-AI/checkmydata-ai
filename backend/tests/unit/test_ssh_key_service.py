@@ -69,6 +69,7 @@ class TestSshKeyServiceCRUD:
 
         mock_key = MagicMock()
         from app.services.encryption import encrypt
+
         mock_key.private_key_encrypted = encrypt(VALID_ED25519_KEY)
         mock_key.passphrase_encrypted = None
 
@@ -124,7 +125,9 @@ class TestSshKeyServiceDelete:
         mock_result.scalar_one_or_none.return_value = mock_key
         mock_session.execute = AsyncMock(return_value=mock_result)
 
-        with patch.object(svc, "_find_references", new_callable=AsyncMock, return_value=["project:MyProject"]):
+        with patch.object(
+            svc, "_find_references", new_callable=AsyncMock, return_value=["project:MyProject"]
+        ):
             with pytest.raises(SshKeyInUseError) as exc_info:
                 await svc.delete(mock_session, "key-123")
             assert "project:MyProject" in exc_info.value.references

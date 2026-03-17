@@ -17,7 +17,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 workflow_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "workflow_id", default=None,
+    "workflow_id",
+    default=None,
 )
 
 
@@ -58,7 +59,9 @@ class WorkflowTracker:
         await self._broadcast(event)
         return wf_id
 
-    async def end(self, workflow_id: str, pipeline: str, status: str = "completed", detail: str = "") -> None:
+    async def end(
+        self, workflow_id: str, pipeline: str, status: str = "completed", detail: str = ""
+    ) -> None:
         event = WorkflowEvent(
             workflow_id=workflow_id,
             step="pipeline_end",
@@ -102,7 +105,9 @@ class WorkflowTracker:
             await self._broadcast(fail_event)
             raise
 
-    async def emit(self, workflow_id: str, step: str, status: str, detail: str = "", **extra: Any) -> None:
+    async def emit(
+        self, workflow_id: str, step: str, status: str, detail: str = "", **extra: Any
+    ) -> None:
         event = WorkflowEvent(
             workflow_id=workflow_id,
             step=step,

@@ -73,10 +73,12 @@ def _make_loop(
     if repairer_result:
         mock_repairer.repair = AsyncMock(return_value=repairer_result)
     else:
-        mock_repairer.repair = AsyncMock(return_value={
-            "query": "SELECT username FROM users",
-            "explanation": "Fixed",
-        })
+        mock_repairer.repair = AsyncMock(
+            return_value={
+                "query": "SELECT username FROM users",
+                "explanation": "Fixed",
+            }
+        )
 
     return ValidationLoop(
         config=cfg,
@@ -94,7 +96,9 @@ class TestValidationLoop:
         loop = _make_loop()
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
-            columns=["id"], rows=[[1]], row_count=1,
+            columns=["id"],
+            rows=[[1]],
+            row_count=1,
             execution_time_ms=10,
         )
 
@@ -122,7 +126,9 @@ class TestValidationLoop:
             error='column "user_name" does not exist',
         )
         success_result = QueryResult(
-            columns=["username"], rows=[["alice"]], row_count=1,
+            columns=["username"],
+            rows=[["alice"]],
+            row_count=1,
             execution_time_ms=5,
         )
         connector.execute_query.side_effect = [error_result, success_result]
@@ -200,7 +206,9 @@ class TestValidationLoop:
         connector = AsyncMock()
 
         conn_cfg = ConnectionConfig(
-            db_type="postgresql", db_name="test", is_read_only=True,
+            db_type="postgresql",
+            db_name="test",
+            is_read_only=True,
         )
 
         result = await loop.execute(
@@ -225,7 +233,9 @@ class TestValidationLoop:
         )
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
-            columns=["username"], rows=[["alice"]], row_count=1,
+            columns=["username"],
+            rows=[["alice"]],
+            row_count=1,
             execution_time_ms=5,
         )
 
@@ -249,7 +259,9 @@ class TestValidationLoop:
         )
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
-            columns=["id"], rows=[], row_count=0,
+            columns=["id"],
+            rows=[],
+            row_count=0,
             execution_time_ms=5,
         )
 

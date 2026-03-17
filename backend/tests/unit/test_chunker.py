@@ -22,7 +22,9 @@ class TestChunker:
     def test_extra_metadata_preserved(self):
         content = "class Foo:\n    pass\n" * 200
         chunks = chunk_document(
-            content, "foo.py", "orm_model",
+            content,
+            "foo.py",
+            "orm_model",
             extra_metadata={"commit_sha": "abc123", "models": "Foo"},
         )
         for chunk in chunks:
@@ -35,8 +37,10 @@ class TestChunker:
 
     def test_heading_boundaries(self):
         content = (
-            "## Table: users\nUser accounts table\n\n" + "x = 12345678\n" * 800
-            + "\n## Table: orders\nOrders table\n\n" + "y = 12345678\n" * 800
+            "## Table: users\nUser accounts table\n\n"
+            + "x = 12345678\n" * 800
+            + "\n## Table: orders\nOrders table\n\n"
+            + "y = 12345678\n" * 800
         )
         chunks = chunk_document(content, "schema.md", "raw_sql")
         assert len(chunks) >= 2

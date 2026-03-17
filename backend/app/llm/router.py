@@ -119,5 +119,6 @@ class LLMRouter:
                 except Exception:
                     logger.warning(
                         "Error closing provider %s",
-                        instance.provider_name, exc_info=True,
+                        instance.provider_name,
+                        exc_info=True,
                     )

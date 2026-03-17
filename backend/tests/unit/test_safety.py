@@ -1,4 +1,3 @@
-
 from app.core.safety import SafetyGuard, SafetyLevel
 
 
@@ -69,15 +68,21 @@ class TestSafetyGuardMongo:
         self.guard = SafetyGuard(level=SafetyLevel.READ_ONLY)
 
     def test_find_allowed(self):
-        result = self.guard.validate_mongo('{"collection": "users", "operation": "find", "filter": {}}')
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "find", "filter": {}}'
+        )
         assert result.is_safe
 
     def test_aggregate_allowed(self):
-        result = self.guard.validate_mongo('{"collection": "users", "operation": "aggregate", "pipeline": []}')
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "aggregate", "pipeline": []}'
+        )
         assert result.is_safe
 
     def test_delete_blocked(self):
-        result = self.guard.validate_mongo('{"collection": "users", "operation": "delete", "filter": {}}')
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "delete", "filter": {}}'
+        )
         assert not result.is_safe
 
     def test_invalid_json_blocked(self):

@@ -100,7 +100,9 @@ class AnthropicAdapter(BaseLLMProvider):
                     ToolCall(
                         id=block.id,
                         name=block.name,
-                        arguments=block.input if isinstance(block.input, dict) else json.loads(block.input),
+                        arguments=block.input
+                        if isinstance(block.input, dict)
+                        else json.loads(block.input),
                     )
                 )
 

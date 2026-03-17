@@ -7,12 +7,18 @@ import app.models.chat_session  # noqa: F401
 import app.models.commit_index  # noqa: F401
 import app.models.connection  # noqa: F401
 import app.models.custom_rule  # noqa: F401
+import app.models.indexing_checkpoint  # noqa: F401
 import app.models.knowledge_doc  # noqa: F401
 import app.models.project  # noqa: F401
+import app.models.project_cache  # noqa: F401
+import app.models.project_invite  # noqa: F401
+import app.models.project_member  # noqa: F401
+import app.models.rag_feedback  # noqa: F401
 import app.models.ssh_key  # noqa: F401
 import app.models.user  # noqa: F401
 from app.knowledge.doc_store import DocStore
 from app.models.base import Base
+from app.models.knowledge_doc import KnowledgeDoc
 from app.services.chat_service import ChatService
 from app.services.project_service import ProjectService
 
@@ -73,6 +79,30 @@ class TestProjectService:
         svc = ProjectService()
         result = await svc.get(db_session, "nonexistent-id")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_delete_cascades_to_knowledge_docs(self, db_session):
+        svc = ProjectService()
+        project = await svc.create(db_session, name="CascadeTest")
+
+        doc = KnowledgeDoc(
+            project_id=project.id,
+            doc_type="orm_model",
+            source_path="models/user.py",
+            content="class User: pass",
+        )
+        db_session.add(doc)
+        await db_session.commit()
+
+        deleted = await svc.delete(db_session, project.id)
+        assert deleted is True
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(
+            select(KnowledgeDoc).where(KnowledgeDoc.project_id == project.id)
+        )
+        assert result.scalars().all() == []
 
 
 class TestChatService:

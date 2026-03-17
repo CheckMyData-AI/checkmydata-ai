@@ -104,9 +104,7 @@ class SSHExecConnector(BaseConnector):
             "keepalive_interval": 15,
         }
         if config.ssh_key_content:
-            key = asyncssh.import_private_key(
-                config.ssh_key_content, config.ssh_key_passphrase
-            )
+            key = asyncssh.import_private_key(config.ssh_key_content, config.ssh_key_passphrase)
             connect_kwargs["client_keys"] = [key]
 
         self._conn = await asyncssh.connect(**connect_kwargs)
@@ -123,11 +121,13 @@ class SSHExecConnector(BaseConnector):
             await asyncio.sleep(0.1)
             try:
                 await asyncio.wait_for(self._conn.wait_closed(), timeout=5)
-            except (asyncio.TimeoutError, Exception):
+            except (TimeoutError, Exception):
                 pass
             self._conn = None
 
-    async def _run_command(self, command: str, timeout: int = SSH_COMMAND_TIMEOUT) -> tuple[str, str, int]:
+    async def _run_command(
+        self, command: str, timeout: int = SSH_COMMAND_TIMEOUT
+    ) -> tuple[str, str, int]:
         """Run a command over SSH and return (stdout, stderr, exit_code).
 
         Automatically attempts one reconnection if the SSH connection is lost.
@@ -250,13 +250,15 @@ class SSHExecConnector(BaseConnector):
             tname = tr[0]
             approx_rows = int(tr[1]) if len(tr) > 1 and tr[1] and tr[1].isdigit() else None
             comment = tr[2] if len(tr) > 2 and tr[2] else None
-            tables.append(TableInfo(
-                name=tname,
-                columns=col_map.get(tname, []),
-                foreign_keys=fk_map.get(tname, []),
-                row_count=approx_rows,
-                comment=comment,
-            ))
+            tables.append(
+                TableInfo(
+                    name=tname,
+                    columns=col_map.get(tname, []),
+                    foreign_keys=fk_map.get(tname, []),
+                    row_count=approx_rows,
+                    comment=comment,
+                )
+            )
 
         return SchemaInfo(tables=tables, db_type="mysql", db_name=db_name)
 
@@ -267,15 +269,13 @@ class SSHExecConnector(BaseConnector):
             format_template(self._get_template("introspect_tables"), variables)
         )
         stdout, _, _ = await self._run_command(tables_cmd)
-        table_names = [
-            line.strip() for line in stdout.strip().splitlines() if line.strip()
-        ]
+        table_names = [line.strip() for line in stdout.strip().splitlines() if line.strip()]
 
         cols_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_columns"), variables)
         )
         stdout, _, _ = await self._run_command(cols_cmd)
-        lines = [l.strip() for l in stdout.strip().splitlines() if l.strip()]
+        lines = [ln.strip() for ln in stdout.strip().splitlines() if ln.strip()]
 
         col_map: dict[str, list[ColumnInfo]] = {}
         for line in lines:
@@ -291,10 +291,7 @@ class SSHExecConnector(BaseConnector):
                     )
                 )
 
-        tables = [
-            TableInfo(name=t, columns=col_map.get(t, []))
-            for t in table_names
-        ]
+        tables = [TableInfo(name=t, columns=col_map.get(t, [])) for t in table_names]
         return SchemaInfo(tables=tables, db_type="postgres", db_name=db_name)
 
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:
@@ -317,14 +314,9 @@ class SSHExecConnector(BaseConnector):
         for c in col_rows:
             if len(c) >= 3:
                 tname = c[0]
-                col_map.setdefault(tname, []).append(
-                    ColumnInfo(name=c[1], data_type=c[2])
-                )
+                col_map.setdefault(tname, []).append(ColumnInfo(name=c[1], data_type=c[2]))
 
-        tables = [
-            TableInfo(name=t, columns=col_map.get(t, []))
-            for t in table_names
-        ]
+        tables = [TableInfo(name=t, columns=col_map.get(t, [])) for t in table_names]
         return SchemaInfo(tables=tables, db_type="clickhouse", db_name=db_name)
 
     async def _introspect_via_query(self, db_name: str, db_type: str) -> SchemaInfo:
@@ -364,7 +356,7 @@ class SSHExecConnector(BaseConnector):
         """Quote a SQL identifier based on the DB type."""
         if self.db_type == "mysql":
             return f"`{name.replace('`', '``')}`"
-        return f'"{name.replace(chr(34), chr(34)+chr(34))}"'
+        return f'"{name.replace(chr(34), chr(34) + chr(34))}"'
 
     async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
         quoted = self._quote_identifier(table_name)

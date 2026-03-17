@@ -16,7 +16,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             'MYSQL_PWD="{db_password}" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
-            " -e \"SELECT table_name, table_rows, table_comment"
+            ' -e "SELECT table_name, table_rows, table_comment'
             " FROM information_schema.tables"
             " WHERE table_schema = '{db_name}' AND table_type = 'BASE TABLE'\""
         ),
@@ -24,21 +24,21 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             'MYSQL_PWD="{db_password}" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
-            " -e \"SELECT table_name, column_name, column_type, is_nullable,"
+            ' -e "SELECT table_name, column_name, column_type, is_nullable,'
             " column_default, column_key, column_comment"
             " FROM information_schema.columns"
             " WHERE table_schema = '{db_name}'"
-            " ORDER BY table_name, ordinal_position\""
+            ' ORDER BY table_name, ordinal_position"'
         ),
         "introspect_fks": (
             'MYSQL_PWD="{db_password}" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
-            " -e \"SELECT table_name, column_name,"
+            ' -e "SELECT table_name, column_name,'
             " referenced_table_name, referenced_column_name"
             " FROM information_schema.key_column_usage"
             " WHERE table_schema = '{db_name}'"
-            " AND referenced_table_name IS NOT NULL\""
+            ' AND referenced_table_name IS NOT NULL"'
         ),
         "test": (
             'MYSQL_PWD="{db_password}" mysql'
@@ -63,11 +63,11 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             'PGPASSWORD="{db_password}" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
-            " -c \"SELECT table_name, column_name, data_type, is_nullable,"
+            ' -c "SELECT table_name, column_name, data_type, is_nullable,'
             " column_default"
             " FROM information_schema.columns"
             " WHERE table_schema = 'public'"
-            " ORDER BY table_name, ordinal_position\""
+            ' ORDER BY table_name, ordinal_position"'
         ),
         "test": (
             'PGPASSWORD="{db_password}" psql'
@@ -95,9 +95,9 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             " -h {db_host} --port {db_port} -u {db_user}"
             ' --password "{db_password}" -d {db_name}'
             " --format TabSeparatedWithNames"
-            " -q \"SELECT table, name, type FROM system.columns"
+            ' -q "SELECT table, name, type FROM system.columns'
             " WHERE database = '{db_name}'"
-            " ORDER BY table, position\""
+            ' ORDER BY table, position"'
         ),
         "test": (
             "clickhouse-client"

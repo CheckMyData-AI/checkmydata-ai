@@ -27,7 +27,8 @@ DIALECT_HINTS = {
         "- Use LIMIT N at end"
     ),
     "mongodb": (
-        "- Generate a JSON query spec with keys: operation, collection, filter, projection, sort, limit\n"
+        "- Generate a JSON query spec with keys: operation, collection, "
+        "filter, projection, sort, limit\n"
         "- operation: find | aggregate | count\n"
         "- For aggregations use pipeline with $match, $group, $sort, $limit stages"
     ),
@@ -40,7 +41,7 @@ RULES:
 1. Only generate SELECT/read queries unless explicitly told otherwise.
 2. Use the EXACT table and column names from the schema below.
 3. Use Foreign Key relationships to determine correct JOINs between tables.
-4. When a question involves multiple tables, use JOINs based on FK relationships shown in the schema.
+4. When a question involves multiple tables, use JOINs based on FK relationships.
 5. Handle ambiguous column names by qualifying them with the table name (e.g. table.column).
 6. Consider indexes listed in the schema -- prefer indexed columns in WHERE and ORDER BY.
 7. Include LIMIT (default 100) for potentially large result sets.
@@ -59,9 +60,14 @@ def _build_system_prompt(db_type: str) -> str:
 
 EXECUTE_QUERY_TOOL = Tool(
     name="execute_query",
-    description="Execute a database query. For SQL databases, provide SQL. For MongoDB, provide a JSON spec.",
+    description=(
+        "Execute a database query. For SQL databases, provide SQL."
+        " For MongoDB, provide a JSON spec."
+    ),
     parameters=[
-        ToolParameter(name="query", type="string", description="The SQL query or MongoDB JSON spec to execute"),
+        ToolParameter(
+            name="query", type="string", description="The SQL query or MongoDB JSON spec to execute"
+        ),
         ToolParameter(
             name="explanation",
             type="string",
@@ -85,7 +91,9 @@ VISUALIZATION_TOOL = Tool(
             type="string",
             description="JSON config for the visualization (labels, axes, colors, etc.)",
         ),
-        ToolParameter(name="summary", type="string", description="Human-readable summary of the results"),
+        ToolParameter(
+            name="summary", type="string", description="Human-readable summary of the results"
+        ),
     ],
 )
 
@@ -171,7 +179,8 @@ class QueryBuilder:
                 role="system",
                 content=(
                     "You are a data analyst. Given a user's question, the query that was executed, "
-                    "and the results, provide a clear interpretation and recommend the best visualization."
+                    "and the results, provide a clear interpretation "
+                    "and recommend the best visualization."
                 ),
             ),
             Message(

@@ -8,10 +8,13 @@ from tests.integration.conftest import auth_headers, register_user
 @pytest.mark.asyncio
 class TestRulesCrud:
     async def test_create_and_list(self, auth_client):
-        resp = await auth_client.post("/api/rules", json={
-            "name": "Test Rule",
-            "content": "Always use UTC timestamps",
-        })
+        resp = await auth_client.post(
+            "/api/rules",
+            json={
+                "name": "Test Rule",
+                "content": "Always use UTC timestamps",
+            },
+        )
         assert resp.status_code == 200
         rule = resp.json()
         assert rule["name"] == "Test Rule"
@@ -27,10 +30,13 @@ class TestRulesCrud:
         assert resp.json()["content"] == "Always use UTC timestamps"
 
     async def test_update_rule(self, auth_client):
-        resp = await auth_client.post("/api/rules", json={
-            "name": "Updatable",
-            "content": "v1",
-        })
+        resp = await auth_client.post(
+            "/api/rules",
+            json={
+                "name": "Updatable",
+                "content": "v1",
+            },
+        )
         rid = resp.json()["id"]
 
         resp = await auth_client.patch(f"/api/rules/{rid}", json={"content": "v2"})
@@ -38,10 +44,13 @@ class TestRulesCrud:
         assert resp.json()["content"] == "v2"
 
     async def test_delete_rule(self, auth_client):
-        resp = await auth_client.post("/api/rules", json={
-            "name": "Deletable",
-            "content": "temp",
-        })
+        resp = await auth_client.post(
+            "/api/rules",
+            json={
+                "name": "Deletable",
+                "content": "temp",
+            },
+        )
         rid = resp.json()["id"]
 
         resp = await auth_client.delete(f"/api/rules/{rid}")
@@ -61,7 +70,8 @@ class TestRulesAccessControl:
         owner = await register_user(client)
         viewer = await register_user(client)
         resp = await client.post(
-            "/api/projects", json={"name": "Rules RBAC"},
+            "/api/projects",
+            json={"name": "Rules RBAC"},
             headers=auth_headers(owner["token"]),
         )
         pid = resp.json()["id"]

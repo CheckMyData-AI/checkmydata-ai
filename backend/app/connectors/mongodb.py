@@ -141,18 +141,24 @@ class MongoDBConnector(BaseConnector):
                     idx_name = idx.get("name", "")
                     idx_keys = list(idx.get("key", {}).keys())
                     is_unique = idx.get("unique", False)
-                    indexes.append(IndexInfo(
-                        name=idx_name,
-                        columns=idx_keys,
-                        is_unique=is_unique,
-                    ))
+                    indexes.append(
+                        IndexInfo(
+                            name=idx_name,
+                            columns=idx_keys,
+                            is_unique=is_unique,
+                        )
+                    )
             except Exception:
                 pass
 
-            tables.append(TableInfo(
-                name=cname, columns=columns,
-                row_count=count, indexes=indexes,
-            ))
+            tables.append(
+                TableInfo(
+                    name=cname,
+                    columns=columns,
+                    row_count=count,
+                    indexes=indexes,
+                )
+            )
 
         return SchemaInfo(
             tables=tables,
@@ -161,16 +167,20 @@ class MongoDBConnector(BaseConnector):
         )
 
     async def sample_data(
-        self, table_name: str, limit: int = 3,
+        self,
+        table_name: str,
+        limit: int = 3,
     ) -> QueryResult:
         if not self._db:
             return QueryResult(error="Not connected")
-        query = json.dumps({
-            "collection": table_name,
-            "operation": "find",
-            "filter": {},
-            "limit": limit,
-        })
+        query = json.dumps(
+            {
+                "collection": table_name,
+                "operation": "find",
+                "filter": {},
+                "limit": limit,
+            }
+        )
         return await self.execute_query(query)
 
     async def test_connection(self) -> bool:

@@ -142,7 +142,8 @@ async def index_repo(
         resumed = True
         logger.info(
             "Found checkpoint for project %s (status=%s, %s steps done)",
-            project_id, existing_cp.status,
+            project_id,
+            existing_cp.status,
             len(CheckpointService.get_completed_steps(existing_cp)),
         )
     elif existing_cp and body.force_full:
@@ -175,8 +176,11 @@ async def index_repo(
 
 
 async def _run_index_background(
-    project_id: str, project, body: IndexRequest,
-    wf_id: str, lock: asyncio.Lock,
+    project_id: str,
+    project,
+    body: IndexRequest,
+    wf_id: str,
+    lock: asyncio.Lock,
 ) -> None:
     """Run the indexing pipeline as a background task with its own DB session."""
     async with lock:
@@ -192,12 +196,21 @@ async def _run_index_background(
                     checkpoint = existing_cp
                 else:
                     checkpoint = await _checkpoint_svc.create(
-                        db, project_id, wf_id, head_sha="", last_sha=None,
+                        db,
+                        project_id,
+                        wf_id,
+                        head_sha="",
+                        last_sha=None,
                     )
 
                 try:
                     await _pipeline_runner.run(
-                        project_id, project, body.force_full, db, wf_id, checkpoint,
+                        project_id,
+                        project,
+                        body.force_full,
+                        db,
+                        wf_id,
+                        checkpoint,
                     )
                 except Exception as exc:
                     logger.exception("Indexing pipeline failed for project %s", project_id)
@@ -206,7 +219,9 @@ async def _run_index_background(
                         if cp:
                             await _checkpoint_svc.mark_failed(db, cp.id, "pipeline", str(exc))
                     except Exception:
-                        logger.exception("Failed to mark checkpoint as failed for project %s", project_id)
+                        logger.exception(
+                            "Failed to mark checkpoint as failed for project %s", project_id
+                        )
                     await tracker.end(wf_id, "index_repo", "failed", str(exc))
         except Exception as exc:
             logger.exception("Background indexing failed for project %s", project_id)
@@ -227,13 +242,16 @@ async def repo_status(
         raise HTTPException(status_code=404, detail="Project not found")
 
     record = await _git_tracker.get_last_indexed_record(
-        db, project_id, branch=project.repo_branch,
+        db,
+        project_id,
+        branch=project.repo_branch,
     )
     docs = await _doc_store.get_docs_for_project(db, project_id)
 
     indexed_files_count = 0
     if record and record.indexed_files:
         import json as _json
+
         try:
             indexed_files_count = len(_json.loads(record.indexed_files))
         except Exception:
@@ -287,7 +305,9 @@ async def check_for_updates(
         logger.warning("git fetch failed: %s", exc)
 
     last_sha = await _git_tracker.get_last_indexed_sha(
-        db, project_id, branch=project.repo_branch,
+        db,
+        project_id,
+        branch=project.repo_branch,
     )
     if not last_sha:
         return {

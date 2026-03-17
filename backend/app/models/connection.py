@@ -11,7 +11,9 @@ class Connection(Base):
     __tablename__ = "connections"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     db_type: Mapped[str] = mapped_column(String(50), nullable=False)
 

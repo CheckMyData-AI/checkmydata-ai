@@ -13,9 +13,16 @@ class TestSchemaIndexer:
                     name="users",
                     schema="public",
                     columns=[
-                        ColumnInfo(name="id", data_type="integer", is_primary_key=True, is_nullable=False),
+                        ColumnInfo(
+                            name="id", data_type="integer", is_primary_key=True, is_nullable=False
+                        ),
                         ColumnInfo(name="name", data_type="varchar", is_nullable=False),
-                        ColumnInfo(name="email", data_type="varchar", is_nullable=True, comment="User email"),
+                        ColumnInfo(
+                            name="email",
+                            data_type="varchar",
+                            is_nullable=True,
+                            comment="User email",
+                        ),
                     ],
                     row_count=1000,
                     foreign_keys=[],
@@ -46,7 +53,9 @@ class TestSchemaIndexer:
                         ColumnInfo(name="total", data_type="decimal"),
                     ],
                     foreign_keys=[
-                        ForeignKeyInfo(column="user_id", references_table="users", references_column="id"),
+                        ForeignKeyInfo(
+                            column="user_id", references_table="users", references_column="id"
+                        ),
                     ],
                     indexes=[IndexInfo(name="idx_user", columns=["user_id"], is_unique=False)],
                     row_count=500,
@@ -70,12 +79,20 @@ class TestSchemaIndexer:
                 TableInfo(
                     name="orders",
                     columns=[ColumnInfo(name="user_id", data_type="int")],
-                    foreign_keys=[ForeignKeyInfo(column="user_id", references_table="users", references_column="id")],
+                    foreign_keys=[
+                        ForeignKeyInfo(
+                            column="user_id", references_table="users", references_column="id"
+                        )
+                    ],
                 ),
                 TableInfo(
                     name="items",
                     columns=[ColumnInfo(name="order_id", data_type="int")],
-                    foreign_keys=[ForeignKeyInfo(column="order_id", references_table="orders", references_column="id")],
+                    foreign_keys=[
+                        ForeignKeyInfo(
+                            column="order_id", references_table="orders", references_column="id"
+                        )
+                    ],
                 ),
             ],
             db_type="postgres",

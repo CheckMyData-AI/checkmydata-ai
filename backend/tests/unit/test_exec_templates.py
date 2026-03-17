@@ -34,12 +34,15 @@ class TestGetDefaultTemplate:
 class TestFormatTemplate:
     def test_substitution(self):
         template = "mysql -h {db_host} -P {db_port} -u {db_user} {db_name}"
-        result = format_template(template, {
-            "db_host": "10.0.0.1",
-            "db_port": "3306",
-            "db_user": "admin",
-            "db_name": "analytics",
-        })
+        result = format_template(
+            template,
+            {
+                "db_host": "10.0.0.1",
+                "db_port": "3306",
+                "db_user": "admin",
+                "db_name": "analytics",
+            },
+        )
         assert result == "mysql -h 10.0.0.1 -P 3306 -u admin analytics"
 
     def test_no_placeholders(self):

@@ -71,7 +71,9 @@ def mock_rules_engine():
 
 
 @pytest.fixture
-def executor(config, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker):
+def executor(
+    config, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker
+):
     return ToolExecutor(
         project_id="proj-1",
         connection_config=config,
@@ -99,13 +101,15 @@ class TestToolExecutorRouting:
 
     @pytest.mark.asyncio
     async def test_search_knowledge_with_results(self, executor, mock_vector_store):
-        mock_vector_store.query = MagicMock(return_value=[
-            {
-                "document": "Some docs about orders",
-                "metadata": {"source_path": "docs/orders.md", "doc_type": "markdown"},
-                "distance": 0.2,
-            },
-        ])
+        mock_vector_store.query = MagicMock(
+            return_value=[
+                {
+                    "document": "Some docs about orders",
+                    "metadata": {"source_path": "docs/orders.md", "doc_type": "markdown"},
+                    "distance": 0.2,
+                },
+            ]
+        )
         tc = ToolCall(id="1", name="search_knowledge", arguments={"query": "orders"})
         result = await executor.execute(tc, "wf-1")
         assert "1 relevant document" in result
@@ -127,7 +131,9 @@ class TestToolExecutorRouting:
         assert "snake_case" in result
 
     @pytest.mark.asyncio
-    async def test_execute_query_no_connection(self, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker):
+    async def test_execute_query_no_connection(
+        self, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker
+    ):
         exec_no_conn = ToolExecutor(
             project_id="proj-1",
             connection_config=None,
@@ -137,12 +143,16 @@ class TestToolExecutorRouting:
             rules_engine=mock_rules_engine,
             tracker=mock_tracker,
         )
-        tc = ToolCall(id="1", name="execute_query", arguments={"query": "SELECT 1", "explanation": "test"})
+        tc = ToolCall(
+            id="1", name="execute_query", arguments={"query": "SELECT 1", "explanation": "test"}
+        )
         result = await exec_no_conn.execute(tc, "wf-1")
         assert "no database connection" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_get_schema_info_no_connection(self, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker):
+    async def test_get_schema_info_no_connection(
+        self, mock_llm, mock_vector_store, mock_schema_indexer, mock_rules_engine, mock_tracker
+    ):
         exec_no_conn = ToolExecutor(
             project_id="proj-1",
             connection_config=None,
@@ -163,7 +173,10 @@ class TestSchemaFormatting:
             tables=[
                 TableInfo(
                     name="users",
-                    columns=[ColumnInfo(name="id", data_type="int"), ColumnInfo(name="email", data_type="varchar")],
+                    columns=[
+                        ColumnInfo(name="id", data_type="int"),
+                        ColumnInfo(name="email", data_type="varchar"),
+                    ],
                     row_count=100,
                 ),
                 TableInfo(
@@ -187,7 +200,9 @@ class TestSchemaFormatting:
                 TableInfo(
                     name="users",
                     columns=[
-                        ColumnInfo(name="id", data_type="int", is_primary_key=True, is_nullable=False),
+                        ColumnInfo(
+                            name="id", data_type="int", is_primary_key=True, is_nullable=False
+                        ),
                         ColumnInfo(name="email", data_type="varchar"),
                     ],
                     row_count=100,

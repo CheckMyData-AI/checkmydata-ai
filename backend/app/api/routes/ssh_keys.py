@@ -35,7 +35,9 @@ async def create_ssh_key(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         if "UNIQUE constraint" in str(e) or "unique" in str(e).lower():
-            raise HTTPException(status_code=409, detail=f"SSH key with name '{body.name}' already exists")
+            raise HTTPException(
+                status_code=409, detail=f"SSH key with name '{body.name}' already exists"
+            )
         raise
     return SshKeyResponse(
         id=key.id,

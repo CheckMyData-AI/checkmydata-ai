@@ -150,11 +150,14 @@ class TestChatSessionRoutes:
 
 class TestVisualizationRoutes:
     def test_render(self, client):
-        resp = client.post("/api/visualizations/render", json={
-            "columns": ["name", "count"],
-            "rows": [["Alice", 10], ["Bob", 20]],
-            "viz_type": "table",
-        })
+        resp = client.post(
+            "/api/visualizations/render",
+            json={
+                "columns": ["name", "count"],
+                "rows": [["Alice", 10], ["Bob", 20]],
+                "viz_type": "table",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["type"] == "table"
@@ -162,27 +165,36 @@ class TestVisualizationRoutes:
         assert len(data["data"]["rows"]) == 2
 
     def test_export_csv(self, client):
-        resp = client.post("/api/visualizations/export", json={
-            "columns": ["name", "count"],
-            "rows": [["Alice", 10]],
-            "format": "csv",
-        })
+        resp = client.post(
+            "/api/visualizations/export",
+            json={
+                "columns": ["name", "count"],
+                "rows": [["Alice", 10]],
+                "format": "csv",
+            },
+        )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers["content-type"]
 
     def test_export_json(self, client):
-        resp = client.post("/api/visualizations/export", json={
-            "columns": ["name", "count"],
-            "rows": [["Alice", 10]],
-            "format": "json",
-        })
+        resp = client.post(
+            "/api/visualizations/export",
+            json={
+                "columns": ["name", "count"],
+                "rows": [["Alice", 10]],
+                "format": "json",
+            },
+        )
         assert resp.status_code == 200
         assert "application/json" in resp.headers["content-type"]
 
     def test_export_unsupported_format(self, client):
-        resp = client.post("/api/visualizations/export", json={
-            "columns": ["name"],
-            "rows": [["Alice"]],
-            "format": "pdf",
-        })
+        resp = client.post(
+            "/api/visualizations/export",
+            json={
+                "columns": ["name"],
+                "rows": [["Alice"]],
+                "format": "pdf",
+            },
+        )
         assert resp.status_code == 400

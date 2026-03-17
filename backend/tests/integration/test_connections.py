@@ -13,14 +13,17 @@ class TestConnectionCrud:
 
     async def test_create_and_list(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "My MySQL",
-            "db_type": "mysql",
-            "db_host": "127.0.0.1",
-            "db_port": 3306,
-            "db_name": "testdb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "My MySQL",
+                "db_type": "mysql",
+                "db_host": "127.0.0.1",
+                "db_port": 3306,
+                "db_name": "testdb",
+            },
+        )
         assert resp.status_code == 200
         conn = resp.json()
         assert conn["name"] == "My MySQL"
@@ -33,13 +36,16 @@ class TestConnectionCrud:
 
     async def test_update_connection(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "Before",
-            "db_type": "postgres",
-            "db_host": "127.0.0.1",
-            "db_name": "testdb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "Before",
+                "db_type": "postgres",
+                "db_host": "127.0.0.1",
+                "db_name": "testdb",
+            },
+        )
         cid = resp.json()["id"]
 
         resp = await auth_client.patch(f"/api/connections/{cid}", json={"name": "After"})
@@ -48,13 +54,16 @@ class TestConnectionCrud:
 
     async def test_delete_connection(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/connections", json={
-            "project_id": pid,
-            "name": "Temp",
-            "db_type": "postgres",
-            "db_host": "127.0.0.1",
-            "db_name": "testdb",
-        })
+        resp = await auth_client.post(
+            "/api/connections",
+            json={
+                "project_id": pid,
+                "name": "Temp",
+                "db_type": "postgres",
+                "db_host": "127.0.0.1",
+                "db_name": "testdb",
+            },
+        )
         cid = resp.json()["id"]
 
         resp = await auth_client.delete(f"/api/connections/{cid}")
@@ -74,7 +83,8 @@ class TestConnectionAccessControl:
         owner = await register_user(client)
         viewer = await register_user(client)
         resp = await client.post(
-            "/api/projects", json={"name": "Conn RBAC"},
+            "/api/projects",
+            json={"name": "Conn RBAC"},
             headers=auth_headers(owner["token"]),
         )
         pid = resp.json()["id"]
@@ -92,8 +102,11 @@ class TestConnectionAccessControl:
         resp = await client.post(
             "/api/connections",
             json={
-                "project_id": pid, "name": "Blocked", "db_type": "mysql",
-                "db_host": "127.0.0.1", "db_name": "testdb",
+                "project_id": pid,
+                "name": "Blocked",
+                "db_type": "mysql",
+                "db_host": "127.0.0.1",
+                "db_name": "testdb",
             },
             headers=auth_headers(owner["token"]),
         )
@@ -109,8 +122,11 @@ class TestConnectionAccessControl:
         resp = await client.post(
             "/api/connections",
             json={
-                "project_id": pid, "name": "Attempt", "db_type": "postgres",
-                "db_host": "127.0.0.1", "db_name": "testdb",
+                "project_id": pid,
+                "name": "Attempt",
+                "db_type": "postgres",
+                "db_host": "127.0.0.1",
+                "db_name": "testdb",
             },
             headers=auth_headers(viewer["token"]),
         )

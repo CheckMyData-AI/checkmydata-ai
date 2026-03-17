@@ -52,33 +52,42 @@ class TestSshKeyRoutes:
 
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
             mock_svc.create = AsyncMock(return_value=mock_key)
-            resp = client.post("/api/ssh-keys", json={
-                "name": "my-key",
-                "private_key": (
-                    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
-                    "test\n-----END OPENSSH PRIVATE KEY-----"
-                ),
-            })
+            resp = client.post(
+                "/api/ssh-keys",
+                json={
+                    "name": "my-key",
+                    "private_key": (
+                        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                        "test\n-----END OPENSSH PRIVATE KEY-----"
+                    ),
+                },
+            )
             assert resp.status_code == 200
             assert resp.json()["name"] == "my-key"
 
     def test_create_invalid_key(self, client):
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
             mock_svc.create = AsyncMock(side_effect=ValueError("Invalid SSH key: bad format"))
-            resp = client.post("/api/ssh-keys", json={
-                "name": "bad-key",
-                "private_key": "not a key",
-            })
+            resp = client.post(
+                "/api/ssh-keys",
+                json={
+                    "name": "bad-key",
+                    "private_key": "not a key",
+                },
+            )
             assert resp.status_code == 400
             assert "Invalid SSH key" in resp.json()["detail"]
 
     def test_create_duplicate_name(self, client):
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
             mock_svc.create = AsyncMock(side_effect=Exception("UNIQUE constraint failed"))
-            resp = client.post("/api/ssh-keys", json={
-                "name": "dupe",
-                "private_key": "test",
-            })
+            resp = client.post(
+                "/api/ssh-keys",
+                json={
+                    "name": "dupe",
+                    "private_key": "test",
+                },
+            )
             assert resp.status_code == 409
 
     def test_get_not_found(self, client):
@@ -102,10 +111,9 @@ class TestSshKeyRoutes:
 
     def test_delete_in_use(self, client):
         from app.services.ssh_key_service import SshKeyInUseError
+
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
-            mock_svc.delete = AsyncMock(
-                side_effect=SshKeyInUseError(["project:MyProject"])
-            )
+            mock_svc.delete = AsyncMock(side_effect=SshKeyInUseError(["project:MyProject"]))
             resp = client.delete("/api/ssh-keys/key-1")
             assert resp.status_code == 409
             assert "in use" in resp.json()["detail"]

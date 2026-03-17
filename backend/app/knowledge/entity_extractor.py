@@ -70,6 +70,7 @@ class EnumDefinition:
 @dataclass
 class ProjectKnowledge:
     """Aggregate cross-file knowledge about the project's data layer."""
+
     entities: dict[str, EntityInfo] = field(default_factory=dict)
     table_usage: dict[str, TableUsage] = field(default_factory=dict)
     enums: list[EnumDefinition] = field(default_factory=list)
@@ -77,10 +78,7 @@ class ProjectKnowledge:
 
     @property
     def dead_tables(self) -> list[str]:
-        return [
-            name for name, usage in self.table_usage.items()
-            if not usage.is_active
-        ]
+        return [name for name, usage in self.table_usage.items() if not usage.is_active]
 
     def to_json(self) -> str:
         """Serialize to JSON for DB persistence."""
@@ -221,7 +219,10 @@ def build_project_knowledge(
     """
     if cached_knowledge and changed_files is not None:
         knowledge = _incremental_update(
-            repo_dir, schemas, cached_knowledge, changed_files,
+            repo_dir,
+            schemas,
+            cached_knowledge,
+            changed_files,
             deleted_files=deleted_files or [],
         )
     else:
@@ -287,7 +288,8 @@ def _incremental_update(
 
     for tbl, usage in cached.table_usage.items():
         new_usage = knowledge.table_usage.setdefault(
-            tbl, TableUsage(table_name=tbl),
+            tbl,
+            TableUsage(table_name=tbl),
         )
         for r in usage.readers:
             if r not in stale_set and r not in new_usage.readers:
@@ -313,9 +315,7 @@ def _incremental_update(
             del knowledge.entities[name]
 
     for entity in knowledge.entities.values():
-        entity.used_in_files = [
-            f for f in entity.used_in_files if f not in stale_set
-        ]
+        entity.used_in_files = [f for f in entity.used_in_files if f not in stale_set]
 
     from app.knowledge.repo_analyzer import is_binary_file
 
@@ -385,7 +385,8 @@ def _extract_entities_from_schemas(
 
             knowledge.entities[model_name] = entity
             knowledge.table_usage.setdefault(
-                entity.table_name, TableUsage(table_name=entity.table_name),
+                entity.table_name,
+                TableUsage(table_name=entity.table_name),
             ).orm_refs.append(file_path)
 
 
@@ -397,20 +398,26 @@ def _extract_columns(content: str, file_path: str) -> list[ColumnInfo]:
         if not name or name.startswith("_") or name in seen:
             return
         seen.add(name)
-        columns.append(ColumnInfo(
-            name=name, col_type=col_type, is_fk=is_fk, fk_target=fk_target,
-        ))
+        columns.append(
+            ColumnInfo(
+                name=name,
+                col_type=col_type,
+                is_fk=is_fk,
+                fk_target=fk_target,
+            )
+        )
 
     if file_path.endswith(".py"):
         for m in SQLALCHEMY_COL.finditer(content):
             col_type = m.group(1)
             line_start = content.rfind("\n", 0, m.start()) + 1
-            line = content[line_start:m.start()].strip()
+            line = content[line_start : m.start()].strip()
             parts = line.split(":")
             col_name = parts[0].strip().split()[-1] if parts else ""
             _add(
-                col_name, col_type,
-                is_fk="ForeignKey" in content[m.start():m.start() + 200],
+                col_name,
+                col_type,
+                is_fk="ForeignKey" in content[m.start() : m.start() + 200],
             )
 
         for m in DJANGO_FIELD.finditer(content):
@@ -425,13 +432,13 @@ def _extract_columns(content: str, file_path: str) -> list[ColumnInfo]:
     elif file_path.endswith((".ts", ".tsx", ".js", ".jsx")):
         for m in TYPEORM_COL.finditer(content):
             line_start = content.rfind("\n", 0, m.start()) + 1
-            prev_line = content[max(0, line_start - 200):line_start]
+            prev_line = content[max(0, line_start - 200) : line_start]
             name_match = re.search(r"(\w+)\s*[:;]\s*$", prev_line)
             col_name = name_match.group(1) if name_match else ""
             _add(col_name, m.group(1))
         for m in TYPEORM_FK.finditer(content):
             line_end = content.find("\n", m.end())
-            after = content[m.end():line_end + 200] if line_end != -1 else ""
+            after = content[m.end() : line_end + 200] if line_end != -1 else ""
             field_m = re.search(r"(\w+)\s*:", after)
             fname = field_m.group(1) if field_m else m.group(1).lower()
             _add(fname, m.group(1), is_fk=True, fk_target=m.group(1))
@@ -499,9 +506,13 @@ def _extract_enums(
         block = content[block_start:block_end]
         values = [v.group(2) for v in PY_ENUM_MEMBER.finditer(block)]
         if values:
-            knowledge.enums.append(EnumDefinition(
-                name=enum_name, values=values, file_path=rel_path,
-            ))
+            knowledge.enums.append(
+                EnumDefinition(
+                    name=enum_name,
+                    values=values,
+                    file_path=rel_path,
+                )
+            )
 
     for m in TS_ENUM.finditer(content):
         enum_name = m.group(1)
@@ -512,18 +523,26 @@ def _extract_enums(
             if v.strip()
         ]
         if values:
-            knowledge.enums.append(EnumDefinition(
-                name=enum_name, values=values, file_path=rel_path,
-            ))
+            knowledge.enums.append(
+                EnumDefinition(
+                    name=enum_name,
+                    values=values,
+                    file_path=rel_path,
+                )
+            )
 
     for m in CONSTANT_DICT.finditer(content):
         const_name = m.group(1)
         block_start = m.end() - 1
-        values = re.findall(r"""['"]([\w\-]+)['"]""", content[block_start:block_start + 500])
+        values = re.findall(r"""['"]([\w\-]+)['"]""", content[block_start : block_start + 500])
         if values:
-            knowledge.enums.append(EnumDefinition(
-                name=const_name, values=values[:20], file_path=rel_path,
-            ))
+            knowledge.enums.append(
+                EnumDefinition(
+                    name=const_name,
+                    values=values[:20],
+                    file_path=rel_path,
+                )
+            )
 
 
 def _extract_service_functions(
@@ -546,12 +565,14 @@ def _extract_service_functions(
                 tables_mentioned.append(entity.table_name or entity.name)
 
         if tables_mentioned:
-            knowledge.service_functions.append({
-                "name": func_name,
-                "file_path": rel_path,
-                "tables": tables_mentioned,
-                "snippet": func_body[:500],
-            })
+            knowledge.service_functions.append(
+                {
+                    "name": func_name,
+                    "file_path": rel_path,
+                    "tables": tables_mentioned,
+                    "snippet": func_body[:500],
+                }
+            )
 
 
 def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:

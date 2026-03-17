@@ -132,7 +132,9 @@ async def update_connection(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     updates = body.model_dump(exclude_unset=True)
 
-    merged_conn_string = updates.get("connection_string", conn.connection_string if hasattr(conn, "connection_string") else None)
+    merged_conn_string = updates.get(
+        "connection_string", conn.connection_string if hasattr(conn, "connection_string") else None
+    )
     merged_db_host = updates.get("db_host", conn.db_host)
     merged_db_name = updates.get("db_name", conn.db_name)
     if not merged_conn_string and not (merged_db_host and merged_db_name):
@@ -203,6 +205,7 @@ async def refresh_schema(
     config = await _svc.to_config(db, conn)
     try:
         from app.core.orchestrator import Orchestrator
+
         orch = Orchestrator()
         schema = await orch.refresh_schema(config)
         return {

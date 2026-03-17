@@ -48,7 +48,11 @@ class ReadableFormatter(logging.Formatter):
 
 
 def configure_logging(json_format: bool = False, level: str = "INFO") -> None:
-    formatter_class = "app.core.logging_config.JSONFormatter" if json_format else "app.core.logging_config.ReadableFormatter"
+    formatter_class = (
+        "app.core.logging_config.JSONFormatter"
+        if json_format
+        else "app.core.logging_config.ReadableFormatter"
+    )
 
     config = {
         "version": 1,

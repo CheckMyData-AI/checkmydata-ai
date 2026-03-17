@@ -54,23 +54,22 @@ def build_agent_system_prompt(
     ]
 
     if has_knowledge_base:
-        sections.append(
-            "- Answering questions about the project's codebase and documentation"
-        )
+        sections.append("- Answering questions about the project's codebase and documentation")
 
     if has_connection:
-        sections.extend([
-            "- Querying databases to find and analyse data",
-            "- Explaining query results, spotting patterns, and visualising data",
-        ])
+        sections.extend(
+            [
+                "- Querying databases to find and analyse data",
+                "- Explaining query results, spotting patterns, and visualising data",
+            ]
+        )
 
     sections.append("")
     sections.append("AVAILABLE CAPABILITIES:")
 
     if has_connection and db_type:
         sections.append(
-            f"- Database: A {db_type} database is connected.  "
-            "Use `execute_query` to run queries."
+            f"- Database: A {db_type} database is connected.  Use `execute_query` to run queries."
         )
         sections.append(
             "- Schema: Use `get_schema_info` to explore the database structure "
@@ -131,8 +130,7 @@ def build_agent_system_prompt(
         )
         guideline_num += 1
         sections.append(
-            f"{guideline_num}. Include LIMIT (default 100) for potentially "
-            "large result sets."
+            f"{guideline_num}. Include LIMIT (default 100) for potentially large result sets."
         )
 
     if has_connection and db_type:

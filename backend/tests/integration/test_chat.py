@@ -13,10 +13,13 @@ class TestChatSessions:
 
     async def test_create_and_list_sessions(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/chat/sessions", json={
-            "project_id": pid,
-            "title": "Test Session",
-        })
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={
+                "project_id": pid,
+                "title": "Test Session",
+            },
+        )
         assert resp.status_code == 200
         sid = resp.json()["id"]
         assert resp.json()["title"] == "Test Session"
@@ -28,10 +31,13 @@ class TestChatSessions:
 
     async def test_delete_session(self, auth_client):
         pid = await self._create_project(auth_client)
-        resp = await auth_client.post("/api/chat/sessions", json={
-            "project_id": pid,
-            "title": "Temp",
-        })
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={
+                "project_id": pid,
+                "title": "Temp",
+            },
+        )
         sid = resp.json()["id"]
 
         resp = await auth_client.delete(f"/api/chat/sessions/{sid}")
@@ -49,7 +55,8 @@ class TestChatSessionIsolation:
         user_b = await register_user(client)
 
         resp = await client.post(
-            "/api/projects", json={"name": "Shared Proj"},
+            "/api/projects",
+            json={"name": "Shared Proj"},
             headers=auth_headers(user_a["token"]),
         )
         pid = resp.json()["id"]
@@ -101,7 +108,8 @@ class TestChatSessionIsolation:
         user_b = await register_user(client)
 
         resp = await client.post(
-            "/api/projects", json={"name": "Isolation Proj"},
+            "/api/projects",
+            json={"name": "Isolation Proj"},
             headers=auth_headers(user_a["token"]),
         )
         pid = resp.json()["id"]

@@ -27,10 +27,13 @@ def _generate_test_key() -> str:
 class TestSshKeyCrud:
     async def test_create_and_list(self, auth_client):
         key = _generate_test_key()
-        resp = await auth_client.post("/api/ssh-keys", json={
-            "name": "test-key",
-            "private_key": key,
-        })
+        resp = await auth_client.post(
+            "/api/ssh-keys",
+            json={
+                "name": "test-key",
+                "private_key": key,
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "test-key"
@@ -46,8 +49,11 @@ class TestSshKeyCrud:
         assert resp.status_code == 404
 
     async def test_create_invalid_key(self, auth_client):
-        resp = await auth_client.post("/api/ssh-keys", json={
-            "name": "bad",
-            "private_key": "not-a-real-key",
-        })
+        resp = await auth_client.post(
+            "/api/ssh-keys",
+            json={
+                "name": "bad",
+                "private_key": "not-a-real-key",
+            },
+        )
         assert resp.status_code == 400

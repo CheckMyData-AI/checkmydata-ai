@@ -59,9 +59,7 @@ class TestSSHExecConnectorBuildCommand:
 
     def test_custom_template(self):
         connector = SSHExecConnector()
-        connector._config = make_config(
-            ssh_command_template="custom-cli -d {db_name} -u {db_user}"
-        )
+        connector._config = make_config(ssh_command_template="custom-cli -d {db_name} -u {db_user}")
         cmd = connector._build_command("query", "SELECT 1")
         assert "custom-cli -d testdb -u testuser" in cmd
 
@@ -101,10 +99,12 @@ class TestSSHExecConnectorExecuteQuery:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_execute_query_success(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stdout="id\tname\n1\talice\n2\tbob\n",
-            exit_status=0,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stdout="id\tname\n1\talice\n2\tbob\n",
+                exit_status=0,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -121,11 +121,13 @@ class TestSSHExecConnectorExecuteQuery:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_execute_query_error(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stdout="",
-            stderr="ERROR 1045: Access denied",
-            exit_status=1,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stdout="",
+                stderr="ERROR 1045: Access denied",
+                exit_status=1,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -140,10 +142,12 @@ class TestSSHExecConnectorExecuteQuery:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_execute_query_empty_result(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stdout="",
-            exit_status=0,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stdout="",
+                exit_status=0,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -160,10 +164,12 @@ class TestSSHExecConnectorTestConnection:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_test_connection_ok(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stdout="ok\n1\n",
-            exit_status=0,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stdout="ok\n1\n",
+                exit_status=0,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -175,10 +181,12 @@ class TestSSHExecConnectorTestConnection:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_test_connection_fail(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stderr="connection refused",
-            exit_status=1,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stderr="connection refused",
+                exit_status=1,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -192,10 +200,12 @@ class TestSSHExecConnectorTestSshOnly:
     @patch("app.connectors.ssh_exec.asyncssh")
     async def test_test_ssh_only_success(self, mock_asyncssh):
         mock_conn = MagicMock()
-        mock_conn.run = AsyncMock(return_value=FakeSSHResult(
-            stdout="ok\nserver-01\n",
-            exit_status=0,
-        ))
+        mock_conn.run = AsyncMock(
+            return_value=FakeSSHResult(
+                stdout="ok\nserver-01\n",
+                exit_status=0,
+            )
+        )
         mock_asyncssh.connect = AsyncMock(return_value=mock_conn)
         mock_asyncssh.import_private_key = MagicMock(return_value="key-obj")
 
@@ -210,11 +220,13 @@ class TestSSHExecConnectorTestSshOnly:
 class TestRegistryWithExecMode:
     def test_exec_mode_returns_ssh_exec_connector(self):
         from app.connectors.registry import get_connector
+
         conn = get_connector("mysql", ssh_exec_mode=True)
         assert isinstance(conn, SSHExecConnector)
 
     def test_normal_mode_returns_mysql(self):
         from app.connectors.mysql import MySQLConnector
         from app.connectors.registry import get_connector
+
         conn = get_connector("mysql", ssh_exec_mode=False)
         assert isinstance(conn, MySQLConnector)

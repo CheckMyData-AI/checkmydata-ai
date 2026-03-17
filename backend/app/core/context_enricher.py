@@ -48,7 +48,8 @@ class ContextEnricher:
         )
 
         repair_hints = self._retry_strategy.get_repair_hints(
-            error, self._schema,
+            error,
+            self._schema,
         )
         sections.append(f"## Repair Hints\n{repair_hints}")
 
@@ -107,13 +108,9 @@ class ContextEnricher:
 
         search_terms: list[str] = []
         if error.suggested_columns:
-            search_terms.extend(
-                f"column {col}" for col in error.suggested_columns[:2]
-            )
+            search_terms.extend(f"column {col}" for col in error.suggested_columns[:2])
         if error.suggested_tables:
-            search_terms.extend(
-                f"table {tbl}" for tbl in error.suggested_tables[:2]
-            )
+            search_terms.extend(f"table {tbl}" for tbl in error.suggested_tables[:2])
         if not search_terms:
             search_terms.append(error.message[:100])
 
@@ -121,7 +118,9 @@ class ContextEnricher:
         for term in search_terms[:3]:
             try:
                 results = self._vector_store.query(
-                    project_id, term, n_results=2,
+                    project_id,
+                    term,
+                    n_results=2,
                 )
                 for r in results:
                     doc = r.get("document", "")

@@ -81,8 +81,7 @@ class ClickHouseConnector(BaseConnector):
             tables: list[TableInfo] = []
 
             tbl_result = self._client.query(
-                "SELECT name, comment, total_rows "
-                "FROM system.tables WHERE database = %(db)s",
+                "SELECT name, comment, total_rows FROM system.tables WHERE database = %(db)s",
                 parameters={"db": db_name},
             )
             for trow in tbl_result.result_rows:
@@ -116,22 +115,26 @@ class ClickHouseConnector(BaseConnector):
                         parameters={"db": db_name, "tbl": tname},
                     )
                     for irow in idx_result.result_rows:
-                        indexes.append(IndexInfo(
-                            name=irow[0],
-                            columns=[irow[1]],
-                            is_unique=False,
-                        ))
+                        indexes.append(
+                            IndexInfo(
+                                name=irow[0],
+                                columns=[irow[1]],
+                                is_unique=False,
+                            )
+                        )
                 except Exception:
                     pass
 
-                tables.append(TableInfo(
-                    name=tname,
-                    schema=db_name,
-                    columns=columns,
-                    comment=tcomment if tcomment else None,
-                    row_count=trow_count,
-                    indexes=indexes,
-                ))
+                tables.append(
+                    TableInfo(
+                        name=tname,
+                        schema=db_name,
+                        columns=columns,
+                        comment=tcomment if tcomment else None,
+                        row_count=trow_count,
+                        indexes=indexes,
+                    )
+                )
             return tables
 
         tables = await asyncio.to_thread(_introspect)

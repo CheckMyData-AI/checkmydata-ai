@@ -8,7 +8,7 @@ beforeEach(() => {
     connections: [],
     activeConnection: null,
     chatSessions: [],
-    activeChatSession: null,
+    activeSession: null,
     messages: [],
   });
 });
@@ -24,6 +24,8 @@ describe("app store", () => {
       ssh_key_id: null,
       default_llm_provider: null,
       default_llm_model: null,
+      owner_id: null,
+      user_role: null,
     };
 
     useAppStore.getState().setActiveProject(project);
@@ -35,6 +37,7 @@ describe("app store", () => {
       id: "m1",
       role: "user",
       content: "Hello",
+      timestamp: Date.now(),
     });
     expect(useAppStore.getState().messages).toHaveLength(1);
     expect(useAppStore.getState().messages[0].content).toBe("Hello");

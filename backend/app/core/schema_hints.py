@@ -81,9 +81,7 @@ def get_table_detail(table_name: str, schema: SchemaInfo) -> str:
         pk = "PK" if col.is_primary_key else ""
         nullable = "YES" if col.is_nullable else "NO"
         comment = col.comment or ""
-        lines.append(
-            f"| {col.name} | {col.data_type} | {pk} | {nullable} | {comment} |"
-        )
+        lines.append(f"| {col.name} | {col.data_type} | {pk} | {nullable} | {comment} |")
 
     if table.foreign_keys:
         fks = "; ".join(

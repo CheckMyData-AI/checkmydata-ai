@@ -60,7 +60,9 @@ class InviteService:
         return invite
 
     async def list_invites(
-        self, db: AsyncSession, project_id: str,
+        self,
+        db: AsyncSession,
+        project_id: str,
     ) -> list[ProjectInvite]:
         result = await db.execute(
             select(ProjectInvite).where(ProjectInvite.project_id == project_id)
@@ -68,11 +70,12 @@ class InviteService:
         return list(result.scalars().all())
 
     async def revoke_invite(
-        self, db: AsyncSession, invite_id: str, _user_id: str,
+        self,
+        db: AsyncSession,
+        invite_id: str,
+        _user_id: str,
     ) -> bool:
-        result = await db.execute(
-            select(ProjectInvite).where(ProjectInvite.id == invite_id)
-        )
+        result = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite_id))
         invite = result.scalar_one_or_none()
         if not invite:
             return False
@@ -83,12 +86,14 @@ class InviteService:
         return True
 
     async def accept_invite(
-        self, db: AsyncSession, invite_id: str, user_id: str,
-        *, _skip_email_check: bool = False,
+        self,
+        db: AsyncSession,
+        invite_id: str,
+        user_id: str,
+        *,
+        _skip_email_check: bool = False,
     ) -> ProjectMember:
-        result = await db.execute(
-            select(ProjectInvite).where(ProjectInvite.id == invite_id)
-        )
+        result = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite_id))
         invite = result.scalar_one_or_none()
         if not invite:
             raise HTTPException(status_code=404, detail="Invite not found")
@@ -129,7 +134,9 @@ class InviteService:
         return member
 
     async def list_pending_for_email(
-        self, db: AsyncSession, email: str,
+        self,
+        db: AsyncSession,
+        email: str,
     ) -> list[ProjectInvite]:
         result = await db.execute(
             select(ProjectInvite).where(
@@ -142,7 +149,10 @@ class InviteService:
         return list(result.scalars().all())
 
     async def auto_accept_for_user(
-        self, db: AsyncSession, user_id: str, email: str,
+        self,
+        db: AsyncSession,
+        user_id: str,
+        email: str,
     ) -> list[ProjectMember]:
         """Auto-accept all pending invites for a newly registered email.
 

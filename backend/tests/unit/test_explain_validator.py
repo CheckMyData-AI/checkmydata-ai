@@ -24,12 +24,16 @@ class TestExplainValidator:
 
     @pytest.mark.asyncio
     async def test_postgres_success(self, validator):
-        plan = json.dumps([{
-            "Plan": {
-                "Node Type": "Index Scan",
-                "Plan Rows": 10,
-            },
-        }])
+        plan = json.dumps(
+            [
+                {
+                    "Plan": {
+                        "Node Type": "Index Scan",
+                        "Plan Rows": 10,
+                    },
+                }
+            ]
+        )
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
             columns=["QUERY PLAN"],
@@ -37,20 +41,26 @@ class TestExplainValidator:
             row_count=1,
         )
         result = await validator.validate(
-            connector, "SELECT * FROM users", "postgresql",
+            connector,
+            "SELECT * FROM users",
+            "postgresql",
         )
         assert result.is_valid
         assert len(result.warnings) == 0
 
     @pytest.mark.asyncio
     async def test_postgres_seq_scan_warning(self, validator):
-        plan = json.dumps([{
-            "Plan": {
-                "Node Type": "Seq Scan",
-                "Plan Rows": 50000,
-                "Relation Name": "big_table",
-            },
-        }])
+        plan = json.dumps(
+            [
+                {
+                    "Plan": {
+                        "Node Type": "Seq Scan",
+                        "Plan Rows": 50000,
+                        "Relation Name": "big_table",
+                    },
+                }
+            ]
+        )
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
             columns=["QUERY PLAN"],
@@ -58,7 +68,9 @@ class TestExplainValidator:
             row_count=1,
         )
         result = await validator.validate(
-            connector, "SELECT * FROM big_table", "postgresql",
+            connector,
+            "SELECT * FROM big_table",
+            "postgresql",
         )
         assert result.is_valid
         assert any("big_table" in w for w in result.warnings)
@@ -70,7 +82,9 @@ class TestExplainValidator:
             error='relation "bad_table" does not exist',
         )
         result = await validator.validate(
-            connector, "SELECT * FROM bad_table", "postgresql",
+            connector,
+            "SELECT * FROM bad_table",
+            "postgresql",
         )
         assert not result.is_valid
         assert result.error is not None
@@ -80,7 +94,9 @@ class TestExplainValidator:
         connector = AsyncMock()
         connector.execute_query.side_effect = Exception("connection lost")
         result = await validator.validate(
-            connector, "SELECT * FROM users", "postgresql",
+            connector,
+            "SELECT * FROM users",
+            "postgresql",
         )
         assert not result.is_valid
 
@@ -93,7 +109,9 @@ class TestExplainValidator:
             row_count=1,
         )
         result = await validator.validate(
-            connector, "SELECT * FROM big_table", "mysql",
+            connector,
+            "SELECT * FROM big_table",
+            "mysql",
         )
         assert result.is_valid
         assert any("big_table" in w for w in result.warnings)

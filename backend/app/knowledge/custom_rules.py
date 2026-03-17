@@ -40,8 +40,10 @@ class CustomRulesEngine:
                 if fp.is_file() and fp.suffix in {".md", ".yaml", ".yml", ".txt"}:
                     try:
                         content = fp.read_text(encoding="utf-8")
-                        fmt = "yaml" if fp.suffix in {".yaml", ".yml"} else (
-                            "markdown" if fp.suffix == ".md" else "text"
+                        fmt = (
+                            "yaml"
+                            if fp.suffix in {".yaml", ".yml"}
+                            else ("markdown" if fp.suffix == ".md" else "text")
                         )
                         rules.append(
                             CustomRule(
@@ -58,7 +60,8 @@ class CustomRulesEngine:
         return rules
 
     async def load_db_rules(
-        self, project_id: str | None = None,
+        self,
+        project_id: str | None = None,
     ) -> list[CustomRule]:
         """Load rules stored in the database."""
         try:

@@ -19,68 +19,82 @@ class TestProjectProfiler:
         return tmp
 
     def test_detect_django(self):
-        repo = self._create_repo({
-            "manage.py": "#!/usr/bin/env python\nimport django",
-            "settings.py": "INSTALLED_APPS = ['myapp']\nDATABASES = {'default': {}}",
-            "myapp/models.py": "from django.db import models",
-        })
+        repo = self._create_repo(
+            {
+                "manage.py": "#!/usr/bin/env python\nimport django",
+                "settings.py": "INSTALLED_APPS = ['myapp']\nDATABASES = {'default': {}}",
+                "myapp/models.py": "from django.db import models",
+            }
+        )
         profile = detect_project_profile(repo)
         assert "django" in profile.frameworks
         assert "django_orm" in profile.orms
 
     def test_detect_fastapi_sqlalchemy(self):
-        repo = self._create_repo({
-            "main.py": "from fastapi import FastAPI\napp = FastAPI()",
-            "requirements.txt": "fastapi\nsqlalchemy>=2.0",
-        })
+        repo = self._create_repo(
+            {
+                "main.py": "from fastapi import FastAPI\napp = FastAPI()",
+                "requirements.txt": "fastapi\nsqlalchemy>=2.0",
+            }
+        )
         profile = detect_project_profile(repo)
         assert "fastapi" in profile.frameworks
         assert "sqlalchemy" in profile.orms
 
     def test_detect_express_typeorm(self):
-        repo = self._create_repo({
-            "package.json": '{"dependencies": {"express": "^4.0", "typeorm": "^0.3"}}',
-            "src/index.ts": "import express from 'express'",
-        })
+        repo = self._create_repo(
+            {
+                "package.json": '{"dependencies": {"express": "^4.0", "typeorm": "^0.3"}}',
+                "src/index.ts": "import express from 'express'",
+            }
+        )
         profile = detect_project_profile(repo)
         assert "express" in profile.frameworks
         assert "typeorm" in profile.orms
 
     def test_detect_prisma(self):
-        repo = self._create_repo({
-            "prisma/schema.prisma": "model User {\n  id Int @id\n}",
-            "package.json": '{"dependencies": {"next": "^14"}}',
-        })
+        repo = self._create_repo(
+            {
+                "prisma/schema.prisma": "model User {\n  id Int @id\n}",
+                "package.json": '{"dependencies": {"next": "^14"}}',
+            }
+        )
         profile = detect_project_profile(repo)
         assert "prisma" in profile.orms
         assert "nextjs" in profile.frameworks
 
     def test_primary_language_python(self):
-        repo = self._create_repo({
-            "a.py": "pass",
-            "b.py": "pass",
-            "c.py": "pass",
-            "d.js": "console.log(1)",
-        })
+        repo = self._create_repo(
+            {
+                "a.py": "pass",
+                "b.py": "pass",
+                "c.py": "pass",
+                "d.js": "console.log(1)",
+            }
+        )
         profile = detect_project_profile(repo)
         assert profile.primary_language == "python"
 
     def test_primary_language_typescript(self):
-        repo = self._create_repo({
-            "a.ts": "const x = 1",
-            "b.ts": "const y = 2",
-            "c.tsx": "export default function App() {}",
-            "d.py": "pass",
-        })
+        repo = self._create_repo(
+            {
+                "a.ts": "const x = 1",
+                "b.ts": "const y = 2",
+                "c.tsx": "export default function App() {}",
+                "d.py": "pass",
+            }
+        )
         profile = detect_project_profile(repo)
         assert profile.primary_language == "typescript"
 
     def test_model_dirs_detected(self):
-        repo = self._create_repo({
-            "src/models/user.py": "class User: pass",
-            "src/services/auth.py": "def login(): pass",
-            "tests/test_user.py": "def test(): pass",
-        })
+        repo = self._create_repo(
+            {
+                "src/models/user.py": "class User: pass",
+                "src/services/auth.py": "def login(): pass",
+                "tests/test_user.py": "def test(): pass",
+            }
+        )
         profile = detect_project_profile(repo)
         model_dir_names = [os.path.basename(d) for d in profile.model_dirs]
         assert "models" in model_dir_names
@@ -90,9 +104,11 @@ class TestProjectProfiler:
         assert "tests" in test_dir_names
 
     def test_unknown_project(self):
-        repo = self._create_repo({
-            "readme.md": "# My project",
-        })
+        repo = self._create_repo(
+            {
+                "readme.md": "# My project",
+            }
+        )
         profile = detect_project_profile(repo)
         assert profile.summary == "Unknown project type"
 
@@ -107,10 +123,12 @@ class TestProjectProfiler:
         assert "python" in p.summary
 
     def test_skip_dirs_ignored(self):
-        repo = self._create_repo({
-            "node_modules/express/index.js": "module.exports = {}",
-            ".git/config": "[core]",
-            "src/app.py": "pass",
-        })
+        repo = self._create_repo(
+            {
+                "node_modules/express/index.js": "module.exports = {}",
+                ".git/config": "[core]",
+                "src/app.py": "pass",
+            }
+        )
         profile = detect_project_profile(repo)
         assert profile.primary_language == "python"

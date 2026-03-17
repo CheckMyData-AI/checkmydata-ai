@@ -1,9 +1,6 @@
 """Tests for IndexingPipelineRunner checkpoint-based resumability."""
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from app.knowledge.pipeline_runner import IndexingPipelineRunner, PipelineResult
 from app.models.indexing_checkpoint import IndexingCheckpoint
@@ -31,7 +28,6 @@ def _make_checkpoint(**overrides) -> IndexingCheckpoint:
 
 
 class TestCheckpointStepSkipping:
-
     def test_empty_checkpoint_means_no_steps_done(self):
         cp = _make_checkpoint()
         assert CheckpointService.get_completed_steps(cp) == set()
@@ -56,7 +52,6 @@ class TestCheckpointStepSkipping:
 
 
 class TestPipelineResultDefaults:
-
     def test_defaults(self):
         r = PipelineResult()
         assert r.status == "completed"
@@ -100,7 +95,6 @@ class TestDocSkippingLogic:
 
 
 class TestRunnerConstruction:
-
     def test_runner_stores_services(self):
         runner = IndexingPipelineRunner(
             ssh_key_svc=MagicMock(),

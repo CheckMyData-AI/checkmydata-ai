@@ -58,16 +58,12 @@ class DocGenerator:
         """
         truncated = content[:MAX_CONTENT_LENGTH]
         if len(content) > MAX_CONTENT_LENGTH:
-            truncated += (
-                f"\n... (truncated, "
-                f"{len(content) - MAX_CONTENT_LENGTH} chars omitted)"
-            )
+            truncated += f"\n... (truncated, {len(content) - MAX_CONTENT_LENGTH} chars omitted)"
 
         enrichment_section = ""
         if enrichment_context:
             enrichment_section = (
-                f"\nADDITIONAL CONTEXT (from cross-file analysis):\n"
-                f"{enrichment_context}\n"
+                f"\nADDITIONAL CONTEXT (from cross-file analysis):\n{enrichment_context}\n"
             )
 
         prompt = DOC_GENERATION_PROMPT.format(
@@ -95,7 +91,8 @@ class DocGenerator:
         except Exception:
             logger.warning(
                 "LLM doc generation failed for %s, using raw content",
-                file_path, exc_info=True,
+                file_path,
+                exc_info=True,
             )
 
         return content

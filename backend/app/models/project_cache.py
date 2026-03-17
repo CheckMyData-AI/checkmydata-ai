@@ -13,16 +13,23 @@ class ProjectCache(Base):
     __tablename__ = "project_cache"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False, unique=True,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     knowledge_json: Mapped[str] = mapped_column(Text, default="{}")
     profile_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(),
+        DateTime,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(),
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

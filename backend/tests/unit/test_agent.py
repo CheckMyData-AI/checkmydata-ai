@@ -77,11 +77,13 @@ class TestConversationalResponse:
 
     @pytest.mark.asyncio
     async def test_text_response_no_tools(self, agent, mock_llm):
-        mock_llm.complete = AsyncMock(return_value=LLMResponse(
-            content="Hello! How can I help you?",
-            tool_calls=[],
-            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-        ))
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="Hello! How can I help you?",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
         resp = await agent.run(
             question="Hi!",
             project_id="proj-1",
@@ -94,11 +96,13 @@ class TestConversationalResponse:
 
     @pytest.mark.asyncio
     async def test_text_response_with_connection(self, agent, mock_llm, config):
-        mock_llm.complete = AsyncMock(return_value=LLMResponse(
-            content="Sure, I can help with that. What would you like to know?",
-            tool_calls=[],
-            usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
-        ))
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="Sure, I can help with that. What would you like to know?",
+                tool_calls=[],
+                usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+            )
+        )
         resp = await agent.run(
             question="Thanks for the earlier results",
             project_id="proj-1",
@@ -117,13 +121,15 @@ class TestKnowledgeSearch:
         collection.count = MagicMock(return_value=10)
         mock_vector_store.get_or_create_collection = MagicMock(return_value=collection)
 
-        mock_vector_store.query = MagicMock(return_value=[
-            {
-                "document": "The project uses PostgreSQL 15",
-                "metadata": {"source_path": "README.md", "doc_type": "markdown"},
-                "distance": 0.1,
-            },
-        ])
+        mock_vector_store.query = MagicMock(
+            return_value=[
+                {
+                    "document": "The project uses PostgreSQL 15",
+                    "metadata": {"source_path": "README.md", "doc_type": "markdown"},
+                    "distance": 0.1,
+                },
+            ]
+        )
 
         call_count = 0
 
@@ -167,11 +173,13 @@ class TestSQLQueryFlow:
     async def test_sql_query_flow(self, mock_get_connector, agent, mock_llm, config):
         mock_connector = MagicMock()
         mock_connector.connect = AsyncMock()
-        mock_connector.introspect_schema = AsyncMock(return_value=MagicMock(
-            tables=[],
-            db_type="postgres",
-            db_name="testdb",
-        ))
+        mock_connector.introspect_schema = AsyncMock(
+            return_value=MagicMock(
+                tables=[],
+                db_type="postgres",
+                db_name="testdb",
+            )
+        )
         mock_get_connector.return_value = mock_connector
 
         from app.core.query_validation import ValidationLoopResult
@@ -195,7 +203,10 @@ class TestSQLQueryFlow:
                         ToolCall(
                             id="tc-1",
                             name="execute_query",
-                            arguments={"query": "SELECT COUNT(*) FROM users", "explanation": "Count users"},
+                            arguments={
+                                "query": "SELECT COUNT(*) FROM users",
+                                "explanation": "Count users",
+                            },
                         ),
                     ],
                     usage={"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
@@ -208,25 +219,29 @@ class TestSQLQueryFlow:
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
 
-        with patch("app.core.tool_executor.ValidationLoop") as MockVL:
+        with patch("app.core.tool_executor.ValidationLoop") as mock_vl_cls:
             mock_vl_instance = MagicMock()
-            mock_vl_instance.execute = AsyncMock(return_value=ValidationLoopResult(
-                success=True,
-                query="SELECT COUNT(*) FROM users",
-                explanation="Count users",
-                results=query_result,
-                attempts=[],
-                total_attempts=1,
-            ))
-            MockVL.return_value = mock_vl_instance
+            mock_vl_instance.execute = AsyncMock(
+                return_value=ValidationLoopResult(
+                    success=True,
+                    query="SELECT COUNT(*) FROM users",
+                    explanation="Count users",
+                    results=query_result,
+                    attempts=[],
+                    total_attempts=1,
+                )
+            )
+            mock_vl_cls.return_value = mock_vl_instance
 
             with patch.object(agent, "_query_builder") as mock_qb:
-                mock_qb.interpret_results = AsyncMock(return_value={
-                    "viz_type": "number",
-                    "config": {},
-                    "summary": "42 users",
-                    "usage": {},
-                })
+                mock_qb.interpret_results = AsyncMock(
+                    return_value={
+                        "viz_type": "number",
+                        "config": {},
+                        "summary": "42 users",
+                        "usage": {},
+                    }
+                )
 
                 resp = await agent.run(
                     question="How many users?",
@@ -245,13 +260,15 @@ class TestMaxIterations:
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, agent, mock_llm, config):
-        mock_llm.complete = AsyncMock(return_value=LLMResponse(
-            content="",
-            tool_calls=[
-                ToolCall(id="tc-x", name="get_custom_rules", arguments={}),
-            ],
-            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-        ))
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="tc-x", name="get_custom_rules", arguments={}),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
 
         resp = await agent.run(
             question="loop forever",

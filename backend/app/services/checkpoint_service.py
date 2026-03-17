@@ -29,9 +29,10 @@ def _safe_json_loads_set(raw: str) -> set[str]:
 
 
 class CheckpointService:
-
     async def get_active(
-        self, session: AsyncSession, project_id: str,
+        self,
+        session: AsyncSession,
+        project_id: str,
     ) -> IndexingCheckpoint | None:
         result = await session.execute(
             select(IndexingCheckpoint).where(
@@ -106,7 +107,10 @@ class CheckpointService:
         await session.commit()
 
     async def mark_doc_processed(
-        self, session: AsyncSession, checkpoint_id: str, source_path: str,
+        self,
+        session: AsyncSession,
+        checkpoint_id: str,
+        source_path: str,
     ) -> None:
         cp = await session.get(IndexingCheckpoint, checkpoint_id)
         if not cp:
@@ -153,7 +157,9 @@ class CheckpointService:
         await session.commit()
 
     async def delete(
-        self, session: AsyncSession, checkpoint_id: str,
+        self,
+        session: AsyncSession,
+        checkpoint_id: str,
     ) -> None:
         cp = await session.get(IndexingCheckpoint, checkpoint_id)
         if cp:
@@ -161,7 +167,9 @@ class CheckpointService:
             await session.commit()
 
     async def cleanup_stale(
-        self, session: AsyncSession, max_age_hours: int = 24,
+        self,
+        session: AsyncSession,
+        max_age_hours: int = 24,
     ) -> int:
         cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
         result = await session.execute(
