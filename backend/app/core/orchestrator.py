@@ -7,6 +7,7 @@ from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, Sc
 from app.connectors.registry import get_connector
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
+from app.core.history_trimmer import trim_history
 from app.core.query_builder import QueryBuilder
 from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
@@ -18,7 +19,6 @@ from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.schema_indexer import SchemaIndexer
 from app.knowledge.vector_store import VectorStore
-from app.core.history_trimmer import trim_history
 from app.llm.base import Message
 from app.llm.router import LLMRouter
 
@@ -81,7 +81,10 @@ class Orchestrator:
     async def get_or_create_connector(self, connection_config: ConnectionConfig) -> BaseConnector:
         key = self._connector_key(connection_config)
         if key not in self._connectors:
-            connector = get_connector(connection_config.db_type)
+            connector = get_connector(
+                connection_config.db_type,
+                ssh_exec_mode=connection_config.ssh_exec_mode,
+            )
             await connector.connect(connection_config)
             self._connectors[key] = connector
         return self._connectors[key]

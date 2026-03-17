@@ -68,6 +68,30 @@ DB_RELEVANT_EXTENSIONS = {
     ".sql", ".prisma", ".graphql",
 }
 
+BINARY_EXTENSIONS = {
+    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
+    ".pyc", ".pyo", ".class", ".jar", ".war",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar", ".7z",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+    ".db", ".sqlite", ".sqlite3",
+    ".wasm", ".map",
+}
+
+
+def is_binary_file(path: Path) -> bool:
+    """Fast check: skip known binary extensions, then peek for null bytes."""
+    if path.suffix.lower() in BINARY_EXTENSIONS:
+        return True
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(8192)
+        return b"\x00" in chunk
+    except Exception:
+        return True
+
 RAW_SQL_IN_CODE = re.compile(
     r"(?:execute|query|raw|text)\s*\(\s*"
     r"(?:f?['\"]{1,3}|`)"
@@ -107,6 +131,143 @@ class RepoAnalyzer:
 
     def get_repo_dir(self, project_id: str) -> Path:
         return self._clone_base_dir / project_id
+
+    def list_remote_refs(
+        self,
+        repo_url: str,
+        ssh_key_content: str | None = None,
+        ssh_key_passphrase: str | None = None,
+        timeout: int = 15,
+    ) -> dict:
+        """Run ``git ls-remote --heads`` to verify access and list branches.
+
+        Returns a dict with ``accessible``, ``branches``, ``default_branch``
+        and optionally ``error``.
+        """
+        import subprocess
+        import tempfile
+
+        env = {**os.environ}
+        temp_key_file: str | None = None
+        agent_pid: str | None = None
+        agent_sock: str | None = None
+
+        try:
+            if ssh_key_content:
+                import asyncssh
+                parsed = asyncssh.import_private_key(
+                    ssh_key_content, ssh_key_passphrase,
+                )
+                unprotected_pem = parsed.export_private_key("openssh").decode()
+
+                try:
+                    agent_out = subprocess.check_output(
+                        ["ssh-agent", "-s"], text=True,
+                    )
+                    for line in agent_out.splitlines():
+                        if "SSH_AUTH_SOCK" in line:
+                            agent_sock = line.split(";")[0].split("=")[1]
+                        elif "SSH_AGENT_PID" in line:
+                            agent_pid = line.split(";")[0].split("=")[1]
+
+                    if agent_sock:
+                        add_env = {**env, "SSH_AUTH_SOCK": agent_sock}
+                        proc = subprocess.Popen(
+                            ["ssh-add", "-"],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            env=add_env,
+                        )
+                        proc.communicate(input=unprotected_pem.encode())
+                        env["SSH_AUTH_SOCK"] = agent_sock
+                        env["GIT_SSH_COMMAND"] = (
+                            "ssh -o StrictHostKeyChecking=no"
+                        )
+                except Exception:
+                    logger.debug(
+                        "ssh-agent failed, falling back to temp file",
+                        exc_info=True,
+                    )
+                    agent_pid = None
+                    agent_sock = None
+
+                if not agent_sock:
+                    fd, temp_key_file = tempfile.mkstemp(prefix="dbagent_ssh_")
+                    with os.fdopen(fd, "w") as f:
+                        f.write(unprotected_pem)
+                    os.chmod(temp_key_file, 0o600)
+                    env["GIT_SSH_COMMAND"] = (
+                        f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
+                    )
+
+            result = subprocess.run(
+                ["git", "ls-remote", "--heads", repo_url],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
+                if not error_msg:
+                    error_msg = f"git ls-remote exited with code {result.returncode}"
+                return {
+                    "accessible": False,
+                    "branches": [],
+                    "default_branch": None,
+                    "error": error_msg,
+                }
+
+            branches: list[str] = []
+            for line in result.stdout.strip().splitlines():
+                parts = line.split("\t")
+                if len(parts) == 2:
+                    ref = parts[1]
+                    if ref.startswith("refs/heads/"):
+                        branches.append(ref[len("refs/heads/"):])
+
+            branches.sort()
+
+            default_branch: str | None = None
+            if "main" in branches:
+                default_branch = "main"
+            elif "master" in branches:
+                default_branch = "master"
+            elif branches:
+                default_branch = branches[0]
+
+            return {
+                "accessible": True,
+                "branches": branches,
+                "default_branch": default_branch,
+                "error": None,
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "accessible": False,
+                "branches": [],
+                "default_branch": None,
+                "error": f"Connection timed out after {timeout}s",
+            }
+        except Exception as exc:
+            return {
+                "accessible": False,
+                "branches": [],
+                "default_branch": None,
+                "error": str(exc),
+            }
+        finally:
+            if temp_key_file and os.path.exists(temp_key_file):
+                os.unlink(temp_key_file)
+            if agent_pid:
+                try:
+                    os.kill(int(agent_pid), 15)
+                except (ProcessLookupError, ValueError):
+                    pass
 
     def clone_or_pull(
         self,
@@ -233,6 +394,8 @@ class RepoAnalyzer:
         for fp in file_paths:
             if not fp.exists() or not fp.is_file():
                 continue
+            if is_binary_file(fp):
+                continue
             try:
                 content = fp.read_text(encoding="utf-8", errors="ignore")
             except Exception:
@@ -269,7 +432,8 @@ class RepoAnalyzer:
                 if extra_dirs:
                     rel = str(fp.relative_to(repo_dir))
                     if any(rel.startswith(ed) for ed in extra_dirs):
-                        relevant.append(fp)
+                        if not is_binary_file(fp):
+                            relevant.append(fp)
         return relevant
 
     def _analyze_file(

@@ -33,6 +33,11 @@ class Connection(Base):
     # Custom connection string override (encrypted)
     connection_string_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # SSH exec mode (run queries via CLI command over SSH instead of port forwarding)
+    ssh_exec_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    ssh_command_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssh_pre_commands: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 

@@ -16,9 +16,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("auth_token");
-      localStorage.removeItem("auth_user");
+    const isAuthRoute = path.startsWith("/auth/");
+    if (res.status === 401 && !isAuthRoute && typeof window !== "undefined") {
+      try {
+        const { useAuthStore } = await import("@/stores/auth-store");
+        useAuthStore.getState().logout();
+      } catch {
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_user");
+      }
       window.location.reload();
       throw new Error("Session expired. Please log in again.");
     }
@@ -26,7 +32,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       throw new Error("Too many requests. Please wait a moment and try again.");
     }
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed: ${res.status}`);
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((e: { msg: string }) => e.msg).join("; ")
+      : body.detail || `Request failed: ${res.status}`;
+    throw new Error(detail);
   }
   return res.json();
 }
@@ -71,6 +80,7 @@ export interface Connection {
   db_type: string;
   ssh_host: string | null;
   ssh_port: number;
+  ssh_user: string | null;
   ssh_key_id: string | null;
   db_host: string;
   db_port: number;
@@ -78,6 +88,9 @@ export interface Connection {
   db_user: string | null;
   is_read_only: boolean;
   is_active: boolean;
+  ssh_exec_mode: boolean;
+  ssh_command_template: string | null;
+  ssh_pre_commands: string | null;
 }
 
 export interface SshKey {
@@ -115,6 +128,13 @@ export interface ChatResponse {
   response_type?: "text" | "sql_result" | "knowledge" | "error";
 }
 
+export interface RepoCheckResult {
+  accessible: boolean;
+  branches: string[];
+  default_branch: string | null;
+  error: string | null;
+}
+
 export interface RepoStatus {
   project_id: string;
   repo_url: string;
@@ -130,6 +150,13 @@ export interface UpdateCheck {
   has_updates: boolean;
   commits_behind: number;
   message: string;
+}
+
+export interface LLMModel {
+  id: string;
+  name: string;
+  context_length: number | null;
+  pricing: { prompt: string; completion: string } | null;
 }
 
 export interface AuthUser {
@@ -188,6 +215,10 @@ export const api = {
       request<{ ok: boolean }>(`/connections/${id}`, { method: "DELETE" }),
     test: (id: string) =>
       request<{ success: boolean; error?: string }>(`/connections/${id}/test`, {
+        method: "POST",
+      }),
+    testSsh: (id: string) =>
+      request<{ success: boolean; hostname?: string; error?: string }>(`/connections/${id}/test-ssh`, {
         method: "POST",
       }),
     refreshSchema: (id: string) =>
@@ -299,8 +330,13 @@ export const api = {
   },
 
   repos: {
+    checkAccess: (data: { repo_url: string; ssh_key_id?: string | null }) =>
+      request<RepoCheckResult>("/repos/check-access", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
     index: (projectId: string, forceFull = false) =>
-      request<{ status: string; commit_sha: string; files_indexed: number; schemas_found: number; workflow_id: string | null }>(
+      request<{ status: string; workflow_id: string | null; commit_sha?: string; files_indexed?: number; schemas_found?: number }>(
         `/repos/${projectId}/index`,
         { method: "POST", body: JSON.stringify({ force_full: forceFull }) }
       ),
@@ -364,11 +400,16 @@ export const api = {
       }),
   },
 
+  models: {
+    list: (provider: string) =>
+      request<LLMModel[]>(`/models?provider=${encodeURIComponent(provider)}`),
+  },
+
   viz: {
     export: async (columns: string[], rows: unknown[][], format: string) => {
       const res = await fetch(`${API_BASE}/visualizations/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ columns, rows, format }),
       });
       if (!res.ok) throw new Error("Export failed");

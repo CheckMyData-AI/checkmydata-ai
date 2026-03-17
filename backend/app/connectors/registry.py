@@ -3,6 +3,7 @@ from app.connectors.clickhouse import ClickHouseConnector
 from app.connectors.mongodb import MongoDBConnector
 from app.connectors.mysql import MySQLConnector
 from app.connectors.postgres import PostgresConnector
+from app.connectors.ssh_exec import SSHExecConnector
 
 CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = {
     "postgres": PostgresConnector,
@@ -14,7 +15,9 @@ CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = {
 }
 
 
-def get_connector(db_type: str) -> BaseConnector:
+def get_connector(db_type: str, *, ssh_exec_mode: bool = False) -> BaseConnector:
+    if ssh_exec_mode:
+        return SSHExecConnector()
     cls = CONNECTOR_REGISTRY.get(db_type.lower())
     if cls is None:
         raise ValueError(f"Unsupported database type: {db_type}. Available: {list(CONNECTOR_REGISTRY.keys())}")

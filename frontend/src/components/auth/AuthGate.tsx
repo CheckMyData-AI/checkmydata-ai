@@ -24,6 +24,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,10 +32,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }, [restore]);
 
   const handleGoogleResponse = useCallback(
-    (response: { credential: string }) => {
-      googleLogin(response.credential);
+    async (response: { credential: string }) => {
+      if (googleLoading) return;
+      setGoogleLoading(true);
+      try {
+        await googleLogin(response.credential);
+      } finally {
+        setGoogleLoading(false);
+      }
     },
-    [googleLogin],
+    [googleLogin, googleLoading],
   );
 
   useEffect(() => {
@@ -111,15 +118,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
           />
 
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={6}
-            className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
-          />
+          <div>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
+            />
+            {mode === "register" && (
+              <p className="text-[10px] text-zinc-500 mt-1 px-1">Min. 6 characters</p>
+            )}
+          </div>
 
           {error && <p className="text-red-400 text-xs">{error}</p>}
 
@@ -138,7 +150,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 <span className="text-[10px] text-zinc-500 uppercase tracking-wider">or</span>
                 <div className="flex-1 border-t border-zinc-700" />
               </div>
-              <div ref={googleBtnRef} className="flex justify-center" />
+              <div ref={googleBtnRef} className={`flex justify-center ${googleLoading ? "opacity-50 pointer-events-none" : ""}`} />
+              {googleLoading && (
+                <p className="text-xs text-zinc-500 text-center animate-pulse">Signing in with Google...</p>
+              )}
             </>
           )}
 

@@ -238,7 +238,7 @@ class ToolExecutor:
     async def _get_or_create_connector(self, cfg: ConnectionConfig) -> BaseConnector:
         key = self._connector_key(cfg)
         if key not in self._connectors:
-            connector = get_connector(cfg.db_type)
+            connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
             await connector.connect(cfg)
             self._connectors[key] = connector
         return self._connectors[key]

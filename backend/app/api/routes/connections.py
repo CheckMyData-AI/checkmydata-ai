@@ -1,5 +1,7 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -14,7 +16,7 @@ _membership_svc = MembershipService()
 class ConnectionCreate(BaseModel):
     project_id: str
     name: str
-    db_type: str
+    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse"]
     ssh_host: str | None = None
     ssh_port: int = 22
     ssh_user: str | None = None
@@ -26,6 +28,15 @@ class ConnectionCreate(BaseModel):
     db_password: str | None = None
     connection_string: str | None = None
     is_read_only: bool = True
+    ssh_exec_mode: bool = False
+    ssh_command_template: str | None = None
+    ssh_pre_commands: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_conn_string_or_host(self):
+        if not self.connection_string and not (self.db_host and self.db_name):
+            raise ValueError("Provide either a connection string or db_host + db_name")
+        return self
 
 
 class ConnectionUpdate(BaseModel):
@@ -42,6 +53,9 @@ class ConnectionUpdate(BaseModel):
     db_password: str | None = None
     connection_string: str | None = None
     is_read_only: bool | None = None
+    ssh_exec_mode: bool | None = None
+    ssh_command_template: str | None = None
+    ssh_pre_commands: list[str] | None = None
 
 
 class ConnectionResponse(BaseModel):
@@ -51,6 +65,7 @@ class ConnectionResponse(BaseModel):
     db_type: str
     ssh_host: str | None
     ssh_port: int
+    ssh_user: str | None
     ssh_key_id: str | None
     db_host: str
     db_port: int
@@ -58,6 +73,9 @@ class ConnectionResponse(BaseModel):
     db_user: str | None
     is_read_only: bool
     is_active: bool
+    ssh_exec_mode: bool
+    ssh_command_template: str | None
+    ssh_pre_commands: str | None
 
 
 @router.post("", response_model=ConnectionResponse)
@@ -135,6 +153,21 @@ async def test_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
     result = await _svc.test_connection(db, connection_id)
+    return result
+
+
+@router.post("/{connection_id}/test-ssh")
+async def test_ssh(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Test SSH connectivity independently from the database."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    result = await _svc.test_ssh(db, connection_id)
     return result
 
 

@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { confirmAction } from "@/components/ui/ConfirmModal";
+import { toast } from "@/stores/toast-store";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface Rule {
   id: string;
@@ -22,25 +25,32 @@ export function RulesManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
+  const [listLoading, setListLoading] = useState(true);
 
   useEffect(() => {
+    setListLoading(true);
     api.rules
       .list(activeProject?.id)
       .then(setRules)
-      .catch(console.error);
+      .catch(() => {})
+      .finally(() => setListLoading(false));
   }, [activeProject?.id]);
 
   const handleCreate = async () => {
     if (!name.trim() || !content.trim()) return;
-    const rule = await api.rules.create({
-      project_id: activeProject?.id,
-      name: name.trim(),
-      content: content.trim(),
-    });
-    setRules((prev) => [rule, ...prev]);
-    setName("");
-    setContent("");
-    setShowCreate(false);
+    try {
+      const rule = await api.rules.create({
+        project_id: activeProject?.id,
+        name: name.trim(),
+        content: content.trim(),
+      });
+      setRules((prev) => [rule, ...prev]);
+      setName("");
+      setContent("");
+      setShowCreate(false);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to create rule", "error");
+    }
   };
 
   const handleEdit = (rule: Rule) => {
@@ -52,30 +62,35 @@ export function RulesManager() {
 
   const handleUpdate = async () => {
     if (!editingId) return;
-    const updated = await api.rules.update(editingId, {
-      name: name.trim(),
-      content: content.trim(),
-    });
-    setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-    setEditingId(null);
-    setName("");
-    setContent("");
+    try {
+      const updated = await api.rules.update(editingId, {
+        name: name.trim(),
+        content: content.trim(),
+      });
+      setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setEditingId(null);
+      setName("");
+      setContent("");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update rule", "error");
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this rule?")) return;
-    await api.rules.delete(id);
-    setRules((prev) => prev.filter((r) => r.id !== id));
+    if (!(await confirmAction("Delete this rule?"))) return;
+    try {
+      await api.rules.delete(id);
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to delete rule", "error");
+    }
   };
 
   const isFormOpen = showCreate || editingId !== null;
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-          Custom Rules
-        </h3>
+      <div className="flex justify-end">
         <button
           onClick={() => {
             if (showCreate) {
@@ -131,6 +146,7 @@ export function RulesManager() {
         </div>
       )}
 
+      {listLoading && <Spinner />}
       <div className="space-y-1 max-h-48 overflow-y-auto">
         {rules.map((rule) => (
           <div key={rule.id} className="flex items-center gap-1 group">

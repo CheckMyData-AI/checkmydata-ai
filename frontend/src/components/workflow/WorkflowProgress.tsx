@@ -76,12 +76,15 @@ function StepIcon({ status, isRetry }: { status: StepState["status"]; isRetry?: 
 interface WorkflowProgressProps {
   workflowId: string | null;
   compact?: boolean;
+  onComplete?: (status: "completed" | "failed", detail: string) => void;
 }
 
-export function WorkflowProgress({ workflowId, compact = false }: WorkflowProgressProps) {
+export function WorkflowProgress({ workflowId, compact = false, onComplete }: WorkflowProgressProps) {
   const [steps, setSteps] = useState<StepState[]>([]);
   const [pipelineStatus, setPipelineStatus] = useState<"running" | "completed" | "failed">("running");
   const unsubRef = useRef<(() => void) | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     if (!workflowId) return;
@@ -91,7 +94,9 @@ export function WorkflowProgress({ workflowId, compact = false }: WorkflowProgre
 
     const unsub = subscribeToWorkflow(workflowId, (event: WorkflowEvent) => {
       if (event.step === "pipeline_end") {
-        setPipelineStatus(event.status === "failed" ? "failed" : "completed");
+        const finalStatus = event.status === "failed" ? "failed" : "completed";
+        setPipelineStatus(finalStatus);
+        onCompleteRef.current?.(finalStatus as "completed" | "failed", event.detail);
         return;
       }
       if (event.step === "pipeline_start") return;

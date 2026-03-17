@@ -17,7 +17,6 @@ from app.knowledge.entity_extractor import (
     build_project_knowledge,
 )
 from app.knowledge.project_profiler import ProjectProfile, detect_project_profile
-from app.knowledge.repo_analyzer import ExtractedSchema
 
 
 class TestProjectKnowledgeSerialization:

@@ -178,6 +178,7 @@ async def submit_feedback(
 ):
     """Record user feedback (thumbs up/down) on an assistant message."""
     from sqlalchemy import select
+
     from app.models.chat_session import ChatMessage as ChatMessageModel
 
     result = await db.execute(
@@ -202,7 +203,9 @@ async def get_feedback_analytics(
 ):
     """Return aggregated feedback stats for a project."""
     from sqlalchemy import and_, func, select
-    from app.models.chat_session import ChatMessage as ChatMessageModel, ChatSession
+
+    from app.models.chat_session import ChatMessage as ChatMessageModel
+    from app.models.chat_session import ChatSession
 
     stmt = (
         select(
@@ -516,7 +519,7 @@ async def chat_websocket(
 ):
     import asyncio
 
-    from app.core.workflow_tracker import WorkflowEvent, tracker
+    from app.core.workflow_tracker import tracker
     from app.models.base import async_session_factory
     from app.services.auth_service import AuthService
 

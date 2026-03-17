@@ -158,14 +158,31 @@ export function ChatPanel() {
 
   if (!canChat) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500">
-        Configure a database connection or switch to Knowledge-Only mode
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
+        <p>No database connection configured.</p>
+        <button
+          onClick={() => useAppStore.getState().setChatMode("knowledge_only")}
+          className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-500 transition-colors"
+        >
+          Chat with Knowledge Base
+        </button>
       </div>
     );
   }
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {chatMode === "knowledge_only" && !activeConnection && (
+        <div className="flex items-center justify-between px-6 py-1.5 bg-purple-900/20 border-b border-purple-800/30">
+          <span className="text-xs text-purple-400">Knowledge Base Mode</span>
+          <button
+            onClick={() => useAppStore.getState().setChatMode("full")}
+            className="text-[10px] text-purple-400 hover:text-purple-300"
+          >
+            Exit
+          </button>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-zinc-500 text-sm mt-20">
@@ -184,9 +201,23 @@ export function ChatPanel() {
             <p className="mt-1">Ask a question about your data…</p>
           </div>
         )}
-        {messages.map((msg) => (
-          <ChatMessage key={msg.id} message={msg} metadataJson={msg.metadataJson} />
-        ))}
+        {messages.map((msg, idx) => {
+          const canRetry =
+            msg.responseType === "error" &&
+            idx === messages.length - 1 &&
+            !isThinking;
+          const prevUserMsg = canRetry
+            ? [...messages].reverse().find((m) => m.role === "user")
+            : undefined;
+          return (
+            <ChatMessage
+              key={msg.id}
+              message={msg}
+              metadataJson={msg.metadataJson}
+              onRetry={prevUserMsg ? () => handleSend(prevUserMsg.content) : undefined}
+            />
+          );
+        })}
         {isThinking && (
           <div className="flex gap-3">
             <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2">

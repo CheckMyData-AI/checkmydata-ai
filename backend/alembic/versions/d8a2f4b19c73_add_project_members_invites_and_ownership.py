@@ -39,14 +39,12 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("projects") as batch_op:
-        batch_op.add_column(
-            sa.Column("owner_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        )
+        batch_op.add_column(sa.Column("owner_id", sa.String(36), nullable=True))
+        batch_op.create_foreign_key("fk_projects_owner_id", "users", ["owner_id"], ["id"], ondelete="SET NULL")
 
     with op.batch_alter_table("chat_sessions") as batch_op:
-        batch_op.add_column(
-            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        )
+        batch_op.add_column(sa.Column("user_id", sa.String(36), nullable=True))
+        batch_op.create_foreign_key("fk_chat_sessions_user_id", "users", ["user_id"], ["id"], ondelete="SET NULL")
 
 
 def downgrade() -> None:

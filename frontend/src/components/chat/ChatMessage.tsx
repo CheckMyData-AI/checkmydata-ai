@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
 import { api } from "@/lib/api";
+import { toast } from "@/stores/toast-store";
 
 interface AttemptInfo {
   attempt: number;
@@ -37,9 +38,10 @@ interface MessageMetadata {
 interface ChatMessageProps {
   message: ChatMessageType;
   metadataJson?: string | null;
+  onRetry?: () => void;
 }
 
-export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
+export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -49,8 +51,8 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
     try {
       await api.chat.submitFeedback(message.id, rating);
       setUserRating(rating);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
     }
   };
 
@@ -157,7 +159,17 @@ export function ChatMessage({ message, metadataJson }: ChatMessageProps) {
         )}
 
         {message.error && (
-          <p className="mt-2 text-xs text-red-400">Error: {message.error}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-xs text-red-400">Error: {message.error}</p>
+            {onRetry && responseType === "error" && (
+              <button
+                onClick={onRetry}
+                className="text-[10px] px-2 py-0.5 rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              >
+                Retry
+              </button>
+            )}
+          </div>
         )}
 
         {/* Thumbs up/down feedback */}

@@ -3,10 +3,13 @@
 import { useEffect, useState } from "react";
 import { api, type ProjectInvite } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { toast } from "@/stores/toast-store";
+import { Spinner } from "@/components/ui/Spinner";
 
 export function PendingInvites() {
   const [invites, setInvites] = useState<ProjectInvite[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
   const setProjects = useAppStore((s) => s.setProjects);
 
   const load = async () => {
@@ -15,6 +18,8 @@ export function PendingInvites() {
       setInvites(pending);
     } catch {
       /* no-op if not logged in */
+    } finally {
+      setListLoading(false);
     }
   };
 
@@ -30,12 +35,13 @@ export function PendingInvites() {
       const projects = await api.projects.list();
       setProjects(projects);
     } catch (err) {
-      console.error("Failed to accept invite", err);
+      toast(err instanceof Error ? err.message : "Failed to accept invite", "error");
     } finally {
       setAccepting(null);
     }
   };
 
+  if (listLoading) return <Spinner />;
   if (invites.length === 0) return null;
 
   return (

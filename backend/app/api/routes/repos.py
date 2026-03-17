@@ -3,12 +3,12 @@ import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from git import Repo
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.services.membership_service import MembershipService
 from app.config import settings
 from app.core.workflow_tracker import tracker
 from app.knowledge.chunker import chunk_document
@@ -23,6 +23,8 @@ from app.knowledge.indexing_pipeline import (
 )
 from app.knowledge.repo_analyzer import RepoAnalyzer
 from app.knowledge.vector_store import VectorStore
+from app.models.base import async_session_factory
+from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
 from app.services.project_service import ProjectService
 from app.services.ssh_key_service import SshKeyService
@@ -41,6 +43,48 @@ _cache_svc = ProjectCacheService()
 
 _membership_svc = MembershipService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
+_indexing_tasks: dict[str, asyncio.Task] = {}
+
+
+class RepoCheckRequest(BaseModel):
+    repo_url: str
+    ssh_key_id: str | None = None
+
+
+class RepoCheckResponse(BaseModel):
+    accessible: bool
+    branches: list[str]
+    default_branch: str | None = None
+    error: str | None = None
+
+
+@router.post("/check-access", response_model=RepoCheckResponse)
+async def check_access(
+    body: RepoCheckRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Verify SSH/HTTPS access to a repo and list its branches."""
+    ssh_key_content: str | None = None
+    ssh_key_passphrase: str | None = None
+    if body.ssh_key_id:
+        decrypted = await _ssh_key_svc.get_decrypted(db, body.ssh_key_id)
+        if decrypted:
+            ssh_key_content, ssh_key_passphrase = decrypted
+        else:
+            return RepoCheckResponse(
+                accessible=False,
+                branches=[],
+                error="SSH key not found",
+            )
+
+    result = await asyncio.to_thread(
+        _repo_analyzer.list_remote_refs,
+        repo_url=body.repo_url,
+        ssh_key_content=ssh_key_content,
+        ssh_key_passphrase=ssh_key_passphrase,
+    )
+    return RepoCheckResponse(**result)
 
 
 class IndexRequest(BaseModel):
@@ -55,7 +99,7 @@ class IndexResponse(BaseModel):
     workflow_id: str | None = None
 
 
-@router.post("/{project_id}/index", response_model=IndexResponse)
+@router.post("/{project_id}/index", status_code=202)
 async def index_repo(
     project_id: str,
     body: IndexRequest | None = None,
@@ -85,14 +129,34 @@ async def index_repo(
         {"project_id": project_id, "repo_url": project.repo_url},
     )
 
+    task = asyncio.create_task(
+        _run_index_background(project_id, project, body, wf_id, lock),
+    )
+    _indexing_tasks[project_id] = task
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "started",
+            "workflow_id": wf_id,
+        },
+    )
+
+
+async def _run_index_background(
+    project_id: str, project, body: IndexRequest,
+    wf_id: str, lock: asyncio.Lock,
+) -> None:
+    """Run the indexing pipeline as a background task with its own DB session."""
     async with lock:
         try:
-            return await _run_index(
-                project_id, project, body, db, wf_id,
-            )
+            async with async_session_factory() as db:
+                await _run_index(project_id, project, body, db, wf_id)
         except Exception as exc:
+            logger.exception("Background indexing failed for project %s", project_id)
             await tracker.end(wf_id, "index_repo", "failed", str(exc))
-            raise
+        finally:
+            _indexing_tasks.pop(project_id, None)
 
 
 async def _run_index(

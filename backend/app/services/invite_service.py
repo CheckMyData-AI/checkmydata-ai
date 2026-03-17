@@ -1,6 +1,6 @@
 """Service for email-based project invitations."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import and_, select
@@ -105,7 +105,7 @@ class InviteService:
                 )
 
         invite.status = "accepted"
-        invite.accepted_at = datetime.now(timezone.utc)
+        invite.accepted_at = datetime.now(UTC)
 
         existing = await db.execute(
             select(ProjectMember).where(

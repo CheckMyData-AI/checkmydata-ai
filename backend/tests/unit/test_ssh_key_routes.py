@@ -4,12 +4,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_current_user
 from app.main import app
+
+_FAKE_USER = {"user_id": "test-user-1", "email": "unit@test.local"}
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
+    yield TestClient(app)
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 class TestSshKeyRoutes:
@@ -49,7 +54,10 @@ class TestSshKeyRoutes:
             mock_svc.create = AsyncMock(return_value=mock_key)
             resp = client.post("/api/ssh-keys", json={
                 "name": "my-key",
-                "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----",
+                "private_key": (
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                    "test\n-----END OPENSSH PRIVATE KEY-----"
+                ),
             })
             assert resp.status_code == 200
             assert resp.json()["name"] == "my-key"

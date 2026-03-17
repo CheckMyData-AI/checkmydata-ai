@@ -143,17 +143,33 @@ To add a connection:
    - Enter SSH host IP, port (default 22), SSH user
    - Select an SSH key from the dropdown
    - The system creates an SSH tunnel automatically — the database fields should point to the *remote* host (usually `127.0.0.1:3306`)
-6. **Read-only mode** (checked by default) — blocks `INSERT`, `UPDATE`, `DELETE`, `DROP` queries
-7. Click **Create Connection**
-8. Click **Test** to verify connectivity
+6. **SSH Exec Mode** (alternative to port forwarding — runs queries via CLI on the remote server):
+   - Enable the **SSH Exec Mode** checkbox (appears when SSH host is configured)
+   - Select a **command template preset** (MySQL, PostgreSQL, ClickHouse) or write a custom one
+   - Templates use placeholders: `{db_host}`, `{db_port}`, `{db_user}`, `{db_password}`, `{db_name}`. The query is piped via stdin.
+   - Optionally add **pre-commands** (one per line) — e.g., `source ~/.bashrc`, `export PATH=/opt/mysql/bin:$PATH`
+   - Use this mode when: port forwarding is blocked, the DB client is only installed on the server, or custom setup commands are required
+7. **Read-only mode** (checked by default) — blocks `INSERT`, `UPDATE`, `DELETE`, `DROP` queries
+8. Click **Create Connection**
+9. Click **Test SSH** to verify SSH connectivity independently, then **Test DB** to verify the full chain
 
-**Example — MySQL via SSH tunnel:**
+**Example — MySQL via SSH tunnel (port forwarding):**
 ```
 SSH Host: 64.188.10.62      SSH User: deploy       SSH Key: "prod-key"
 DB Host: 127.0.0.1          DB Port: 3306          DB Name: analytics
 DB User: readonly_agent     DB Password: ****
 ```
 The agent will SSH into `64.188.10.62`, then connect to MySQL at `127.0.0.1:3306` through the tunnel.
+
+**Example — MySQL via SSH exec mode (CLI on server):**
+```
+SSH Host: 64.188.10.62      SSH User: ssheleg-ai-agent    SSH Key: "server-key"
+DB Host: 127.0.0.1          DB Port: 3306                 DB Name: esim_analytics
+DB User: ssheleg_ai_agent_read    DB Password: ****
+SSH Exec Mode: ON
+Template: MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch --raw
+```
+The agent will SSH into the server and execute queries via the `mysql` CLI client directly. This is equivalent to running: `ssh server 'echo "SELECT ..." | mysql ...'`
 
 ### 6. Index the Repository (Knowledge Base)
 
@@ -182,6 +198,21 @@ After indexing, the **Knowledge Docs** section in the sidebar shows all indexed 
 **Staleness detection**: When chatting, the orchestrator automatically compares the last indexed commit with the current repo HEAD. If the knowledge base is behind, a warning badge appears on the assistant's response.
 
 **Multi-pass pipeline**: The indexing runs 5 passes to understand the project holistically, not just per-file.
+
+### Activity Log (Bottom Panel)
+
+A real-time **Activity Log** panel is available at the bottom of the screen:
+
+1. Click the **"Activity Log"** button in the bottom-right corner to open it
+2. The panel shows a live stream of ALL backend events across all pipelines:
+   - **Indexing** (purple) — SSH key, git clone/pull, file analysis, doc generation, vector storage
+   - **Query** (cyan) — schema introspection, SQL generation, execution, validation, repair
+   - **Agent** (amber) — LLM calls, tool execution, knowledge search
+3. Each log line shows: timestamp, pipeline, step name, status, detail, and elapsed time
+4. The panel auto-scrolls to the latest entry. A badge shows unread count when closed.
+5. Use **Clear** to reset the log, **Close** to hide the panel.
+
+The log connects via SSE to `GET /api/workflows/events` (global mode, no workflow filter).
 
 ### 7. Chat — Ask Questions
 
@@ -318,10 +349,15 @@ app/
 │   └── logging_config.py ← Structured logging setup
 ├── connectors/         ← Database adapters
 │   ├── base.py         ← Abstract interface (ConnectionConfig, QueryResult, SchemaInfo)
+│   ├── registry.py     ← Connector factory (routes to SSHExecConnector when exec_mode=True)
 │   ├── postgres.py     ← asyncpg + SSH tunnel via asyncssh
 │   ├── mysql.py        ← aiomysql + SSH tunnel
 │   ├── mongodb.py      ← motor (async MongoDB driver)
-│   └── clickhouse.py   ← clickhouse-connect (sync, wrapped in asyncio.to_thread)
+│   ├── clickhouse.py   ← clickhouse-connect (sync, wrapped in asyncio.to_thread)
+│   ├── ssh_exec.py     ← SSH exec mode: run queries via CLI on remote server
+│   ├── ssh_tunnel.py   ← SSH tunnel (port forwarding) with keepalive + timeout
+│   ├── cli_output_parser.py ← Parse MySQL/psql/ClickHouse CLI tabular output
+│   └── exec_templates.py    ← Predefined CLI command templates per db_type
 ├── knowledge/          ← Repository analysis & RAG (multi-pass pipeline)
 │   ├── indexing_pipeline.py ← Multi-pass orchestrator (profile → extract → enrich → store)
 │   ├── project_profiler.py  ← Pass 1: Auto-detect framework/ORM/language/dirs
@@ -489,6 +525,10 @@ The system prompt is **dialect-aware** — it includes specific guidance for MyS
 
 ### SSH Tunnel Architecture
 
+The system supports **two SSH modes** for connecting to databases on remote servers:
+
+**Mode 1 — Port Forwarding** (default): Uses `asyncssh` to create an in-process SSH tunnel with local port forwarding. The native async DB driver (e.g., `aiomysql`) connects through the forwarded port.
+
 ```
 User's Machine                        Target Server
 ┌──────────────┐                      ┌──────────────────┐
@@ -502,7 +542,26 @@ User's Machine                        Target Server
 └──────────────┘                      └──────────────────┘
 ```
 
+**Mode 2 — SSH Exec Mode** (new): SSHes into the server and runs the database CLI client directly via `asyncssh.run()`. Query is piped via stdin to avoid shell injection. Useful when port forwarding is blocked, the DB client is only on the server, or custom pre-commands are needed.
+
+```
+User's Machine                        Target Server
+┌──────────────┐                      ┌──────────────────┐
+│  Agent       │  SSH exec            │  SSH Server      │
+│  Backend     ├──────────────────────┤                  │
+│              │  conn.run(           │  ┌────────────┐  │
+│  asyncssh    │    "echo QUERY |     │  │  mysql CLI  │  │
+│  SSHExec     │     mysql ..."       │  │  on server  │  │
+│  Connector   │  )                   │  └──────┬─────┘  │
+│              │  ◄── stdout (TSV)    │         │        │
+│  CLIOutput   │                      │  ┌──────▼─────┐  │
+│  Parser      │                      │  │  MySQL DB   │  │
+└──────────────┘                      └──┴────────────┴──┘
+```
+
 SSH keys are loaded directly into memory via `asyncssh.import_private_key()` — no temporary files needed for database connections. For Git operations (which use the `git` CLI), the key is briefly written to a temp file with `0600` permissions and deleted immediately after.
+
+SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check actively pings the server (not just socket inspection). The SSH test endpoint (`POST /connections/{id}/test-ssh`) allows testing SSH connectivity independently from the database.
 
 ### Data Flow for Repository Indexing (Multi-Pass Pipeline)
 
@@ -549,16 +608,19 @@ Next.js 15 / React 19 / TypeScript / Tailwind CSS
 
 src/
 ├── app/
-│   ├── page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel
+│   ├── page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel + LogPanel
 │   ├── layout.tsx         ← Root layout: wraps app in ClientShell (ErrorBoundary + Toast + ConfirmModal)
 │   └── globals.css        ← Global styles + animation keyframes
 ├── stores/
 │   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
 │   ├── auth-store.ts      ← Zustand: user, token, login/register/logout
+│   ├── log-store.ts       ← Zustand: activity log entries, panel state, SSE connection status
 │   └── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
+├── hooks/
+│   └── useGlobalEvents.ts ← Global SSE subscription hook (all workflow events → log store)
 ├── lib/
 │   ├── api.ts             ← REST client (fetch wrapper + auth headers + 422 error parsing)
-│   └── sse.ts             ← Server-Sent Events subscription helper
+│   └── sse.ts             ← SSE helpers: fetch-based streaming with auth (per-workflow + global)
 └── components/
     ├── ui/
     │   ├── ClientShell.tsx    ← Client wrapper: ErrorBoundary + ToastContainer + ConfirmModal
@@ -583,6 +645,7 @@ src/
     ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs + empty state message
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
+    ├── log/LogPanel.tsx ← Bottom panel: real-time activity log with color-coded pipeline events
     └── viz/ ← DataTable, ChartRenderer, ExportButtons
 ```
 
@@ -603,6 +666,7 @@ src/
 | `POST/GET/PATCH/DELETE` | `/api/connections` | Connection CRUD |
 | `GET` | `/api/connections/project/{id}` | List connections for project |
 | `POST` | `/api/connections/{id}/test` | Test database connectivity |
+| `POST` | `/api/connections/{id}/test-ssh` | Test SSH connectivity independently (returns hostname) |
 | `POST` | `/api/connections/{id}/refresh-schema` | Invalidate cached schema and re-introspect |
 | `POST/GET/DELETE` | `/api/ssh-keys` | SSH key management |
 | `POST` | `/api/chat/sessions` | Create chat session |
@@ -658,7 +722,7 @@ The agent uses SQLite (default) or PostgreSQL (recommended for production) to st
 ```
 users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, created_at
 projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, llm_provider, llm_model
-connections      — id, project_id, name, db_type, ssh_*, db_*, is_read_only, is_active
+connections      — id, project_id, name, db_type, ssh_*, db_*, ssh_exec_mode, ssh_command_template, ssh_pre_commands, is_read_only, is_active
 ssh_keys         — id, name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type
 project_members  — id, project_id, user_id, role (owner|editor|viewer), created_at  [UNIQUE(project_id, user_id)]
 project_invites  — id, project_id, email, invited_by, role, status (pending|accepted|revoked), created_at, accepted_at
@@ -671,7 +735,7 @@ rag_feedback     — id, project_id, chunk_id, source_path, doc_type, distance, 
 project_cache    — id, project_id, knowledge_json, profile_json, created_at, updated_at
 ```
 
-Managed via **Alembic migrations** (8 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields).
+Managed via **Alembic migrations** (10 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode).
 
 ---
 
@@ -750,10 +814,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 399 across 43 files
-- Backend integration tests: 76 across 12 files
+- Backend unit tests: 460 across 46 files
+- Backend integration tests: 82 across 13 files
 - Frontend tests: 11 across 3 files
-- **Total: 486 tests**
+- **Total: 553 tests**
 
 ### Test Coverage by Module
 
@@ -775,6 +839,10 @@ make test-frontend    # frontend vitest
 | Safety Guard | 17 (read-only, DML, DDL, MongoDB) | — |
 | SSH Key Service | 10 (CRUD, validation, passphrase, in-use) | 3 |
 | SSH Key Routes | 9 (list, create, delete, duplicate, in-use) | — |
+| SSH Exec Connector | 15 (connect, execute, test, build_command, pre-commands, custom template) | — |
+| CLI Output Parser | 17 (TSV, CSV, psql tuples, MySQL batch, generic, edge cases) | — |
+| Exec Templates | 12 (structure, format, defaults, substitution, special chars) | — |
+| SSH Exec Connections | — | 6 (CRUD with exec mode, test-ssh, ssh_user in response) |
 | Viz/Export | 14 (table, chart, text, CSV, JSON) | — |
 | Workflow Tracker | 11 (events, subscribe, step, queue) | — |
 | Workflow Routes | 4 (SSE format, filtering, pipeline) | — |
@@ -830,7 +898,20 @@ The production environment runs on **Heroku** as two Docker container apps with 
 - `esim-db-agent-api` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
 - `esim-db-agent-web` — container stack, `Dockerfile.frontend`, connects to the API app
 
-**Redeploying after code changes:**
+**Auto-deploy (CI/CD):**
+
+Every push to `main` triggers automatic deployment via GitHub Actions (`.github/workflows/deploy.yml`):
+
+1. CI workflow runs (lint, tests, type check)
+2. If CI passes, deploy workflow starts automatically
+3. Builds both Docker images for `linux/amd64`
+4. Pushes to Heroku Container Registry
+5. Releases both apps
+6. Verifies backend health check
+
+Required GitHub secret: `HEROKU_API_KEY` (already configured).
+
+**Manual redeploy (if needed):**
 
 ```bash
 # Login to container registry
@@ -899,10 +980,14 @@ App spec at `.do/app.yaml`. Set secrets in the dashboard:
 
 ### CI/CD
 
-GitHub Actions workflow at `.github/workflows/ci.yml` runs on every push/PR:
-- Backend lint (ruff)
-- Backend unit + integration tests
-- Frontend type check + build
+Two GitHub Actions workflows in `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | Every push/PR to `main` | Backend lint (ruff), unit + integration tests, frontend type check + build |
+| `deploy.yml` | After CI passes on `main` | Builds Docker images, pushes to Heroku, releases both apps, health check |
+
+GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku Container Registry access.
 
 ---
 

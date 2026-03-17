@@ -19,6 +19,10 @@ class ConnectionConfig:
     ssh_key_content: str | None = None
     ssh_key_passphrase: str | None = None
 
+    ssh_exec_mode: bool = False
+    ssh_command_template: str | None = None
+    ssh_pre_commands: list[str] | None = None
+
     is_read_only: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
 

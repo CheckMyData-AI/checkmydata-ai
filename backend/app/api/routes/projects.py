@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -12,7 +12,7 @@ _membership_svc = MembershipService()
 
 
 class ProjectCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1)
     description: str = ""
     repo_url: str | None = None
     repo_branch: str = "main"

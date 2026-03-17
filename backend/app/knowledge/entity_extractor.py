@@ -247,10 +247,14 @@ def _full_scan(
     knowledge = ProjectKnowledge()
     _extract_entities_from_schemas(schemas, knowledge)
 
+    from app.knowledge.repo_analyzer import is_binary_file
+
     scan_files = all_files or _list_all_source_files(repo_dir)
     for rel_path in scan_files:
         fp = repo_dir / rel_path
         if not fp.exists() or not fp.is_file():
+            continue
+        if is_binary_file(fp):
             continue
         try:
             content = fp.read_text(encoding="utf-8", errors="ignore")
@@ -313,9 +317,13 @@ def _incremental_update(
             f for f in entity.used_in_files if f not in stale_set
         ]
 
+    from app.knowledge.repo_analyzer import is_binary_file
+
     for rel_path in changed_files:
         fp = repo_dir / rel_path
         if not fp.exists() or not fp.is_file():
+            continue
+        if is_binary_file(fp):
             continue
         try:
             content = fp.read_text(encoding="utf-8", errors="ignore")

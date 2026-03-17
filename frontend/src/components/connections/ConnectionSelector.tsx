@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { api, type Connection } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { confirmAction } from "@/components/ui/ConfirmModal";
+import { toast } from "@/stores/toast-store";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse"];
 
@@ -11,6 +13,15 @@ const DEFAULT_PORTS: Record<string, string> = {
   mysql: "3306",
   mongodb: "27017",
   clickhouse: "9000",
+};
+
+const EXEC_TEMPLATE_PRESETS: Record<string, string> = {
+  mysql:
+    'MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch --raw',
+  postgres:
+    'PGPASSWORD="{db_password}" psql -h {db_host} -p {db_port} -U {db_user} -d {db_name} -t -A -F $\'\\t\' --pset footer=off --csv',
+  clickhouse:
+    'clickhouse-client -h {db_host} --port {db_port} -u {db_user} --password "{db_password}" -d {db_name} --format TabSeparatedWithNames',
 };
 
 const EMPTY_FORM = {
@@ -27,11 +38,23 @@ const EMPTY_FORM = {
   ssh_key_id: "",
   connection_string: "",
   is_read_only: true,
+  ssh_exec_mode: false,
+  ssh_command_template: "",
+  ssh_pre_commands: "",
 };
 
 type FormState = typeof EMPTY_FORM;
 
 function connToForm(c: Connection): FormState {
+  let preCommands = "";
+  if (c.ssh_pre_commands) {
+    try {
+      const arr = JSON.parse(c.ssh_pre_commands);
+      preCommands = Array.isArray(arr) ? arr.join("\n") : "";
+    } catch {
+      preCommands = "";
+    }
+  }
   return {
     name: c.name,
     db_type: c.db_type,
@@ -42,10 +65,13 @@ function connToForm(c: Connection): FormState {
     db_password: "",
     ssh_host: c.ssh_host || "",
     ssh_port: String(c.ssh_port),
-    ssh_user: "",
+    ssh_user: c.ssh_user || "",
     ssh_key_id: c.ssh_key_id || "",
     connection_string: "",
     is_read_only: c.is_read_only,
+    ssh_exec_mode: c.ssh_exec_mode,
+    ssh_command_template: c.ssh_command_template || "",
+    ssh_pre_commands: preCommands,
   };
 }
 
@@ -62,8 +88,12 @@ export function ConnectionSelector() {
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   const [useConnString, setUseConnString] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
+  const [testingSsh, setTestingSsh] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<
     Record<string, { success: boolean; error?: string }>
+  >({});
+  const [sshTestResult, setSshTestResult] = useState<
+    Record<string, { success: boolean; hostname?: string; error?: string }>
   >({});
   const [refreshing, setRefreshing] = useState<string | null>(null);
 
@@ -72,8 +102,13 @@ export function ConnectionSelector() {
     setUseConnString(false);
   };
 
+  const hasSSH = form.ssh_host.trim().length > 0;
+
   const handleCreate = async () => {
     if (!activeProject || !form.name.trim()) return;
+    const preCommandsList = form.ssh_pre_commands.trim()
+      ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
+      : null;
     const conn = await api.connections.create({
       project_id: activeProject.id,
       name: form.name,
@@ -89,6 +124,9 @@ export function ConnectionSelector() {
       ssh_key_id: form.ssh_key_id || null,
       connection_string: useConnString ? form.connection_string || null : null,
       is_read_only: form.is_read_only,
+      ssh_exec_mode: form.ssh_exec_mode,
+      ssh_command_template: form.ssh_command_template || null,
+      ssh_pre_commands: preCommandsList,
     });
     useAppStore.setState((state) => ({
       connections: [conn, ...state.connections],
@@ -123,6 +161,12 @@ export function ConnectionSelector() {
     }
     updates.name = form.name;
     updates.is_read_only = form.is_read_only;
+    updates.ssh_exec_mode = form.ssh_exec_mode;
+    updates.ssh_command_template = form.ssh_command_template || null;
+    const preCommandsList = form.ssh_pre_commands.trim()
+      ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
+      : null;
+    updates.ssh_pre_commands = preCommandsList;
 
     const updated = await api.connections.update(editingId, updates);
     useAppStore.setState((state) => ({
@@ -143,12 +187,32 @@ export function ConnectionSelector() {
     }
   };
 
+  const handleTestSsh = async (id: string) => {
+    setTestingSsh(id);
+    try {
+      const result = await api.connections.testSsh(id);
+      setSshTestResult((prev) => ({ ...prev, [id]: result }));
+      if (result.success) {
+        toast(`SSH OK — ${result.hostname || "connected"}`, "success");
+      } else {
+        toast(`SSH failed: ${result.error || "unknown"}`, "error");
+      }
+    } catch (err) {
+      setSshTestResult((prev) => ({
+        ...prev,
+        [id]: { success: false, error: err instanceof Error ? err.message : "Failed" },
+      }));
+    } finally {
+      setTestingSsh(null);
+    }
+  };
+
   const handleRefreshSchema = async (id: string) => {
     setRefreshing(id);
     try {
       await api.connections.refreshSchema(id);
     } catch (err) {
-      console.error("Schema refresh failed", err);
+      toast(err instanceof Error ? err.message : "Schema refresh failed", "error");
     } finally {
       setRefreshing(null);
     }
@@ -156,15 +220,15 @@ export function ConnectionSelector() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!confirm("Delete this connection?")) return;
+    if (!(await confirmAction("Delete this connection?"))) return;
     try {
       await api.connections.delete(id);
       useAppStore.setState((state) => ({
         connections: state.connections.filter((c) => c.id !== id),
         ...(state.activeConnection?.id === id ? { activeConnection: null } : {}),
       }));
-    } catch (err) {
-      console.error("Failed to delete connection", err);
+    } catch {
+      toast("Failed to delete connection", "error");
     }
   };
 
@@ -253,7 +317,7 @@ export function ConnectionSelector() {
               type="password"
               value={form.db_password}
               onChange={(e) => setForm({ ...form, db_password: e.target.value })}
-              placeholder="Password"
+              placeholder={editingId ? "New password (leave blank to keep)" : "Password"}
               className={halfInputCls}
             />
           </div>
@@ -294,6 +358,70 @@ export function ConnectionSelector() {
           ))}
         </select>
       </div>
+      {hasSSH && (!form.ssh_user.trim() || !form.ssh_key_id) && (
+        <p className="text-[10px] text-amber-400 px-1">SSH tunnel requires a user and key.</p>
+      )}
+
+      {/* SSH Exec Mode (visible only when SSH is configured) */}
+      {hasSSH && (
+        <div className="space-y-2 border border-zinc-700 rounded p-2">
+          <label className="flex items-center gap-2 text-zinc-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={form.ssh_exec_mode}
+              onChange={(e) => setForm({ ...form, ssh_exec_mode: e.target.checked })}
+              className="accent-purple-500"
+            />
+            <span>
+              SSH Exec Mode
+              <span className="text-[9px] ml-1 text-zinc-500">(run queries via CLI on server)</span>
+            </span>
+          </label>
+
+          {form.ssh_exec_mode && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-500 shrink-0">Template:</span>
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setForm((prev) => ({ ...prev, ssh_command_template: e.target.value }));
+                    }
+                  }}
+                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-300 text-[10px]"
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Load preset...
+                  </option>
+                  {Object.entries(EXEC_TEMPLATE_PRESETS).map(([key, val]) => (
+                    <option key={key} value={val}>
+                      {key}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <textarea
+                value={form.ssh_command_template}
+                onChange={(e) => setForm({ ...form, ssh_command_template: e.target.value })}
+                placeholder="Command template, e.g.: mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch"
+                rows={2}
+                className={inputCls + " font-mono text-[10px] resize-y"}
+              />
+              <p className="text-[9px] text-zinc-600 px-1">
+                Placeholders: {"{db_host}"} {"{db_port}"} {"{db_user}"} {"{db_password}"} {"{db_name}"}. Query piped via stdin.
+              </p>
+              <textarea
+                value={form.ssh_pre_commands}
+                onChange={(e) => setForm({ ...form, ssh_pre_commands: e.target.value })}
+                placeholder={"Pre-commands (one per line, optional):\nsource ~/.bashrc\nexport PATH=/usr/local/bin:$PATH"}
+                rows={2}
+                className={inputCls + " font-mono text-[10px] resize-y"}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {/* Read-only toggle */}
       <label className="flex items-center gap-2 text-zinc-400 cursor-pointer select-none">
@@ -327,10 +455,7 @@ export function ConnectionSelector() {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-          Connections
-        </h3>
+      <div className="flex justify-end">
         <button
           onClick={() => {
             if (showCreate) {
@@ -368,6 +493,11 @@ export function ConnectionSelector() {
                     RO
                   </span>
                 )}
+                {c.ssh_exec_mode && (
+                  <span className="text-[9px] px-1 py-0.5 rounded bg-purple-900/50 text-purple-400">
+                    EXEC
+                  </span>
+                )}
               </span>
               {c.name}
             </button>
@@ -378,6 +508,32 @@ export function ConnectionSelector() {
             >
               ✎
             </button>
+            {c.ssh_host && (
+              <button
+                onClick={() => handleTestSsh(c.id)}
+                disabled={testingSsh === c.id}
+                className={`text-[10px] px-1.5 py-1 rounded ${
+                  sshTestResult[c.id]?.success
+                    ? "text-green-400"
+                    : sshTestResult[c.id]
+                      ? "text-red-400"
+                      : "text-zinc-500 hover:text-zinc-300"
+                }`}
+                title={
+                  sshTestResult[c.id]?.success
+                    ? `SSH OK: ${sshTestResult[c.id].hostname}`
+                    : sshTestResult[c.id]?.error || "Test SSH connection"
+                }
+              >
+                {testingSsh === c.id
+                  ? "..."
+                  : sshTestResult[c.id]?.success
+                    ? "SSH"
+                    : sshTestResult[c.id]
+                      ? "SSH!"
+                      : "SSH"}
+              </button>
+            )}
             <button
               onClick={() => handleTest(c.id)}
               disabled={testing === c.id}
@@ -388,13 +544,14 @@ export function ConnectionSelector() {
                     ? "text-red-400"
                     : "text-zinc-500 hover:text-zinc-300"
               }`}
+              title={testResult[c.id] && !testResult[c.id].success ? testResult[c.id].error : undefined}
             >
               {testing === c.id
                 ? "..."
                 : testResult[c.id]?.success
-                  ? "OK"
+                  ? "DB"
                   : testResult[c.id]
-                    ? "Fail"
+                    ? "DB!"
                     : "Test"}
             </button>
             {activeConnection?.id === c.id && (

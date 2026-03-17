@@ -1,7 +1,7 @@
 .PHONY: setup setup-backend setup-frontend setup-env migrate \
        dev dev-backend dev-frontend stop logs \
        test test-integration test-all test-frontend lint check \
-       docker-up docker-down docker-logs \
+       docker-up docker-down docker-clean docker-logs \
        clean
 
 BACKEND_DIR  = backend
@@ -105,13 +105,16 @@ lint:
 
 check: lint test-all
 
-# ── Docker ───────────────────────────────────────────────────────
+# ── Docker (OrbStack / Docker Desktop) ────────────────────────────
 
 docker-up:
-	docker compose up --build -d
+	@bash scripts/dev-up.sh
 
 docker-down:
-	docker compose down
+	@bash scripts/dev-down.sh
+
+docker-clean:
+	@bash scripts/dev-down.sh --volumes
 
 docker-logs:
 	docker compose logs -f

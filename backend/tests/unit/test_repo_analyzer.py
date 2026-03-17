@@ -1,7 +1,107 @@
+import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from app.knowledge.repo_analyzer import RepoAnalyzer
+
+
+class TestListRemoteRefs:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.analyzer = RepoAnalyzer(clone_base_dir=self.tmpdir)
+
+    @patch("subprocess.run")
+    def test_success_with_branches(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "abc123\trefs/heads/develop\n"
+                "def456\trefs/heads/main\n"
+                "ghi789\trefs/heads/feature/x\n"
+            ),
+            stderr="",
+        )
+        result = self.analyzer.list_remote_refs("git@github.com:org/repo.git")
+        assert result["accessible"] is True
+        assert "main" in result["branches"]
+        assert "develop" in result["branches"]
+        assert "feature/x" in result["branches"]
+        assert result["default_branch"] == "main"
+        assert result["error"] is None
+
+    @patch("subprocess.run")
+    def test_prefers_main_over_master(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="a\trefs/heads/main\nb\trefs/heads/master\n",
+            stderr="",
+        )
+        result = self.analyzer.list_remote_refs("https://github.com/org/repo.git")
+        assert result["default_branch"] == "main"
+
+    @patch("subprocess.run")
+    def test_falls_back_to_master(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="a\trefs/heads/master\nb\trefs/heads/develop\n",
+            stderr="",
+        )
+        result = self.analyzer.list_remote_refs("https://github.com/org/repo.git")
+        assert result["default_branch"] == "master"
+
+    @patch("subprocess.run")
+    def test_falls_back_to_first_branch(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="a\trefs/heads/production\nb\trefs/heads/staging\n",
+            stderr="",
+        )
+        result = self.analyzer.list_remote_refs("https://github.com/org/repo.git")
+        assert result["default_branch"] == "production"
+
+    @patch("subprocess.run")
+    def test_access_denied(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=128,
+            stdout="",
+            stderr="Permission denied (publickey).",
+        )
+        result = self.analyzer.list_remote_refs("git@github.com:org/repo.git")
+        assert result["accessible"] is False
+        assert result["branches"] == []
+        assert result["default_branch"] is None
+        assert "Permission denied" in result["error"]
+
+    @patch("subprocess.run")
+    def test_repo_not_found(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=128,
+            stdout="",
+            stderr="fatal: repository 'https://github.com/org/nope.git/' not found",
+        )
+        result = self.analyzer.list_remote_refs("https://github.com/org/nope.git")
+        assert result["accessible"] is False
+        assert "not found" in result["error"]
+
+    @patch("subprocess.run")
+    def test_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=15)
+        result = self.analyzer.list_remote_refs("git@slow.host:repo.git", timeout=15)
+        assert result["accessible"] is False
+        assert "timed out" in result["error"]
+
+    @patch("subprocess.run")
+    def test_empty_repo(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        result = self.analyzer.list_remote_refs("https://github.com/org/empty.git")
+        assert result["accessible"] is True
+        assert result["branches"] == []
+        assert result["default_branch"] is None
 
 
 class TestRepoAnalyzer:

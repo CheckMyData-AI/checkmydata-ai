@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -14,6 +15,7 @@ _ssh_key_svc = SshKeyService()
 _UPDATABLE_FIELDS = {
     "name", "db_type", "ssh_host", "ssh_port", "ssh_user", "ssh_key_id",
     "db_host", "db_port", "db_name", "db_user", "is_read_only",
+    "ssh_exec_mode", "ssh_command_template", "ssh_pre_commands",
 }
 
 
@@ -25,6 +27,9 @@ class ConnectionService:
             kwargs["connection_string_encrypted"] = encrypt(kwargs.pop("connection_string"))
         kwargs.pop("db_password", None)
         kwargs.pop("connection_string", None)
+
+        if "ssh_pre_commands" in kwargs and isinstance(kwargs["ssh_pre_commands"], list):
+            kwargs["ssh_pre_commands"] = json.dumps(kwargs["ssh_pre_commands"])
 
         connection = Connection(**kwargs)
         session.add(connection)
@@ -45,6 +50,9 @@ class ConnectionService:
         if "connection_string" in kwargs:
             cs = kwargs.pop("connection_string")
             conn.connection_string_encrypted = encrypt(cs) if cs else None
+
+        if "ssh_pre_commands" in kwargs and isinstance(kwargs["ssh_pre_commands"], list):
+            kwargs["ssh_pre_commands"] = json.dumps(kwargs["ssh_pre_commands"])
 
         for key, value in kwargs.items():
             if key in _UPDATABLE_FIELDS:
@@ -83,12 +91,52 @@ class ConnectionService:
             return {"success": False, "error": "Connection not found"}
 
         config = await self.to_config(session, conn)
-        connector = get_connector(conn.db_type)
+        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
         try:
             await connector.connect(config)
             alive = await connector.test_connection()
             await connector.disconnect()
             return {"success": alive}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def test_ssh(self, session: AsyncSession, connection_id: str) -> dict:
+        """Test SSH connectivity independently from the database."""
+        import asyncssh
+
+
+        conn = await self.get(session, connection_id)
+        if not conn:
+            return {"success": False, "error": "Connection not found"}
+        if not conn.ssh_host:
+            return {"success": False, "error": "No SSH host configured"}
+
+        ssh_key_content = None
+        ssh_key_passphrase = None
+        if conn.ssh_key_id:
+            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id)
+            if decrypted:
+                ssh_key_content, ssh_key_passphrase = decrypted
+
+        connect_kwargs: dict = {
+            "host": conn.ssh_host,
+            "port": conn.ssh_port,
+            "username": conn.ssh_user,
+            "known_hosts": None,
+            "login_timeout": 15,
+        }
+        if ssh_key_content:
+            key = asyncssh.import_private_key(ssh_key_content, ssh_key_passphrase)
+            connect_kwargs["client_keys"] = [key]
+
+        try:
+            async with asyncssh.connect(**connect_kwargs) as ssh_conn:
+                result = await ssh_conn.run("echo ok && hostname", timeout=10, check=False)
+                stdout = (result.stdout or "").strip()
+                lines = stdout.splitlines()
+                ok = len(lines) >= 1 and lines[0].strip() == "ok"
+                hostname = lines[1].strip() if len(lines) > 1 else "unknown"
+                return {"success": ok, "hostname": hostname}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -108,6 +156,13 @@ class ConnectionService:
             if decrypted:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
+        pre_commands: list[str] | None = None
+        if conn.ssh_pre_commands:
+            try:
+                pre_commands = json.loads(conn.ssh_pre_commands)
+            except (json.JSONDecodeError, TypeError):
+                pre_commands = None
+
         return ConnectionConfig(
             db_type=conn.db_type,
             db_host=conn.db_host,
@@ -121,5 +176,8 @@ class ConnectionService:
             ssh_user=conn.ssh_user,
             ssh_key_content=ssh_key_content,
             ssh_key_passphrase=ssh_key_passphrase,
+            ssh_exec_mode=conn.ssh_exec_mode,
+            ssh_command_template=conn.ssh_command_template,
+            ssh_pre_commands=pre_commands,
             is_read_only=conn.is_read_only,
         )

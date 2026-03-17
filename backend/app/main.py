@@ -12,6 +12,7 @@ from app.api.routes import (
     chat,
     connections,
     invites,
+    models,
     projects,
     repos,
     rules,
@@ -84,6 +85,7 @@ app.include_router(visualizations.router, prefix="/api/visualizations", tags=["v
 app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"])
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
+app.include_router(models.router, prefix="/api/models", tags=["models"])
 
 
 @app.get("/api/health")
@@ -153,7 +155,7 @@ async def module_health():
         elapsed = round((time.monotonic() - start) * 1000, 1)
         results["llm"] = {
             "status": "ok",
-            "provider": llm._chain[0] if llm._chain else "unknown",
+            "provider": settings.default_llm_provider,
             "response_time_ms": elapsed,
         }
         await llm.close()

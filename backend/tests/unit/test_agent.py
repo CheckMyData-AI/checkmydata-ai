@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.connectors.base import ConnectionConfig, QueryResult
-from app.core.agent import AgentResponse, ConversationalAgent
+from app.core.agent import ConversationalAgent
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import LLMResponse, ToolCall
 

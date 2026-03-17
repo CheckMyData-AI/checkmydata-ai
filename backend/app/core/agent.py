@@ -273,6 +273,7 @@ class ConversationalAgent:
     async def _check_staleness(self, project_id: str) -> str | None:
         try:
             from pathlib import Path
+
             from app.config import settings as app_settings
             from app.knowledge.git_tracker import GitTracker
             from app.models.base import async_session_factory

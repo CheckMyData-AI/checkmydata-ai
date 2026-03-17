@@ -5,8 +5,7 @@ to the ConversationalAgent with optional connection_id and returns
 responses with the new response_type field.
 """
 
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -164,7 +163,6 @@ class TestAskEndpointAuth:
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
     async def test_non_member_returns_403(self, mock_agent, auth_client, project_id):
-        from tests.integration.conftest import register_user
 
         other = await register_user(auth_client)
         resp = await auth_client.post(

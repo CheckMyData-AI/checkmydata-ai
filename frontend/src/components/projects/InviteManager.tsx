@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { api, type ProjectInvite, type ProjectMember } from "@/lib/api";
+import { confirmAction } from "@/components/ui/ConfirmModal";
+import { toast } from "@/stores/toast-store";
+import { Spinner } from "@/components/ui/Spinner";
 
 const inputCls =
   "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -24,6 +27,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const [role, setRole] = useState("editor");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshLoading, setRefreshLoading] = useState(true);
 
   const refresh = async () => {
     try {
@@ -34,11 +38,14 @@ export function InviteManager({ projectId, onClose }: Props) {
       setInvites(inv);
       setMembers(mem);
     } catch (err) {
-      console.error("Failed to load access data", err);
+      toast(err instanceof Error ? err.message : "Failed to load access data", "error");
+    } finally {
+      setRefreshLoading(false);
     }
   };
 
   useEffect(() => {
+    setRefreshLoading(true);
     refresh();
   }, [projectId]);
 
@@ -62,12 +69,12 @@ export function InviteManager({ projectId, onClose }: Props) {
       await api.invites.revoke(projectId, inviteId);
       await refresh();
     } catch (err) {
-      console.error("Failed to revoke invite", err);
+      toast(err instanceof Error ? err.message : "Failed to revoke invite", "error");
     }
   };
 
   const handleRemoveMember = async (userId: string) => {
-    if (!confirm("Remove this member?")) return;
+    if (!(await confirmAction("Remove this member?"))) return;
     try {
       await api.invites.removeMember(projectId, userId);
       await refresh();
@@ -116,6 +123,7 @@ export function InviteManager({ projectId, onClose }: Props) {
         </button>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
+      {refreshLoading && <Spinner />}
 
       {/* Members */}
       {members.length > 0 && (

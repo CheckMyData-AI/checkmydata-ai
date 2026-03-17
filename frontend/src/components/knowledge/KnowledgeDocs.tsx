@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { Spinner } from "@/components/ui/Spinner";
+import { toast } from "@/stores/toast-store";
 
 interface DocMeta {
   id: string;
@@ -15,6 +17,7 @@ interface DocMeta {
 export function KnowledgeDocs() {
   const { activeProject } = useAppStore();
   const [docs, setDocs] = useState<DocMeta[]>([]);
+  const [listLoading, setListLoading] = useState(true);
   const [viewingDoc, setViewingDoc] = useState<{
     id: string;
     content: string;
@@ -22,8 +25,9 @@ export function KnowledgeDocs() {
   } | null>(null);
 
   useEffect(() => {
-    if (!activeProject) return;
-    api.repos.docs(activeProject.id).then(setDocs).catch(console.error);
+    if (!activeProject) { setListLoading(false); return; }
+    setListLoading(true);
+    api.repos.docs(activeProject.id).then(setDocs).catch(() => {}).finally(() => setListLoading(false));
   }, [activeProject?.id]);
 
   const handleView = async (doc: DocMeta) => {
@@ -40,17 +44,20 @@ export function KnowledgeDocs() {
         source_path: full.source_path,
       });
     } catch (err) {
-      console.error("Failed to load doc", err);
+      toast(err instanceof Error ? err.message : "Failed to load doc", "error");
     }
   };
 
-  if (!activeProject || docs.length === 0) return null;
+  if (!activeProject) return null;
 
   return (
     <div className="space-y-2">
-      <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-        Knowledge Docs ({docs.length})
-      </h3>
+      {listLoading && <Spinner />}
+      {!listLoading && docs.length === 0 && (
+        <p className="text-[10px] text-zinc-600 px-3">
+          No indexed documents yet. Index your repository to generate knowledge docs.
+        </p>
+      )}
       <div className="space-y-1 max-h-48 overflow-y-auto">
         {docs.map((d) => (
           <button

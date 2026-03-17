@@ -7,6 +7,9 @@ from app.connectors.base import ConnectionConfig
 
 logger = logging.getLogger(__name__)
 
+SSH_CONNECT_TIMEOUT = 30
+SSH_KEEPALIVE_INTERVAL = 15
+
 
 class SSHTunnel:
     def __init__(self):
@@ -34,6 +37,8 @@ class SSHTunnel:
             "port": config.ssh_port,
             "username": config.ssh_user,
             "known_hosts": None,
+            "login_timeout": SSH_CONNECT_TIMEOUT,
+            "keepalive_interval": SSH_KEEPALIVE_INTERVAL,
         }
         if config.ssh_key_content:
             key = asyncssh.import_private_key(
@@ -76,7 +81,15 @@ class SSHTunnel:
             return False
         try:
             transport = self._conn.get_extra_info("socket")
-            return transport is not None
+            if transport is None:
+                return False
+            result = await asyncio.wait_for(
+                self._conn.run("echo 1", check=False),
+                timeout=5,
+            )
+            return result.exit_status == 0
+        except (TimeoutError, asyncssh.Error, OSError):
+            return False
         except Exception:
             return False
 

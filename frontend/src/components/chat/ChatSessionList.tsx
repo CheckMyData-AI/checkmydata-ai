@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
+import { toast } from "@/stores/toast-store";
 
 export function ChatSessionList() {
   const {
@@ -14,6 +16,8 @@ export function ChatSessionList() {
     setChatSessions,
   } = useAppStore();
 
+  const [loadingSession, setLoadingSession] = useState<string | null>(null);
+
   if (!activeProject || chatSessions.length === 0) return null;
 
   const handleSelect = async (sessionId: string) => {
@@ -21,6 +25,7 @@ export function ChatSessionList() {
     if (!session) return;
 
     setActiveSession(session);
+    setLoadingSession(sessionId);
 
     try {
       const msgs = await api.chat.getMessages(sessionId);
@@ -39,7 +44,9 @@ export function ChatSessionList() {
       });
       setMessages(mapped);
     } catch (err) {
-      console.error("Failed to load session messages", err);
+      toast(err instanceof Error ? err.message : "Failed to load session messages", "error");
+    } finally {
+      setLoadingSession(null);
     }
   };
 
@@ -54,7 +61,7 @@ export function ChatSessionList() {
           : {}),
       }));
     } catch (err) {
-      console.error("Failed to delete session", err);
+      toast(err instanceof Error ? err.message : "Failed to delete session", "error");
     }
   };
 
@@ -65,10 +72,7 @@ export function ChatSessionList() {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-          Chat History
-        </h3>
+      <div className="flex justify-end">
         <button
           onClick={handleNewChat}
           className="text-xs text-blue-400 hover:text-blue-300"
@@ -81,13 +85,18 @@ export function ChatSessionList() {
           <div key={s.id} className="flex items-center group">
             <button
               onClick={() => handleSelect(s.id)}
+              disabled={loadingSession === s.id}
               className={`flex-1 text-left px-3 py-1.5 rounded-md text-xs transition-colors truncate ${
                 activeSession?.id === s.id
                   ? "bg-zinc-800 text-zinc-100"
                   : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
               }`}
             >
-              {s.title}
+              {loadingSession === s.id ? (
+                <span className="animate-pulse">Loading...</span>
+              ) : (
+                s.title
+              )}
             </button>
             <button
               onClick={(e) => handleDelete(e, s.id)}

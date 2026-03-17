@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, type Project } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type Project, type RepoCheckResult, type LLMModel } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { InviteManager } from "./InviteManager";
+import { confirmAction } from "@/components/ui/ConfirmModal";
+import { toast } from "@/stores/toast-store";
+import { Spinner } from "@/components/ui/Spinner";
 
 const LLM_PROVIDERS = ["openai", "anthropic", "openrouter"];
 
 const inputCls =
   "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+
+function isSshUrl(url: string): boolean {
+  const trimmed = url.trim();
+  return trimmed.startsWith("git@") || trimmed.startsWith("ssh://");
+}
 
 interface ProjectFormState {
   name: string;
@@ -57,53 +65,160 @@ export function ProjectSelector() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
+  const [checking, setChecking] = useState(false);
+  const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [availableModels, setAvailableModels] = useState<LLMModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
-    api.projects.list().then(setProjects).catch(console.error);
+    api.projects.list().then(setProjects).catch(() => {}).finally(() => setListLoading(false));
   }, [setProjects]);
 
-  const resetForm = () => setForm({ ...EMPTY_FORM });
+  useEffect(() => {
+    if (!form.llmProvider) {
+      setAvailableModels([]);
+      return;
+    }
+    let cancelled = false;
+    setModelsLoading(true);
+    api.models
+      .list(form.llmProvider)
+      .then((models) => {
+        if (!cancelled) setAvailableModels(models);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [form.llmProvider]);
+
+  const runAccessCheck = useCallback(
+    async (repoUrl: string, sshKeyId: string) => {
+      if (!repoUrl.trim()) return;
+      setChecking(true);
+      setAccessResult(null);
+      try {
+        const result = await api.repos.checkAccess({
+          repo_url: repoUrl.trim(),
+          ssh_key_id: sshKeyId || null,
+        });
+        setAccessResult(result);
+        if (result.accessible && result.default_branch) {
+          setForm((prev) => ({ ...prev, branch: result.default_branch! }));
+        }
+      } catch {
+        setAccessResult({
+          accessible: false,
+          branches: [],
+          default_branch: null,
+          error: "Failed to check access",
+        });
+      } finally {
+        setChecking(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const url = form.repoUrl.trim();
+    if (!url) {
+      setAccessResult(null);
+      return;
+    }
+    if (isSshUrl(url) && !form.sshKeyId) return;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(
+      () => runAccessCheck(url, form.sshKeyId),
+      800,
+    );
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [form.repoUrl, form.sshKeyId, runAccessCheck]);
+
+  useEffect(() => {
+    const url = form.repoUrl.trim();
+    if (!url || !isSshUrl(url) || form.sshKeyId) return;
+    if (sshKeys.length === 1) {
+      setForm((prev) => ({ ...prev, sshKeyId: sshKeys[0].id }));
+    }
+  }, [form.repoUrl, form.sshKeyId, sshKeys]);
+
+  const resetForm = () => {
+    setForm({ ...EMPTY_FORM });
+    setAccessResult(null);
+    setChecking(false);
+  };
+
+  const [nameError, setNameError] = useState("");
 
   const handleCreate = async () => {
-    if (!form.name.trim()) return;
-    const project = await api.projects.create({
-      name: form.name.trim(),
-      repo_url: form.repoUrl.trim() || null,
-      repo_branch: form.branch.trim() || "main",
-      ssh_key_id: form.sshKeyId || null,
-      default_llm_provider: form.llmProvider || null,
-      default_llm_model: form.llmModel || null,
-    });
-    useAppStore.setState((state) => ({
-      projects: [project, ...state.projects],
-    }));
-    setActiveProject(project);
-    resetForm();
-    setShowCreate(false);
+    if (!form.name.trim()) {
+      setNameError("Name is required");
+      return;
+    }
+    setNameError("");
+    try {
+      const project = await api.projects.create({
+        name: form.name.trim(),
+        repo_url: form.repoUrl.trim() || null,
+        repo_branch: form.branch.trim() || "main",
+        ssh_key_id: form.sshKeyId || null,
+        default_llm_provider: form.llmProvider || null,
+        default_llm_model: form.llmModel || null,
+      });
+      useAppStore.setState((state) => ({
+        projects: [project, ...state.projects],
+      }));
+      setActiveProject(project);
+      resetForm();
+      setShowCreate(false);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to create project", "error");
+    }
   };
 
   const handleEdit = (p: Project) => {
     setEditingId(p.id);
     setForm(projectToForm(p));
     setShowCreate(false);
+    setAccessResult(null);
+    setChecking(false);
+    setNameError("");
   };
 
   const handleUpdate = async () => {
-    if (!editingId || !form.name.trim()) return;
-    const updated = await api.projects.update(editingId, {
-      name: form.name.trim(),
-      repo_url: form.repoUrl.trim() || null,
-      repo_branch: form.branch.trim() || "main",
-      ssh_key_id: form.sshKeyId || null,
-      default_llm_provider: form.llmProvider || null,
-      default_llm_model: form.llmModel || null,
-    });
-    useAppStore.setState((state) => ({
-      projects: state.projects.map((p) => (p.id === updated.id ? updated : p)),
-      ...(state.activeProject?.id === updated.id ? { activeProject: updated } : {}),
-    }));
-    setEditingId(null);
-    resetForm();
+    if (!editingId) return;
+    if (!form.name.trim()) {
+      setNameError("Name is required");
+      return;
+    }
+    setNameError("");
+    try {
+      const updated = await api.projects.update(editingId, {
+        name: form.name.trim(),
+        repo_url: form.repoUrl.trim() || null,
+        repo_branch: form.branch.trim() || "main",
+        ssh_key_id: form.sshKeyId || null,
+        default_llm_provider: form.llmProvider || null,
+        default_llm_model: form.llmModel || null,
+      });
+      useAppStore.setState((state) => ({
+        projects: state.projects.map((p) => (p.id === updated.id ? updated : p)),
+        ...(state.activeProject?.id === updated.id ? { activeProject: updated } : {}),
+      }));
+      setEditingId(null);
+      resetForm();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update project", "error");
+    }
   };
 
   const handleSelect = async (project: Project) => {
@@ -128,7 +243,7 @@ export function ProjectSelector() {
 
   const handleDelete = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
-    if (!confirm(`Delete project "${project.name}"?`)) return;
+    if (!(await confirmAction(`Delete project "${project.name}"?`))) return;
     try {
       await api.projects.delete(project.id);
       useAppStore.setState((state) => ({
@@ -145,7 +260,7 @@ export function ProjectSelector() {
           : {}),
       }));
     } catch (err) {
-      console.error("Failed to delete project", err);
+      toast("Failed to delete project", "error");
     }
   };
 
@@ -153,26 +268,53 @@ export function ProjectSelector() {
 
   const formUI = (
     <div className="space-y-2 p-2 bg-zinc-800/50 rounded-lg">
-      <input
-        value={form.name}
-        onChange={(e) => setForm({ ...form, name: e.target.value })}
-        placeholder="Project name"
-        className={inputCls}
-      />
-      <input
-        value={form.repoUrl}
-        onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
-        placeholder="Git repo URL (optional)"
-        className={inputCls}
-      />
+      <div>
+        <input
+          value={form.name}
+          onChange={(e) => { setForm({ ...form, name: e.target.value }); setNameError(""); }}
+          placeholder="Project name"
+          className={`${inputCls} ${nameError ? "border-red-500" : ""}`}
+        />
+        {nameError && <p className="text-[10px] text-red-400 mt-0.5 px-1">{nameError}</p>}
+      </div>
+      <div className="space-y-1">
+        <input
+          value={form.repoUrl}
+          onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
+          placeholder="Git repo URL (optional)"
+          className={inputCls}
+        />
+        {form.repoUrl.trim() && (
+          <div className="flex items-center gap-1.5 px-1 min-h-[18px]">
+            {checking && (
+              <span className="text-[10px] text-zinc-500 animate-pulse">Checking access...</span>
+            )}
+            {!checking && accessResult?.accessible && (
+              <span className="text-[10px] text-emerald-400">
+                ✓ Access verified
+                {accessResult.branches.length > 0 && (
+                  <span className="text-zinc-500 ml-1">
+                    ({accessResult.branches.length} branch{accessResult.branches.length !== 1 ? "es" : ""})
+                  </span>
+                )}
+              </span>
+            )}
+            {!checking && accessResult && !accessResult.accessible && (
+              <span className="text-[10px] text-red-400" title={accessResult.error || undefined}>
+                ✕ {accessResult.error || "Access denied"}
+              </span>
+            )}
+            {!checking && !accessResult && isSshUrl(form.repoUrl) && !form.sshKeyId && sshKeys.length === 0 && (
+              <span className="text-[10px] text-amber-400">SSH URL detected — add an SSH key first</span>
+            )}
+            {!checking && !accessResult && isSshUrl(form.repoUrl) && !form.sshKeyId && sshKeys.length > 1 && (
+              <span className="text-[10px] text-amber-400">Select an SSH key to verify access</span>
+            )}
+          </div>
+        )}
+      </div>
       {form.repoUrl.trim() && (
         <>
-          <input
-            value={form.branch}
-            onChange={(e) => setForm({ ...form, branch: e.target.value })}
-            placeholder="Branch (default: main)"
-            className={inputCls}
-          />
           <select
             value={form.sshKeyId}
             onChange={(e) => setForm({ ...form, sshKeyId: e.target.value })}
@@ -185,12 +327,30 @@ export function ProjectSelector() {
               </option>
             ))}
           </select>
+          {accessResult?.accessible && accessResult.branches.length > 0 ? (
+            <select
+              value={form.branch}
+              onChange={(e) => setForm({ ...form, branch: e.target.value })}
+              className={inputCls}
+            >
+              {accessResult.branches.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={form.branch}
+              onChange={(e) => setForm({ ...form, branch: e.target.value })}
+              placeholder="Branch (default: main)"
+              className={inputCls}
+            />
+          )}
         </>
       )}
       <div className="grid grid-cols-2 gap-2">
         <select
           value={form.llmProvider}
-          onChange={(e) => setForm({ ...form, llmProvider: e.target.value })}
+          onChange={(e) => setForm({ ...form, llmProvider: e.target.value, llmModel: "" })}
           className={inputCls}
         >
           <option value="">LLM Provider (default)</option>
@@ -200,12 +360,31 @@ export function ProjectSelector() {
             </option>
           ))}
         </select>
-        <input
-          value={form.llmModel}
-          onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
-          placeholder="Model (e.g. gpt-4o)"
-          className={inputCls}
-        />
+        {modelsLoading ? (
+          <div className={`${inputCls} flex items-center`}>
+            <span className="text-zinc-500 text-[10px] animate-pulse">Loading models...</span>
+          </div>
+        ) : availableModels.length > 0 ? (
+          <select
+            value={form.llmModel}
+            onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
+            className={inputCls}
+          >
+            <option value="">Select model</option>
+            {availableModels.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={form.llmModel}
+            onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
+            placeholder="Model (e.g. gpt-4o)"
+            className={inputCls}
+          />
+        )}
       </div>
       <div className="flex gap-2">
         <button
@@ -228,10 +407,7 @@ export function ProjectSelector() {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-          Projects
-        </h3>
+      <div className="flex justify-end">
         <button
           onClick={() => {
             if (showCreate) {
@@ -251,6 +427,7 @@ export function ProjectSelector() {
 
       {isFormOpen && formUI}
 
+      {listLoading && <Spinner />}
       <div className="space-y-1">
         {projects.map((p) => (
           <div key={p.id} className="flex items-center group">

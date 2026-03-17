@@ -37,6 +37,8 @@ class TestConnectionCrud:
             "project_id": pid,
             "name": "Before",
             "db_type": "postgres",
+            "db_host": "127.0.0.1",
+            "db_name": "testdb",
         })
         cid = resp.json()["id"]
 
@@ -50,6 +52,8 @@ class TestConnectionCrud:
             "project_id": pid,
             "name": "Temp",
             "db_type": "postgres",
+            "db_host": "127.0.0.1",
+            "db_name": "testdb",
         })
         cid = resp.json()["id"]
 
@@ -87,7 +91,10 @@ class TestConnectionAccessControl:
 
         resp = await client.post(
             "/api/connections",
-            json={"project_id": pid, "name": "Blocked", "db_type": "mysql"},
+            json={
+                "project_id": pid, "name": "Blocked", "db_type": "mysql",
+                "db_host": "127.0.0.1", "db_name": "testdb",
+            },
             headers=auth_headers(owner["token"]),
         )
         assert resp.status_code == 200
@@ -101,7 +108,10 @@ class TestConnectionAccessControl:
 
         resp = await client.post(
             "/api/connections",
-            json={"project_id": pid, "name": "Attempt", "db_type": "postgres"},
+            json={
+                "project_id": pid, "name": "Attempt", "db_type": "postgres",
+                "db_host": "127.0.0.1", "db_name": "testdb",
+            },
             headers=auth_headers(viewer["token"]),
         )
         assert resp.status_code == 403
