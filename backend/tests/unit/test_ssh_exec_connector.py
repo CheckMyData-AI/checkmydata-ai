@@ -202,7 +202,7 @@ class TestSSHExecConnectorTestSshOnly:
         mock_conn = MagicMock()
         mock_conn.run = AsyncMock(
             return_value=FakeSSHResult(
-                stdout="ok\nserver-01\n",
+                stdout="__SSH_EXEC_TEST__\nserver-01\n",
                 exit_status=0,
             )
         )

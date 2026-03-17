@@ -94,6 +94,63 @@ class TestDocGenerator:
         assert "\x00" not in prompt
 
 
+class TestDiffAwareGeneration:
+    @pytest.mark.asyncio
+    async def test_small_change_uses_diff_prompt(self):
+        """When previous_content and existing_doc are provided with a small change,
+        the DOC_UPDATE_PROMPT should be used (contains 'CHANGES (unified diff)')."""
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock(
+            return_value=LLMResponse(content="Updated documentation")
+        )
+        gen = DocGenerator(llm_router=mock_router)
+
+        old_content = "class User(Base):\n    id = Column(Integer)\n    name = Column(String)\n"
+        new_content = "class User(Base):\n    id = Column(Integer)\n    name = Column(String)\n    email = Column(String)\n"
+
+        result = await gen.generate(
+            file_path="models/user.py",
+            content=new_content,
+            doc_type="orm_model",
+            previous_content=old_content,
+            existing_doc="## User table docs",
+        )
+        assert result == "Updated documentation"
+        prompt = mock_router.complete.call_args[1]["messages"][0].content
+        assert "CHANGES (unified diff)" in prompt
+
+    @pytest.mark.asyncio
+    async def test_large_change_uses_full_prompt(self):
+        """When the diff is too large, the full generation prompt should be used."""
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock(
+            return_value=LLMResponse(content="Full documentation")
+        )
+        gen = DocGenerator(llm_router=mock_router)
+
+        old_content = "line A\n" * 10
+        new_content = "line B\n" * 10
+
+        result = await gen.generate(
+            file_path="models/user.py",
+            content=new_content,
+            doc_type="orm_model",
+            previous_content=old_content,
+            existing_doc="## Old docs",
+        )
+        assert result == "Full documentation"
+        prompt = mock_router.complete.call_args[1]["messages"][0].content
+        assert "CHANGES (unified diff)" not in prompt
+
+    def test_compute_diff(self):
+        gen = DocGenerator(llm_router=MagicMock())
+        old = "line1\nline2\nline3\n"
+        new = "line1\nline2_changed\nline3\n"
+        diff = gen._compute_diff(old, new)
+        assert "-line2\n" in diff
+        assert "+line2_changed\n" in diff
+
+
 class TestBinaryContentDetection:
     def test_normal_text_is_not_binary(self):
         assert _is_binary_content("class User(Base):\n    pass\n") is False

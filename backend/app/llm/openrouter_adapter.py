@@ -38,6 +38,18 @@ class OpenRouterAdapter(BaseLLMProvider):
                 msg["tool_call_id"] = m.tool_call_id
             if m.name:
                 msg["name"] = m.name
+            if m.tool_calls:
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in m.tool_calls
+                ]
             result.append(msg)
         return result
 

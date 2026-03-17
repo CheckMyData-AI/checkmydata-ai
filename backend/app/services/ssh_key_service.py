@@ -81,10 +81,13 @@ class SshKeyService:
         return result.scalar_one_or_none()
 
     async def get_decrypted(
-        self, session: AsyncSession, key_id: str
+        self, session: AsyncSession, key_id: str, user_id: str | None = None,
     ) -> tuple[str, str | None] | None:
-        """Return (private_key_pem, passphrase) decrypted. Internal use only."""
-        ssh_key = await self.get(session, key_id)
+        """Return (private_key_pem, passphrase) decrypted.
+
+        When user_id is provided, enforces ownership check via get().
+        """
+        ssh_key = await self.get(session, key_id, user_id=user_id)
         if not ssh_key:
             return None
         try:
@@ -102,8 +105,8 @@ class SshKeyService:
             ) from exc
         return private_key_pem, passphrase
 
-    async def delete(self, session: AsyncSession, key_id: str) -> bool:
-        ssh_key = await self.get(session, key_id)
+    async def delete(self, session: AsyncSession, key_id: str, user_id: str | None = None) -> bool:
+        ssh_key = await self.get(session, key_id, user_id=user_id)
         if not ssh_key:
             return False
 

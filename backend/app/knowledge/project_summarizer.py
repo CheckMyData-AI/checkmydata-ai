@@ -21,6 +21,7 @@ def build_project_summary(
     """Return a markdown summary combining all cross-file knowledge."""
     sections: list[str] = []
 
+    logger.debug("Generating project summary (%d entities)", len(knowledge.entities))
     sections.append("# Project Data Model Summary\n")
 
     if profile:
@@ -78,17 +79,43 @@ def build_project_summary(
         sections.append("")
 
     if knowledge.enums:
-        sections.append("## Enum / Constant Definitions\n")
-        for enum_def in knowledge.enums[:30]:
-            vals = ", ".join(enum_def.values[:10])
+        total_enums = len(knowledge.enums)
+        shown = min(total_enums, 50)
+        sections.append(f"## Enum / Constant Definitions ({shown}/{total_enums})\n")
+        for enum_def in knowledge.enums[:shown]:
+            vals = ", ".join(enum_def.values[:12])
+            if len(enum_def.values) > 12:
+                vals += f" (+{len(enum_def.values) - 12} more)"
             sections.append(f"- **{enum_def.name}** (`{enum_def.file_path}`): {vals}")
+        if total_enums > shown:
+            sections.append(
+                f"\n*{total_enums - shown} more enum(s) omitted. "
+                "Use `get_entity_info(scope='enums')` to see all.*"
+            )
         sections.append("")
 
     if knowledge.service_functions:
-        sections.append("## Key Service Functions\n")
-        for sf in knowledge.service_functions[:20]:
+        total_sf = len(knowledge.service_functions)
+        shown = min(total_sf, 50)
+        sections.append(f"## Key Service Functions ({shown}/{total_sf})\n")
+        for sf in knowledge.service_functions[:shown]:
             tables = ", ".join(sf["tables"])
             sections.append(f"- `{sf['name']}` in `{sf['file_path']}` → tables: {tables}")
+        if total_sf > shown:
+            sections.append(
+                f"\n*{total_sf - shown} more function(s) omitted. "
+                "Use `get_entity_info(scope='enums')` to see all.*"
+            )
+        sections.append("")
+
+    if knowledge.config_refs:
+        unique_vars = {}
+        for cref in knowledge.config_refs:
+            if cref.var_name not in unique_vars:
+                unique_vars[cref.var_name] = cref
+        sections.append("## Database Configuration References\n")
+        for var_name, cref in sorted(unique_vars.items()):
+            sections.append(f"- `{var_name}` in `{cref.file_path}`")
         sections.append("")
 
     return "\n".join(sections)

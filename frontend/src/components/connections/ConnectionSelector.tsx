@@ -1,12 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Connection } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse"];
+
+function formatAge(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 const DEFAULT_PORTS: Record<string, string> = {
   postgres: "5432",
@@ -44,6 +55,12 @@ const EMPTY_FORM = {
 };
 
 type FormState = typeof EMPTY_FORM;
+
+function safePort(raw: string, fallback: number): number {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 1 || n > 65535) return fallback;
+  return n;
+}
 
 function connToForm(c: Connection): FormState {
   let preCommands = "";
@@ -87,15 +104,48 @@ export function ConnectionSelector() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   const [useConnString, setUseConnString] = useState(false);
-  const [testing, setTesting] = useState<string | null>(null);
-  const [testingSsh, setTestingSsh] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<
+  const [checking, setChecking] = useState<string | null>(null);
+  const [status, setStatus] = useState<
     Record<string, { success: boolean; error?: string }>
   >({});
-  const [sshTestResult, setSshTestResult] = useState<
-    Record<string, { success: boolean; hostname?: string; error?: string }>
-  >({});
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [indexing, setIndexing] = useState<string | null>(null);
+  const [indexStatus, setIndexStatus] = useState<
+    Record<string, { is_indexed: boolean; active_tables?: number; total_tables?: number; is_indexing?: boolean; indexed_at?: string }>
+  >({});
+  const indexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (indexPollRef.current) clearInterval(indexPollRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    setStatus({});
+    setEditingId(null);
+    setShowCreate(false);
+    setIndexStatus({});
+    resetForm();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id]);
+
+  useEffect(() => {
+    connections.forEach((c) => {
+      api.connections.indexDbStatus(c.id).then((s) => {
+        setIndexStatus((prev) => ({
+          ...prev,
+          [c.id]: {
+            is_indexed: s.is_indexed,
+            active_tables: s.active_tables,
+            total_tables: s.total_tables,
+            is_indexing: s.is_indexing,
+            indexed_at: s.indexed_at,
+          },
+        }));
+      }).catch(() => {});
+    });
+  }, [connections]);
 
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
@@ -119,12 +169,12 @@ export function ConnectionSelector() {
         name: form.name,
         db_type: form.db_type,
         db_host: form.db_host,
-        db_port: parseInt(form.db_port),
+        db_port: safePort(form.db_port, 5432),
         db_name: form.db_name,
         db_user: form.db_user || null,
         db_password: form.db_password || null,
         ssh_host: form.ssh_host || null,
-        ssh_port: parseInt(form.ssh_port) || 22,
+        ssh_port: safePort(form.ssh_port, 22),
         ssh_user: form.ssh_user || null,
         ssh_key_id: form.ssh_key_id || null,
         connection_string: useConnString ? form.connection_string || null : null,
@@ -139,6 +189,7 @@ export function ConnectionSelector() {
       setActiveConnection(conn);
       setShowCreate(false);
       resetForm();
+      toast("Connection created", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to create connection", "error");
     }
@@ -169,8 +220,8 @@ export function ConnectionSelector() {
     for (const f of fields) {
       updates[f] = form[f] !== "" ? form[f] : null;
     }
-    updates.db_port = parseInt(form.db_port);
-    updates.ssh_port = parseInt(form.ssh_port) || 22;
+    updates.db_port = safePort(form.db_port, 5432);
+    updates.ssh_port = safePort(form.ssh_port, 22);
     if (form.db_password) updates.db_password = form.db_password;
     if (useConnString && form.connection_string) {
       updates.connection_string = form.connection_string;
@@ -192,47 +243,31 @@ export function ConnectionSelector() {
         connections: state.connections.map((c) => (c.id === updated.id ? updated : c)),
         ...(state.activeConnection?.id === updated.id ? { activeConnection: updated } : {}),
       }));
-      setTestResult((prev) => { const next = { ...prev }; delete next[editingId]; return next; });
-      setSshTestResult((prev) => { const next = { ...prev }; delete next[editingId]; return next; });
+      setStatus((prev) => { const next = { ...prev }; delete next[editingId]; return next; });
       setEditingId(null);
       resetForm();
+      toast("Connection updated", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to update connection", "error");
     }
   };
 
-  const handleTest = async (id: string) => {
-    setTesting(id);
+  const handleCheckStatus = async (id: string) => {
+    setChecking(id);
     try {
       const result = await api.connections.test(id);
-      setTestResult((prev) => ({ ...prev, [id]: result }));
-    } catch (err) {
-      setTestResult((prev) => ({
-        ...prev,
-        [id]: { success: false, error: err instanceof Error ? err.message : "Connection test failed" },
-      }));
-    } finally {
-      setTesting(null);
-    }
-  };
-
-  const handleTestSsh = async (id: string) => {
-    setTestingSsh(id);
-    try {
-      const result = await api.connections.testSsh(id);
-      setSshTestResult((prev) => ({ ...prev, [id]: result }));
+      setStatus((prev) => ({ ...prev, [id]: result }));
       if (result.success) {
-        toast(`SSH OK — ${result.hostname || "connected"}`, "success");
+        toast("Connected", "success");
       } else {
-        toast(`SSH failed: ${result.error || "unknown"}`, "error");
+        toast(`Not connected: ${result.error || "unknown error"}`, "error");
       }
     } catch (err) {
-      setSshTestResult((prev) => ({
-        ...prev,
-        [id]: { success: false, error: err instanceof Error ? err.message : "Failed" },
-      }));
+      const error = err instanceof Error ? err.message : "Connection check failed";
+      setStatus((prev) => ({ ...prev, [id]: { success: false, error } }));
+      toast(`Not connected: ${error}`, "error");
     } finally {
-      setTestingSsh(null);
+      setChecking(null);
     }
   };
 
@@ -240,10 +275,54 @@ export function ConnectionSelector() {
     setRefreshing(id);
     try {
       await api.connections.refreshSchema(id);
+      toast("Schema refreshed", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Schema refresh failed", "error");
     } finally {
       setRefreshing(null);
+    }
+  };
+
+  const handleIndexDb = async (id: string) => {
+    setIndexing(id);
+    try {
+      await api.connections.indexDb(id);
+      toast("Database indexing started", "success");
+      setIndexStatus((prev) => ({
+        ...prev,
+        [id]: { ...prev[id], is_indexing: true, is_indexed: prev[id]?.is_indexed ?? false },
+      }));
+      if (indexPollRef.current) clearInterval(indexPollRef.current);
+      indexPollRef.current = setInterval(async () => {
+        try {
+          const s = await api.connections.indexDbStatus(id);
+          setIndexStatus((prev) => ({
+            ...prev,
+            [id]: {
+              is_indexed: s.is_indexed,
+              active_tables: s.active_tables,
+              total_tables: s.total_tables,
+              is_indexing: s.is_indexing,
+              indexed_at: s.indexed_at,
+            },
+          }));
+          if (!s.is_indexing) {
+            if (indexPollRef.current) clearInterval(indexPollRef.current);
+            indexPollRef.current = null;
+            setIndexing(null);
+            if (s.is_indexed) {
+              toast(`DB indexed: ${s.active_tables}/${s.total_tables} active tables`, "success");
+            }
+          }
+        } catch {
+          if (indexPollRef.current) clearInterval(indexPollRef.current);
+          indexPollRef.current = null;
+          setIndexing(null);
+        }
+      }, 3000);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "DB indexing failed", "error");
+      setIndexing(null);
     }
   };
 
@@ -256,10 +335,9 @@ export function ConnectionSelector() {
         connections: state.connections.filter((c) => c.id !== id),
         ...(state.activeConnection?.id === id ? { activeConnection: null } : {}),
       }));
-      setTestResult((prev) => { const next = { ...prev }; delete next[id]; return next; });
-      setSshTestResult((prev) => { const next = { ...prev }; delete next[id]; return next; });
-    } catch {
-      toast("Failed to delete connection", "error");
+      setStatus((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to delete connection", "error");
     }
   };
 
@@ -550,103 +628,113 @@ export function ConnectionSelector() {
       {isFormOpen && formUI}
 
       <div className="space-y-1">
-        {connections.map((c) => (
-          <div key={c.id} className="flex items-center gap-1 group">
-            <button
-              onClick={() => setActiveConnection(c)}
-              className={`flex-1 text-left px-3 py-2 rounded-md text-sm transition-colors truncate ${
-                activeConnection?.id === c.id
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <span className="text-[10px] text-zinc-500 uppercase">{c.db_type}</span>
-                {c.is_read_only && (
-                  <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400">
-                    RO
-                  </span>
-                )}
-                {c.ssh_exec_mode && (
-                  <span className="text-[9px] px-1 py-0.5 rounded bg-purple-900/50 text-purple-400">
-                    EXEC
-                  </span>
-                )}
-              </span>
-              {c.name}
-            </button>
-            <button
-              onClick={() => handleEdit(c)}
-              className="text-[10px] text-zinc-600 hover:text-blue-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Edit"
-            >
-              ✎
-            </button>
-            {c.ssh_host && (
-              <button
-                onClick={() => handleTestSsh(c.id)}
-                disabled={testingSsh === c.id}
-                className={`text-[10px] px-1.5 py-1 rounded ${
-                  sshTestResult[c.id]?.success
-                    ? "text-green-400"
-                    : sshTestResult[c.id]
-                      ? "text-red-400"
-                      : "text-zinc-500 hover:text-zinc-300"
+        {connections.map((c) => {
+          const s = status[c.id];
+          const isChecking = checking === c.id;
+          return (
+            <div key={c.id} className="flex items-center gap-1 group">
+              <span
+                className={`shrink-0 w-1.5 h-1.5 rounded-full ${
+                  isChecking
+                    ? "bg-yellow-400 animate-pulse"
+                    : s?.success
+                      ? "bg-green-400"
+                      : s
+                        ? "bg-red-400"
+                        : "bg-zinc-600"
                 }`}
                 title={
-                  sshTestResult[c.id]?.success
-                    ? `SSH OK: ${sshTestResult[c.id].hostname}`
-                    : sshTestResult[c.id]?.error || "Test SSH connection"
+                  isChecking
+                    ? "Checking..."
+                    : s?.success
+                      ? "Connected"
+                      : s?.error || "Not checked"
                 }
-              >
-                {testingSsh === c.id
-                  ? "..."
-                  : sshTestResult[c.id]?.success
-                    ? "SSH"
-                    : sshTestResult[c.id]
-                      ? "SSH!"
-                      : "SSH"}
-              </button>
-            )}
-            <button
-              onClick={() => handleTest(c.id)}
-              disabled={testing === c.id}
-              className={`text-[10px] px-2 py-1 rounded ${
-                testResult[c.id]?.success
-                  ? "text-green-400"
-                  : testResult[c.id]
-                    ? "text-red-400"
-                    : "text-zinc-500 hover:text-zinc-300"
-              }`}
-              title={testResult[c.id] && !testResult[c.id].success ? testResult[c.id].error : undefined}
-            >
-              {testing === c.id
-                ? "..."
-                : testResult[c.id]?.success
-                  ? "DB"
-                  : testResult[c.id]
-                    ? "DB!"
-                    : "Test"}
-            </button>
-            {activeConnection?.id === c.id && (
+              />
               <button
-                onClick={() => handleRefreshSchema(c.id)}
-                disabled={refreshing === c.id}
-                className="text-[10px] px-1.5 py-1 rounded text-zinc-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Refresh schema cache"
+                onClick={() => setActiveConnection(c)}
+                className={`flex-1 text-left px-2 py-2 rounded-md text-sm transition-colors truncate ${
+                  activeConnection?.id === c.id
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
+                }`}
               >
-                {refreshing === c.id ? "..." : "↻"}
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-zinc-500 uppercase">{c.db_type}</span>
+                  {c.is_read_only && (
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400">
+                      RO
+                    </span>
+                  )}
+                  {c.ssh_exec_mode && (
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-purple-900/50 text-purple-400">
+                      EXEC
+                    </span>
+                  )}
+                </span>
+                {c.name}
               </button>
-            )}
-            <button
-              onClick={(e) => handleDelete(e, c.id)}
-              className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Delete connection"
-            >
-              ×
-            </button>
-          </div>
-        ))}
+              <button
+                onClick={() => handleCheckStatus(c.id)}
+                disabled={isChecking}
+                className="text-[10px] px-1.5 py-1 rounded text-zinc-500 hover:text-blue-400 transition-colors"
+                title={isChecking ? "Checking..." : "Check connection"}
+              >
+                {isChecking ? "..." : "↻"}
+              </button>
+              <button
+                onClick={() => handleEdit(c)}
+                className="text-[10px] text-zinc-600 hover:text-blue-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Edit"
+              >
+                ✎
+              </button>
+              {activeConnection?.id === c.id && (
+                <>
+                  <button
+                    onClick={() => handleRefreshSchema(c.id)}
+                    disabled={refreshing === c.id}
+                    className="text-[10px] px-1 py-1 rounded text-zinc-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Refresh schema cache"
+                  >
+                    {refreshing === c.id ? "..." : "⟳"}
+                  </button>
+                  <button
+                    onClick={() => handleIndexDb(c.id)}
+                    disabled={indexing === c.id || indexStatus[c.id]?.is_indexing === true}
+                    className={`text-[10px] px-1.5 py-1 rounded transition-opacity ${
+                      indexStatus[c.id]?.is_indexing
+                        ? "text-amber-400 animate-pulse"
+                        : indexStatus[c.id]?.is_indexed
+                          ? "text-green-500 hover:text-green-400 opacity-0 group-hover:opacity-100"
+                          : "text-zinc-500 hover:text-blue-400 opacity-0 group-hover:opacity-100"
+                    }`}
+                    title={
+                      indexStatus[c.id]?.is_indexing
+                        ? "Indexing in progress..."
+                        : indexStatus[c.id]?.is_indexed
+                          ? `Indexed: ${indexStatus[c.id]?.active_tables ?? "?"}/${indexStatus[c.id]?.total_tables ?? "?"} active${indexStatus[c.id]?.indexed_at ? ` (${formatAge(indexStatus[c.id]!.indexed_at!)})` : ""} — click to re-index`
+                          : "Index database"
+                    }
+                  >
+                    {indexStatus[c.id]?.is_indexing
+                      ? "IDX..."
+                      : indexStatus[c.id]?.is_indexed
+                        ? "IDX"
+                        : "IDX"}
+                  </button>
+                </>
+              )}
+              <button
+                onClick={(e) => handleDelete(e, c.id)}
+                className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Delete connection"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

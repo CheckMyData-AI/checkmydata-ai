@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -171,7 +171,7 @@ class CheckpointService:
         session: AsyncSession,
         max_age_hours: int = 24,
     ) -> int:
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         result = await session.execute(
             delete(IndexingCheckpoint).where(
                 IndexingCheckpoint.updated_at < cutoff,

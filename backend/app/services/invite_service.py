@@ -74,8 +74,12 @@ class InviteService:
         db: AsyncSession,
         invite_id: str,
         _user_id: str,
+        project_id: str | None = None,
     ) -> bool:
-        result = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite_id))
+        stmt = select(ProjectInvite).where(ProjectInvite.id == invite_id)
+        if project_id:
+            stmt = stmt.where(ProjectInvite.project_id == project_id)
+        result = await db.execute(stmt)
         invite = result.scalar_one_or_none()
         if not invite:
             return False

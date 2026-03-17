@@ -2,6 +2,10 @@ import tempfile
 from pathlib import Path
 
 from app.knowledge.custom_rules import CustomRulesEngine
+from app.services.default_rule_template import (
+    DEFAULT_RULE_NAME,
+    get_default_rule_content,
+)
 
 
 class TestCustomRules:
@@ -61,3 +65,49 @@ class TestCustomRules:
             engine = CustomRulesEngine(rules_dir=global_dir)
             rules = engine.load_rules(project_rules_dir=project_dir)
             assert len(rules) == 2
+
+
+class TestDefaultRuleTemplate:
+    def test_template_is_non_empty(self):
+        content = get_default_rule_content()
+        assert len(content) > 500
+
+    def test_template_contains_revenue_metrics(self):
+        content = get_default_rule_content()
+        assert "Revenue" in content
+        assert "GMV" in content
+        assert "AOV" in content
+        assert "ARPU" in content
+
+    def test_template_contains_roi_section(self):
+        content = get_default_rule_content()
+        assert "ROAS" in content
+        assert "CAC" in content
+
+    def test_template_contains_traffic_sources(self):
+        content = get_default_rule_content()
+        assert "Traffic" in content
+        assert "utm_source" in content
+
+    def test_template_contains_payment_methods(self):
+        content = get_default_rule_content()
+        assert "Payment" in content
+        assert "payment_method" in content
+
+    def test_template_contains_engagement_metrics(self):
+        content = get_default_rule_content()
+        assert "DAU" in content
+        assert "MAU" in content
+
+    def test_template_contains_churn_retention(self):
+        content = get_default_rule_content()
+        assert "Churn" in content
+        assert "Retention" in content
+
+    def test_template_contains_query_guidelines(self):
+        content = get_default_rule_content()
+        assert "LIMIT" in content
+        assert "NULL" in content
+
+    def test_default_rule_name(self):
+        assert DEFAULT_RULE_NAME == "Business Metrics & Guidelines"

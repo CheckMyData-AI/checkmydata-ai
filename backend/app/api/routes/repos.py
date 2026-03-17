@@ -20,6 +20,7 @@ from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
 from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
+from app.services.connection_service import ConnectionService
 from app.services.project_service import ProjectService
 from app.services.ssh_key_service import SshKeyService
 
@@ -36,6 +37,7 @@ _vector_store = VectorStore()
 _cache_svc = ProjectCacheService()
 _checkpoint_svc = CheckpointService()
 
+_connection_svc = ConnectionService()
 _membership_svc = MembershipService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
@@ -74,7 +76,7 @@ async def check_access(
     ssh_key_content: str | None = None
     ssh_key_passphrase: str | None = None
     if body.ssh_key_id:
-        decrypted = await _ssh_key_svc.get_decrypted(db, body.ssh_key_id)
+        decrypted = await _ssh_key_svc.get_decrypted(db, body.ssh_key_id, user_id=user["user_id"])
         if decrypted:
             ssh_key_content, ssh_key_passphrase = decrypted
         else:
@@ -140,16 +142,14 @@ async def index_repo(
             existing_cp.status = "interrupted"
             await db.commit()
         resumed = True
-        logger.info(
-            "Found checkpoint for project %s (status=%s, %s steps done)",
-            project_id,
-            existing_cp.status,
-            len(CheckpointService.get_completed_steps(existing_cp)),
-        )
     elif existing_cp and body.force_full:
         await _checkpoint_svc.delete(db, existing_cp.id)
         existing_cp = None
-        logger.info("Discarded existing checkpoint for project %s (force_full)", project_id)
+
+    logger.info(
+        "Index started: project=%s force=%s resumed=%s",
+        project_id[:8], body.force_full, resumed,
+    )
 
     wf_id = await tracker.begin(
         "index_repo",
@@ -203,6 +203,8 @@ async def _run_index_background(
                         last_sha=None,
                     )
 
+                live_table_names = await _fetch_live_table_names(db, project_id)
+
                 try:
                     await _pipeline_runner.run(
                         project_id,
@@ -211,6 +213,7 @@ async def _run_index_background(
                         db,
                         wf_id,
                         checkpoint,
+                        live_table_names=live_table_names,
                     )
                 except Exception as exc:
                     logger.exception("Indexing pipeline failed for project %s", project_id)
@@ -330,6 +333,31 @@ async def check_for_updates(
         "commits_behind": behind,
         "message": f"{behind} new commit(s) since last index",
     }
+
+
+async def _fetch_live_table_names(
+    db: AsyncSession,
+    project_id: str,
+) -> list[str] | None:
+    """Best-effort: introspect the first active connection's table names."""
+    try:
+        from app.connectors.registry import get_connector
+
+        connections = await _connection_svc.list_by_project(db, project_id)
+        for conn in connections:
+            if not conn.is_active:
+                continue
+            cfg = await _connection_svc.to_config(db, conn)
+            connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
+            await connector.connect(cfg)
+            try:
+                schema = await connector.introspect_schema()
+                return [t.name for t in schema.tables]
+            finally:
+                await connector.disconnect()
+    except Exception:
+        logger.debug("Could not fetch live table names for cross-reference", exc_info=True)
+    return None
 
 
 def _git_fetch(repo_dir) -> None:

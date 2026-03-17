@@ -155,6 +155,63 @@ class TestChatService:
         assert result is False
 
 
+class TestChatServiceHistoryEnrichment:
+    @pytest.mark.asyncio
+    async def test_history_enriches_assistant_with_context(self, db_session):
+        svc = ChatService()
+        session = await svc.create_session(db_session, "project-1")
+        await svc.add_message(db_session, session.id, "user", "Show sales")
+        await svc.add_message(
+            db_session,
+            session.id,
+            "assistant",
+            "Here are the sales results.",
+            metadata={
+                "query": "SELECT * FROM sales",
+                "viz_type": "bar_chart",
+                "row_count": 5,
+                "raw_result": {
+                    "columns": ["product", "amount"],
+                    "rows": [["Widget", 100], ["Gadget", 200], ["Doohickey", 50]],
+                    "total_rows": 5,
+                },
+            },
+        )
+
+        history = await svc.get_history_as_messages(db_session, session.id)
+        assert len(history) == 2
+        assistant_content = history[1].content
+        assert "[Context:" in assistant_content
+        assert "SQL Query: SELECT * FROM sales" in assistant_content
+        assert "Visualization: bar_chart" in assistant_content
+        assert "Rows: 5" in assistant_content
+        assert "Columns: product, amount" in assistant_content
+        assert "Sample data:" in assistant_content
+
+    @pytest.mark.asyncio
+    async def test_history_no_context_for_plain_messages(self, db_session):
+        svc = ChatService()
+        session = await svc.create_session(db_session, "project-1")
+        await svc.add_message(db_session, session.id, "user", "Hello")
+        await svc.add_message(db_session, session.id, "assistant", "Hi!")
+
+        history = await svc.get_history_as_messages(db_session, session.id)
+        assert len(history) == 2
+        assert "[Context:" not in history[1].content
+
+    @pytest.mark.asyncio
+    async def test_history_no_context_for_empty_metadata(self, db_session):
+        svc = ChatService()
+        session = await svc.create_session(db_session, "project-1")
+        await svc.add_message(
+            db_session, session.id, "assistant", "Info",
+            metadata={"response_type": "text"},
+        )
+
+        history = await svc.get_history_as_messages(db_session, session.id)
+        assert "[Context:" not in history[0].content
+
+
 class TestDocStore:
     @pytest.mark.asyncio
     async def test_upsert_new(self, db_session):

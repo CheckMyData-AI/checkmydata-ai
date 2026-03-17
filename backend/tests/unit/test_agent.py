@@ -318,6 +318,92 @@ class TestErrorHandling:
         assert "error" in resp.answer.lower()
 
 
+class TestToolCallsPropagation:
+    """Agent includes tool_calls on assistant messages sent back to the LLM."""
+
+    @pytest.mark.asyncio
+    async def test_tool_calls_included_in_assistant_message(self, agent, mock_llm, mock_vector_store):
+        collection = MagicMock()
+        collection.count = MagicMock(return_value=10)
+        mock_vector_store.get_or_create_collection = MagicMock(return_value=collection)
+        mock_vector_store.query = MagicMock(return_value=[
+            {"document": "test doc", "metadata": {"source_path": "test.py", "doc_type": "code"}, "distance": 0.1},
+        ])
+
+        tool_call = ToolCall(id="tc-1", name="search_knowledge", arguments={"query": "test"})
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[tool_call],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            messages = kwargs.get("messages", [])
+            assistant_msgs = [m for m in messages if m.role == "assistant"]
+            assert len(assistant_msgs) == 1
+            assert assistant_msgs[0].tool_calls is not None
+            assert len(assistant_msgs[0].tool_calls) == 1
+            assert assistant_msgs[0].tool_calls[0].id == "tc-1"
+            assert assistant_msgs[0].tool_calls[0].name == "search_knowledge"
+
+            return LLMResponse(content="Done.", tool_calls=[], usage={})
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert call_count == 2
+        assert resp.answer == "Done."
+
+
+class TestSqlConfigForwarding:
+    """Agent forwards sql_provider/sql_model to ToolExecutor separately from agent model."""
+
+    @pytest.mark.asyncio
+    async def test_sql_config_passed_to_tool_executor(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="Done.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+        from unittest.mock import patch as _patch
+
+        with _patch("app.core.agent.ToolExecutor") as mock_te_cls:
+            mock_executor = MagicMock()
+            mock_executor.ctx = MagicMock(
+                last_query=None,
+                last_query_result=None,
+                last_query_explanation=None,
+                rag_sources=[],
+                total_token_usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+            mock_te_cls.return_value = mock_executor
+
+            await agent.run(
+                question="Hi",
+                project_id="proj-1",
+                preferred_provider="openai",
+                model="gpt-4o",
+                sql_provider="anthropic",
+                sql_model="claude-3-opus",
+            )
+
+            init_kwargs = mock_te_cls.call_args
+            assert init_kwargs.kwargs["preferred_provider"] == "openai"
+            assert init_kwargs.kwargs["model"] == "gpt-4o"
+            assert init_kwargs.kwargs["sql_provider"] == "anthropic"
+            assert init_kwargs.kwargs["sql_model"] == "claude-3-opus"
+
+
 class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_sums_across_iterations(self, agent, mock_llm):

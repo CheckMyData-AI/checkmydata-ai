@@ -21,6 +21,11 @@ workflow_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     default=None,
 )
 
+request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "request_id",
+    default=None,
+)
+
 
 @dataclass
 class WorkflowEvent:
@@ -129,7 +134,7 @@ class WorkflowTracker:
             pass
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
-        logger.info(
+        logger.debug(
             "workflow[%s] %s: %s (%s)%s",
             event.workflow_id[:8],
             event.step,

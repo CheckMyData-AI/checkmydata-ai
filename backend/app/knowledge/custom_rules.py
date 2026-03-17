@@ -56,7 +56,7 @@ class CustomRulesEngine:
                     except Exception as e:
                         logger.warning("Failed to load rule %s: %s", fp, e)
 
-        logger.info("Loaded %d custom rules", len(rules))
+        logger.debug("Loaded %d custom rules", len(rules))
         return rules
 
     async def load_db_rules(

@@ -33,6 +33,8 @@ async def _event_generator(
             yield f"event: step\ndata: {event.to_json()}\n\n"
     except asyncio.CancelledError:
         return
+    except Exception:
+        logger.warning("SSE event stream error", exc_info=True)
     finally:
         tracker.unsubscribe(queue)
 

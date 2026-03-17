@@ -31,6 +31,32 @@ DOC TYPE: {doc_type}
 {content}
 ```"""
 
+DOC_UPDATE_PROMPT = """\
+You are a database documentation specialist. The source file below has changed.
+Update the existing documentation to reflect the changes.
+
+SOURCE FILE: {file_path}
+DOC TYPE: {doc_type}
+{enrichment_section}
+
+EXISTING DOCUMENTATION:
+{existing_doc}
+
+CHANGES (unified diff):
+```diff
+{diff_text}
+```
+
+CURRENT FILE (for reference):
+```
+{content}
+```
+
+Produce the complete updated documentation in structured markdown. \
+Preserve sections that are unchanged. Update/add/remove sections as needed."""
+
+DIFF_THRESHOLD_RATIO = 0.3
+
 MAX_CONTENT_LENGTH = 12_000
 MAX_FALLBACK_LENGTH = 50_000
 _PRINTABLE = set(string.printable)
@@ -64,16 +90,32 @@ class DocGenerator:
         preferred_provider: str | None = None,
         model: str | None = None,
         enrichment_context: str = "",
+        previous_content: str | None = None,
+        existing_doc: str | None = None,
     ) -> str:
         """Generate structured documentation for a single extracted file.
 
         *enrichment_context* is optional cross-file context (relationships,
         enum values, usage data) that helps the LLM produce richer docs.
 
+        When *previous_content* and *existing_doc* are both provided and the
+        change is small (< DIFF_THRESHOLD_RATIO of file), a diff-based update
+        prompt is used instead of regenerating from scratch.
+
         Returns the generated markdown documentation.
         Falls back to sanitized raw content if LLM is unavailable.
         """
         content = _sanitize_content(content)
+
+        use_diff = False
+        diff_text = ""
+        if previous_content and existing_doc:
+            diff_text = self._compute_diff(previous_content, content)
+            if diff_text:
+                changed_lines = sum(1 for l in diff_text.splitlines() if l.startswith(("+", "-")) and not l.startswith(("+++", "---")))
+                total_lines = max(len(content.splitlines()), 1)
+                if changed_lines / total_lines < DIFF_THRESHOLD_RATIO:
+                    use_diff = True
 
         truncated = content[:MAX_CONTENT_LENGTH]
         if len(content) > MAX_CONTENT_LENGTH:
@@ -85,12 +127,22 @@ class DocGenerator:
                 f"\nADDITIONAL CONTEXT (from cross-file analysis):\n{enrichment_context}\n"
             )
 
-        prompt = DOC_GENERATION_PROMPT.format(
-            file_path=file_path,
-            doc_type=doc_type,
-            content=truncated,
-            enrichment_section=enrichment_section,
-        )
+        if use_diff:
+            prompt = DOC_UPDATE_PROMPT.format(
+                file_path=file_path,
+                doc_type=doc_type,
+                enrichment_section=enrichment_section,
+                existing_doc=existing_doc[:MAX_CONTENT_LENGTH],
+                diff_text=diff_text[:4000],
+                content=truncated,
+            )
+        else:
+            prompt = DOC_GENERATION_PROMPT.format(
+                file_path=file_path,
+                doc_type=doc_type,
+                content=truncated,
+                enrichment_section=enrichment_section,
+            )
 
         messages = [
             Message(role="user", content=prompt),
@@ -127,3 +179,12 @@ class DocGenerator:
             return content[:MAX_FALLBACK_LENGTH]
 
         return content
+
+    @staticmethod
+    def _compute_diff(old: str, new: str) -> str:
+        import difflib
+
+        old_lines = old.splitlines(keepends=True)
+        new_lines = new.splitlines(keepends=True)
+        diff = difflib.unified_diff(old_lines, new_lines, n=2)
+        return "".join(diff)

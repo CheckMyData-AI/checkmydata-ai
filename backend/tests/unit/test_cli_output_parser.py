@@ -9,7 +9,10 @@ class TestStripLines:
         assert _strip_lines("\n\n  \n") == []
 
     def test_strips_mysql_warnings(self):
-        lines = _strip_lines("Warning: password on command line\nid\tname\n1\talice\n")
+        lines = _strip_lines(
+            "Warning: Using a password on the command line interface can be insecure.\n"
+            "id\tname\n1\talice\n"
+        )
         assert lines == ["id\tname", "1\talice"]
 
     def test_preserves_normal_lines(self):
@@ -42,7 +45,7 @@ class TestParseTsvWithHeaders:
         assert rows == []
 
     def test_with_mysql_warning(self):
-        stdout = "Warning: blah\nid\tname\n1\talice\n"
+        stdout = "Warning: Using a password on the command line interface can be insecure.\nid\tname\n1\talice\n"
         columns, rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         assert columns == ["id", "name"]
         assert rows == [["1", "alice"]]

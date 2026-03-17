@@ -186,6 +186,81 @@ class TestAskEndpointAgent:
         assert resp2.json()["session_id"] == session_id
 
 
+class TestProjectLlmConfigUsed:
+    """Verify the chat route loads project-level LLM settings."""
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_agent_receives_project_llm_config(
+        self, mock_agent, auth_client
+    ):
+        from app.core.agent import AgentResponse
+
+        resp = await auth_client.post(
+            "/api/projects",
+            json={
+                "name": "LLM Route Test",
+                "agent_llm_provider": "anthropic",
+                "agent_llm_model": "claude-3-opus",
+                "sql_llm_provider": "openrouter",
+                "sql_llm_model": "mixtral-8x7b",
+            },
+        )
+        pid = resp.json()["id"]
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(answer="ok", response_type="text")
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={"project_id": pid, "message": "Hi"},
+        )
+        assert resp.status_code == 200
+
+        call_kwargs = mock_agent.run.call_args.kwargs
+        assert call_kwargs["preferred_provider"] == "anthropic"
+        assert call_kwargs["model"] == "claude-3-opus"
+        assert call_kwargs["sql_provider"] == "openrouter"
+        assert call_kwargs["sql_model"] == "mixtral-8x7b"
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_request_overrides_project_agent_config(
+        self, mock_agent, auth_client
+    ):
+        from app.core.agent import AgentResponse
+
+        resp = await auth_client.post(
+            "/api/projects",
+            json={
+                "name": "Override Test",
+                "agent_llm_provider": "anthropic",
+                "agent_llm_model": "claude-3-opus",
+            },
+        )
+        pid = resp.json()["id"]
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(answer="ok", response_type="text")
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={
+                "project_id": pid,
+                "message": "Hi",
+                "preferred_provider": "openai",
+                "model": "gpt-4o",
+            },
+        )
+        assert resp.status_code == 200
+
+        call_kwargs = mock_agent.run.call_args.kwargs
+        assert call_kwargs["preferred_provider"] == "openai"
+        assert call_kwargs["model"] == "gpt-4o"
+
+
 class TestAskEndpointAuth:
     @pytest.mark.asyncio
     async def test_unauthenticated_returns_401(self, client):

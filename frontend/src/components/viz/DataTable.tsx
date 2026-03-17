@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { toast } from "@/stores/toast-store";
 
 interface DataTableProps {
   data: Record<string, unknown>;
@@ -25,6 +26,8 @@ export function DataTable({ data }: DataTableProps) {
       a.download = `export.${format}`;
       a.click();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Export failed", "error");
     } finally {
       setExporting(false);
     }

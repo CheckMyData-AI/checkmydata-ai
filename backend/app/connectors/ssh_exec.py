@@ -39,6 +39,7 @@ class SSHExecConnector(BaseConnector):
     def __init__(self) -> None:
         self._conn: asyncssh.SSHClientConnection | None = None
         self._config: ConnectionConfig | None = None
+        self._reconnect_lock = asyncio.Lock()
 
     @property
     def db_type(self) -> str:
@@ -119,12 +120,13 @@ class SSHExecConnector(BaseConnector):
 
     async def disconnect(self) -> None:
         if self._conn:
+            logger.debug("Disconnecting SSH exec session")
             self._conn.close()
             await asyncio.sleep(0.1)
             try:
                 await asyncio.wait_for(self._conn.wait_closed(), timeout=5)
-            except (TimeoutError, Exception):
-                pass
+            except Exception as exc:
+                logger.warning("SSH exec disconnect did not complete cleanly: %s", exc)
             self._conn = None
 
     async def _run_command(
@@ -141,12 +143,22 @@ class SSHExecConnector(BaseConnector):
             result = await self._conn.run(command, timeout=timeout, check=False)
         except (asyncssh.ConnectionLost, asyncssh.DisconnectError, BrokenPipeError, OSError) as exc:
             logger.warning("SSH connection lost (%s), attempting reconnect", exc)
-            self._conn = None
-            if self._config:
-                await self.connect(self._config)
-                result = await self._conn.run(command, timeout=timeout, check=False)
-            else:
-                raise RuntimeError("SSH connection lost and no config to reconnect") from exc
+            async with self._reconnect_lock:
+                if self._conn is None or not self._config:
+                    if not self._config:
+                        raise RuntimeError("SSH connection lost and no config to reconnect") from exc
+                    await self.connect(self._config)
+                elif self._conn:
+                    try:
+                        _chk = await self._conn.run(
+                            "echo __SSH_EXEC_ALIVE__", timeout=5, check=False,
+                        )
+                        if "__SSH_EXEC_ALIVE__" not in (_chk.stdout or ""):
+                            raise RuntimeError("marker not in stdout")
+                    except Exception:
+                        self._conn = None
+                        await self.connect(self._config)
+            result = await self._conn.run(command, timeout=timeout, check=False)
 
         stdout = result.stdout or ""
         stderr = result.stderr or ""
@@ -155,7 +167,7 @@ class SSHExecConnector(BaseConnector):
             stdout = stdout[:MAX_OUTPUT_BYTES]
             logger.warning("SSH exec output truncated to %d bytes", MAX_OUTPUT_BYTES)
 
-        return stdout, stderr, result.exit_status or 0
+        return stdout, stderr, result.exit_status if result.exit_status is not None else -1
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         start = time.monotonic()
@@ -180,9 +192,11 @@ class SSHExecConnector(BaseConnector):
             )
         except asyncssh.TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
+            logger.warning("SSH exec query timed out after %.0fms", elapsed)
             return QueryResult(error="SSH command timed out", execution_time_ms=elapsed)
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
+            logger.warning("SSH exec execute_query error: %s", e)
             return QueryResult(error=str(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
@@ -201,25 +215,39 @@ class SSHExecConnector(BaseConnector):
         else:
             return await self._introspect_via_query(db_name, db_type)
 
+    def _check_introspection_result(
+        self, step: str, stdout: str, stderr: str, exit_code: int,
+    ) -> None:
+        if exit_code != 0:
+            logger.warning(
+                "SSH exec introspection '%s' failed (exit=%d): %s",
+                step, exit_code, stderr.strip()[:300],
+            )
+        elif stderr.strip():
+            logger.debug("SSH exec introspection '%s' stderr: %s", step, stderr.strip()[:200])
+
     async def _introspect_mysql(self, db_name: str) -> SchemaInfo:
         variables = self._config_vars()
 
         tables_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_tables"), variables)
         )
-        stdout, _, _ = await self._run_command(tables_cmd)
+        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        self._check_introspection_result("mysql:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         cols_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_columns"), variables)
         )
-        stdout, _, _ = await self._run_command(cols_cmd)
+        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        self._check_introspection_result("mysql:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         fks_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_fks"), variables)
         )
-        stdout, _, _ = await self._run_command(fks_cmd)
+        stdout, stderr, exit_code = await self._run_command(fks_cmd)
+        self._check_introspection_result("mysql:fks", stdout, stderr, exit_code)
         _, fk_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         fk_map: dict[str, list[ForeignKeyInfo]] = {}
@@ -270,13 +298,15 @@ class SSHExecConnector(BaseConnector):
         tables_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_tables"), variables)
         )
-        stdout, _, _ = await self._run_command(tables_cmd)
+        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        self._check_introspection_result("postgres:tables", stdout, stderr, exit_code)
         table_names = [line.strip() for line in stdout.strip().splitlines() if line.strip()]
 
         cols_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_columns"), variables)
         )
-        stdout, _, _ = await self._run_command(cols_cmd)
+        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        self._check_introspection_result("postgres:columns", stdout, stderr, exit_code)
         lines = [ln.strip() for ln in stdout.strip().splitlines() if ln.strip()]
 
         col_map: dict[str, list[ColumnInfo]] = {}
@@ -302,14 +332,16 @@ class SSHExecConnector(BaseConnector):
         tables_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_tables"), variables)
         )
-        stdout, _, _ = await self._run_command(tables_cmd)
+        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        self._check_introspection_result("clickhouse:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         table_names = [r[0] for r in table_rows if r]
 
         cols_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_columns"), variables)
         )
-        stdout, _, _ = await self._run_command(cols_cmd)
+        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        self._check_introspection_result("clickhouse:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         col_map: dict[str, list[ColumnInfo]] = {}
@@ -336,20 +368,33 @@ class SSHExecConnector(BaseConnector):
     async def test_connection(self) -> bool:
         try:
             command = self._build_command("test")
-            _, _, exit_code = await self._run_command(command, timeout=15)
+            _, stderr, exit_code = await self._run_command(command, timeout=15)
+            if exit_code != 0:
+                logger.warning(
+                    "SSH exec test_connection failed (exit=%d): %s",
+                    exit_code, stderr.strip()[:200],
+                )
             return exit_code == 0
-        except Exception:
+        except Exception as exc:
+            logger.warning("SSH exec test_connection error: %s", exc)
             return False
 
     async def test_ssh_only(self) -> dict[str, Any]:
         """Test SSH connectivity without testing the database."""
         if not self._conn:
             return {"success": False, "error": "Not connected"}
+        _MARKER = "__SSH_EXEC_TEST__"
         try:
-            stdout, _, _ = await self._run_command("echo ok && hostname", timeout=10)
-            lines = stdout.strip().splitlines()
-            ok = len(lines) >= 1 and lines[0].strip() == "ok"
-            hostname = lines[1].strip() if len(lines) > 1 else "unknown"
+            stdout, _, _ = await self._run_command(
+                f"echo {_MARKER} && hostname", timeout=10,
+            )
+            ok = _MARKER in stdout
+            hostname = "unknown"
+            if ok:
+                for line in stdout.strip().splitlines():
+                    stripped = line.strip()
+                    if stripped and stripped != _MARKER:
+                        hostname = stripped
             return {"success": ok, "hostname": hostname}
         except Exception as e:
             return {"success": False, "error": str(e)}

@@ -8,7 +8,7 @@ def format_text(result: QueryResult, summary: str = "") -> dict:
             "content": summary or "No results found.",
         }
 
-    if result.row_count == 1 and len(result.columns) == 1:
+    if result.row_count == 1 and len(result.columns) == 1 and result.rows:
         return {
             "type": "number",
             "value": result.rows[0][0],
@@ -16,7 +16,7 @@ def format_text(result: QueryResult, summary: str = "") -> dict:
             "summary": summary,
         }
 
-    if result.row_count == 1:
+    if result.row_count == 1 and result.rows:
         kv_pairs = {col: result.rows[0][i] for i, col in enumerate(result.columns)}
         return {
             "type": "key_value",

@@ -235,6 +235,57 @@ class TestRepoAnalyzer:
         results = self.analyzer.analyze(repo_dir, files=["sneaky.py"])
         assert len(results) == 0
 
+    def test_analyze_graphql_schema(self):
+        """GraphQL schema files should produce ExtractedSchema with models."""
+        repo_dir = Path(self.tmpdir) / "test_graphql"
+        repo_dir.mkdir()
+        graphql_file = repo_dir / "schema.graphql"
+        graphql_file.write_text(
+            "type User {\n"
+            "  id: ID!\n"
+            "  name: String!\n"
+            "  email: String\n"
+            "}\n"
+            "\n"
+            "type Post {\n"
+            "  id: ID!\n"
+            "  title: String!\n"
+            "  author: User!\n"
+            "}\n"
+            "\n"
+            "enum UserRole {\n"
+            "  ADMIN\n"
+            "  USER\n"
+            "  MODERATOR\n"
+            "}\n"
+        )
+        results = self.analyzer.analyze(repo_dir, files=["schema.graphql"])
+        assert len(results) == 1
+        schema = results[0]
+        assert schema.doc_type == "orm_model"
+        assert "User" in schema.models
+        assert "Post" in schema.models
+        assert "UserRole" in schema.models
+
+    def test_analyze_sql_views_and_procedures(self):
+        """SQL files with VIEW and FUNCTION definitions should be extracted."""
+        repo_dir = Path(self.tmpdir) / "test_sql_views"
+        repo_dir.mkdir()
+        sql_file = repo_dir / "views.sql"
+        sql_file.write_text(
+            "CREATE TABLE users (id INT PRIMARY KEY);\n"
+            "CREATE OR REPLACE VIEW active_users AS SELECT * FROM users WHERE active = 1;\n"
+            "CREATE FUNCTION get_user_count() RETURNS INT AS $$ SELECT count(*) FROM users; $$ LANGUAGE SQL;\n"
+        )
+        results = self.analyzer.analyze(repo_dir, files=["views.sql"])
+        assert len(results) == 1
+        schema = results[0]
+        assert "users" in schema.tables
+        assert "active_users" in schema.tables
+        model_prefixes = [m.split(":")[0] for m in schema.models]
+        assert "VIEW" in model_prefixes
+        assert "FUNC" in model_prefixes
+
     def test_analyze_allows_extra_dirs_from_profile(self):
         """Files in model_dirs with valid text content should still be analyzed
         even if their extension isn't in DB_RELEVANT_EXTENSIONS.

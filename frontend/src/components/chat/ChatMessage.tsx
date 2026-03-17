@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
+import { VizToolbar } from "@/components/viz/VizToolbar";
+import { rerenderViz, type VizTypeKey } from "@/lib/viz-utils";
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 
@@ -41,20 +43,29 @@ interface ChatMessageProps {
   onRetry?: () => void;
 }
 
+function resolveOriginalVizType(
+  visualization: Record<string, unknown> | null | undefined,
+  metaVizType?: string,
+): VizTypeKey {
+  if (metaVizType === "bar_chart" || metaVizType === "line_chart" || metaVizType === "pie_chart" || metaVizType === "scatter") {
+    return metaVizType;
+  }
+  const vizDataType = visualization?.type as string | undefined;
+  if (vizDataType === "chart") {
+    const chartType = (visualization?.data as Record<string, unknown>)?.type as string | undefined;
+    if (chartType === "bar") return "bar_chart";
+    if (chartType === "line") return "line_chart";
+    if (chartType === "pie") return "pie_chart";
+    if (chartType === "scatter") return "scatter";
+  }
+  return "table";
+}
+
 export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
-  const [userRating, setUserRating] = useState<number | null>(null);
-
-  const handleFeedback = async (rating: number) => {
-    try {
-      await api.chat.submitFeedback(message.id, rating);
-      setUserRating(rating);
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
-    }
-  };
+  const [userRating, setUserRating] = useState<number | null>(message.userRating ?? null);
 
   let metadata: MessageMetadata | null = null;
   if (metadataJson) {
@@ -66,6 +77,56 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
   }
 
   const responseType = message.responseType || metadata?.response_type || "text";
+  const isSqlResult = responseType === "sql_result";
+  const hasViz = !!message.visualization;
+  const hasRawResult = !!message.rawResult;
+
+  const originalVizType = resolveOriginalVizType(message.visualization, metadata?.viz_type);
+  const [activeVizType, setActiveVizType] = useState<VizTypeKey>(originalVizType);
+  const [overrideViz, setOverrideViz] = useState<Record<string, unknown> | null>(null);
+  const [vizLoading, setVizLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"viz" | "text">(hasViz ? "viz" : "text");
+
+  const handleVizTypeChange = useCallback(
+    async (newType: VizTypeKey) => {
+      if (newType === activeVizType || !message.rawResult) return;
+      setActiveVizType(newType);
+
+      if (newType === originalVizType) {
+        setOverrideViz(null);
+        return;
+      }
+
+      setVizLoading(true);
+      try {
+        const newViz = await rerenderViz(message.rawResult, newType);
+        setOverrideViz(newViz);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "Failed to re-render visualization", "error");
+        setActiveVizType(activeVizType);
+      } finally {
+        setVizLoading(false);
+      }
+    },
+    [activeVizType, originalVizType, message.rawResult],
+  );
+
+  const handleFeedback = async (rating: number) => {
+    try {
+      await api.chat.submitFeedback(message.id, rating);
+      setUserRating(rating);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
+    }
+  };
+
+  let toolCalls: Array<{ tool?: string; arguments?: Record<string, unknown>; result_preview?: string }> = [];
+  if (message.toolCallsJson) {
+    try {
+      toolCalls = JSON.parse(message.toolCallsJson);
+    } catch { /* ignore */ }
+  }
+
   const hasKnowledgeSources =
     metadata?.rag_sources && metadata.rag_sources.length > 0;
 
@@ -100,7 +161,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
         <p className="text-sm whitespace-pre-wrap">{message.content}</p>
 
         {/* SQL Query — only for sql_result responses */}
-        {message.query && responseType === "sql_result" && (
+        {message.query && isSqlResult && (
           <details className="mt-3 text-xs">
             <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300">
               View SQL Query
@@ -114,10 +175,45 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
           </details>
         )}
 
-        {/* Visualization — only for sql_result responses */}
-        {message.visualization && responseType === "sql_result" && (
-          <div className="mt-3">
-            <VizRenderer data={message.visualization} />
+        {/* Text / Visual toggle + Viz toolbar — for sql_result responses with visualization */}
+        {isSqlResult && hasViz && (
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg">
+              <button
+                onClick={() => setViewMode("viz")}
+                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                  viewMode === "viz"
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Visual
+              </button>
+              <button
+                onClick={() => setViewMode("text")}
+                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                  viewMode === "text"
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Text
+              </button>
+            </div>
+            {viewMode === "viz" && hasRawResult && (
+              <VizToolbar
+                activeType={activeVizType}
+                onTypeChange={handleVizTypeChange}
+                loading={vizLoading}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Visualization — for sql_result responses in viz mode */}
+        {isSqlResult && hasViz && viewMode === "viz" && (
+          <div className="mt-2">
+            <VizRenderer data={overrideViz ?? message.visualization!} />
           </div>
         )}
 
@@ -324,6 +420,27 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
                     <pre className="mt-0.5 text-zinc-600 truncate max-w-full overflow-hidden">
                       {att.query?.slice(0, 200)}
                     </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {toolCalls.length > 0 && (
+              <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
+                <div className="font-medium text-zinc-400 mb-1">
+                  Tool Calls ({toolCalls.length})
+                </div>
+                {toolCalls.map((tc: { tool?: string; arguments?: Record<string, unknown>; result_preview?: string }, idx: number) => (
+                  <div
+                    key={idx}
+                    className="p-1.5 rounded mb-1 bg-cyan-950/20 border border-cyan-900/20"
+                  >
+                    <span className="text-cyan-400 font-medium">{tc.tool}</span>
+                    {tc.arguments && (
+                      <pre className="mt-0.5 text-zinc-600 truncate max-w-full overflow-hidden">
+                        {JSON.stringify(tc.arguments).slice(0, 150)}
+                      </pre>
+                    )}
                   </div>
                 ))}
               </div>

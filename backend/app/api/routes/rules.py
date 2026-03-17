@@ -32,6 +32,7 @@ class RuleResponse(BaseModel):
     name: str
     content: str
     format: str
+    is_default: bool = False
 
 
 @router.post("", response_model=RuleResponse)

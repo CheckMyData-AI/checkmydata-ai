@@ -36,14 +36,18 @@ def split_large_file(
     if len(content) <= max_segment_chars:
         return [FileSegment(name=file_path, content=content)]
 
-    if file_path.endswith(".py"):
-        return _split_python(content, file_path, max_segment_chars)
-    if file_path.endswith(".prisma"):
-        return _split_prisma(content, file_path, max_segment_chars)
-    if file_path.endswith((".ts", ".tsx", ".js", ".jsx")):
-        return _split_js_ts(content, file_path, max_segment_chars)
+    try:
+        if file_path.endswith(".py"):
+            return _split_python(content, file_path, max_segment_chars)
+        if file_path.endswith(".prisma"):
+            return _split_prisma(content, file_path, max_segment_chars)
+        if file_path.endswith((".ts", ".tsx", ".js", ".jsx")):
+            return _split_js_ts(content, file_path, max_segment_chars)
 
-    return _split_generic(content, file_path, max_segment_chars)
+        return _split_generic(content, file_path, max_segment_chars)
+    except Exception:
+        logger.warning("File split failed for %s, returning single segment", file_path, exc_info=True)
+        return [FileSegment(name=file_path, content=content[:max_segment_chars])]
 
 
 def _split_python(

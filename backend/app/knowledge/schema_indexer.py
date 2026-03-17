@@ -9,7 +9,7 @@ class SchemaIndexer:
     """Introspects a live database to extract schema documentation."""
 
     async def introspect(self, connector: BaseConnector) -> SchemaInfo:
-        logger.info("Introspecting schema via %s connector", connector.db_type)
+        logger.debug("Introspecting schema via %s connector", connector.db_type)
         return await connector.introspect_schema()
 
     async def fetch_sample_data(

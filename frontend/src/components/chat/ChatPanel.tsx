@@ -8,6 +8,7 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { StreamWorkflowProgress } from "../workflow/StreamWorkflowProgress";
+import { LogToggleButton } from "../log/LogPanel";
 
 export function ChatPanel() {
   const {
@@ -20,6 +21,7 @@ export function ChatPanel() {
     activeToolCalls,
     setActiveSession,
     addMessage,
+    updateMessageId,
     setThinking,
     setLoading,
     addToolCall,
@@ -64,40 +66,59 @@ export function ChatPanel() {
         },
         (result: ChatResponse) => {
           if (!activeSession) {
-            setActiveSession({
+            const newSession = {
               id: result.session_id,
               project_id: activeProject.id,
               title: content.slice(0, 50),
-            });
+              connection_id: activeConnection?.id ?? null,
+            };
+            setActiveSession(newSession);
+            useAppStore.setState((state) => ({
+              chatSessions: [newSession, ...state.chatSessions],
+            }));
             api.chat.generateTitle(result.session_id).then((updated) => {
-              setActiveSession({
+              const updatedSession = {
                 id: updated.id,
                 project_id: updated.project_id,
                 title: updated.title,
-              });
+                connection_id: activeConnection?.id ?? null,
+              };
+              setActiveSession(updatedSession);
+              useAppStore.setState((state) => ({
+                chatSessions: state.chatSessions.map((s) =>
+                  s.id === updated.id ? updatedSession : s,
+                ),
+              }));
             }).catch(() => { /* keep truncated title */ });
           }
 
-          const ragSources = (result as unknown as Record<string, unknown>).rag_sources as
-            | Array<{ source_path: string; distance?: number; doc_type?: string }>
-            | undefined;
+          if (result.user_message_id) {
+            updateMessageId(userMsg.id, result.user_message_id);
+          }
 
-          const tokenUsage = (result as unknown as Record<string, unknown>).token_usage as
-            | Record<string, number>
-            | undefined;
+          const ragSources = result.rag_sources ?? undefined;
+          const tokenUsage = result.token_usage ?? undefined;
 
           const metadataObj: Record<string, unknown> = {
             query: result.query,
+            query_explanation: result.query_explanation,
             viz_type: result.visualization?.type,
+            visualization: result.visualization,
             error: result.error,
             workflow_id: result.workflow_id,
             rag_sources: ragSources,
             token_usage: tokenUsage,
             response_type: result.response_type,
+            staleness_warning: result.staleness_warning,
           };
 
+          const rawResult = (result as unknown as Record<string, unknown>)
+            .raw_result as
+            | { columns: string[]; rows: unknown[][]; total_rows: number }
+            | undefined;
+
           addMessage({
-            id: crypto.randomUUID(),
+            id: result.assistant_message_id || crypto.randomUUID(),
             role: "assistant",
             content: result.answer,
             query: result.query || undefined,
@@ -107,6 +128,7 @@ export function ChatPanel() {
             stalenessWarning: result.staleness_warning,
             responseType: result.response_type,
             metadataJson: JSON.stringify(metadataObj),
+            rawResult: rawResult ?? undefined,
             timestamp: Date.now(),
           });
 
@@ -139,7 +161,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, chatMode, addMessage, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall],
+    [activeProject, activeConnection, activeSession, chatMode, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall],
   );
 
   useEffect(() => {
@@ -237,7 +259,7 @@ export function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
-      <ChatInput onSend={handleSend} disabled={isThinking} />
+      <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
     </div>
   );
 }

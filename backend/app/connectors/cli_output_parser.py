@@ -77,14 +77,22 @@ class CLIOutputParser:
         return CLIOutputParser.parse_generic(stdout)
 
 
+_NOISE_PREFIXES = (
+    "Warning: Using a password",
+    "Warning: Using unique option prefix",
+    "mysql: [Warning]",
+    "mysql: Deprecated",
+)
+
+
 def _strip_lines(text: str) -> list[str]:
-    """Split text into non-empty stripped lines, ignoring common noise."""
+    """Split text into non-empty lines, ignoring common CLI noise."""
     lines: list[str] = []
     for raw in text.strip().splitlines():
-        line = raw.rstrip()
+        line = raw.rstrip("\n\r")
         if not line:
             continue
-        if line.startswith("Warning:") or line.startswith("mysql:"):
+        if any(line.startswith(prefix) for prefix in _NOISE_PREFIXES):
             continue
         lines.append(line)
     return lines

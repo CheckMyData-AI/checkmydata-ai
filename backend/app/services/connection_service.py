@@ -119,13 +119,28 @@ class ConnectionService:
         connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
         try:
             await connector.connect(config)
-            alive = await connector.test_connection()
-            await connector.disconnect()
-            return {"success": alive}
+            try:
+                alive = await connector.test_connection()
+            finally:
+                await connector.disconnect()
+            if not alive:
+                logger.warning(
+                    "Connection test query failed for '%s' (id=%s, type=%s)",
+                    conn.name, connection_id, conn.db_type,
+                )
+                return {"success": False, "error": "Database responded but test query failed"}
+            logger.info("Connection test OK for '%s' (id=%s)", conn.name, connection_id)
+            return {"success": True}
         except Exception as e:
+            logger.warning(
+                "Connection test error for '%s' (id=%s, type=%s): %s",
+                conn.name, connection_id, conn.db_type, e,
+            )
             return {"success": False, "error": str(e)}
 
-    async def test_ssh(self, session: AsyncSession, connection_id: str) -> dict:
+    async def test_ssh(
+        self, session: AsyncSession, connection_id: str, user_id: str | None = None,
+    ) -> dict:
         """Test SSH connectivity independently from the database."""
         import asyncssh
 
@@ -138,7 +153,7 @@ class ConnectionService:
         ssh_key_content = None
         ssh_key_passphrase = None
         if conn.ssh_key_id:
-            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id)
+            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id, user_id=user_id)
             if decrypted:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
@@ -153,18 +168,46 @@ class ConnectionService:
             key = asyncssh.import_private_key(ssh_key_content.strip(), ssh_key_passphrase)
             connect_kwargs["client_keys"] = [key]
 
+        _MARKER = "__SSH_TEST_OK__"
         try:
             async with asyncssh.connect(**connect_kwargs) as ssh_conn:
-                result = await ssh_conn.run("echo ok && hostname", timeout=10, check=False)
+                result = await ssh_conn.run(
+                    f"echo {_MARKER} && hostname", timeout=10, check=False,
+                )
                 stdout = (result.stdout or "").strip()
-                lines = stdout.splitlines()
-                ok = len(lines) >= 1 and lines[0].strip() == "ok"
-                hostname = lines[1].strip() if len(lines) > 1 else "unknown"
-                return {"success": ok, "hostname": hostname}
+                ok = _MARKER in stdout
+                hostname = "unknown"
+                if ok:
+                    for line in stdout.splitlines():
+                        stripped = line.strip()
+                        if stripped and stripped != _MARKER:
+                            hostname = stripped
+                    logger.info("SSH test OK for '%s' -> %s", conn.name, hostname)
+                else:
+                    logger.warning(
+                        "SSH test: marker not found for '%s' "
+                        "(exit=%s, stdout=%r)",
+                        conn.name,
+                        result.exit_status,
+                        stdout[:200],
+                    )
+                return {
+                    "success": ok,
+                    "hostname": hostname,
+                    **(
+                        {}
+                        if ok
+                        else {"error": "SSH connected but test command returned unexpected output",
+                              "stdout": stdout[:200]}
+                    ),
+                }
         except Exception as e:
+            logger.warning("SSH test error for '%s' (host=%s): %s", conn.name, conn.ssh_host, e)
             return {"success": False, "error": str(e)}
 
-    async def to_config(self, session: AsyncSession, conn: Connection) -> ConnectionConfig:
+    async def to_config(
+        self, session: AsyncSession, conn: Connection, user_id: str | None = None,
+    ) -> ConnectionConfig:
         try:
             db_password = None
             if conn.db_password_encrypted:
@@ -183,7 +226,7 @@ class ConnectionService:
         ssh_key_content = None
         ssh_key_passphrase = None
         if conn.ssh_key_id:
-            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id)
+            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id, user_id=user_id)
             if decrypted:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
@@ -192,6 +235,10 @@ class ConnectionService:
             try:
                 pre_commands = json.loads(conn.ssh_pre_commands)
             except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    "Invalid JSON in ssh_pre_commands for connection '%s': %s",
+                    conn.name, conn.ssh_pre_commands[:100],
+                )
                 pre_commands = None
 
         return ConnectionConfig(

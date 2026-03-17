@@ -38,7 +38,12 @@ class LLMRouter:
         for p in self._fallback_order:
             if p != primary:
                 chain.append(p)
-        return chain
+        key_map = {
+            "openai": settings.openai_api_key,
+            "anthropic": settings.anthropic_api_key,
+            "openrouter": settings.openrouter_api_key,
+        }
+        return [p for p in chain if key_map.get(p)]
 
     async def complete(
         self,

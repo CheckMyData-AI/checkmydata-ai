@@ -7,13 +7,18 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers: optHeaders, ...restOptions } = options ?? {};
   const res = await fetch(`${API_BASE}${path}`, {
+    ...restOptions,
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
-      ...options?.headers,
+      ...(optHeaders instanceof Headers
+        ? Object.fromEntries(optHeaders.entries())
+        : Array.isArray(optHeaders)
+          ? Object.fromEntries(optHeaders)
+          : optHeaders),
     },
-    ...options,
   });
   if (!res.ok) {
     const isAuthRoute = path.startsWith("/auth/");
@@ -47,8 +52,12 @@ export interface Project {
   repo_url: string | null;
   repo_branch: string;
   ssh_key_id: string | null;
-  default_llm_provider: string | null;
-  default_llm_model: string | null;
+  indexing_llm_provider: string | null;
+  indexing_llm_model: string | null;
+  agent_llm_provider: string | null;
+  agent_llm_model: string | null;
+  sql_llm_provider: string | null;
+  sql_llm_model: string | null;
   owner_id: string | null;
   user_role: string | null;
 }
@@ -105,6 +114,7 @@ export interface ChatSession {
   id: string;
   project_id: string;
   title: string;
+  connection_id?: string | null;
 }
 
 export interface ChatMessageDTO {
@@ -112,6 +122,7 @@ export interface ChatMessageDTO {
   role: string;
   content: string;
   metadata_json: string | null;
+  tool_calls_json: string | null;
   user_rating: number | null;
   created_at: string;
 }
@@ -126,6 +137,11 @@ export interface ChatResponse {
   workflow_id: string | null;
   staleness_warning: string | null;
   response_type?: "text" | "sql_result" | "knowledge" | "error";
+  assistant_message_id?: string | null;
+  user_message_id?: string | null;
+  raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
+  rag_sources?: Array<{ source_path: string; distance?: number; doc_type?: string }> | null;
+  token_usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
 }
 
 export interface RepoCheckResult {
@@ -150,6 +166,42 @@ export interface UpdateCheck {
   has_updates: boolean;
   commits_behind: number;
   message: string;
+}
+
+export interface DbIndexStatus {
+  is_indexed: boolean;
+  is_indexing?: boolean;
+  indexed_at?: string | null;
+  total_tables?: number;
+  active_tables?: number;
+  empty_tables?: number;
+  orphan_tables?: number;
+  phantom_tables?: number;
+}
+
+export interface DbIndexResponse {
+  tables: {
+    table_name: string;
+    table_schema: string;
+    column_count: number;
+    row_count: number | null;
+    is_active: boolean;
+    relevance_score: number;
+    business_description: string;
+    query_hints: string;
+    code_match_status: string;
+    indexed_at: string | null;
+  }[];
+  summary?: {
+    total_tables: number;
+    active_tables: number;
+    empty_tables: number;
+    orphan_tables: number;
+    phantom_tables: number;
+    summary_text: string;
+    recommendations: string;
+    indexed_at: string | null;
+  } | null;
 }
 
 export interface LLMModel {
@@ -225,6 +277,16 @@ export const api = {
       request<{ ok: boolean; tables: number; db_type: string }>(`/connections/${id}/refresh-schema`, {
         method: "POST",
       }),
+    indexDb: (id: string) =>
+      request<{ status: string; connection_id: string }>(`/connections/${id}/index-db`, {
+        method: "POST",
+      }),
+    indexDbStatus: (id: string) =>
+      request<DbIndexStatus>(`/connections/${id}/index-db/status`),
+    getDbIndex: (id: string) =>
+      request<DbIndexResponse>(`/connections/${id}/index-db`),
+    deleteDbIndex: (id: string) =>
+      request<{ ok: boolean }>(`/connections/${id}/index-db`, { method: "DELETE" }),
   },
 
   chat: {
@@ -275,6 +337,8 @@ export const api = {
         connection_id?: string;
         message: string;
         session_id?: string;
+        preferred_provider?: string;
+        model?: string;
       },
       onStep: (event: Record<string, unknown>) => void,
       onResult: (result: ChatResponse) => void,
@@ -361,16 +425,16 @@ export const api = {
 
   rules: {
     list: (projectId?: string) =>
-      request<{ id: string; project_id: string | null; name: string; content: string; format: string }[]>(
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string; is_default: boolean }[]>(
         `/rules${projectId ? `?project_id=${projectId}` : ""}`,
       ),
     create: (data: { project_id?: string; name: string; content: string; format?: string }) =>
-      request<{ id: string; project_id: string | null; name: string; content: string; format: string }>(
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string; is_default: boolean }>(
         "/rules",
         { method: "POST", body: JSON.stringify(data) },
       ),
     update: (id: string, data: Record<string, unknown>) =>
-      request<{ id: string; project_id: string | null; name: string; content: string; format: string }>(
+      request<{ id: string; project_id: string | null; name: string; content: string; format: string; is_default: boolean }>(
         `/rules/${id}`,
         { method: "PATCH", body: JSON.stringify(data) },
       ),
@@ -411,6 +475,21 @@ export const api = {
   },
 
   viz: {
+    render: (
+      columns: string[],
+      rows: unknown[][],
+      vizType: string,
+      config?: Record<string, unknown>,
+    ) =>
+      request<Record<string, unknown>>("/visualizations/render", {
+        method: "POST",
+        body: JSON.stringify({
+          columns,
+          rows,
+          viz_type: vizType,
+          config: config || {},
+        }),
+      }),
     export: async (columns: string[], rows: unknown[][], format: string) => {
       const res = await fetch(`${API_BASE}/visualizations/export`, {
         method: "POST",

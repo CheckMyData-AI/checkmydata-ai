@@ -1,8 +1,11 @@
+import logging
 import time
 from typing import Any
 from urllib.parse import urlparse
 
 import aiomysql
+
+logger = logging.getLogger(__name__)
 
 from app.connectors.base import (
     BaseConnector,
@@ -69,6 +72,8 @@ class MySQLConnector(BaseConnector):
         ordered: list[Any] = []
         def _replacer(m: re.Match) -> str:
             name = m.group(1)
+            if name not in params:
+                return m.group(0)
             ordered.append(params[name])
             return "%s"
         converted = re.sub(r":(\w+)", _replacer, query)
@@ -105,7 +110,35 @@ class MySQLConnector(BaseConnector):
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(error=str(e), execution_time_ms=elapsed)
 
+    async def _reconnect(self) -> None:
+        """Close the stale pool and reconnect (picks up a new tunnel port)."""
+        logger.info("MySQL: reconnecting after connection loss")
+        if self._pool:
+            self._pool.close()
+            await self._pool.wait_closed()
+            self._pool = None
+        if self._config:
+            await self.connect(self._config)
+
     async def introspect_schema(self) -> SchemaInfo:
+        if not self._pool:
+            return SchemaInfo(db_type=self.db_type)
+
+        for attempt in range(2):
+            try:
+                return await self._introspect_schema_inner()
+            except aiomysql.OperationalError as exc:
+                if attempt == 0 and self._config:
+                    logger.warning(
+                        "MySQL introspect_schema lost connection (attempt %d): %s — reconnecting",
+                        attempt + 1, exc,
+                    )
+                    await self._reconnect()
+                else:
+                    raise
+        return SchemaInfo(db_type=self.db_type)
+
+    async def _introspect_schema_inner(self) -> SchemaInfo:
         if not self._pool:
             return SchemaInfo(db_type=self.db_type)
 
@@ -215,11 +248,13 @@ class MySQLConnector(BaseConnector):
 
     async def test_connection(self) -> bool:
         if not self._pool:
+            logger.warning("MySQL test_connection: no pool available")
             return False
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1")
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("MySQL test_connection failed: %s", exc)
             return False

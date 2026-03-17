@@ -19,6 +19,11 @@ class ChatSession(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    connection_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("connections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     title: Mapped[str] = mapped_column(String(255), default="New Chat")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

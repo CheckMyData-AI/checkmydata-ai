@@ -13,10 +13,19 @@ interface Rule {
   name: string;
   content: string;
   format: string;
+  is_default: boolean;
 }
 
 const inputCls =
   "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+
+function sortRules(rules: Rule[]): Rule[] {
+  return [...rules].sort((a, b) => {
+    if (a.is_default && !b.is_default) return -1;
+    if (!a.is_default && b.is_default) return 1;
+    return 0;
+  });
+}
 
 export function RulesManager() {
   const { activeProject } = useAppStore();
@@ -27,11 +36,13 @@ export function RulesManager() {
   const [content, setContent] = useState("");
   const [listLoading, setListLoading] = useState(true);
 
+  const editingRule = editingId ? rules.find((r) => r.id === editingId) : null;
+
   useEffect(() => {
     setListLoading(true);
     api.rules
       .list(activeProject?.id)
-      .then(setRules)
+      .then((data) => setRules(sortRules(data)))
       .catch(() => {})
       .finally(() => setListLoading(false));
   }, [activeProject?.id]);
@@ -44,7 +55,7 @@ export function RulesManager() {
         name: name.trim(),
         content: content.trim(),
       });
-      setRules((prev) => [rule, ...prev]);
+      setRules((prev) => sortRules([rule, ...prev]));
       setName("");
       setContent("");
       setShowCreate(false);
@@ -67,7 +78,7 @@ export function RulesManager() {
         name: name.trim(),
         content: content.trim(),
       });
-      setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setRules((prev) => sortRules(prev.map((r) => (r.id === updated.id ? updated : r))));
       setEditingId(null);
       setName("");
       setContent("");
@@ -76,11 +87,14 @@ export function RulesManager() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!(await confirmAction("Delete this rule?"))) return;
+  const handleDelete = async (rule: Rule) => {
+    const message = rule.is_default
+      ? "Delete the default metrics rule? Once deleted, it won't be re-created automatically."
+      : "Delete this rule?";
+    if (!(await confirmAction(message))) return;
     try {
-      await api.rules.delete(id);
-      setRules((prev) => prev.filter((r) => r.id !== id));
+      await api.rules.delete(rule.id);
+      setRules((prev) => prev.filter((r) => r.id !== rule.id));
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to delete rule", "error");
     }
@@ -110,6 +124,11 @@ export function RulesManager() {
 
       {isFormOpen && (
         <div className="space-y-2 p-2 bg-zinc-800/50 rounded-lg">
+          {editingRule?.is_default && (
+            <p className="text-[10px] text-amber-400/70 px-1">
+              This is the default metrics guide. Edit it to match your project.
+            </p>
+          )}
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -152,6 +171,11 @@ export function RulesManager() {
           <div key={rule.id} className="flex items-center gap-1 group">
             <div className="flex-1 px-3 py-1.5 text-xs text-zinc-400 truncate">
               <span className="text-zinc-300">{rule.name}</span>
+              {rule.is_default && (
+                <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400/80">
+                  default
+                </span>
+              )}
               {!rule.project_id && (
                 <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-500">
                   global
@@ -165,7 +189,7 @@ export function RulesManager() {
               ✎
             </button>
             <button
-              onClick={() => handleDelete(rule.id)}
+              onClick={() => handleDelete(rule)}
               className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
             >
               ×

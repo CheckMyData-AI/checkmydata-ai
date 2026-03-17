@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from app.connectors.base import ConnectionConfig, QueryResult
+from app.connectors.base import ConnectionConfig, QueryResult, connector_key
 from app.core.history_trimmer import trim_history
 from app.core.prompt_builder import build_agent_system_prompt
 from app.core.query_builder import QueryBuilder
@@ -45,6 +45,7 @@ class AgentResponse:
     token_usage: dict = field(default_factory=dict)
     staleness_warning: str | None = None
     response_type: str = "text"  # text | sql_result | knowledge | error
+    tool_call_log: list[dict] = field(default_factory=list)
 
 
 class ConversationalAgent:
@@ -76,6 +77,8 @@ class ConversationalAgent:
         chat_history: list[Message] | None = None,
         preferred_provider: str | None = None,
         model: str | None = None,
+        sql_provider: str | None = None,
+        sql_model: str | None = None,
         project_name: str | None = None,
     ) -> AgentResponse:
         wf_id = await self._tracker.begin(
@@ -93,10 +96,14 @@ class ConversationalAgent:
                     chat_history,
                     max_tokens=app_settings.max_history_tokens,
                     llm_router=self._llm,
+                    preferred_provider=preferred_provider,
+                    model=model,
                 )
 
             has_connection = connection_config is not None
             has_kb = self._has_knowledge_base(project_id)
+            has_db_idx = await self._has_db_index(project_id, connection_config)
+            db_idx_stale = await self._is_db_index_stale(connection_config) if has_db_idx else False
             db_type = connection_config.db_type if connection_config else None
 
             system_prompt = build_agent_system_prompt(
@@ -104,11 +111,14 @@ class ConversationalAgent:
                 db_type=db_type,
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
+                has_db_index=has_db_idx,
+                db_index_stale=db_idx_stale,
             )
 
             tools = get_available_tools(
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
+                has_db_index=has_db_idx,
             )
 
             executor = ToolExecutor(
@@ -123,6 +133,8 @@ class ConversationalAgent:
                 chat_history=chat_history,
                 preferred_provider=preferred_provider,
                 model=model,
+                sql_provider=sql_provider,
+                sql_model=sql_model,
             )
 
             messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -155,11 +167,17 @@ class ConversationalAgent:
                 self._accum_usage(total_usage, llm_resp.usage)
 
                 if not llm_resp.tool_calls:
-                    final_text = llm_resp.content
+                    final_text = llm_resp.content or ""
                     break
 
                 assistant_content = llm_resp.content or ""
-                messages.append(Message(role="assistant", content=assistant_content))
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=assistant_content,
+                        tool_calls=llm_resp.tool_calls,
+                    )
+                )
 
                 for tc in llm_resp.tool_calls:
                     async with self._tracker.step(
@@ -225,6 +243,7 @@ class ConversationalAgent:
                 token_usage=total_usage,
                 staleness_warning=staleness_warning,
                 response_type=response_type,
+                tool_call_log=tool_call_log,
             )
 
         except Exception as exc:
@@ -240,6 +259,76 @@ class ConversationalAgent:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _resolve_connection_id(
+        self,
+        project_id: str,
+        connection_config: ConnectionConfig,
+    ) -> str | None:
+        """Map a runtime ConnectionConfig back to its stored Connection.id."""
+        from app.models.base import async_session_factory
+        from app.services.connection_service import ConnectionService
+
+        target_key = connector_key(connection_config)
+        conn_svc = ConnectionService()
+        async with async_session_factory() as session:
+            connections = await conn_svc.list_by_project(session, project_id)
+            for c in connections:
+                cfg = await conn_svc.to_config(session, c)
+                if connector_key(cfg) == target_key:
+                    return c.id
+        return None
+
+    async def _has_db_index(
+        self,
+        project_id: str,
+        connection_config: ConnectionConfig | None,
+    ) -> bool:
+        """Check whether a database index exists for the active connection."""
+        if not connection_config:
+            return False
+        try:
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            cid = connection_config.connection_id
+            if not cid:
+                cid = await self._resolve_connection_id(project_id, connection_config)
+                if cid:
+                    connection_config.connection_id = cid
+
+            if not cid:
+                return False
+
+            db_index_svc = DbIndexService()
+            async with async_session_factory() as session:
+                return await db_index_svc.is_indexed(session, cid)
+        except Exception:
+            logger.debug("DB index check failed", exc_info=True)
+            return False
+
+    async def _is_db_index_stale(
+        self,
+        connection_config: ConnectionConfig | None,
+    ) -> bool:
+        """Return True if the DB index exists but is older than the configured TTL."""
+        if not connection_config or not connection_config.connection_id:
+            return False
+        try:
+            from app.config import settings as app_settings
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            svc = DbIndexService()
+            async with async_session_factory() as session:
+                return await svc.is_stale(
+                    session,
+                    connection_config.connection_id,
+                    ttl_hours=app_settings.db_index_ttl_hours,
+                )
+        except Exception:
+            logger.debug("DB index staleness check failed", exc_info=True)
+            return False
 
     def _has_knowledge_base(self, project_id: str) -> bool:
         """Check whether the project's ChromaDB collection has documents."""

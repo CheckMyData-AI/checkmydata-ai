@@ -1,8 +1,11 @@
+import logging
 import re
 import time
 from typing import Any
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 from app.connectors.base import (
     BaseConnector,
@@ -79,7 +82,36 @@ class PostgresConnector(BaseConnector):
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(error=str(e), execution_time_ms=elapsed)
 
+    async def _reconnect(self) -> None:
+        """Close the stale pool and reconnect (picks up a new tunnel port)."""
+        logger.info("Postgres: reconnecting after connection loss")
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
+        if self._config:
+            await self.connect(self._config)
+
     async def introspect_schema(self) -> SchemaInfo:
+        if not self._pool:
+            return SchemaInfo(db_type=self.db_type)
+
+        for attempt in range(2):
+            try:
+                return await self._introspect_schema_inner()
+            except (asyncpg.ConnectionDoesNotExistError,
+                    asyncpg.InterfaceError,
+                    OSError) as exc:
+                if attempt == 0 and self._config:
+                    logger.warning(
+                        "Postgres introspect_schema lost connection (attempt %d): %s — reconnecting",
+                        attempt + 1, exc,
+                    )
+                    await self._reconnect()
+                else:
+                    raise
+        return SchemaInfo(db_type=self.db_type)
+
+    async def _introspect_schema_inner(self) -> SchemaInfo:
         if not self._pool:
             return SchemaInfo(db_type=self.db_type)
 
@@ -152,11 +184,13 @@ class PostgresConnector(BaseConnector):
                     FROM pg_constraint con
                     JOIN pg_class cl_child ON cl_child.oid = con.conrelid
                     JOIN pg_namespace ns ON ns.oid = cl_child.relnamespace
-                    JOIN pg_attribute a_child ON a_child.attrelid = con.conrelid
-                        AND a_child.attnum = ANY(con.conkey)
                     JOIN pg_class cl_parent ON cl_parent.oid = con.confrelid
+                    CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                        WITH ORDINALITY AS u(child_attnum, parent_attnum, ord)
+                    JOIN pg_attribute a_child ON a_child.attrelid = con.conrelid
+                        AND a_child.attnum = u.child_attnum
                     JOIN pg_attribute a_parent ON a_parent.attrelid = con.confrelid
-                        AND a_parent.attnum = ANY(con.confkey)
+                        AND a_parent.attnum = u.parent_attnum
                     WHERE con.contype = 'f' AND ns.nspname = $1 AND cl_child.relname = $2
                     """,
                     schema_name,
@@ -217,12 +251,14 @@ class PostgresConnector(BaseConnector):
 
     async def test_connection(self) -> bool:
         if not self._pool:
+            logger.warning("Postgres test_connection: no pool available")
             return False
         try:
             async with self._pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("Postgres test_connection failed: %s", exc)
             return False
 
 

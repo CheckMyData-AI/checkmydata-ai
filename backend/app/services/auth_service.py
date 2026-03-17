@@ -39,6 +39,7 @@ class AuthService:
     ) -> User:
         existing = await session.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none():
+            logger.warning("Registration failed for %s: email already registered", email)
             raise ValueError("Email already registered")
 
         user = User(
@@ -50,6 +51,7 @@ class AuthService:
         session.add(user)
         await session.commit()
         await session.refresh(user)
+        logger.info("User registered: %s", email)
         return user
 
     async def authenticate(
@@ -61,9 +63,12 @@ class AuthService:
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user or not user.password_hash:
+            logger.warning("Login failed for %s: user not found or no password", email)
             return None
         if not self._verify_password(password, user.password_hash):
+            logger.warning("Login failed for %s: invalid credentials", email)
             return None
+        logger.info("User logged in: %s (provider=email)", email)
         return user
 
     async def get_by_id(self, session: AsyncSession, user_id: str) -> User | None:
@@ -119,6 +124,9 @@ class AuthService:
                 user.auth_provider = "google"
                 await session.commit()
                 await session.refresh(user)
+                logger.info("Google account linked for existing user: %s", email)
+            else:
+                logger.info("User logged in: %s (provider=google)", email)
             return user
 
         user = User(
@@ -131,4 +139,5 @@ class AuthService:
         session.add(user)
         await session.commit()
         await session.refresh(user)
+        logger.info("User registered via Google: %s", email)
         return user

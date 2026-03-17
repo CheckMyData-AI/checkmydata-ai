@@ -18,6 +18,7 @@ class TestRulesCrud:
         assert resp.status_code == 200
         rule = resp.json()
         assert rule["name"] == "Test Rule"
+        assert rule["is_default"] is False
         rule_id = rule["id"]
 
         resp = await auth_client.get("/api/rules")
@@ -113,3 +114,96 @@ class TestRulesAccessControl:
             headers=auth_headers(viewer["token"]),
         )
         assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+class TestDefaultRuleCreation:
+    async def test_project_creation_creates_default_rule(self, client):
+        """Creating a project should auto-create a default business metrics rule."""
+        user = await register_user(client)
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Default Rule Test"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+        pid = resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/rules?project_id={pid}",
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+        rules = resp.json()
+        default_rules = [r for r in rules if r["is_default"] is True]
+        assert len(default_rules) == 1
+        assert default_rules[0]["name"] == "Business Metrics & Guidelines"
+        assert "Revenue" in default_rules[0]["content"]
+        assert default_rules[0]["project_id"] == pid
+
+    async def test_default_rule_is_editable(self, client):
+        """Users should be able to edit the default rule content."""
+        user = await register_user(client)
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Editable Default"},
+            headers=auth_headers(user["token"]),
+        )
+        pid = resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/rules?project_id={pid}",
+            headers=auth_headers(user["token"]),
+        )
+        default_rule = [r for r in resp.json() if r["is_default"]][0]
+
+        resp = await client.patch(
+            f"/api/rules/{default_rule['id']}",
+            json={"content": "Custom metrics for my project"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "Custom metrics for my project"
+        assert resp.json()["is_default"] is True
+
+    async def test_default_rule_is_deletable(self, client):
+        """Users should be able to delete the default rule."""
+        user = await register_user(client)
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Deletable Default"},
+            headers=auth_headers(user["token"]),
+        )
+        pid = resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/rules?project_id={pid}",
+            headers=auth_headers(user["token"]),
+        )
+        default_rule = [r for r in resp.json() if r["is_default"]][0]
+
+        resp = await client.delete(
+            f"/api/rules/{default_rule['id']}",
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get(
+            f"/api/rules?project_id={pid}",
+            headers=auth_headers(user["token"]),
+        )
+        default_rules = [r for r in resp.json() if r.get("is_default")]
+        assert len(default_rules) == 0
+
+    async def test_is_default_field_in_response(self, client):
+        """All rule responses should include the is_default field."""
+        user = await register_user(client)
+
+        resp = await client.post(
+            "/api/rules",
+            json={"name": "Manual Rule", "content": "manual content"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+        assert "is_default" in resp.json()
+        assert resp.json()["is_default"] is False

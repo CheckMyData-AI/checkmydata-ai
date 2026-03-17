@@ -1,16 +1,30 @@
-from typing import Literal
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from app.connectors.base import ConnectionConfig
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.services.connection_service import ConnectionService
+from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _svc = ConnectionService()
 _membership_svc = MembershipService()
+_db_index_svc = DbIndexService()
+
+_db_index_tasks: dict[str, asyncio.Task] = {}
 
 
 class ConnectionCreate(BaseModel):
@@ -93,6 +107,7 @@ async def create_connection(
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
     conn = await _svc.create(db, **body.model_dump())
+    logger.info("Connection created: name=%s type=%s project=%s", body.name, body.db_type, body.project_id[:8])
     return conn
 
 
@@ -158,6 +173,7 @@ async def delete_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     await _svc.delete(db, connection_id)
+    logger.info("Connection deleted: id=%s name=%s", connection_id[:8], conn.name)
     return {"ok": True}
 
 
@@ -172,6 +188,26 @@ async def test_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
     result = await _svc.test_connection(db, connection_id)
+
+    if result.get("success"):
+        from app.config import settings as app_settings
+
+        if app_settings.auto_index_db_on_test:
+            existing = _db_index_tasks.get(connection_id)
+            if not (existing and not existing.done()):
+                try:
+                    config = await _svc.to_config(db, conn, user_id=user["user_id"])
+                    await _db_index_svc.set_indexing_status(db, connection_id, "running")
+                    await db.commit()
+                    task = asyncio.create_task(
+                        _run_db_index_background(connection_id, config, conn.project_id)
+                    )
+                    _db_index_tasks[connection_id] = task
+                    result["auto_indexing"] = True
+                    logger.info("Auto-indexing triggered after test: connection=%s", connection_id[:8])
+                except Exception:
+                    logger.debug("Auto-index trigger failed", exc_info=True)
+
     return result
 
 
@@ -186,7 +222,7 @@ async def test_ssh(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
-    result = await _svc.test_ssh(db, connection_id)
+    result = await _svc.test_ssh(db, connection_id, user_id=user["user_id"])
     return result
 
 
@@ -202,7 +238,7 @@ async def refresh_schema(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
 
-    config = await _svc.to_config(db, conn)
+    config = await _svc.to_config(db, conn, user_id=user["user_id"])
     try:
         from app.core.orchestrator import Orchestrator
 
@@ -214,4 +250,151 @@ async def refresh_schema(
             "db_type": schema.db_type,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schema refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Schema refresh failed: {e}") from e
+
+
+# ------------------------------------------------------------------
+# Database Index endpoints
+# ------------------------------------------------------------------
+
+
+@router.post("/{connection_id}/index-db", status_code=202)
+async def index_database(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Trigger database indexing pipeline (runs in background)."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    existing = _db_index_tasks.get(connection_id)
+    if existing and not existing.done():
+        raise HTTPException(
+            status_code=409,
+            detail="Database indexing already in progress for this connection",
+        )
+
+    db_status = await _db_index_svc.get_indexing_status(db, connection_id)
+    if db_status == "running" and not (existing and existing.done()):
+        raise HTTPException(
+            status_code=409,
+            detail="Database indexing already in progress for this connection",
+        )
+
+    config = await _svc.to_config(db, conn, user_id=user["user_id"])
+    project_id = conn.project_id
+
+    await _db_index_svc.set_indexing_status(db, connection_id, "running")
+    await db.commit()
+
+    task = asyncio.create_task(
+        _run_db_index_background(connection_id, config, project_id)
+    )
+    _db_index_tasks[connection_id] = task
+
+    logger.info(
+        "DB index started: connection=%s type=%s project=%s",
+        connection_id[:8], conn.db_type, project_id[:8],
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"status": "started", "connection_id": connection_id},
+    )
+
+
+@router.get("/{connection_id}/index-db/status")
+async def index_db_status(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get database index status for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    status = await _db_index_svc.get_status(db, connection_id)
+
+    existing = _db_index_tasks.get(connection_id)
+    in_memory_running = existing is not None and not existing.done()
+    db_running = status.get("indexing_status") == "running"
+    status["is_indexing"] = in_memory_running or db_running
+
+    return status
+
+
+@router.get("/{connection_id}/index-db")
+async def get_db_index(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get the full database index for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    entries = await _db_index_svc.get_index(db, connection_id)
+    summary = await _db_index_svc.get_summary(db, connection_id)
+
+    if not entries:
+        return {"tables": [], "summary": None}
+
+    return _db_index_svc.index_to_response(entries, summary)
+
+
+@router.delete("/{connection_id}/index-db")
+async def delete_db_index(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Clear the database index for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+
+    await _db_index_svc.delete_all(db, connection_id)
+    logger.info("DB index cleared: connection=%s", connection_id[:8])
+    return {"ok": True}
+
+
+async def _run_db_index_background(
+    connection_id: str,
+    connection_config: ConnectionConfig,
+    project_id: str,
+) -> None:
+    from app.models.base import async_session_factory
+
+    final_status = "failed"
+    try:
+        from app.config import settings as app_settings
+        from app.knowledge.db_index_pipeline import DbIndexPipeline
+
+        pipeline = DbIndexPipeline(
+            db_index_batch_size=app_settings.db_index_batch_size,
+        )
+        result = await pipeline.run(
+            connection_id=connection_id,
+            connection_config=connection_config,
+            project_id=project_id,
+        )
+        logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
+        final_status = "idle"
+    except Exception:
+        logger.exception("DB index background task failed: connection=%s", connection_id[:8])
+    finally:
+        _db_index_tasks.pop(connection_id, None)
+        try:
+            async with async_session_factory() as session:
+                await _db_index_svc.set_indexing_status(session, connection_id, final_status)
+                await session.commit()
+        except Exception:
+            logger.debug("Failed to update indexing_status", exc_info=True)

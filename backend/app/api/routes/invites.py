@@ -98,7 +98,7 @@ async def revoke_invite(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
-    revoked = await _invite_svc.revoke_invite(db, invite_id, user["user_id"])
+    revoked = await _invite_svc.revoke_invite(db, invite_id, user["user_id"], project_id=project_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="Invite not found")
     return {"ok": True}

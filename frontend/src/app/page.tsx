@@ -7,12 +7,14 @@ import { LogPanel } from "@/components/log/LogPanel";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import { useRestoreState } from "@/hooks/useRestoreState";
 
 export default function Home() {
   const { activeProject, activeConnection } = useAppStore();
   const { user, logout } = useAuthStore();
 
   useGlobalEvents(!!user);
+  useRestoreState(!!user);
 
   return (
     <AuthGate>

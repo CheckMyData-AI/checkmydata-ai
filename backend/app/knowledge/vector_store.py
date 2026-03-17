@@ -2,10 +2,30 @@ import logging
 from pathlib import Path
 
 import chromadb
+from chromadb.api.types import EmbeddingFunction
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_embedding_function() -> EmbeddingFunction | None:
+    """Return a custom embedding function if configured, else None (ChromaDB default)."""
+    model_name = settings.chroma_embedding_model
+    if not model_name:
+        return None
+    try:
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+        logger.info("ChromaDB: using custom embedding model %s", model_name)
+        return SentenceTransformerEmbeddingFunction(model_name=model_name)
+    except Exception:
+        logger.warning(
+            "Failed to load embedding model %s, falling back to default",
+            model_name,
+            exc_info=True,
+        )
+        return None
 
 
 class VectorStore:
@@ -13,6 +33,8 @@ class VectorStore:
 
     Supports both embedded PersistentClient and remote HttpClient.
     Set ``CHROMA_SERVER_URL`` to use a remote ChromaDB instance.
+    Set ``CHROMA_EMBEDDING_MODEL`` to use a custom sentence-transformer model
+    (e.g. ``nomic-ai/nomic-embed-text-v1``).
     """
 
     def __init__(self):
@@ -27,15 +49,20 @@ class VectorStore:
             self._client = chromadb.PersistentClient(path=str(persist_dir))
             logger.info("ChromaDB: using local PersistentClient at %s", persist_dir)
 
+        self._embedding_fn = _get_embedding_function()
+
     def _collection_name(self, project_id: str) -> str:
         safe = project_id.replace("-", "_")[:50]
         return f"project_{safe}"
 
     def get_or_create_collection(self, project_id: str) -> chromadb.Collection:
-        return self._client.get_or_create_collection(
-            name=self._collection_name(project_id),
-            metadata={"hnsw:space": "cosine"},
-        )
+        kwargs: dict = {
+            "name": self._collection_name(project_id),
+            "metadata": {"hnsw:space": "cosine"},
+        }
+        if self._embedding_fn is not None:
+            kwargs["embedding_function"] = self._embedding_fn
+        return self._client.get_or_create_collection(**kwargs)
 
     def add_documents(
         self,
@@ -50,7 +77,7 @@ class VectorStore:
             documents=documents,
             metadatas=metadatas,
         )
-        logger.info("Upserted %d documents to collection %s", len(doc_ids), project_id)
+        logger.debug("Upserted %d documents to collection %s", len(doc_ids), project_id)
 
     def query(
         self,
@@ -101,7 +128,7 @@ class VectorStore:
             ids_to_delete = existing["ids"]
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
-                logger.info(
+                logger.debug(
                     "Deleted %d stale chunks for source_path=%s in project %s",
                     len(ids_to_delete),
                     source_path,

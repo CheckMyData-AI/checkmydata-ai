@@ -53,6 +53,8 @@ async def trim_history(
     messages: list[Message],
     max_tokens: int,
     llm_router=None,
+    preferred_provider: str | None = None,
+    model: str | None = None,
 ) -> list[Message]:
     """Return a token-budget-aware version of *messages*.
 
@@ -90,7 +92,9 @@ async def trim_history(
         return keep
 
     if llm_router is not None:
-        summary = await _summarise(older, llm_router)
+        summary = await _summarise(
+            older, llm_router, preferred_provider, model,
+        )
     else:
         summary = _fallback_summary(older)
 
@@ -101,7 +105,12 @@ async def trim_history(
     return [summary_msg, *keep]
 
 
-async def _summarise(messages: list[Message], llm_router) -> str:
+async def _summarise(
+    messages: list[Message],
+    llm_router,
+    preferred_provider: str | None = None,
+    model: str | None = None,
+) -> str:
     non_tool = [m for m in messages if m.role != "tool"]
     conversation = "\n".join(f"{m.role}: {m.content[:300]}" for m in non_tool)
     prompt_messages = [
@@ -120,6 +129,8 @@ async def _summarise(messages: list[Message], llm_router) -> str:
             messages=prompt_messages,
             max_tokens=300,
             temperature=0.0,
+            preferred_provider=preferred_provider,
+            model=model,
         )
         return resp.content.strip()
     except (RuntimeError, ValueError, TypeError, OSError):

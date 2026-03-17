@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.agent import ConversationalAgent
-from app.core.orchestrator import Orchestrator
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.services.chat_service import ChatService
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
+from app.services.project_service import ProjectService
 from app.services.rag_feedback_service import RAGFeedbackService
 from app.viz.renderer import render
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _chat_svc = ChatService()
 _conn_svc = ConnectionService()
-_orchestrator = Orchestrator()
+_project_svc = ProjectService()
 _agent = ConversationalAgent()
 _rag_feedback_svc = RAGFeedbackService()
 _membership_svc = MembershipService()
@@ -44,21 +44,26 @@ class ChatResponse(BaseModel):
     query: str | None = None
     query_explanation: str | None = None
     visualization: dict | None = None
+    raw_result: dict | None = None
     error: str | None = None
     workflow_id: str | None = None
     staleness_warning: str | None = None
     response_type: str = "text"
+    assistant_message_id: str | None = None
+    user_message_id: str | None = None
 
 
 class SessionCreate(BaseModel):
     project_id: str
     title: str = "New Chat"
+    connection_id: str | None = None
 
 
 class SessionResponse(BaseModel):
     id: str
     project_id: str
     title: str
+    connection_id: str | None = None
 
 
 @router.post("/sessions", response_model=SessionResponse)
@@ -73,6 +78,7 @@ async def create_session(
         body.project_id,
         body.title,
         user_id=user["user_id"],
+        connection_id=body.connection_id,
     )
     return session
 
@@ -242,6 +248,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     metadata_json: str | None = None
+    tool_calls_json: str | None = None
     user_rating: int | None = None
     created_at: str
 
@@ -259,11 +266,35 @@ async def get_session_messages(
             role=m.role,
             content=m.content,
             metadata_json=m.metadata_json,
+            tool_calls_json=m.tool_calls_json,
             user_rating=m.user_rating,
             created_at=m.created_at.isoformat() if m.created_at else "",
         )
         for m in session.messages
     ]
+
+
+_RAW_RESULT_ROW_CAP = 500
+
+
+def _build_raw_result(results) -> dict | None:
+    """Extract raw tabular data from query results, capped at 500 rows."""
+    if not results:
+        return None
+    cols = getattr(results, "columns", None)
+    rows = getattr(results, "rows", None)
+    if not cols:
+        return None
+    from app.viz.utils import serialize_value
+
+    return {
+        "columns": list(cols),
+        "rows": [
+            [serialize_value(v) for v in row]
+            for row in (rows or [])[:_RAW_RESULT_ROW_CAP]
+        ],
+        "total_rows": getattr(results, "row_count", len(rows or [])),
+    }
 
 
 @router.post("/ask", response_model=ChatResponse)
@@ -282,6 +313,7 @@ async def ask(
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
         config = await _conn_svc.to_config(db, conn_model)
+        config.connection_id = body.connection_id
 
     session_id = body.session_id
     if not session_id:
@@ -289,19 +321,34 @@ async def ask(
             db,
             body.project_id,
             user_id=user["user_id"],
+            connection_id=body.connection_id,
         )
         session_id = chat_session.id
 
-    await _chat_svc.add_message(db, session_id, "user", body.message)
+    user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
     history = await _chat_svc.get_history_as_messages(db, session_id)
+
+    logger.info(
+        "Chat request: project=%s session=%s conn=%s",
+        body.project_id[:8], session_id[:8], (body.connection_id or "none")[:8],
+    )
+
+    project = await _project_svc.get(db, body.project_id)
+    agent_provider = body.preferred_provider or (project.agent_llm_provider if project else None)
+    agent_model = body.model or (project.agent_llm_model if project else None)
+    sql_provider = (project.sql_llm_provider if project else None) or agent_provider
+    sql_model = (project.sql_llm_model if project else None) or agent_model
 
     result = await _agent.run(
         question=body.message,
         project_id=body.project_id,
         connection_config=config,
         chat_history=history[:-1],
-        preferred_provider=body.preferred_provider,
-        model=body.model,
+        preferred_provider=agent_provider,
+        model=agent_model,
+        sql_provider=sql_provider,
+        sql_model=sql_model,
+        project_name=project.name if project else None,
     )
 
     viz_data = None
@@ -313,6 +360,8 @@ async def ask(
             summary=result.answer,
         )
 
+    raw_result = _build_raw_result(result.results)
+
     rag_source_dicts = [
         {
             "source_path": s.source_path,
@@ -322,22 +371,37 @@ async def ask(
         for s in result.knowledge_sources
     ]
 
-    await _chat_svc.add_message(
+    tool_calls_str = (
+        json.dumps(result.tool_call_log) if result.tool_call_log else None
+    )
+
+    assistant_msg = await _chat_svc.add_message(
         db,
         session_id,
         "assistant",
         result.answer,
         metadata={
             "query": result.query,
+            "query_explanation": result.query_explanation,
             "viz_type": result.viz_type,
+            "visualization": viz_data,
+            "raw_result": raw_result,
             "error": result.error,
             "workflow_id": result.workflow_id,
-            "row_count": result.results.row_count if result.results else None,
-            "execution_time_ms": (result.results.execution_time_ms if result.results else None),
+            "row_count": (
+                result.results.row_count if result.results else None
+            ),
+            "execution_time_ms": (
+                result.results.execution_time_ms
+                if result.results
+                else None
+            ),
             "rag_sources": rag_source_dicts,
             "token_usage": result.token_usage or None,
             "response_type": result.response_type,
+            "staleness_warning": result.staleness_warning,
         },
+        tool_calls_json=tool_calls_str,
     )
 
     if rag_source_dicts:
@@ -352,16 +416,28 @@ async def ask(
         except Exception:
             logger.warning("Failed to record RAG feedback", exc_info=True)
 
+    usage = result.token_usage or {}
+    logger.info(
+        "Chat response: type=%s tokens=%d error=%s",
+        result.response_type,
+        usage.get("total_tokens", 0)
+        or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
+        bool(result.error),
+    )
+
     return ChatResponse(
         session_id=session_id,
         answer=result.answer,
         query=result.query or None,
         query_explanation=result.query_explanation or None,
         visualization=viz_data,
+        raw_result=raw_result,
         error=result.error,
         workflow_id=result.workflow_id,
         staleness_warning=result.staleness_warning,
         response_type=result.response_type,
+        assistant_message_id=assistant_msg.id,
+        user_message_id=user_msg.id,
     )
 
 
@@ -382,6 +458,7 @@ async def ask_stream(
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
         config = await _conn_svc.to_config(db, conn_model)
+        config.connection_id = body.connection_id
 
     session_id = body.session_id
     if not session_id:
@@ -389,11 +466,25 @@ async def ask_stream(
             db,
             body.project_id,
             user_id=user["user_id"],
+            connection_id=body.connection_id,
         )
         session_id = chat_session.id
 
-    await _chat_svc.add_message(db, session_id, "user", body.message)
+    user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
+    user_message_id = user_msg.id
     history = await _chat_svc.get_history_as_messages(db, session_id)
+
+    logger.info(
+        "Chat stream request: project=%s session=%s conn=%s",
+        body.project_id[:8], session_id[:8], (body.connection_id or "none")[:8],
+    )
+
+    project = await _project_svc.get(db, body.project_id)
+    agent_provider = body.preferred_provider or (project.agent_llm_provider if project else None)
+    agent_model = body.model or (project.agent_llm_model if project else None)
+    sql_provider = (project.sql_llm_provider if project else None) or agent_provider
+    sql_model = (project.sql_llm_model if project else None) or agent_model
+    project_name = project.name if project else None
 
     async def _generate():
         result_holder: list = []
@@ -405,8 +496,11 @@ async def ask_stream(
                 project_id=body.project_id,
                 connection_config=config,
                 chat_history=history[:-1],
-                preferred_provider=body.preferred_provider,
-                model=body.model,
+                preferred_provider=agent_provider,
+                model=agent_model,
+                sql_provider=sql_provider,
+                sql_model=sql_model,
+                project_name=project_name,
             )
             result_holder.append(res)
 
@@ -460,6 +554,8 @@ async def ask_stream(
                 summary=result.answer,
             )
 
+        raw_result = _build_raw_result(result.results)
+
         stream_rag = [
             {
                 "source_path": s.source_path,
@@ -469,22 +565,37 @@ async def ask_stream(
             for s in result.knowledge_sources
         ]
 
-        await _chat_svc.add_message(
+        tool_calls_str = (
+            json.dumps(result.tool_call_log) if result.tool_call_log else None
+        )
+
+        assistant_msg = await _chat_svc.add_message(
             db,
             session_id,
             "assistant",
             result.answer,
             metadata={
                 "query": result.query,
+                "query_explanation": result.query_explanation,
                 "viz_type": result.viz_type,
+                "visualization": viz_data,
+                "raw_result": raw_result,
                 "error": result.error,
                 "workflow_id": result.workflow_id,
-                "row_count": result.results.row_count if result.results else None,
-                "execution_time_ms": (result.results.execution_time_ms if result.results else None),
+                "row_count": (
+                    result.results.row_count if result.results else None
+                ),
+                "execution_time_ms": (
+                    result.results.execution_time_ms
+                    if result.results
+                    else None
+                ),
                 "rag_sources": stream_rag,
                 "token_usage": result.token_usage or None,
                 "response_type": result.response_type,
+                "staleness_warning": result.staleness_warning,
             },
+            tool_calls_json=tool_calls_str,
         )
 
         if stream_rag:
@@ -505,12 +616,15 @@ async def ask_stream(
             "query": result.query,
             "query_explanation": result.query_explanation,
             "visualization": viz_data,
+            "raw_result": raw_result,
             "error": result.error,
             "workflow_id": result.workflow_id,
             "rag_sources": stream_rag,
             "staleness_warning": result.staleness_warning,
             "token_usage": result.token_usage or None,
             "response_type": result.response_type,
+            "assistant_message_id": assistant_msg.id,
+            "user_message_id": user_message_id,
         }
         yield f"event: result\ndata: {json.dumps(final)}\n\n"
 
@@ -594,11 +708,16 @@ async def chat_websocket(
                     await websocket.close()
                     return
                 config = await _conn_svc.to_config(db, conn_model)
+                config.connection_id = connection_id
 
+            ws_project = await _project_svc.get(db, project_id)
+
+            ws_conn_id = connection_id if connection_id and connection_id != "_none" else None
             chat_session = await _chat_svc.create_session(
                 db,
                 project_id,
                 user_id=user_id,
+                connection_id=ws_conn_id,
             )
             session_id = chat_session.id
 
@@ -623,13 +742,25 @@ async def chat_websocket(
             relay_task = asyncio.create_task(_relay_events(queue))
 
             try:
+                _proj_agent_prov = ws_project.agent_llm_provider if ws_project else None
+                _proj_agent_mdl = ws_project.agent_llm_model if ws_project else None
+                ws_agent_provider = data.get("preferred_provider") or _proj_agent_prov
+                ws_agent_model = data.get("model") or _proj_agent_mdl
+                _proj_sql_prov = ws_project.sql_llm_provider if ws_project else None
+                _proj_sql_mdl = ws_project.sql_llm_model if ws_project else None
+                ws_sql_provider = _proj_sql_prov or ws_agent_provider
+                ws_sql_model = _proj_sql_mdl or ws_agent_model
+
                 result = await _agent.run(
                     question=message,
                     project_id=project_id,
                     connection_config=config,
                     chat_history=history[:-1],
-                    preferred_provider=data.get("preferred_provider"),
-                    model=data.get("model"),
+                    preferred_provider=ws_agent_provider,
+                    model=ws_agent_model,
+                    sql_provider=ws_sql_provider,
+                    sql_model=ws_sql_model,
+                    project_name=ws_project.name if ws_project else None,
                 )
 
                 viz_data = None
@@ -641,29 +772,53 @@ async def chat_websocket(
                         summary=result.answer,
                     )
 
+                ws_raw_result = _build_raw_result(result.results)
+
                 rag_dicts = [
-                    {"source_path": s.source_path, "distance": s.distance, "doc_type": s.doc_type}
+                    {
+                        "source_path": s.source_path,
+                        "distance": s.distance,
+                        "doc_type": s.doc_type,
+                    }
                     for s in result.knowledge_sources
                 ]
 
+                ws_tool_calls_str = (
+                    json.dumps(result.tool_call_log)
+                    if result.tool_call_log
+                    else None
+                )
+
                 async with async_session_factory() as db:
-                    await _chat_svc.add_message(
+                    ws_assistant_msg = await _chat_svc.add_message(
                         db,
                         session_id,
                         "assistant",
                         result.answer,
                         metadata={
                             "query": result.query,
+                            "query_explanation": result.query_explanation,
                             "viz_type": result.viz_type,
+                            "visualization": viz_data,
+                            "raw_result": ws_raw_result,
+                            "error": result.error,
                             "workflow_id": result.workflow_id,
-                            "row_count": result.results.row_count if result.results else None,
+                            "row_count": (
+                                result.results.row_count
+                                if result.results
+                                else None
+                            ),
                             "execution_time_ms": (
-                                result.results.execution_time_ms if result.results else None
+                                result.results.execution_time_ms
+                                if result.results
+                                else None
                             ),
                             "rag_sources": rag_dicts,
                             "token_usage": result.token_usage or None,
                             "response_type": result.response_type,
+                            "staleness_warning": result.staleness_warning,
                         },
+                        tool_calls_json=ws_tool_calls_str,
                     )
 
                 await websocket.send_json(
@@ -673,11 +828,13 @@ async def chat_websocket(
                         "query": result.query,
                         "query_explanation": result.query_explanation,
                         "visualization": viz_data,
+                        "raw_result": ws_raw_result,
                         "error": result.error,
                         "workflow_id": result.workflow_id,
                         "response_type": result.response_type,
                         "rag_sources": rag_dicts,
                         "staleness_warning": result.staleness_warning,
+                        "assistant_message_id": ws_assistant_msg.id,
                     }
                 )
             finally:

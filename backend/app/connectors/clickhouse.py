@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import time
 from typing import Any
 from urllib.parse import urlparse
 
 import clickhouse_connect
+
+logger = logging.getLogger(__name__)
 
 from app.connectors.base import (
     BaseConnector,
@@ -150,9 +153,11 @@ class ClickHouseConnector(BaseConnector):
 
     async def test_connection(self) -> bool:
         if not self._client:
+            logger.warning("ClickHouse test_connection: no client available")
             return False
         try:
             await asyncio.to_thread(self._client.query, "SELECT 1")
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("ClickHouse test_connection failed: %s", exc)
             return False

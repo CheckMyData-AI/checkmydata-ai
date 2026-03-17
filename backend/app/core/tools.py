@@ -84,11 +84,63 @@ GET_CUSTOM_RULES_TOOL = Tool(
     parameters=[],
 )
 
+GET_ENTITY_INFO_TOOL = Tool(
+    name="get_entity_info",
+    description=(
+        "Look up structured information about ORM entities, database tables, "
+        "columns, relationships, enums, and service functions extracted from "
+        "the project's codebase. Use scope='list' to list all known entities, "
+        "scope='detail' with an entity_name for full column/relationship info, "
+        "scope='table_map' for table usage statistics, or scope='enums' to "
+        "list all extracted enum/constant definitions."
+    ),
+    parameters=[
+        ToolParameter(
+            name="scope",
+            type="string",
+            description="Level of detail to return",
+            enum=["list", "detail", "table_map", "enums"],
+        ),
+        ToolParameter(
+            name="entity_name",
+            type="string",
+            description="Entity/model name (required when scope is 'detail')",
+            required=False,
+        ),
+    ],
+)
+
+GET_DB_INDEX_TOOL = Tool(
+    name="get_db_index",
+    description=(
+        "Get the pre-analyzed database index with business descriptions, "
+        "data patterns, relevance scores, and query hints for every table. "
+        "Use scope='overview' for a summary of all tables, or "
+        "scope='table_detail' with a table_name for deep per-table analysis "
+        "including sample data and column notes."
+    ),
+    parameters=[
+        ToolParameter(
+            name="scope",
+            type="string",
+            description="Level of detail to return",
+            enum=["overview", "table_detail"],
+        ),
+        ToolParameter(
+            name="table_name",
+            type="string",
+            description="Table name (required when scope is 'table_detail')",
+            required=False,
+        ),
+    ],
+)
+
 
 def get_available_tools(
     *,
     has_connection: bool = False,
     has_knowledge_base: bool = False,
+    has_db_index: bool = False,
 ) -> list[Tool]:
     """Return the subset of tools available given the current context."""
     tools: list[Tool] = []
@@ -96,6 +148,9 @@ def get_available_tools(
         tools.append(EXECUTE_QUERY_TOOL)
         tools.append(GET_SCHEMA_INFO_TOOL)
         tools.append(GET_CUSTOM_RULES_TOOL)
+        if has_db_index:
+            tools.append(GET_DB_INDEX_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_KNOWLEDGE_TOOL)
+        tools.append(GET_ENTITY_INFO_TOOL)
     return tools

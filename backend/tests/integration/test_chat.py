@@ -29,6 +29,29 @@ class TestChatSessions:
         ids = [s["id"] for s in resp.json()]
         assert sid in ids
 
+    async def test_create_session_with_connection_id(self, auth_client):
+        pid = await self._create_project(auth_client)
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={
+                "project_id": pid,
+                "title": "With Conn",
+                "connection_id": None,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["connection_id"] is None
+
+    async def test_session_response_includes_connection_id(self, auth_client):
+        pid = await self._create_project(auth_client)
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={"project_id": pid, "title": "Sess"},
+        )
+        assert resp.status_code == 200
+        assert "connection_id" in resp.json()
+
     async def test_delete_session(self, auth_client):
         pid = await self._create_project(auth_client)
         resp = await auth_client.post(
@@ -46,6 +69,18 @@ class TestChatSessions:
     async def test_delete_session_not_found(self, auth_client):
         resp = await auth_client.delete("/api/chat/sessions/nonexistent")
         assert resp.status_code == 404
+
+    async def test_messages_include_tool_calls_json(self, auth_client):
+        pid = await self._create_project(auth_client)
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={"project_id": pid, "title": "MsgTest"},
+        )
+        sid = resp.json()["id"]
+        resp = await auth_client.get(f"/api/chat/sessions/{sid}/messages")
+        assert resp.status_code == 200
+        for msg in resp.json():
+            assert "tool_calls_json" in msg
 
 
 @pytest.mark.asyncio

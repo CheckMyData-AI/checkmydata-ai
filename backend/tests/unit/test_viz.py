@@ -1,3 +1,4 @@
+from app.api.routes.chat import _build_raw_result
 from app.connectors.base import QueryResult
 from app.viz.chart import generate_bar_chart, generate_line_chart, generate_pie_chart
 from app.viz.export import export_csv, export_json
@@ -88,6 +89,43 @@ class TestExport:
         data = json.loads(json_str)
         assert len(data) == 3
         assert data[0]["name"] == "Alice"
+
+
+class TestBuildRawResult:
+    def test_returns_none_for_no_results(self):
+        assert _build_raw_result(None) is None
+
+    def test_returns_none_for_no_columns(self):
+        result = QueryResult(row_count=0)
+        assert _build_raw_result(result) is None
+
+    def test_returns_raw_data(self):
+        result = _sample_result()
+        raw = _build_raw_result(result)
+        assert raw is not None
+        assert raw["columns"] == ["name", "count", "total"]
+        assert len(raw["rows"]) == 3
+        assert raw["total_rows"] == 3
+
+    def test_caps_at_500_rows(self):
+        big = QueryResult(
+            columns=["id"],
+            rows=[[i] for i in range(700)],
+            row_count=700,
+        )
+        raw = _build_raw_result(big)
+        assert raw is not None
+        assert len(raw["rows"]) == 500
+        assert raw["total_rows"] == 700
+
+    def test_serializes_special_values(self):
+        result = QueryResult(
+            columns=["data"],
+            rows=[[b"\x00\x01"]], row_count=1,
+        )
+        raw = _build_raw_result(result)
+        assert raw is not None
+        assert raw["rows"][0][0] == "0001"
 
 
 class TestRenderer:

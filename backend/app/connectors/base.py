@@ -26,6 +26,21 @@ class ConnectionConfig:
     is_read_only: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
 
+    connection_id: str | None = None
+
+
+def connector_key(cfg: ConnectionConfig) -> str:
+    """Canonical cache key for a ConnectionConfig.
+
+    Used everywhere that needs to match a runtime config back to a
+    stored ``Connection`` row or cache slot.  Keep this single source
+    of truth instead of duplicating the logic.
+    """
+    parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name, str(cfg.ssh_exec_mode)]
+    if cfg.ssh_host:
+        parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
+    return ":".join(parts)
+
 
 @dataclass
 class ColumnInfo:
@@ -99,14 +114,21 @@ class BaseConnector(ABC):
     async def test_connection(self) -> bool:
         """Test if the connection is alive."""
 
+    def _quote_identifier(self, name: str) -> str:
+        """Quote a SQL identifier based on the DB type."""
+        if self.db_type == "mysql":
+            return f"`{name.replace('`', '``')}`"
+        return f'"{name.replace(chr(34), chr(34) + chr(34))}"'
+
     async def sample_data(
         self,
         table_name: str,
         limit: int = 3,
     ) -> QueryResult:
         """Fetch a few sample rows from a table for LLM context."""
+        quoted = self._quote_identifier(table_name)
         return await self.execute_query(
-            f"SELECT * FROM {table_name} LIMIT {limit}",
+            f"SELECT * FROM {quoted} LIMIT {limit}",
         )
 
     @property

@@ -64,8 +64,29 @@ const LogLine = memo(function LogLine({ entry }: { entry: LogEntry }) {
   );
 });
 
+export function LogToggleButton() {
+  const { isOpen, isConnected, unreadCount, toggle } = useLogStore();
+
+  if (isOpen) return null;
+
+  return (
+    <button
+      onClick={toggle}
+      className="flex items-center gap-2 px-3 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors whitespace-nowrap"
+    >
+      <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-400" : "bg-zinc-600"}`} />
+      Activity Log
+      {unreadCount > 0 && (
+        <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+          {unreadCount > 99 ? "99+" : unreadCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
 export function LogPanel() {
-  const { entries, isOpen, isConnected, unreadCount, toggle, clear, resetUnread } = useLogStore();
+  const { entries, isOpen, isConnected, toggle, clear, resetUnread } = useLogStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
 
@@ -88,22 +109,7 @@ export function LogPanel() {
     wasAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
   };
 
-  if (!isOpen) {
-    return (
-      <button
-        onClick={toggle}
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors shadow-lg"
-      >
-        <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-400" : "bg-zinc-600"}`} />
-        Activity Log
-        {unreadCount > 0 && (
-          <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-            {unreadCount > 99 ? "99+" : unreadCount}
-          </span>
-        )}
-      </button>
-    );
-  }
+  if (!isOpen) return null;
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-950 flex flex-col" style={{ height: 200 }}>

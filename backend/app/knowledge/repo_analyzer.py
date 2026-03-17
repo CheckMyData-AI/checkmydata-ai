@@ -169,6 +169,19 @@ ORM_QUERY_CHAIN = re.compile(
     re.MULTILINE,
 )
 
+GRAPHQL_TYPE = re.compile(
+    r"^(?:type|input|interface)\s+(\w+)\s*(?:@[^{]*)?{([^}]+)}",
+    re.MULTILINE,
+)
+GRAPHQL_FIELD = re.compile(
+    r"^\s+(\w+)\s*(?:\([^)]*\))?\s*:\s*(\[?\w+!?\]?!?)",
+    re.MULTILINE,
+)
+GRAPHQL_ENUM = re.compile(
+    r"^enum\s+(\w+)\s*{([^}]+)}",
+    re.MULTILINE,
+)
+
 
 @dataclass
 class ExtractedSchema:
@@ -526,14 +539,53 @@ class RepoAnalyzer:
                 content,
                 re.IGNORECASE,
             )
+            views = re.findall(
+                r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"]?(\w+)[`\"]?",
+                content,
+                re.IGNORECASE,
+            )
+            procedures = re.findall(
+                r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+[`\"]?(\w+)[`\"]?",
+                content,
+                re.IGNORECASE,
+            )
+            triggers = re.findall(
+                r"CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+[`\"]?(\w+)[`\"]?",
+                content,
+                re.IGNORECASE,
+            )
+            all_objects = tables + views
+            doc_type = "raw_sql"
+            models: list[str] = []
+            if views:
+                models.extend(f"VIEW:{v}" for v in views)
+            if procedures:
+                models.extend(f"FUNC:{p}" for p in procedures)
+            if triggers:
+                models.extend(f"TRIGGER:{t}" for t in triggers)
             results.append(
                 ExtractedSchema(
                     file_path=rel_path,
-                    doc_type="raw_sql",
+                    doc_type=doc_type,
                     content=content,
-                    tables=tables,
+                    tables=all_objects,
+                    models=models,
                 )
             )
+            return results
+
+        if rel_path.endswith(".graphql"):
+            models = [m.group(1) for m in GRAPHQL_TYPE.finditer(content)]
+            enums = [m.group(1) for m in GRAPHQL_ENUM.finditer(content)]
+            if models or enums:
+                results.append(
+                    ExtractedSchema(
+                        file_path=rel_path,
+                        doc_type="orm_model",
+                        content=content,
+                        models=models + enums,
+                    )
+                )
             return results
 
         migration_dirs_to_check = set(MIGRATION_DIRS)

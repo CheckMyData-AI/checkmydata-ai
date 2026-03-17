@@ -1,11 +1,13 @@
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import (
     auth,
@@ -39,6 +41,7 @@ async def lifespan(app: FastAPI):
     run_migrations()
     await init_db()
     await _cleanup_stale_checkpoints()
+    await _backfill_default_rules()
     yield
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
@@ -69,6 +72,23 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Assigns a short request ID to every incoming HTTP request for log correlation."""
+
+    async def dispatch(self, request: Request, call_next):
+        from app.core.workflow_tracker import request_id_var
+
+        req_id = uuid.uuid4().hex[:12]
+        token = request_id_var.set(req_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = req_id
+            return response
+        finally:
+            request_id_var.reset(token)
+
+
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -100,6 +120,49 @@ async def _cleanup_stale_checkpoints() -> None:
                 logger.info("Startup: cleaned %d stale checkpoints", cleaned)
     except Exception:
         logger.warning("Failed to clean stale checkpoints at startup", exc_info=True)
+
+
+async def _backfill_default_rules() -> None:
+    """One-time: create default rule for existing projects that never had one.
+
+    Projects that already have custom rules (user-created) are marked as
+    initialized without creating the default rule, so we never re-create it
+    for projects where rules were intentionally deleted.
+    """
+    try:
+        from sqlalchemy import func, select
+
+        from app.models.custom_rule import CustomRule
+        from app.models.project import Project
+        from app.services.rule_service import RuleService
+
+        svc = RuleService()
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Project).where(Project.default_rule_initialized == False)  # noqa: E712
+            )
+            projects = list(result.scalars().all())
+            if not projects:
+                return
+
+            created = 0
+            for project in projects:
+                existing = await session.execute(
+                    select(func.count())
+                    .select_from(CustomRule)
+                    .where(CustomRule.project_id == project.id)
+                )
+                if existing.scalar() == 0:
+                    await svc.ensure_default_rule(session, project.id)
+                    created += 1
+                else:
+                    project.default_rule_initialized = True
+
+            await session.commit()
+            if created:
+                logger.info("Startup: created default rules for %d projects", created)
+    except Exception:
+        logger.warning("Failed to backfill default rules at startup", exc_info=True)
 
 
 @app.get("/api/health")

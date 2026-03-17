@@ -3,7 +3,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, SchemaInfo
+from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, SchemaInfo, connector_key
 from app.connectors.registry import get_connector
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
@@ -66,11 +66,9 @@ class Orchestrator:
         self._query_result_cache = QueryCache()
         self._tracker = workflow_tracker or default_tracker
 
-    def _connector_key(self, cfg: ConnectionConfig) -> str:
-        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name, str(cfg.ssh_exec_mode)]
-        if cfg.ssh_host:
-            parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
-        return ":".join(parts)
+    @staticmethod
+    def _connector_key(cfg: ConnectionConfig) -> str:
+        return connector_key(cfg)
 
     async def get_or_create_connector(self, connection_config: ConnectionConfig) -> BaseConnector:
         key = self._connector_key(connection_config)
@@ -230,7 +228,8 @@ class Orchestrator:
 
             connector = await self.get_or_create_connector(connection_config)
             val_config = self._build_validation_config()
-            enricher = ContextEnricher(schema, self._vector_store)
+            db_idx_ctx = await self._get_db_index_context(project_id, connection_config)
+            enricher = ContextEnricher(schema, self._vector_store, db_index_context=db_idx_ctx)
             repairer = QueryRepairer(self._llm_router)
 
             validation_loop = ValidationLoop(
@@ -418,6 +417,10 @@ class Orchestrator:
 
         live_context += await self._build_cross_reference(project_id, schema)
 
+        db_index_ctx = await self._get_db_index_context(project_id, connection_config)
+        if db_index_ctx:
+            live_context += f"\n\n{db_index_ctx}"
+
         if staleness_warning:
             live_context += f"\n\n## ⚠️ Staleness Warning\n{staleness_warning}\n"
 
@@ -431,33 +434,19 @@ class Orchestrator:
         """Append schema cross-reference when code knowledge is available."""
         try:
             from app.knowledge.project_summarizer import build_schema_cross_reference
-
-            summary_results = await asyncio.to_thread(
-                self._vector_store.query,
-                project_id,
-                "project data model summary entities",
-                n_results=1,
-            )
-            if not summary_results:
-                return ""
-            first_meta = summary_results[0].get("metadata", {})
-            if first_meta.get("doc_type") != "project_summary":
-                return ""
+            from app.models.base import async_session_factory
+            from app.services.project_cache_service import ProjectCacheService
 
             live_tables = [t.name for t in schema.tables]
             if not live_tables:
                 return ""
 
-            from app.knowledge.entity_extractor import ProjectKnowledge, TableUsage
+            cache_svc = ProjectCacheService()
+            async with async_session_factory() as session:
+                knowledge = await cache_svc.load_knowledge(session, project_id)
 
-            knowledge = ProjectKnowledge()
-            doc_text = summary_results[0].get("document", "")
-            for line in doc_text.splitlines():
-                if line.startswith("| ") and "---" not in line:
-                    parts = [p.strip() for p in line.split("|") if p.strip()]
-                    if parts and parts[0] not in ("Table",):
-                        tbl = parts[0]
-                        knowledge.table_usage[tbl] = TableUsage(table_name=tbl)
+            if not knowledge:
+                return ""
 
             xref = build_schema_cross_reference(knowledge, live_tables)
             if "All tables in the database match" in xref:
@@ -465,6 +454,34 @@ class Orchestrator:
             return f"\n\n{xref}"
         except Exception:
             logger.debug("Schema cross-reference failed", exc_info=True)
+            return ""
+
+    async def _get_db_index_context(
+        self,
+        project_id: str,
+        connection_config: ConnectionConfig,
+    ) -> str:
+        """Load DB index summary if available for this connection."""
+        try:
+            connection_id = connection_config.connection_id
+            if not connection_id:
+                return ""
+
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            db_index_svc = DbIndexService()
+
+            async with async_session_factory() as session:
+                entries = await db_index_svc.get_index(session, connection_id)
+                summary = await db_index_svc.get_summary(session, connection_id)
+
+            if not entries:
+                return ""
+
+            return db_index_svc.index_to_prompt_context(entries, summary)
+        except Exception:
+            logger.debug("DB index context load failed", exc_info=True)
             return ""
 
     async def _get_rules_context(

@@ -2,7 +2,9 @@ import tempfile
 from pathlib import Path
 
 from app.knowledge.entity_extractor import (
+    ConfigRef,
     ProjectKnowledge,
+    ValidationRule,
     _extract_columns,
     build_project_knowledge,
 )
@@ -119,6 +121,94 @@ class TestExtractColumns:
     def test_empty_python_file(self):
         cols = _extract_columns("# just a comment", "empty.py")
         assert cols == []
+
+    def test_gorm_columns(self):
+        content = (
+            "type User struct {\n"
+            '    ID   uint   `gorm:"primaryKey"`\n'
+            '    Name string `gorm:"column:name;size:255"`\n'
+            '    Age  int    `gorm:"column:age"`\n'
+            "}\n"
+        )
+        cols = _extract_columns(content, "models/user.go")
+        names = [c.name for c in cols]
+        assert "name" in names
+        assert "age" in names
+
+    def test_activerecord_fields(self):
+        content = (
+            "class CreateUsers < ActiveRecord::Migration[7.0]\n"
+            "  def change\n"
+            "    create_table :users do |t|\n"
+            "      t.string :name\n"
+            "      t.integer :age\n"
+            "      t.references :company\n"
+            "      t.timestamps\n"
+            "    end\n"
+            "  end\n"
+            "end\n"
+        )
+        cols = _extract_columns(content, "db/migrate/001_create_users.rb")
+        names = [c.name for c in cols]
+        assert "name" in names
+        assert "age" in names
+        assert "company" in names
+
+    def test_jpa_columns(self):
+        content = (
+            "import javax.persistence.*;\n"
+            "\n"
+            "@Entity\n"
+            "@Table(name = \"users\")\n"
+            "public class User {\n"
+            '    @Column(name = "user_name")\n'
+            "    private String userName;\n"
+            "\n"
+            "    @Column()\n"
+            "    private Integer age;\n"
+            "\n"
+            "    @ManyToOne\n"
+            "    private Company company;\n"
+            "}\n"
+        )
+        cols = _extract_columns(content, "src/models/User.java")
+        names = [c.name for c in cols]
+        assert "user_name" in names
+        assert "age" in names
+        fk_cols = [c for c in cols if c.is_fk]
+        assert len(fk_cols) >= 1
+
+    def test_graphql_columns(self):
+        content = (
+            "type User {\n"
+            "  id: ID!\n"
+            "  name: String!\n"
+            "  email: String\n"
+            "  posts: [Post!]!\n"
+            "}\n"
+        )
+        cols = _extract_columns(content, "schema.graphql")
+        names = [c.name for c in cols]
+        assert "id" in names
+        assert "name" in names
+        fk_cols = [c for c in cols if c.is_fk]
+        assert len(fk_cols) >= 1
+
+    def test_orm_scoped_extraction(self):
+        """When detected_orms is provided, only matching patterns should run."""
+        content = (
+            "const User = sequelize.define('User', {\n"
+            "  name: {\n"
+            "    type: DataTypes.STRING,\n"
+            "  },\n"
+            "});\n"
+        )
+        cols_all = _extract_columns(content, "models/user.js", detected_orms=None)
+        cols_seq = _extract_columns(content, "models/user.js", detected_orms=["sequelize"])
+        cols_typeorm = _extract_columns(content, "models/user.js", detected_orms=["typeorm"])
+        assert len(cols_seq) >= 1
+        assert len(cols_all) >= 1
+        assert len(cols_typeorm) == 0
 
 
 class TestBuildProjectKnowledge:
@@ -260,6 +350,87 @@ class TestBuildProjectKnowledge:
         )
         entity = knowledge.entities["User"]
         assert "utils/helpers.py" not in entity.used_in_files
+
+    def test_config_refs_extraction(self):
+        repo = self._make_repo(
+            {
+                "config.py": (
+                    "import os\n"
+                    "DATABASE_URL = os.environ['DATABASE_URL']\n"
+                    "DB_HOST = os.getenv('DB_HOST', 'localhost')\n"
+                ),
+            }
+        )
+        knowledge = build_project_knowledge(
+            repo,
+            [],
+            all_files=["config.py"],
+        )
+        var_names = [cr.var_name for cr in knowledge.config_refs]
+        assert "DATABASE_URL" in var_names
+        assert "DB_HOST" in var_names
+
+    def test_validation_rules_extraction_django(self):
+        repo = self._make_repo(
+            {
+                "models.py": (
+                    "from django.db import models\n"
+                    "from django.core.validators import MinValueValidator\n"
+                    "class Product(models.Model):\n"
+                    "    price = models.DecimalField(validators=[MinValueValidator(0)])\n"
+                ),
+            }
+        )
+        knowledge = build_project_knowledge(
+            repo,
+            [],
+            all_files=["models.py"],
+        )
+        assert len(knowledge.validation_rules) >= 1
+        assert knowledge.validation_rules[0].rule_type == "validator"
+
+    def test_validation_rules_extraction_typeorm(self):
+        repo = self._make_repo(
+            {
+                "user.entity.ts": (
+                    "@Entity()\n"
+                    '@Check("age >= 0")\n'
+                    "export class User {\n"
+                    "  @Column()\n"
+                    "  age: number;\n"
+                    "}\n"
+                ),
+            }
+        )
+        knowledge = build_project_knowledge(
+            repo,
+            [],
+            all_files=["user.entity.ts"],
+        )
+        checks = [vr for vr in knowledge.validation_rules if vr.rule_type == "check"]
+        assert len(checks) >= 1
+        assert "age >= 0" in checks[0].expression
+
+    def test_knowledge_serialization_with_new_fields(self):
+        """Round-trip serialization of config_refs and validation_rules."""
+        knowledge = ProjectKnowledge()
+        knowledge.config_refs.append(
+            ConfigRef(var_name="DATABASE_URL", file_path="config.py", context="os.environ")
+        )
+        knowledge.validation_rules.append(
+            ValidationRule(
+                rule_type="check",
+                expression="age >= 0",
+                file_path="user.ts",
+                model_name="User",
+            )
+        )
+        json_str = knowledge.to_json()
+        restored = ProjectKnowledge.from_json(json_str)
+        assert len(restored.config_refs) == 1
+        assert restored.config_refs[0].var_name == "DATABASE_URL"
+        assert len(restored.validation_rules) == 1
+        assert restored.validation_rules[0].expression == "age >= 0"
 
     def test_incremental_update_preserves_cached(self):
         repo = self._make_repo(

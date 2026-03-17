@@ -103,6 +103,7 @@ class IndexingPipelineRunner:
         db: AsyncSession,
         wf_id: str,
         checkpoint: IndexingCheckpoint,
+        live_table_names: list[str] | None = None,
     ) -> PipelineResult:
         cp_id = checkpoint.id
         done = CheckpointService.get_completed_steps(checkpoint)
@@ -336,6 +337,7 @@ class IndexingPipelineRunner:
                     changed_files=state.changed_files if is_incremental else None,
                     deleted_files=state.deleted_files if is_incremental else None,
                     cached_knowledge=cached_knowledge,
+                    detected_orms=state.profile.orms if state.profile else None,
                 )
             await tracker.emit(
                 wf_id,
@@ -364,7 +366,7 @@ class IndexingPipelineRunner:
             state.knowledge,
             state.profile,
         )
-        summary_doc = generate_summary_doc(state.knowledge, state.profile)
+        summary_doc = generate_summary_doc(state.knowledge, state.profile, live_table_names)
         state.enriched_docs.append(summary_doc)
 
         existing_summary = await self._doc_store.get_docs_for_project(
@@ -427,13 +429,24 @@ class IndexingPipelineRunner:
                             pending_paths = []
                         continue
 
+                prev_content = None
+                existing_doc_content = None
+                if state.last_sha is not None:
+                    existing_kd = await self._doc_store.get_doc_by_path(
+                        db, project_id, edoc.file_path,
+                    )
+                    if existing_kd:
+                        existing_doc_content = existing_kd.content
+
                 generated_content = await self._doc_generator.generate(
                     file_path=edoc.file_path,
                     content=edoc.content,
                     doc_type=edoc.doc_type,
-                    preferred_provider=project.default_llm_provider,
-                    model=project.default_llm_model,
+                    preferred_provider=project.indexing_llm_provider,
+                    model=project.indexing_llm_model,
                     enrichment_context=edoc.enrichment_context,
+                    previous_content=prev_content,
+                    existing_doc=existing_doc_content,
                 )
 
                 doc = await self._doc_store.upsert(
@@ -451,15 +464,30 @@ class IndexingPipelineRunner:
                     edoc.file_path,
                 )
 
+                table_model_map: dict[str, str] = {}
+                if state.knowledge:
+                    for ent_name, ent_info in state.knowledge.entities.items():
+                        if ent_info.table_name:
+                            table_model_map[ent_info.table_name.lower()] = ent_name
+
+                extra_meta: dict[str, str] = {
+                    "commit_sha": state.head_sha,
+                    "models": ",".join(edoc.models),
+                    "tables": ",".join(edoc.tables),
+                }
+                for idx_t, tbl in enumerate(edoc.tables[:10]):
+                    tbl_lower = tbl.lower()
+                    extra_meta[f"table_{idx_t}"] = tbl_lower
+                    if tbl_lower in table_model_map:
+                        extra_meta[f"table_{idx_t}_model"] = table_model_map[tbl_lower]
+                for idx_m, mdl in enumerate(edoc.models[:10]):
+                    extra_meta[f"model_{idx_m}"] = mdl
+
                 chunks = chunk_document(
                     content=generated_content,
                     file_path=edoc.file_path,
                     doc_type=edoc.doc_type,
-                    extra_metadata={
-                        "commit_sha": state.head_sha,
-                        "models": ",".join(edoc.models),
-                        "tables": ",".join(edoc.tables),
-                    },
+                    extra_metadata=extra_meta,
                 )
                 if chunks:
                     chunk_ids = [f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks]
@@ -503,6 +531,8 @@ class IndexingPipelineRunner:
                 profile=state.profile,
             )
 
+            await self._mark_db_index_code_stale(db, project_id)
+
         # --- Cleanup checkpoint ---
         await self._cp_svc.delete(db, cp_id)
 
@@ -518,3 +548,37 @@ class IndexingPipelineRunner:
         result.files_indexed = len(state.changed_files)
         result.schemas_found = len(state.schemas)
         return result
+
+    @staticmethod
+    async def _mark_db_index_code_stale(
+        db: AsyncSession,
+        project_id: str,
+    ) -> None:
+        """After a code re-index, mark all DB index entries for this project's
+        connections as ``code_stale`` so the agent knows the code_match_status
+        values may be outdated."""
+        try:
+            from app.models.db_index import DbIndex
+            from app.services.connection_service import ConnectionService
+            from sqlalchemy import update as sa_update
+
+            conn_svc = ConnectionService()
+            connections = await conn_svc.list_by_project(db, project_id)
+            for conn in connections:
+                await db.execute(
+                    sa_update(DbIndex)
+                    .where(DbIndex.connection_id == conn.id)
+                    .where(DbIndex.code_match_status != "code_stale")
+                    .values(code_match_status="code_stale")
+                )
+            await db.flush()
+            logger.info(
+                "Marked DB index code_match_status as stale for project %s",
+                project_id[:8],
+            )
+        except Exception:
+            logger.debug(
+                "Failed to mark DB index as code-stale for project %s",
+                project_id[:8],
+                exc_info=True,
+            )

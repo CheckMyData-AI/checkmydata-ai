@@ -44,6 +44,55 @@ describe("api.projects", () => {
     expect(JSON.parse(opts.body)).toEqual({ name: "New" });
   });
 
+  it("create sends all 6 LLM fields", async () => {
+    const llmData = {
+      name: "LLM Project",
+      indexing_llm_provider: "openai",
+      indexing_llm_model: "gpt-4o",
+      agent_llm_provider: "anthropic",
+      agent_llm_model: "claude-3-opus",
+      sql_llm_provider: "openrouter",
+      sql_llm_model: "mixtral-8x7b",
+    };
+    mockOk({ id: "3", ...llmData });
+    await api.projects.create(llmData);
+    const [, opts] = fetchMock.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.indexing_llm_provider).toBe("openai");
+    expect(body.indexing_llm_model).toBe("gpt-4o");
+    expect(body.agent_llm_provider).toBe("anthropic");
+    expect(body.agent_llm_model).toBe("claude-3-opus");
+    expect(body.sql_llm_provider).toBe("openrouter");
+    expect(body.sql_llm_model).toBe("mixtral-8x7b");
+  });
+
+  it("update sends partial LLM fields", async () => {
+    mockOk({ id: "4", name: "P", agent_llm_provider: "openai" });
+    await api.projects.update("4", { agent_llm_provider: "openai" });
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/4");
+    expect(opts.method).toBe("PATCH");
+    const body = JSON.parse(opts.body);
+    expect(body.agent_llm_provider).toBe("openai");
+    expect(body.indexing_llm_provider).toBeUndefined();
+  });
+
+  it("create with null LLM fields", async () => {
+    const data = {
+      name: "No LLM",
+      indexing_llm_provider: null,
+      agent_llm_provider: null,
+      sql_llm_provider: null,
+    };
+    mockOk({ id: "5", ...data });
+    await api.projects.create(data);
+    const [, opts] = fetchMock.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.indexing_llm_provider).toBeNull();
+    expect(body.agent_llm_provider).toBeNull();
+    expect(body.sql_llm_provider).toBeNull();
+  });
+
   it("throws on error response", async () => {
     mockError(404, "Not found");
     await expect(api.projects.get("missing")).rejects.toThrow("Not found");

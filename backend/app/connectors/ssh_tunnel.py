@@ -68,6 +68,7 @@ class SSHTunnel:
         return self._local_host, self._local_port
 
     async def stop(self):
+        logger.debug("Stopping SSH tunnel (local_port=%s)", self._local_port)
         if self._listener:
             self._listener.close()
             self._listener = None
@@ -77,21 +78,34 @@ class SSHTunnel:
             self._conn = None
         self._local_port = None
 
+    _ALIVE_MARKER = "__SSH_TUNNEL_ALIVE__"
+
     async def is_alive(self) -> bool:
         if self._conn is None:
             return False
         try:
             transport = self._conn.get_extra_info("socket")
             if transport is None:
+                logger.debug("SSH tunnel is_alive: transport is None")
                 return False
             result = await asyncio.wait_for(
-                self._conn.run("echo 1", check=False),
+                self._conn.run(f"echo {self._ALIVE_MARKER}", check=False),
                 timeout=5,
             )
-            return result.exit_status == 0
-        except (TimeoutError, asyncssh.Error, OSError):
+            alive = self._ALIVE_MARKER in (result.stdout or "")
+            if not alive:
+                logger.warning(
+                    "SSH tunnel is_alive: marker not found in stdout "
+                    "(exit=%s, stdout=%r)",
+                    result.exit_status,
+                    (result.stdout or "")[:200],
+                )
+            return alive
+        except (TimeoutError, asyncssh.Error, OSError) as exc:
+            logger.warning("SSH tunnel is_alive check failed: %s", exc)
             return False
-        except Exception:
+        except Exception as exc:
+            logger.warning("SSH tunnel is_alive unexpected error: %s", exc)
             return False
 
 

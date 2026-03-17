@@ -71,3 +71,19 @@ class TestBuildAgentSystemPrompt:
             db_type="postgres",
         )
         assert "project" not in prompt.split("\n")[0] or "AI data assistant" in prompt
+
+    def test_re_visualization_section_when_connection(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "RE-VISUALIZATION:" in prompt
+        assert "pie chart" in prompt.lower()
+        assert "[Context]" in prompt
+
+    def test_no_re_visualization_without_connection(self):
+        prompt = build_agent_system_prompt(
+            has_connection=False,
+            has_knowledge_base=True,
+        )
+        assert "RE-VISUALIZATION:" not in prompt

@@ -46,8 +46,12 @@ class TestProjectRoutes:
         mock_project.repo_url = None
         mock_project.repo_branch = "main"
         mock_project.ssh_key_id = None
-        mock_project.default_llm_provider = None
-        mock_project.default_llm_model = None
+        mock_project.indexing_llm_provider = None
+        mock_project.indexing_llm_model = None
+        mock_project.agent_llm_provider = None
+        mock_project.agent_llm_model = None
+        mock_project.sql_llm_provider = None
+        mock_project.sql_llm_model = None
         mock_project.owner_id = "test-user-1"
 
         with (

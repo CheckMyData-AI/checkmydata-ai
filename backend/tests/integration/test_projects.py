@@ -57,6 +57,54 @@ class TestProjectCrud:
 
 
 @pytest.mark.asyncio
+class TestProjectLlmFields:
+    """Test CRUD with the per-purpose LLM model fields."""
+
+    async def test_create_with_llm_fields(self, auth_client):
+        resp = await auth_client.post(
+            "/api/projects",
+            json={
+                "name": "LLM Config Project",
+                "indexing_llm_provider": "openai",
+                "indexing_llm_model": "gpt-4o",
+                "agent_llm_provider": "anthropic",
+                "agent_llm_model": "claude-3-opus",
+                "sql_llm_provider": "openrouter",
+                "sql_llm_model": "mistral-large",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["indexing_llm_provider"] == "openai"
+        assert data["indexing_llm_model"] == "gpt-4o"
+        assert data["agent_llm_provider"] == "anthropic"
+        assert data["agent_llm_model"] == "claude-3-opus"
+        assert data["sql_llm_provider"] == "openrouter"
+        assert data["sql_llm_model"] == "mistral-large"
+
+    async def test_update_llm_fields(self, auth_client):
+        resp = await auth_client.post("/api/projects", json={"name": "Update LLM"})
+        pid = resp.json()["id"]
+
+        resp = await auth_client.patch(
+            f"/api/projects/{pid}",
+            json={"agent_llm_provider": "openai", "agent_llm_model": "gpt-4o-mini"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_llm_provider"] == "openai"
+        assert data["agent_llm_model"] == "gpt-4o-mini"
+
+    async def test_create_without_llm_fields(self, auth_client):
+        resp = await auth_client.post("/api/projects", json={"name": "No LLM"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["indexing_llm_provider"] is None
+        assert data["agent_llm_provider"] is None
+        assert data["sql_llm_provider"] is None
+
+
+@pytest.mark.asyncio
 class TestProjectAccessControl:
     """Test role-based access control on projects endpoints."""
 

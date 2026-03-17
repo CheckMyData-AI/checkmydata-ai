@@ -42,6 +42,8 @@ def build_agent_system_prompt(
     db_type: str | None = None,
     has_connection: bool = False,
     has_knowledge_base: bool = False,
+    has_db_index: bool = False,
+    db_index_stale: bool = False,
 ) -> str:
     """Assemble a role-aware, capability-aware system prompt."""
 
@@ -79,11 +81,31 @@ def build_agent_system_prompt(
             "- Rules: Use `get_custom_rules` to load project-specific guidelines "
             "before building queries."
         )
+        if has_db_index:
+            stale_note = ""
+            if db_index_stale:
+                stale_note = (
+                    " WARNING: The DB index is older than the configured TTL. "
+                    "Results may be outdated — always verify against `get_schema_info`."
+                )
+            sections.append(
+                "- DB Index: A pre-analyzed database index is available. "
+                "Use `get_db_index` to see which tables are active, their "
+                "business purpose, relevance scores, and query hints. "
+                "NOTE: `get_schema_info` is always live truth; `get_db_index` "
+                "is a pre-analyzed snapshot that may lag behind schema changes."
+                + stale_note
+            )
 
     if has_knowledge_base:
         sections.append(
             "- Knowledge Base: Project documentation is indexed.  "
             "Use `search_knowledge` to find relevant information."
+        )
+        sections.append(
+            "- Entity Info: Structured entity/model data is available.  "
+            "Use `get_entity_info` to look up models, columns, relationships, "
+            "enums, and table usage from the codebase."
         )
 
     if not has_connection and not has_knowledge_base:
@@ -95,10 +117,15 @@ def build_agent_system_prompt(
 
     guideline_num = 1
     if has_connection:
+        db_index_hint = ""
+        if has_db_index:
+            db_index_hint = (
+                "check the database index with `get_db_index` for table relevance and query hints, "
+            )
         sections.append(
-            f"{guideline_num}. For data questions: first check the schema with "
-            "`get_schema_info`, then load rules with `get_custom_rules`, then "
-            "build and run a query with `execute_query`."
+            f"{guideline_num}. For data questions: {db_index_hint}"
+            "check the schema with `get_schema_info`, load rules with "
+            "`get_custom_rules`, then build and run a query with `execute_query`."
         )
         guideline_num += 1
     if has_knowledge_base:
@@ -131,6 +158,17 @@ def build_agent_system_prompt(
         guideline_num += 1
         sections.append(
             f"{guideline_num}. Include LIMIT (default 100) for potentially large result sets."
+        )
+
+    if has_connection:
+        sections.append("")
+        sections.append("RE-VISUALIZATION:")
+        sections.append(
+            "When the user asks to re-visualize data from a previous answer "
+            '(e.g., "show as pie chart", "make it a bar chart"), '
+            "look at the [Context] block in the prior assistant message to find "
+            "the SQL query and columns. Re-execute the same query and use the "
+            "recommend_visualization tool to suggest the requested chart type."
         )
 
     if has_connection and db_type:

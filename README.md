@@ -115,9 +115,12 @@ A **Project** groups together a Git repository, an LLM configuration, and a set 
    - Shows a green **"Access verified"** badge with the branch count, or a red error
    - **Populates the branch dropdown** with all remote branches
    - **Auto-selects** `main` (or `master` if `main` doesn't exist) as the default branch
-4. Optionally set:
-   - **LLM provider** (`openai`, `anthropic`, or `openrouter`)
-   - **LLM model** (e.g. `gpt-4o`, `claude-sonnet-4-20250514`)
+4. Optionally configure **per-purpose LLM models** under the collapsible **"LLM Models"** section (collapsed by default for new projects, expanded when editing):
+   - **Indexing** — "Repo analysis & docs" — used for repository analysis and documentation generation
+   - **Agent** — "Chat & reasoning" — used for the conversational agent loop, tool decisions, and answer generation
+   - **SQL** — "Query generation & repair" — used for SQL query generation and repair; has a **"Use Agent model"** checkbox (checked by default) that mirrors the Agent settings
+   
+   Supported providers: OpenAI, Anthropic, OpenRouter. If left blank, the system default (OpenAI) is used. The active project shows all configured LLM models in a compact badge below the project name.
 5. Click **Create**
 
 The project appears in the sidebar. Click it to make it active.
@@ -154,7 +157,7 @@ To add a connection:
    - Use this mode when: port forwarding is blocked, the DB client is only installed on the server, or custom setup commands are required
 7. **Read-only mode** (checked by default) — blocks `INSERT`, `UPDATE`, `DELETE`, `DROP` queries
 8. Click **Create Connection**
-9. Click **Test SSH** to verify SSH connectivity independently, then **Test DB** to verify the full chain
+9. Each connection shows a **status dot** (green = connected, red = error, gray = not checked). Click **↻** to check the connection — this tests the full chain (SSH tunnel + database) in one step.
 
 **Example — MySQL via SSH tunnel (port forwarding):**
 ```
@@ -174,7 +177,45 @@ Template: MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user}
 ```
 The agent will SSH into the server and execute queries via the `mysql` CLI client directly. This is equivalent to running: `ssh server 'echo "SELECT ..." | mysql ...'`
 
-### 6. Index the Repository (Knowledge Base)
+### 6. Index the Database (DB Index)
+
+After creating and testing a database connection, you can run a **database index** to give the query agent richer context about your data:
+
+1. Select a connection in the sidebar and make sure it shows a green status dot (test passes)
+2. Click the **IDX** button that appears next to the active connection
+3. The backend runs a 6-step pipeline in the background:
+   - **Introspect Schema** — fetches all tables, columns, types, FKs, indexes
+   - **Fetch Sample Data** — queries the 3 newest rows per table (ordered by `created_at`, `updated_at`, or PK)
+   - **Load Project Knowledge** — loads code-level entity info and custom rules
+   - **LLM Validation** — an LLM analyzes each table: determines if it's active, rates relevance (1-5), writes a business description, identifies data patterns, and checks alignment with code
+   - **Store Results** — persists the per-table index in the internal database
+   - **Generate Summary** — LLM produces an overall database summary with query recommendations
+
+4. The IDX button shows status:
+   - **Gray "IDX"** — not yet indexed
+   - **Amber pulsing "IDX..."** — indexing in progress
+   - **Green "IDX"** — indexed (hover to see table counts and index age, e.g. "2h ago")
+
+5. Once indexed, the query agent gains:
+   - A `get_db_index` tool to look up table descriptions, relevance scores, and query hints
+   - Enriched schema context injected automatically into every query
+   - Knowledge of which tables are active, empty, or orphaned (exist in DB but not in code)
+   - DB index context in the query repair loop for better SQL error recovery
+
+6. The index can be re-triggered at any time by clicking IDX again. Stale entries for removed tables are automatically cleaned up.
+
+**Staleness and freshness:**
+- The system prompt warns the LLM when the DB index is older than the configured TTL
+- The prompt notes that `get_schema_info` is always live truth while `get_db_index` is a pre-analyzed snapshot
+- When project code is re-indexed, all `code_match_status` values in the DB index are flagged as "code_stale" to prevent stale cross-reference data
+- Indexing status is persisted in the database (`indexing_status` field on `DbIndexSummary`) so it survives server restarts and works across multiple processes
+
+**Configuration:**
+- `DB_INDEX_TTL_HOURS` — how long before the index is considered stale (default: 24h); wired into staleness detection and system prompt warnings
+- `DB_INDEX_BATCH_SIZE` — how many small/empty tables to batch per LLM call (default: 5); passed to the pipeline constructor
+- `AUTO_INDEX_DB_ON_TEST` — auto-trigger indexing after a successful connection test (default: false); implemented in the test endpoint
+
+### 7. Index the Repository (Knowledge Base)
 
 If your project has a Git repo URL configured:
 
@@ -225,7 +266,7 @@ A real-time **Activity Log** panel is available at the bottom of the screen:
 
 The log connects via SSE to `GET /api/workflows/events` (global mode, no workflow filter).
 
-### 7. Chat — Ask Questions
+### 8. Chat — Ask Questions
 
 With a project selected (and optionally a connection):
 
@@ -254,13 +295,13 @@ Your question
     ↓
 [ConversationalAgent] — LLM with tools decides what to do
     ↓
-├── Data question → calls get_schema_info, get_custom_rules, execute_query
+├── Data question → calls get_db_index, get_schema_info, get_custom_rules, execute_query
 │   ↓
 │   [Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute
 │   ↓  (if error: Classify → Enrich → Repair → retry, up to 3 attempts)
 │   [Interpret results] → Table / Chart / Text + Export
 │
-├── Knowledge question → calls search_knowledge
+├── Knowledge question → calls search_knowledge, get_entity_info
 │   ↓
 │   Returns answer with source citations
 │
@@ -276,33 +317,49 @@ Your question
      - **Code Context** — which RAG documents were used (with similarity scores)
      - **Attempt History** — full retry details if validation loop triggered
      - **Token Usage** — prompt, completion, and total tokens consumed
-   - A **table or chart** with the data
+   - A **table or chart** with the data, plus a **Visual / Text toggle** to switch between the rendered visualization and the plain-text answer
+   - A **Viz Type Toolbar** on SQL result messages (when raw data is available) — switch between Table, Bar, Line, Pie, and Scatter views without re-querying the database. The toolbar calls `/api/visualizations/render` with the stored raw data to produce a new chart type on the fly.
    - **Export buttons** to download as CSV, JSON, or XLSX
 5. **Session titles** are auto-generated by the LLM after the first response
 6. **Identical queries** are served from a short-lived cache (2-minute TTL) to avoid re-executing the same SQL
+7. **Chat persistence** — your active project, connection, and session survive page refreshes. Visualization data (charts, tables), raw tabular data, and all message metadata are stored in the database so you can return to any past chat session and see it exactly as it was, including rendered charts and data tables. Thumbs up/down ratings, tool call history, and query explanations are all preserved.
+8. **Re-visualization** — when you ask the agent to "show that as a pie chart" or "make it a bar chart," the agent sees the prior SQL query, columns, and visualization type from the enriched chat history and can re-execute the query with the requested chart type. The `[Context]` block appended to assistant messages in history gives the agent full awareness of prior data.
 
-### 8. Custom Rules
+### 9. Custom Rules
 
 Rules inject additional context into the LLM prompt, guiding how queries are built:
 
 - **File-based rules**: Place `.md` or `.yaml` files in `./rules/` directory
 - **DB-based rules**: Create via the **Rules** section in the sidebar
+- **Default rule**: Every new project is automatically created with a comprehensive **"Business Metrics & Guidelines"** rule that teaches the agent how to calculate common metrics:
+  - Revenue (GMV, net revenue, AOV, ARPU, MRR, LTV)
+  - ROI & profitability (ROAS, CAC, profit margin, payback period)
+  - Traffic sources (source/medium, UTM attribution, organic vs paid)
+  - Payment methods (breakdown, success/failure rates, refund rates)
+  - User engagement (DAU/MAU, session duration, retention)
+  - Conversion funnel (step-by-step drop-off, cart abandonment)
+  - Churn & retention (monthly churn, cohort retention, reactivation)
+  - Date/time conventions and general query guidelines
 
-Example rules:
+  The default rule is fully **editable** — customize it to match your project's specific schema and business logic. It can also be **deleted**, but once deleted it will not be re-created automatically.
+
+  Existing projects that had no custom rules receive the default rule automatically on the next app startup (one-time backfill).
+
+Example custom rules:
 - _"The `created_at` field uses UTC timestamps. Always convert to user timezone."_
 - _"Revenue = price × quantity − discount. Always use this formula."_
 - _"Table `legacy_users` is deprecated. Use `users_v2` instead."_
 
 Rules can be **global** or **project-scoped**.
 
-### 9. Editing & Managing
+### 10. Editing & Managing
 
 - **Edit project**: Hover over a project and click the ✎ icon — change name, repo, LLM config
 - **Edit connection**: Hover over a connection and click the ✎ icon — update host, credentials
 - **Delete**: Click the × icon (projects, connections, SSH keys, rules, chat sessions)
 - **SSH key protection**: Deleting a key that is used by a project or connection returns a 409 error
 
-### 10. Sharing a Project (Email Invite System)
+### 11. Sharing a Project (Email Invite System)
 
 Project owners can invite other users to collaborate on a project via email:
 
@@ -335,8 +392,8 @@ app/
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
 ├── core/               ← Business logic
 │   ├── agent.py        ← ConversationalAgent: multi-tool loop (replaces rigid orchestrator for chat)
-│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules)
-│   ├── tool_executor.py← Executes tool calls, wraps ValidationLoop / VectorStore / SchemaIndexer
+│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_db_index, get_entity_info)
+│   ├── tool_executor.py← Executes tool calls, wraps ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
 │   ├── prompt_builder.py← Dynamic system prompt builder (role-aware, capability-aware)
 │   ├── orchestrator.py ← Original SQL pipeline (preserved, used by tool_executor)
 │   ├── query_builder.py← LLM prompt construction + tool calling
@@ -383,7 +440,9 @@ app/
 │   ├── vector_store.py ← ChromaDB wrapper (embedded + server modes)
 │   ├── git_tracker.py  ← Incremental indexing with branch tracking + deleted file handling
 │   ├── custom_rules.py ← File + DB rule loading
-│   └── doc_store.py    ← Doc storage keyed by (project_id, source_path)
+│   ├── doc_store.py    ← Doc storage keyed by (project_id, source_path)
+│   ├── db_index_pipeline.py  ← 6-step DB indexing pipeline (introspect → sample → validate → store)
+│   └── db_index_validator.py ← LLM-powered per-table analysis with structured output
 ├── llm/                ← LLM provider abstraction
 │   ├── base.py         ← Message, LLMResponse, ToolCall types
 │   ├── router.py       ← Provider chain with fallback + retry
@@ -398,16 +457,18 @@ app/
 │   ├── project_invite.py ← Email-based project invitations
 │   ├── knowledge_doc.py, commit_index.py (branch-aware)
 │   ├── project_cache.py ← Cached ProjectKnowledge + ProjectProfile per project
+│   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
 │   └── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
 ├── services/           ← Business logic layer
 │   ├── project_service.py, connection_service.py
 │   ├── ssh_key_service.py, chat_service.py
-│   ├── rule_service.py, auth_service.py
+│   ├── rule_service.py, default_rule_template.py, auth_service.py
 │   ├── membership_service.py ← Role checking, member CRUD, accessible projects
 │   ├── invite_service.py ← Create/accept/revoke invites, auto-accept on registration
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
+│   ├── db_index_service.py  ← CRUD + formatting for database index entries
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)
@@ -439,7 +500,9 @@ Build system prompt (role-aware, capability-aware)
 │    • execute_query  (if DB connected)                  │
 │    • get_schema_info (if DB connected)                 │
 │    • get_custom_rules (if DB connected)                │
+│    • get_db_index   (if DB connected + indexed)        │
 │    • search_knowledge (if knowledge base indexed)      │
+│    • get_entity_info (if knowledge base indexed)       │
 │                                                        │
 └────────────────────────────────────────────────────────┘
     ↓
@@ -460,8 +523,8 @@ Return AgentResponse (text | sql_result | knowledge | error)
 ```
 backend/app/core/
 ├── agent.py           ← ConversationalAgent: main loop, tool iteration, response building
-├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules)
-├── tool_executor.py   ← Executes tool calls, wraps existing ValidationLoop / VectorStore / SchemaIndexer
+├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info)
+├── tool_executor.py   ← Executes tool calls, wraps existing ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
 ├── prompt_builder.py  ← Dynamic system prompt (capability-aware, dialect-aware)
 ├── orchestrator.py    ← Original pipeline (preserved, used by tool_executor for SQL)
 └── ...
@@ -574,7 +637,7 @@ User's Machine                        Target Server
 
 SSH keys are loaded directly into memory via `asyncssh.import_private_key()` — no temporary files needed for database connections. For Git operations (which use the `git` CLI), the key is briefly written to a temp file with `0600` permissions and deleted immediately after.
 
-SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check actively pings the server (not just socket inspection). If an SSH connection drops mid-query, the exec connector automatically attempts one reconnection before failing. The SSH test endpoint (`POST /connections/{id}/test-ssh`) allows testing SSH connectivity independently from the database.
+SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check uses a unique stdout marker (`__SSH_TUNNEL_ALIVE__`) instead of relying on exit codes, making it robust against shell profile noise on the remote server. The SSH test endpoint (`POST /connections/{id}/test-ssh`) also uses a stdout marker (`__SSH_TEST_OK__`) and returns the actual stdout on failure for debugging. If an SSH tunnel is recreated (new port), the MySQL and PostgreSQL connectors automatically detect the broken connection during schema introspection and reconnect with a single retry. If an SSH connection drops mid-query, the exec connector automatically attempts one reconnection before failing.
 
 ### Data Flow for Repository Indexing (Multi-Pass Pipeline)
 
@@ -597,17 +660,27 @@ Pass 3: Entity Extractor (cross-file analysis, incremental-capable)
   • Extract enums, constants, validation rules across files
   • Detect dead/unused tables (in schema but not referenced in code)
   • Extract service-layer business logic (defaults, computed fields, state machines)
+  • Extract data validation rules (Django validators, Prisma constraints, TypeORM @Check/@Unique)
+  • Extract database config/environment variable references (DATABASE_URL, DB_HOST, etc.)
+  • GraphQL schema parsing (type definitions, enums, field extraction)
+  • Column extraction for Go (GORM struct tags), Ruby (ActiveRecord), Java (JPA @Column)
+  • ORM-scoped extraction: only runs relevant regex patterns based on detected ORM
   • Incremental mode: load cached ProjectKnowledge, re-scan only changed/deleted files
     ↓
 Pass 4: DocGenerator — enriched LLM documentation
   • Each model sent to LLM WITH cross-file context (relationships, enum values, usage data)
   • Large files split by class/model boundary (no blind truncation)
-  • Project-level summary document generated (entity map, dead tables, enums)
+  • Diff-aware updates: small file changes use unified diff instead of full regeneration
+  • Project-level summary document generated (entity map, dead tables, enums, config refs)
+  • Schema cross-reference: compares code-discovered tables vs live DB tables (orphan/phantom detection)
     ↓
 Pass 5: Chunker + VectorStore
   • Stale chunks cleaned before upserting new ones
   • Entity-aware chunk boundaries
   • Chunks tagged with source_path, models, tables, commit_sha
+  • Per-table/model metadata entries for filtered ChromaDB queries
+  • Table-to-model mapping included in chunk metadata
+  • Configurable embedding model via CHROMA_EMBEDDING_MODEL
     ↓
 ChromaDB — RAG retrieval (supports embedded + remote server mode)
     ↓
@@ -630,16 +703,19 @@ src/
 │   ├── log-store.ts       ← Zustand: activity log entries, panel state, SSE connection status
 │   └── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
 ├── hooks/
-│   └── useGlobalEvents.ts ← Global SSE subscription hook (all workflow events → log store)
+│   ├── useGlobalEvents.ts ← Global SSE subscription hook (all workflow events → log store)
+│   └── useRestoreState.ts ← Restore active project/connection/session from localStorage on mount
 ├── lib/
 │   ├── api.ts             ← REST client (fetch wrapper + auth headers + 422 error parsing)
-│   └── sse.ts             ← SSE helpers: fetch-based streaming with auth (per-workflow + global)
+│   ├── sse.ts             ← SSE helpers: fetch-based streaming with auth (per-workflow + global)
+│   └── viz-utils.ts       ← Viz type definitions + rerenderViz() utility for client-side viz switching
 └── components/
     ├── ui/
     │   ├── ClientShell.tsx    ← Client wrapper: ErrorBoundary + ToastContainer + ConfirmModal
     │   ├── ErrorBoundary.tsx  ← Global React error boundary (prevents white-screen crashes)
     │   ├── ToastContainer.tsx ← Toast notification renderer (bottom-right corner)
     │   ├── ConfirmModal.tsx   ← Reusable confirmation modal (replaces native confirm())
+    │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout, capitalized names)
     │   └── Spinner.tsx        ← Reusable loading spinner
     ├── auth/AuthGate.tsx   ← Login/register form with password hint, Google loading state
     ├── Sidebar.tsx         ← Collapsible sections, onboarding guide, section toggles with localStorage persistence
@@ -652,17 +728,17 @@ src/
     │   ├── ProjectSelector.tsx  ← CRUD + inline name validation + error toasts
     │   └── InviteManager.tsx    ← Invite users, manage members, error toasts
     ├── invites/PendingInvites.tsx ← Accept/decline incoming invites with error toasts
-    ├── connections/ConnectionSelector.tsx ← CRUD + test error details + SSH tunnel guidance
+    ├── connections/ConnectionSelector.tsx ← CRUD + unified status dot + check button + SSH tunnel guidance
     ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with loading state
     ├── rules/RulesManager.tsx ← CRUD with try-catch + error toasts
     ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs + empty state message
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
     ├── log/LogPanel.tsx ← Bottom panel: real-time activity log with color-coded pipeline events
-    └── viz/ ← DataTable, ChartRenderer, ExportButtons
+    └── viz/ ← DataTable, ChartRenderer, VizToolbar, ExportButtons
 ```
 
-**State management**: Zustand stores persist the active project, connection, chat session, and messages. Auth state is synced with `localStorage` for persistence across refreshes. Sidebar collapse state is persisted in `localStorage`.
+**State management**: Zustand stores manage all app state. The active project ID, connection ID, and session ID are persisted to `localStorage` and automatically restored on page reload via `useRestoreState` — the app re-fetches the project, connections, sessions, and messages from the API so the user resumes exactly where they left off. Auth state (JWT token, user object) is also persisted in `localStorage`. Sidebar collapse state is persisted in `localStorage`.
 
 **Error handling**: All API errors flow through a centralized parser that handles FastAPI 422 validation arrays (with fallback for missing `msg` fields). Destructive actions use a custom confirmation modal with Escape key and backdrop-click dismissal (race-condition safe for overlapping calls). Errors are surfaced via toast notifications instead of `console.error` or `alert()`. A global `ErrorBoundary` prevents white-screen crashes. The viz export endpoint includes 401 session-expiry handling matching the shared `request()` helper.
 
@@ -683,6 +759,10 @@ src/
 | `POST` | `/api/connections/{id}/test` | Test database connectivity |
 | `POST` | `/api/connections/{id}/test-ssh` | Test SSH connectivity independently (returns hostname) |
 | `POST` | `/api/connections/{id}/refresh-schema` | Invalidate cached schema and re-introspect |
+| `POST` | `/api/connections/{id}/index-db` | Trigger database indexing (returns 202, background) |
+| `GET` | `/api/connections/{id}/index-db/status` | DB index status (is_indexed, table counts, is_indexing) |
+| `GET` | `/api/connections/{id}/index-db` | Get full database index (all tables + summary) |
+| `DELETE` | `/api/connections/{id}/index-db` | Clear database index (force re-index) |
 | `POST/GET/DELETE` | `/api/ssh-keys` | SSH key management |
 | `POST` | `/api/chat/sessions` | Create chat session |
 | `GET` | `/api/chat/sessions/{project_id}` | List sessions |
@@ -727,7 +807,9 @@ src/
 | **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing |
 | **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat |
 | **CORS** | Configurable origins via `CORS_ORIGINS` env var |
-| **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). |
+| **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). `get_decrypted()` enforces ownership when `user_id` is provided. |
+| **Shell injection prevention** | SSH exec template variables (`db_name`, `db_user`, `db_host`, `db_password`) are shell-escaped via single-quoting before substitution. Queries are piped via stdin. |
+| **Invite scoping** | `revoke_invite()` enforces `project_id` to prevent cross-project invite revocation by guessing IDs. |
 | **WebSocket auth** | JWT token passed as query parameter, validated before connection acceptance |
 
 ### Database Schema (Internal)
@@ -736,21 +818,23 @@ The agent uses SQLite (default) or PostgreSQL (recommended for production) to st
 
 ```
 users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, created_at
-projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, llm_provider, llm_model
+projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, default_rule_initialized, indexing_llm_provider, indexing_llm_model, agent_llm_provider, agent_llm_model, sql_llm_provider, sql_llm_model
 connections      — id, project_id, name, db_type, ssh_*, db_*, ssh_exec_mode, ssh_command_template, ssh_pre_commands, is_read_only, is_active
 ssh_keys         — id, user_id (FK→users), name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type
 project_members  — id, project_id, user_id, role (owner|editor|viewer), created_at  [UNIQUE(project_id, user_id)]
 project_invites  — id, project_id, email, invited_by, role, status (pending|accepted|revoked), created_at, accepted_at
-chat_sessions    — id, project_id, user_id, title, created_at
-chat_messages    — id, session_id, role, content, metadata_json, user_rating, created_at
-custom_rules     — id, project_id, name, content, format, created_at, updated_at
+chat_sessions    — id, project_id, user_id, connection_id (FK→connections, SET NULL), title, created_at
+chat_messages    — id, session_id, role, content, metadata_json (includes visualization payload + raw_result for re-rendering), tool_calls_json, user_rating, created_at
+custom_rules     — id, project_id, name, content, format, is_default, created_at, updated_at
 knowledge_docs   — id, project_id, doc_type, source_path, content, commit_sha, updated_at
 commit_index     — id, project_id, commit_sha, branch, commit_message, indexed_files, created_at
 rag_feedback     — id, project_id, chunk_id, source_path, doc_type, distance, query_succeeded, commit_sha, created_at
 project_cache    — id, project_id, knowledge_json, profile_json, created_at, updated_at
+db_index         — id, connection_id (FK→connections CASCADE), table_name, table_schema, column_count, row_count, sample_data_json, ordering_column, latest_record_at, is_active, relevance_score, business_description, data_patterns, column_notes_json, query_hints, code_match_status, code_match_details, indexed_at  [UNIQUE(connection_id, table_name)]
+db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total_tables, active_tables, empty_tables, orphan_tables, phantom_tables, summary_text, recommendations, indexed_at
 ```
 
-Managed via **Alembic migrations** (12 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks).
+Managed via **Alembic migrations** (17 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables).
 
 All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints).
 
@@ -773,11 +857,15 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `JWT_EXPIRE_MINUTES` | No | Token expiry (default: 1440 = 24h) |
 | `CORS_ORIGINS` | No | JSON array of allowed origins (default: `["http://localhost:3000"]`) |
 | `CHROMA_SERVER_URL` | No | Remote ChromaDB server URL. If empty (default), uses embedded PersistentClient |
+| `CHROMA_EMBEDDING_MODEL` | No | Custom sentence-transformer model for ChromaDB embeddings (e.g. `nomic-ai/nomic-embed-text-v1`). If empty, uses ChromaDB's default `all-MiniLM-L6-v2` |
 | `MAX_HISTORY_TOKENS` | No | Token budget for chat history before summarization kicks in (default: 4000) |
 | `INCLUDE_SAMPLE_DATA` | No | Include sample rows in LLM prompt (default: false) |
+| `DB_INDEX_TTL_HOURS` | No | How long before the database index is considered stale (default: 24) |
+| `DB_INDEX_BATCH_SIZE` | No | Number of small/empty tables to batch per LLM call during DB indexing (default: 5) |
+| `AUTO_INDEX_DB_ON_TEST` | No | Auto-trigger DB indexing after a successful connection test (default: false) |
 | `CUSTOM_RULES_DIR` | No | Directory for file-based rules (default: `./rules`) |
-| `LOG_FORMAT` | No | `text` (default) or `json` (structured) |
-| `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
+| `LOG_FORMAT` | No | `text` (default, human-readable with timestamps) or `json` (structured, for production log aggregation) |
+| `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, `ERROR`. At INFO level, logs show: app startup/shutdown, user auth events, project/connection CRUD, chat request/response summaries, indexing pipeline start/end, SSH tunnel creation, connection test results, and all warnings/errors. Third-party library noise (SQLAlchemy queries, asyncssh handshakes, httpx requests) is silenced at INFO level. Set to DEBUG to see all internal details including workflow steps, SQL queries, and SSH lifecycle events. |
 
 ---
 
@@ -831,10 +919,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 474 across 26 test files
-- Backend integration tests: 79 across 13 test files
-- Frontend tests: 27 across 5 test files
-- **Total: 580 tests**
+- Backend unit tests: 549 across 29 test files
+- Backend integration tests: 91 across 13 test files
+- Frontend tests: 38 across 5 test files
+- **Total: 678 tests**
 
 ### Test Coverage by Module
 
@@ -860,7 +948,7 @@ make test-frontend    # frontend vitest
 | CLI Output Parser | 17 (TSV, CSV, psql tuples, MySQL batch, generic, edge cases) | — |
 | Exec Templates | 12 (structure, format, defaults, substitution, special chars) | — |
 | SSH Exec Connections | — | 6 (CRUD with exec mode, test-ssh, ssh_user in response) |
-| Viz/Export | 14 (table, chart, text, CSV, JSON) | — |
+| Viz/Export | 19 (table, chart, text, CSV, JSON, _build_raw_result) | — |
 | Workflow Tracker | 11 (events, subscribe, step, queue) | — |
 | Workflow Routes | 4 (SSE format, filtering, pipeline) | — |
 | Repo Analyzer | 18 (SQL files, ORM models, migrations, binary file filter, null-byte content guard, extra dirs, list_remote_refs: branches, default selection, access denied, timeout, empty) | 7 (check-access: success, denied, bad key, validation, auth, empty, many branches) |
@@ -873,11 +961,14 @@ make test-frontend    # frontend vitest
 | Doc Generator | 13 (LLM output, fallback, truncation, binary fallback placeholder, oversized fallback truncation, null-byte sanitization, binary detection, content sanitization) | — |
 | Chunker | 5 (small doc, large doc, headings, empty) | — |
 | Schema Indexer | 4 (markdown, prompt context, relationships) | — |
-| Custom Rules | 6 (file loading, YAML, context generation) | 4 |
+| DB Index Pipeline | 19 (ordering column, sample query, sample-to-json, detect-latest-record) | — |
+| DB Index Validator | 21 (fallback analysis, build prompt, analyze table, batch analysis, generate summary) | — |
+| DB Index Service | 16 (prompt context, table detail, response format, status check) | — |
+| Custom Rules | 15 (file loading, YAML, context generation, default template) | 9 (CRUD, access control, default rule auto-creation) |
 | Retry | 5 (success, retry, max attempts, callback) | — |
 | ConversationalAgent | 10 (text reply, SQL tool call, knowledge search, multi-tool, no-connection, error handling) | 10 (full chat: text/SQL/knowledge flow, optional connection, stream events) |
-| ToolExecutor | 8 (execute_query, search_knowledge, get_schema_info, get_custom_rules, unknown tool) | — |
-| Prompt Builder | 6 (all combinations of connection/knowledge flags) | — |
+| ToolExecutor | 8 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool) | — |
+| Prompt Builder | 10 (all combinations of connection/knowledge flags, re-visualization prompt) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
 | API Routes | 9 (projects, connections, viz routes) | — |
 | Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
@@ -888,12 +979,12 @@ make test-frontend    # frontend vitest
 | Invites (routes) | — | 9 (create, list, revoke, accept, pending, members, remove, non-owner restrictions) |
 | Connections | — | 5 (CRUD lifecycle + viewer access control) |
 | Rules | — | 5 (CRUD + viewer access control) |
-| Chat Sessions | — | 5 (create, delete, not found, session isolation, cross-user protection) |
+| Chat Sessions | — | 8 (create, delete, not found, session isolation, cross-user protection, connection_id, tool_calls_json in messages) |
 | WebSocket Auth | — | 4 (valid/invalid/empty/tampered token) |
 | Health | — | 2 (basic, modules) |
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
-| Frontend (app-store) | 3 (setActiveProject, addMessage) | — |
+| Frontend (app-store) | 10 (setActiveProject, addMessage, localStorage persistence, updateMessageId, userRating, rawResult) | — |
 
 ---
 
@@ -1016,7 +1107,7 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 | `no such table: users` | Run `make migrate` to apply Alembic migrations |
 | SSH key validation fails | Ensure you paste the *private* key in PEM format (starts with `-----BEGIN`) |
 | LLM health check fails | Set at least one API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`) |
-| Connection test fails | Verify SSH tunnel config: SSH host/user/key must reach the server, DB host should be `127.0.0.1` for tunneled connections |
+| Connection test fails | Verify SSH tunnel config: SSH host/user/key must reach the server, DB host should be `127.0.0.1` for tunneled connections. Check backend logs — all connector `test_connection()` failures and SSH errors are now logged with `logger.warning()`. |
 | 429 Too Many Requests | Rate limiting active. Wait and retry. Limits: 20 chat/min, 5 register/min |
 | Indexing returns 409 | Indexing is already running as a background task. Wait for it to finish (check `/status` endpoint or SSE events) |
 | Indexing interrupted, want to restart fresh | Click "Index Repository" with `force_full=true` to discard the checkpoint and start from scratch |

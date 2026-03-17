@@ -24,9 +24,11 @@ class ContextEnricher:
         self,
         schema: SchemaInfo,
         vector_store: VectorStore | None = None,
+        db_index_context: str = "",
     ):
         self._schema = schema
         self._vector_store = vector_store
+        self._db_index_context = db_index_context
         self._retry_strategy = RetryStrategy()
 
     async def build_repair_context(
@@ -60,6 +62,9 @@ class ContextEnricher:
         schema_detail = self._get_error_schema_detail(error)
         if schema_detail:
             sections.append(f"## Relevant Schema\n{schema_detail}")
+
+        if self._db_index_context:
+            sections.append(f"## Database Index Hints\n{self._db_index_context}")
 
         if self._vector_store and project_id:
             doc_context = await self._lookup_docs(error, project_id)

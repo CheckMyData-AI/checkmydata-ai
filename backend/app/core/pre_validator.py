@@ -29,6 +29,7 @@ class PreValidator:
         tables = extract_tables(query)
         for table in tables:
             if table.lower() not in self._table_names:
+                logger.debug("Pre-validation failed: table '%s' not found in schema", table)
                 similar = find_similar_tables(table, self._schema)
                 suggestions = [s[0] for s in similar]
                 return ValidationResult(
@@ -54,6 +55,10 @@ class PreValidator:
                 )
                 if resolved_table in self._column_map:
                     if col.lower() not in self._column_map[resolved_table]:
+                        logger.debug(
+                            "Pre-validation failed: column '%s' not in table '%s'",
+                            col, resolved_table,
+                        )
                         similar = find_similar_columns(col, self._schema)
                         table_cols = [s[1] for s in similar if s[0].lower() == resolved_table]
                         all_suggestions = table_cols or [s[1] for s in similar[:3]]

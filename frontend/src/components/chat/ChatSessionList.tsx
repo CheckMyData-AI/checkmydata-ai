@@ -9,9 +9,11 @@ import { toast } from "@/stores/toast-store";
 export function ChatSessionList() {
   const {
     activeProject,
+    connections,
     chatSessions,
     activeSession,
     setActiveSession,
+    setActiveConnection,
     setMessages,
     setChatSessions,
   } = useAppStore();
@@ -27,18 +29,31 @@ export function ChatSessionList() {
     setActiveSession(session);
     setLoadingSession(sessionId);
 
+    if (session.connection_id) {
+      const conn = connections.find((c) => c.id === session.connection_id);
+      if (conn) setActiveConnection(conn);
+    }
+
     try {
       const msgs = await api.chat.getMessages(sessionId);
       const mapped: ChatMessage[] = msgs.map((m) => {
-        const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let meta: any = {};
+        try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
         return {
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
           content: m.content,
           query: meta.query || undefined,
+          queryExplanation: meta.query_explanation || undefined,
           visualization: meta.visualization ?? undefined,
           error: meta.error || undefined,
           metadataJson: m.metadata_json || undefined,
+          stalenessWarning: meta.staleness_warning || undefined,
+          responseType: meta.response_type || undefined,
+          userRating: m.user_rating ?? undefined,
+          toolCallsJson: m.tool_calls_json || undefined,
+          rawResult: meta.raw_result ?? undefined,
           timestamp: new Date(m.created_at).getTime(),
         };
       });

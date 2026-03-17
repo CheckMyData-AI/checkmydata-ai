@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
@@ -6,10 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
+from app.services.rule_service import RuleService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _svc = ProjectService()
 _membership_svc = MembershipService()
+_rule_svc = RuleService()
 
 
 class ProjectCreate(BaseModel):
@@ -18,8 +24,12 @@ class ProjectCreate(BaseModel):
     repo_url: str | None = None
     repo_branch: str = "main"
     ssh_key_id: str | None = None
-    default_llm_provider: str | None = None
-    default_llm_model: str | None = None
+    indexing_llm_provider: str | None = None
+    indexing_llm_model: str | None = None
+    agent_llm_provider: str | None = None
+    agent_llm_model: str | None = None
+    sql_llm_provider: str | None = None
+    sql_llm_model: str | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -39,8 +49,12 @@ class ProjectUpdate(BaseModel):
     repo_url: str | None = None
     repo_branch: str | None = None
     ssh_key_id: str | None = None
-    default_llm_provider: str | None = None
-    default_llm_model: str | None = None
+    indexing_llm_provider: str | None = None
+    indexing_llm_model: str | None = None
+    agent_llm_provider: str | None = None
+    agent_llm_model: str | None = None
+    sql_llm_provider: str | None = None
+    sql_llm_model: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -52,8 +66,12 @@ class ProjectResponse(BaseModel):
     repo_url: str | None
     repo_branch: str
     ssh_key_id: str | None
-    default_llm_provider: str | None
-    default_llm_model: str | None
+    indexing_llm_provider: str | None = None
+    indexing_llm_model: str | None = None
+    agent_llm_provider: str | None = None
+    agent_llm_model: str | None = None
+    sql_llm_provider: str | None = None
+    sql_llm_model: str | None = None
     owner_id: str | None = None
     user_role: str | None = None
 
@@ -68,6 +86,13 @@ async def create_project(
     data["owner_id"] = user["user_id"]
     project = await _svc.create(db, **data)
     await _membership_svc.add_member(db, project.id, user["user_id"], "owner")
+    await _rule_svc.ensure_default_rule(db, project.id)
+    await db.commit()
+    await db.refresh(project)
+    logger.info(
+        "Project created: name=%s id=%s owner=%s",
+        body.name, project.id[:8], user["user_id"][:8],
+    )
     return ProjectResponse(
         **{k: getattr(project, k) for k in ProjectResponse.model_fields if k not in ("user_role",)},
         user_role="owner",
@@ -91,8 +116,12 @@ async def list_projects(
                 repo_url=p.repo_url,
                 repo_branch=p.repo_branch,
                 ssh_key_id=p.ssh_key_id,
-                default_llm_provider=p.default_llm_provider,
-                default_llm_model=p.default_llm_model,
+                indexing_llm_provider=p.indexing_llm_provider,
+                indexing_llm_model=p.indexing_llm_model,
+                agent_llm_provider=p.agent_llm_provider,
+                agent_llm_model=p.agent_llm_model,
+                sql_llm_provider=p.sql_llm_provider,
+                sql_llm_model=p.sql_llm_model,
                 owner_id=p.owner_id,
                 user_role=role,
             )
@@ -117,8 +146,12 @@ async def get_project(
         repo_url=project.repo_url,
         repo_branch=project.repo_branch,
         ssh_key_id=project.ssh_key_id,
-        default_llm_provider=project.default_llm_provider,
-        default_llm_model=project.default_llm_model,
+        indexing_llm_provider=project.indexing_llm_provider,
+        indexing_llm_model=project.indexing_llm_model,
+        agent_llm_provider=project.agent_llm_provider,
+        agent_llm_model=project.agent_llm_model,
+        sql_llm_provider=project.sql_llm_provider,
+        sql_llm_model=project.sql_llm_model,
         owner_id=project.owner_id,
         user_role=role,
     )
@@ -145,6 +178,7 @@ async def delete_project(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    logger.info("Project delete requested: id=%s", project_id[:8])
     try:
         deleted = await _svc.delete(db, project_id)
     except IntegrityError:

@@ -68,6 +68,25 @@ class EnumDefinition:
 
 
 @dataclass
+class ValidationRule:
+    """A data validation or constraint rule extracted from code."""
+
+    rule_type: str  # "check", "unique", "validator", "constraint"
+    expression: str
+    file_path: str
+    model_name: str = ""
+
+
+@dataclass
+class ConfigRef:
+    """A database-related config/env variable reference."""
+
+    var_name: str
+    file_path: str
+    context: str = ""
+
+
+@dataclass
 class ProjectKnowledge:
     """Aggregate cross-file knowledge about the project's data layer."""
 
@@ -75,6 +94,8 @@ class ProjectKnowledge:
     table_usage: dict[str, TableUsage] = field(default_factory=dict)
     enums: list[EnumDefinition] = field(default_factory=list)
     service_functions: list[dict] = field(default_factory=list)
+    config_refs: list[ConfigRef] = field(default_factory=list)
+    validation_rules: list[ValidationRule] = field(default_factory=list)
 
     @property
     def dead_tables(self) -> list[str]:
@@ -97,6 +118,10 @@ class ProjectKnowledge:
         for edef in data.get("enums", []):
             knowledge.enums.append(EnumDefinition(**edef))
         knowledge.service_functions = data.get("service_functions", [])
+        for cref in data.get("config_refs", []):
+            knowledge.config_refs.append(ConfigRef(**cref))
+        for vr in data.get("validation_rules", []):
+            knowledge.validation_rules.append(ValidationRule(**vr))
         return knowledge
 
 
@@ -133,6 +158,36 @@ CONSTANT_DICT = re.compile(
 SERVICE_FUNC = re.compile(
     r"(?:async\s+)?(?:def|function)\s+(create_|update_|delete_|process_|handle_|get_|find_|fetch_|save_|remove_|add_|set_)(\w+)",
     re.MULTILINE,
+)
+
+DJANGO_VALIDATOR = re.compile(
+    r"""validators\s*=\s*\[([^\]]+)\]""",
+    re.MULTILINE,
+)
+DJANGO_CONSTRAINT = re.compile(
+    r"""(?:models\.)?(?:CheckConstraint|UniqueConstraint)\s*\([^)]*(?:check|condition)\s*=[^)]*\)""",
+    re.MULTILINE | re.DOTALL,
+)
+PRISMA_CONSTRAINT = re.compile(
+    r"""@@(?:unique|index|check)\s*\(([^)]+)\)""",
+    re.MULTILINE,
+)
+TYPEORM_CHECK = re.compile(
+    r"""@Check\s*\(\s*['"`]([^'"`]+)['"`]\s*\)""",
+    re.MULTILINE,
+)
+TYPEORM_UNIQUE = re.compile(
+    r"""@Unique\s*\(\s*\[([^\]]+)\]\s*\)""",
+    re.MULTILINE,
+)
+
+DB_ENV_VAR = re.compile(
+    r"""(?:process\.env\.|os\.(?:environ|getenv)\s*[\[(]\s*|ENV\[)['"]?(DATABASE_URL|DB_HOST|DB_PORT|DB_NAME|DB_USER|DB_PASSWORD|DB_DATABASE|POSTGRES_\w+|MYSQL_\w+|MONGO_URI|MONGODB_URI|REDIS_URL|DATABASE_\w+)['"]?""",
+    re.IGNORECASE,
+)
+DB_CONFIG_BLOCK = re.compile(
+    r"""(?:DATABASES|database|db)\s*[=:]\s*\{[^}]*(?:host|port|user|password|name|engine|adapter)[^}]*\}""",
+    re.IGNORECASE | re.DOTALL,
 )
 
 SQLALCHEMY_COL = re.compile(
@@ -201,6 +256,36 @@ DRIZZLE_COL = re.compile(
     re.MULTILINE,
 )
 
+GORM_TAG = re.compile(
+    r"""(\w+)\s+(\w+(?:\.\w+)?)\s+`[^`]*gorm:"([^"]*)"[^`]*`""",
+    re.MULTILINE,
+)
+GORM_FK_TAG = re.compile(r"foreignKey:(\w+)", re.IGNORECASE)
+GORM_COL_TAG = re.compile(r"column:(\w+)", re.IGNORECASE)
+
+ACTIVERECORD_FIELD = re.compile(
+    r"""t\.(string|integer|text|boolean|datetime|date|float|decimal|binary|bigint|timestamp|references|json|jsonb|uuid)\s+[:"'](\w+)""",
+    re.MULTILINE,
+)
+ACTIVERECORD_BELONGS = re.compile(
+    r"""belongs_to\s+:(\w+)""",
+    re.MULTILINE,
+)
+ACTIVERECORD_HAS = re.compile(
+    r"""has_(?:many|one)\s+:(\w+)""",
+    re.MULTILINE,
+)
+
+JPA_COLUMN = re.compile(
+    r"""@Column\s*(?:\(([^)]*)\))?\s*.*?(?:private|protected|public)\s+(\w+(?:<[^>]+>)?)\s+(\w+)\s*[;=]""",
+    re.DOTALL,
+)
+JPA_COLUMN_NAME = re.compile(r"""name\s*=\s*"(\w+)""" )
+JPA_FK = re.compile(
+    r"""@(?:ManyToOne|OneToOne|ManyToMany|OneToMany)[^@]*?(?:private|protected|public)\s+(?:List<)?(\w+)>?\s+(\w+)\s*[;=]""",
+    re.DOTALL,
+)
+
 
 def build_project_knowledge(
     repo_dir: Path,
@@ -209,6 +294,7 @@ def build_project_knowledge(
     changed_files: list[str] | None = None,
     deleted_files: list[str] | None = None,
     cached_knowledge: ProjectKnowledge | None = None,
+    detected_orms: list[str] | None = None,
 ) -> ProjectKnowledge:
     """Build cross-file knowledge from extracted schemas and full file scan.
 
@@ -224,9 +310,10 @@ def build_project_knowledge(
             cached_knowledge,
             changed_files,
             deleted_files=deleted_files or [],
+            detected_orms=detected_orms,
         )
     else:
-        knowledge = _full_scan(repo_dir, schemas, all_files)
+        knowledge = _full_scan(repo_dir, schemas, all_files, detected_orms=detected_orms)
 
     _resolve_enum_to_columns(knowledge)
 
@@ -244,9 +331,10 @@ def _full_scan(
     repo_dir: Path,
     schemas: list[ExtractedSchema],
     all_files: list[str] | None,
+    detected_orms: list[str] | None = None,
 ) -> ProjectKnowledge:
     knowledge = ProjectKnowledge()
-    _extract_entities_from_schemas(schemas, knowledge)
+    _extract_entities_from_schemas(schemas, knowledge, detected_orms)
 
     from app.knowledge.repo_analyzer import is_binary_file
 
@@ -265,6 +353,8 @@ def _full_scan(
         _scan_table_usage(rel_path, content, knowledge)
         _extract_enums(rel_path, content, knowledge)
         _extract_service_functions(rel_path, content, knowledge)
+        _extract_config_refs(rel_path, content, knowledge)
+        _extract_validation_rules(rel_path, content, knowledge)
 
     return knowledge
 
@@ -275,11 +365,12 @@ def _incremental_update(
     cached: ProjectKnowledge,
     changed_files: list[str],
     deleted_files: list[str] | None = None,
+    detected_orms: list[str] | None = None,
 ) -> ProjectKnowledge:
     """Re-scan only changed files, merging results with cached knowledge."""
     knowledge = ProjectKnowledge()
 
-    _extract_entities_from_schemas(schemas, knowledge)
+    _extract_entities_from_schemas(schemas, knowledge, detected_orms)
     for name, entity in cached.entities.items():
         if name not in knowledge.entities:
             knowledge.entities[name] = entity
@@ -309,6 +400,14 @@ def _incremental_update(
         if sf["file_path"] not in stale_set:
             knowledge.service_functions.append(sf)
 
+    for cref in cached.config_refs:
+        if cref.file_path not in stale_set:
+            knowledge.config_refs.append(cref)
+
+    for vr in cached.validation_rules:
+        if vr.file_path not in stale_set:
+            knowledge.validation_rules.append(vr)
+
     deleted_set = set(deleted_files or [])
     for name in list(knowledge.entities.keys()):
         if knowledge.entities[name].file_path in deleted_set:
@@ -333,6 +432,8 @@ def _incremental_update(
         _scan_table_usage(rel_path, content, knowledge)
         _extract_enums(rel_path, content, knowledge)
         _extract_service_functions(rel_path, content, knowledge)
+        _extract_config_refs(rel_path, content, knowledge)
+        _extract_validation_rules(rel_path, content, knowledge)
 
     return knowledge
 
@@ -344,8 +445,7 @@ def _list_all_source_files(repo_dir: Path) -> list[str]:
         dirs[:] = [d for d in dirs if d not in skip]
         for f in filenames:
             p = Path(root) / f
-            extra = {".py", ".js", ".ts", ".tsx", ".jsx", ".rb", ".go", ".java"}
-            if p.suffix in DB_RELEVANT_EXTENSIONS or p.suffix in extra:
+            if p.suffix in DB_RELEVANT_EXTENSIONS:
                 files.append(str(p.relative_to(repo_dir)))
     return files
 
@@ -353,6 +453,7 @@ def _list_all_source_files(repo_dir: Path) -> list[str]:
 def _extract_entities_from_schemas(
     schemas: list[ExtractedSchema],
     knowledge: ProjectKnowledge,
+    detected_orms: list[str] | None = None,
 ) -> None:
     for schema in schemas:
         if schema.doc_type != "orm_model":
@@ -378,7 +479,7 @@ def _extract_entities_from_schemas(
             else:
                 entity.table_name = _model_name_to_table(model_name)
 
-            entity.columns = _extract_columns(content, file_path)
+            entity.columns = _extract_columns(content, file_path, detected_orms)
 
             for fk_target in sa_fks + django_fks:
                 entity.relationships.append(fk_target)
@@ -390,9 +491,14 @@ def _extract_entities_from_schemas(
             ).orm_refs.append(file_path)
 
 
-def _extract_columns(content: str, file_path: str) -> list[ColumnInfo]:
+def _extract_columns(
+    content: str,
+    file_path: str,
+    detected_orms: list[str] | None = None,
+) -> list[ColumnInfo]:
     columns: list[ColumnInfo] = []
     seen: set[str] = set()
+    orms = set(detected_orms) if detected_orms else set()
 
     def _add(name: str, col_type: str, is_fk: bool = False, fk_target: str = "") -> None:
         if not name or name.startswith("_") or name in seen:
@@ -407,21 +513,29 @@ def _extract_columns(content: str, file_path: str) -> list[ColumnInfo]:
             )
         )
 
-    if file_path.endswith(".py"):
-        for m in SQLALCHEMY_COL.finditer(content):
-            col_type = m.group(1)
-            line_start = content.rfind("\n", 0, m.start()) + 1
-            line = content[line_start : m.start()].strip()
-            parts = line.split(":")
-            col_name = parts[0].strip().split()[-1] if parts else ""
-            _add(
-                col_name,
-                col_type,
-                is_fk="ForeignKey" in content[m.start() : m.start() + 200],
-            )
+    def _orm_match(*orm_names: str) -> bool:
+        """Return True if no ORMs detected (run all) or any listed ORM matches."""
+        if not orms:
+            return True
+        return bool(orms & set(orm_names))
 
-        for m in DJANGO_FIELD.finditer(content):
-            _add(m.group(1), m.group(2), is_fk="ForeignKey" in m.group(2))
+    if file_path.endswith(".py"):
+        if _orm_match("sqlalchemy", "tortoise"):
+            for m in SQLALCHEMY_COL.finditer(content):
+                col_type = m.group(1)
+                line_start = content.rfind("\n", 0, m.start()) + 1
+                line = content[line_start : m.start()].strip()
+                parts = line.split(":")
+                col_name = parts[0].strip().split()[-1] if parts else ""
+                _add(
+                    col_name,
+                    col_type,
+                    is_fk="ForeignKey" in content[m.start() : m.start() + 200],
+                )
+
+        if _orm_match("django_orm", "django"):
+            for m in DJANGO_FIELD.finditer(content):
+                _add(m.group(1), m.group(2), is_fk="ForeignKey" in m.group(2))
 
     elif file_path.endswith(".prisma"):
         for m in PRISMA_FIELD.finditer(content):
@@ -430,31 +544,82 @@ def _extract_columns(content: str, file_path: str) -> list[ColumnInfo]:
             _add(m.group(1), m.group(2), is_fk=True, fk_target=m.group(2))
 
     elif file_path.endswith((".ts", ".tsx", ".js", ".jsx")):
-        for m in TYPEORM_COL.finditer(content):
-            line_start = content.rfind("\n", 0, m.start()) + 1
-            prev_line = content[max(0, line_start - 200) : line_start]
-            name_match = re.search(r"(\w+)\s*[:;]\s*$", prev_line)
-            col_name = name_match.group(1) if name_match else ""
-            _add(col_name, m.group(1))
-        for m in TYPEORM_FK.finditer(content):
-            line_end = content.find("\n", m.end())
-            after = content[m.end() : line_end + 200] if line_end != -1 else ""
-            field_m = re.search(r"(\w+)\s*:", after)
-            fname = field_m.group(1) if field_m else m.group(1).lower()
-            _add(fname, m.group(1), is_fk=True, fk_target=m.group(1))
+        if _orm_match("typeorm"):
+            for m in TYPEORM_COL.finditer(content):
+                line_start = content.rfind("\n", 0, m.start()) + 1
+                prev_line = content[max(0, line_start - 200) : line_start]
+                name_match = re.search(r"(\w+)\s*[:;]\s*$", prev_line)
+                col_name = name_match.group(1) if name_match else ""
+                _add(col_name, m.group(1))
+            for m in TYPEORM_FK.finditer(content):
+                line_end = content.find("\n", m.end())
+                after = content[m.end() : line_end + 200] if line_end != -1 else ""
+                field_m = re.search(r"(\w+)\s*:", after)
+                fname = field_m.group(1) if field_m else m.group(1).lower()
+                _add(fname, m.group(1), is_fk=True, fk_target=m.group(1))
 
-        for m in SEQUELIZE_COL.finditer(content):
-            _add(m.group(1), m.group(2))
-        for m in SEQUELIZE_COL_SHORT.finditer(content):
-            _add(m.group(1), m.group(2))
+        if _orm_match("sequelize"):
+            for m in SEQUELIZE_COL.finditer(content):
+                _add(m.group(1), m.group(2))
+            for m in SEQUELIZE_COL_SHORT.finditer(content):
+                _add(m.group(1), m.group(2))
 
-        for m in MONGOOSE_FIELD.finditer(content):
-            _add(m.group(1), m.group(2))
-        for m in MONGOOSE_FIELD_SHORT.finditer(content):
-            _add(m.group(1), m.group(2))
+        if _orm_match("mongoose"):
+            for m in MONGOOSE_FIELD.finditer(content):
+                _add(m.group(1), m.group(2))
+            for m in MONGOOSE_FIELD_SHORT.finditer(content):
+                _add(m.group(1), m.group(2))
 
-        for m in DRIZZLE_COL.finditer(content):
-            _add(m.group(1), m.group(2))
+        if _orm_match("drizzle"):
+            for m in DRIZZLE_COL.finditer(content):
+                _add(m.group(1), m.group(2))
+
+    elif file_path.endswith(".go"):
+        for m in GORM_TAG.finditer(content):
+            field_name = m.group(1)
+            field_type = m.group(2)
+            tag = m.group(3)
+            col_name_m = GORM_COL_TAG.search(tag)
+            col_name = col_name_m.group(1) if col_name_m else field_name
+            is_fk = "foreignKey" in tag or "references" in tag.lower()
+            fk_target = ""
+            fk_m = GORM_FK_TAG.search(tag)
+            if fk_m:
+                fk_target = fk_m.group(1)
+            _add(col_name, field_type, is_fk=is_fk, fk_target=fk_target)
+
+    elif file_path.endswith(".rb"):
+        for m in ACTIVERECORD_FIELD.finditer(content):
+            col_type = m.group(1)
+            col_name = m.group(2)
+            is_fk = col_type == "references"
+            _add(col_name, col_type, is_fk=is_fk, fk_target=col_name if is_fk else "")
+        for m in ACTIVERECORD_BELONGS.finditer(content):
+            _add(f"{m.group(1)}_id", "integer", is_fk=True, fk_target=m.group(1))
+
+    elif file_path.endswith(".java") or file_path.endswith(".kt"):
+        for m in JPA_COLUMN.finditer(content):
+            anno_args = m.group(1) or ""
+            field_type = m.group(2)
+            field_name = m.group(3)
+            name_m = JPA_COLUMN_NAME.search(anno_args)
+            col_name = name_m.group(1) if name_m else field_name
+            _add(col_name, field_type)
+        for m in JPA_FK.finditer(content):
+            target_type = m.group(1)
+            field_name = m.group(2)
+            _add(field_name, target_type, is_fk=True, fk_target=target_type)
+
+    elif file_path.endswith(".graphql"):
+        from app.knowledge.repo_analyzer import GRAPHQL_FIELD, GRAPHQL_TYPE
+
+        for type_m in GRAPHQL_TYPE.finditer(content):
+            body = type_m.group(2)
+            for field_m in GRAPHQL_FIELD.finditer(body):
+                fname = field_m.group(1)
+                ftype = field_m.group(2).strip("[]!")
+                is_fk = ftype[0].isupper() if ftype else False
+                _add(fname, ftype, is_fk=is_fk, fk_target=ftype if is_fk else "")
 
     return columns
 
@@ -573,6 +738,92 @@ def _extract_service_functions(
                     "snippet": func_body[:500],
                 }
             )
+
+
+def _extract_validation_rules(
+    rel_path: str,
+    content: str,
+    knowledge: ProjectKnowledge,
+) -> None:
+    """Extract data validation constraints from Django, Prisma, TypeORM code."""
+    if rel_path.endswith(".py"):
+        for m in DJANGO_VALIDATOR.finditer(content):
+            knowledge.validation_rules.append(
+                ValidationRule(
+                    rule_type="validator",
+                    expression=m.group(1).strip(),
+                    file_path=rel_path,
+                )
+            )
+        for m in DJANGO_CONSTRAINT.finditer(content):
+            knowledge.validation_rules.append(
+                ValidationRule(
+                    rule_type="constraint",
+                    expression=m.group(0).strip()[:200],
+                    file_path=rel_path,
+                )
+            )
+
+    elif rel_path.endswith(".prisma"):
+        for m in PRISMA_CONSTRAINT.finditer(content):
+            rule_type = "unique" if "unique" in m.group(0).lower() else "constraint"
+            knowledge.validation_rules.append(
+                ValidationRule(
+                    rule_type=rule_type,
+                    expression=m.group(1).strip(),
+                    file_path=rel_path,
+                )
+            )
+
+    elif rel_path.endswith((".ts", ".tsx", ".js", ".jsx")):
+        for m in TYPEORM_CHECK.finditer(content):
+            knowledge.validation_rules.append(
+                ValidationRule(
+                    rule_type="check",
+                    expression=m.group(1).strip(),
+                    file_path=rel_path,
+                )
+            )
+        for m in TYPEORM_UNIQUE.finditer(content):
+            knowledge.validation_rules.append(
+                ValidationRule(
+                    rule_type="unique",
+                    expression=m.group(1).strip(),
+                    file_path=rel_path,
+                )
+            )
+
+
+def _extract_config_refs(
+    rel_path: str,
+    content: str,
+    knowledge: ProjectKnowledge,
+) -> None:
+    """Detect database-related environment variables and config blocks."""
+    seen_vars: set[str] = set()
+    for m in DB_ENV_VAR.finditer(content):
+        var_name = m.group(1)
+        if var_name in seen_vars:
+            continue
+        seen_vars.add(var_name)
+        ctx_start = max(0, m.start() - 80)
+        ctx_end = min(len(content), m.end() + 80)
+        knowledge.config_refs.append(
+            ConfigRef(
+                var_name=var_name,
+                file_path=rel_path,
+                context=content[ctx_start:ctx_end].strip(),
+            )
+        )
+
+    if DB_CONFIG_BLOCK.search(content):
+        knowledge.config_refs.append(
+            ConfigRef(
+                var_name="__db_config_block__",
+                file_path=rel_path,
+                context="Database configuration block detected",
+            )
+        )
 
 
 def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:

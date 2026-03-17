@@ -54,12 +54,14 @@ def _fallback_create_all() -> None:
         commit_index,
         connection,
         custom_rule,
+        db_index,
         indexing_checkpoint,
         knowledge_doc,
         project,
         project_cache,
         project_invite,
         project_member,
+        rag_feedback,
         ssh_key,
         user,
     )
@@ -72,18 +74,20 @@ def _fallback_create_all() -> None:
 
 
 async def init_db():
-    """Called at app startup. Runs migrations then imports models."""
+    """Called at app startup. Imports all models so relationships are registered."""
     from app.models import (  # noqa: F401
         chat_session,
         commit_index,
         connection,
         custom_rule,
+        db_index,
         indexing_checkpoint,
         knowledge_doc,
         project,
         project_cache,
         project_invite,
         project_member,
+        rag_feedback,
         ssh_key,
         user,
     )

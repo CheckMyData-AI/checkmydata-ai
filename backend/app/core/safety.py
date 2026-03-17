@@ -45,21 +45,23 @@ class SafetyGuard:
         stripped = query.strip().rstrip(";")
 
         for pattern in DANGEROUS_PATTERNS_SQL:
-            if pattern.search(stripped):
-                match_text = pattern.search(stripped).group(0)  # type: ignore[union-attr]
+            match = pattern.search(stripped)
+            if match:
+                logger.warning("Blocked dangerous SQL operation: %s", match.group(0))
                 return SafetyResult(
                     is_safe=False,
-                    reason=f"Blocked dangerous operation: {match_text}",
+                    reason=f"Blocked dangerous operation: {match.group(0)}",
                     query=query,
                 )
 
         if self.level == SafetyLevel.READ_ONLY:
             for pattern in DML_PATTERNS_SQL:
-                if pattern.search(stripped):
-                    match_text = pattern.search(stripped).group(0)  # type: ignore[union-attr]
+                match = pattern.search(stripped)
+                if match:
+                    logger.warning("Blocked DML in read-only mode: %s", match.group(0))
                     return SafetyResult(
                         is_safe=False,
-                        reason=f"DML not allowed in read-only mode: {match_text}",
+                        reason=f"DML not allowed in read-only mode: {match.group(0)}",
                         query=query,
                     )
 
@@ -76,6 +78,7 @@ class SafetyGuard:
         write_ops = {"insert", "update", "delete", "drop", "rename", "create_index", "drop_index"}
 
         if self.level == SafetyLevel.READ_ONLY and operation in write_ops:
+            logger.warning("Blocked MongoDB write operation in read-only mode: %s", operation)
             return SafetyResult(
                 is_safe=False,
                 reason=f"Write operation '{operation}' not allowed in read-only mode",

@@ -1,14 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Project, type RepoCheckResult, type LLMModel } from "@/lib/api";
+import { api, type Project, type RepoCheckResult } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { InviteManager } from "./InviteManager";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
-
-const LLM_PROVIDERS = ["openai", "anthropic", "openrouter"];
+import {
+  LlmModelSelector,
+  formatProvider,
+  formatModelShort,
+  EMPTY_LLM,
+  type LlmPair,
+} from "@/components/ui/LlmModelSelector";
 
 const inputCls =
   "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -23,8 +28,10 @@ interface ProjectFormState {
   repoUrl: string;
   branch: string;
   sshKeyId: string;
-  llmProvider: string;
-  llmModel: string;
+  indexing: LlmPair;
+  agent: LlmPair;
+  sql: LlmPair;
+  sqlSameAsAgent: boolean;
 }
 
 const EMPTY_FORM: ProjectFormState = {
@@ -32,19 +39,81 @@ const EMPTY_FORM: ProjectFormState = {
   repoUrl: "",
   branch: "main",
   sshKeyId: "",
-  llmProvider: "",
-  llmModel: "",
+  indexing: { ...EMPTY_LLM },
+  agent: { ...EMPTY_LLM },
+  sql: { ...EMPTY_LLM },
+  sqlSameAsAgent: true,
 };
 
+function sqlMatchesAgent(sql: LlmPair, agent: LlmPair): boolean {
+  return sql.provider === agent.provider && sql.model === agent.model;
+}
+
 function projectToForm(p: Project): ProjectFormState {
+  const agent: LlmPair = {
+    provider: p.agent_llm_provider || "",
+    model: p.agent_llm_model || "",
+  };
+  const sql: LlmPair = {
+    provider: p.sql_llm_provider || "",
+    model: p.sql_llm_model || "",
+  };
   return {
     name: p.name,
     repoUrl: p.repo_url || "",
     branch: p.repo_branch || "main",
     sshKeyId: p.ssh_key_id || "",
-    llmProvider: p.default_llm_provider || "",
-    llmModel: p.default_llm_model || "",
+    indexing: {
+      provider: p.indexing_llm_provider || "",
+      model: p.indexing_llm_model || "",
+    },
+    agent,
+    sql,
+    sqlSameAsAgent: sqlMatchesAgent(sql, agent),
   };
+}
+
+function LlmBadges({ project }: { project: Project }) {
+  const lines: { label: string; text: string }[] = [];
+  if (project.indexing_llm_provider) {
+    lines.push({
+      label: "Idx",
+      text: `${formatProvider(project.indexing_llm_provider)}${project.indexing_llm_model ? " / " + formatModelShort(project.indexing_llm_model) : ""}`,
+    });
+  }
+  if (project.agent_llm_provider) {
+    lines.push({
+      label: "Agent",
+      text: `${formatProvider(project.agent_llm_provider)}${project.agent_llm_model ? " / " + formatModelShort(project.agent_llm_model) : ""}`,
+    });
+  }
+  if (project.sql_llm_provider) {
+    const isSameAsAgent =
+      project.sql_llm_provider === project.agent_llm_provider &&
+      project.sql_llm_model === project.agent_llm_model;
+    if (!isSameAsAgent) {
+      lines.push({
+        label: "SQL",
+        text: `${formatProvider(project.sql_llm_provider)}${project.sql_llm_model ? " / " + formatModelShort(project.sql_llm_model) : ""}`,
+      });
+    }
+  }
+  if (lines.length === 0) {
+    return (
+      <span className="block text-[10px] text-zinc-600 italic">
+        System defaults
+      </span>
+    );
+  }
+  return (
+    <span className="block space-y-0">
+      {lines.map((l) => (
+        <span key={l.label} className="block text-[10px] text-zinc-500 leading-tight">
+          <span className="text-zinc-600">{l.label}:</span> {l.text}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 export function ProjectSelector() {
@@ -69,35 +138,12 @@ export function ProjectSelector() {
   const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [listLoading, setListLoading] = useState(true);
-  const [availableModels, setAvailableModels] = useState<LLMModel[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
     api.projects.list().then(setProjects).catch((err) => {
       toast(err instanceof Error ? err.message : "Failed to load projects", "error");
     }).finally(() => setListLoading(false));
   }, [setProjects]);
-
-  useEffect(() => {
-    if (!form.llmProvider) {
-      setAvailableModels([]);
-      return;
-    }
-    let cancelled = false;
-    setModelsLoading(true);
-    api.models
-      .list(form.llmProvider)
-      .then((models) => {
-        if (!cancelled) setAvailableModels(models);
-      })
-      .catch(() => {
-        if (!cancelled) setAvailableModels([]);
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [form.llmProvider]);
 
   const runAccessCheck = useCallback(
     async (repoUrl: string, sshKeyId: string) => {
@@ -161,20 +207,28 @@ export function ProjectSelector() {
 
   const [nameError, setNameError] = useState("");
 
+  const resolveSql = (): LlmPair =>
+    form.sqlSameAsAgent ? form.agent : form.sql;
+
   const handleCreate = async () => {
     if (!form.name.trim()) {
       setNameError("Name is required");
       return;
     }
     setNameError("");
+    const sql = resolveSql();
     try {
       const project = await api.projects.create({
         name: form.name.trim(),
         repo_url: form.repoUrl.trim() || null,
         repo_branch: form.branch.trim() || "main",
         ssh_key_id: form.sshKeyId || null,
-        default_llm_provider: form.llmProvider || null,
-        default_llm_model: form.llmModel || null,
+        indexing_llm_provider: form.indexing.provider || null,
+        indexing_llm_model: form.indexing.model || null,
+        agent_llm_provider: form.agent.provider || null,
+        agent_llm_model: form.agent.model || null,
+        sql_llm_provider: sql.provider || null,
+        sql_llm_model: sql.model || null,
       });
       useAppStore.setState((state) => ({
         projects: [project, ...state.projects],
@@ -203,14 +257,19 @@ export function ProjectSelector() {
       return;
     }
     setNameError("");
+    const sql = resolveSql();
     try {
       const updated = await api.projects.update(editingId, {
         name: form.name.trim(),
         repo_url: form.repoUrl.trim() || null,
         repo_branch: form.branch.trim() || "main",
         ssh_key_id: form.sshKeyId || null,
-        default_llm_provider: form.llmProvider || null,
-        default_llm_model: form.llmModel || null,
+        indexing_llm_provider: form.indexing.provider || null,
+        indexing_llm_model: form.indexing.model || null,
+        agent_llm_provider: form.agent.provider || null,
+        agent_llm_model: form.agent.model || null,
+        sql_llm_provider: sql.provider || null,
+        sql_llm_model: sql.model || null,
       });
       useAppStore.setState((state) => ({
         projects: state.projects.map((p) => (p.id === updated.id ? updated : p)),
@@ -265,7 +324,7 @@ export function ProjectSelector() {
           : {}),
       }));
     } catch (err) {
-      toast("Failed to delete project", "error");
+      toast(err instanceof Error ? err.message : "Failed to delete project", "error");
     }
   };
 
@@ -352,45 +411,65 @@ export function ProjectSelector() {
           )}
         </>
       )}
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          value={form.llmProvider}
-          onChange={(e) => setForm({ ...form, llmProvider: e.target.value, llmModel: "" })}
-          className={inputCls}
-        >
-          <option value="">LLM Provider (default)</option>
-          {LLM_PROVIDERS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        {modelsLoading ? (
-          <div className={`${inputCls} flex items-center`}>
-            <span className="text-zinc-500 text-[10px] animate-pulse">Loading models...</span>
-          </div>
-        ) : availableModels.length > 0 ? (
-          <select
-            value={form.llmModel}
-            onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
-            className={inputCls}
+      <details open={!!editingId} className="group/llm">
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none py-1 text-[11px] font-medium text-zinc-300 hover:text-zinc-100 transition-colors">
+          <svg
+            className="w-3 h-3 text-zinc-500 transition-transform group-open/llm:rotate-90"
+            viewBox="0 0 16 16"
+            fill="currentColor"
           >
-            <option value="">Select model</option>
-            {availableModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            value={form.llmModel}
-            onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
-            placeholder="Model (e.g. gpt-4o)"
-            className={inputCls}
+            <path d="M6 3l5 5-5 5V3z" />
+          </svg>
+          LLM Models
+        </summary>
+        <div className="space-y-3 pt-1.5 pl-0.5">
+          <LlmModelSelector
+            label="Indexing"
+            description="Repo analysis & docs"
+            pair={form.indexing}
+            onChange={(p) => setForm({ ...form, indexing: p })}
           />
-        )}
-      </div>
+          <LlmModelSelector
+            label="Agent"
+            description="Chat & reasoning"
+            pair={form.agent}
+            onChange={(p) => {
+              const next: Partial<ProjectFormState> = { agent: p };
+              if (form.sqlSameAsAgent) {
+                next.sql = { ...p };
+              }
+              setForm({ ...form, ...next });
+            }}
+          />
+          <div className="space-y-1">
+            <LlmModelSelector
+              label="SQL"
+              description="Query generation & repair"
+              pair={form.sqlSameAsAgent ? form.agent : form.sql}
+              onChange={(p) => setForm({ ...form, sql: p })}
+              disabled={form.sqlSameAsAgent}
+            />
+            <label className="flex items-center gap-1.5 cursor-pointer pl-0.5">
+              <input
+                type="checkbox"
+                checked={form.sqlSameAsAgent}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setForm({
+                    ...form,
+                    sqlSameAsAgent: checked,
+                    sql: checked ? { ...form.agent } : form.sql,
+                  });
+                }}
+                className="w-3 h-3 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-1 focus:ring-blue-500 focus:ring-offset-0"
+              />
+              <span className="text-[10px] text-zinc-500">
+                Use Agent model
+              </span>
+            </label>
+          </div>
+        </div>
+      </details>
       <div className="flex gap-2">
         <button
           onClick={editingId ? handleUpdate : handleCreate}
@@ -458,11 +537,8 @@ export function ProjectSelector() {
                   </span>
                 )}
               </span>
-              {activeProject?.id === p.id && p.default_llm_provider && (
-                <span className="block text-[10px] text-zinc-500">
-                  {p.default_llm_provider}
-                  {p.default_llm_model ? ` / ${p.default_llm_model}` : ""}
-                </span>
+              {activeProject?.id === p.id && (
+                <LlmBadges project={p} />
               )}
             </button>
             {p.user_role === "owner" && (

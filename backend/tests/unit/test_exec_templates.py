@@ -50,15 +50,30 @@ class TestFormatTemplate:
         result = format_template(template, {"db_host": "x"})
         assert result == "echo hello"
 
-    def test_password_with_special_chars(self):
+    def test_password_with_special_chars_in_dquotes(self):
         template = 'MYSQL_PWD="{db_password}" mysql'
         result = format_template(template, {"db_password": "p@ss$w0rd"})
-        assert result == 'MYSQL_PWD="p@ss$w0rd" mysql'
+        assert result == 'MYSQL_PWD="p@ss\\$w0rd" mysql'
+
+    def test_password_with_special_chars_bare(self):
+        template = "mysql -p{db_password}"
+        result = format_template(template, {"db_password": "p@ss$w0rd"})
+        assert result == "mysql -p'p@ss$w0rd'"
+
+    def test_password_with_quotes_in_dquotes(self):
+        template = 'MYSQL_PWD="{db_password}" mysql'
+        result = format_template(template, {"db_password": 'he"llo'})
+        assert result == 'MYSQL_PWD="he\\"llo" mysql'
 
     def test_empty_values(self):
         template = "mysql -u {db_user} -p{db_password}"
         result = format_template(template, {"db_user": "", "db_password": ""})
-        assert result == "mysql -u  -p"
+        assert result == "mysql -u '' -p''"
+
+    def test_empty_password_in_dquotes(self):
+        template = 'MYSQL_PWD="{db_password}" mysql'
+        result = format_template(template, {"db_password": ""})
+        assert result == 'MYSQL_PWD="" mysql'
 
 
 class TestExecTemplatesStructure:

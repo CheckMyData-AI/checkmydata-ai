@@ -96,13 +96,19 @@ class AnthropicAdapter(BaseLLMProvider):
             if block.type == "text":
                 content_parts.append(block.text)
             elif block.type == "tool_use":
+                if isinstance(block.input, dict):
+                    args = block.input
+                else:
+                    try:
+                        args = json.loads(block.input)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning("Malformed tool_call arguments: %s", block.input)
+                        args = {}
                 tool_calls.append(
                     ToolCall(
                         id=block.id,
                         name=block.name,
-                        arguments=block.input
-                        if isinstance(block.input, dict)
-                        else json.loads(block.input),
+                        arguments=args,
                     )
                 )
 

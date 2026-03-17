@@ -15,8 +15,14 @@ class ChatService:
         project_id: str,
         title: str = "New Chat",
         user_id: str | None = None,
+        connection_id: str | None = None,
     ) -> ChatSession:
-        chat = ChatSession(project_id=project_id, title=title, user_id=user_id)
+        chat = ChatSession(
+            project_id=project_id,
+            title=title,
+            user_id=user_id,
+            connection_id=connection_id,
+        )
         session.add(chat)
         await session.commit()
         await session.refresh(chat)
@@ -50,12 +56,14 @@ class ChatService:
         role: str,
         content: str,
         metadata: dict | None = None,
+        tool_calls_json: str | None = None,
     ) -> ChatMessage:
         msg = ChatMessage(
             session_id=session_id,
             role=role,
             content=content,
             metadata_json=json.dumps(metadata) if metadata else None,
+            tool_calls_json=tool_calls_json,
         )
         session.add(msg)
         await session.commit()
@@ -70,7 +78,40 @@ class ChatService:
             return []
 
         recent = chat.messages[-limit:]
-        return [Message(role=m.role, content=m.content) for m in recent]
+        result: list[Message] = []
+        for m in recent:
+            content = m.content
+            if m.role == "assistant" and m.metadata_json:
+                try:
+                    meta = json.loads(m.metadata_json)
+                except (json.JSONDecodeError, TypeError):
+                    meta = {}
+                context_parts: list[str] = []
+                if meta.get("query"):
+                    context_parts.append(f"SQL Query: {meta['query']}")
+                if meta.get("viz_type"):
+                    context_parts.append(
+                        f"Visualization: {meta['viz_type']}"
+                    )
+                row_count = meta.get("row_count")
+                if row_count is not None:
+                    context_parts.append(f"Rows: {row_count}")
+                raw = meta.get("raw_result")
+                if raw and raw.get("columns"):
+                    context_parts.append(
+                        f"Columns: {', '.join(raw['columns'])}"
+                    )
+                    sample = raw.get("rows", [])[:3]
+                    if sample:
+                        context_parts.append(f"Sample data: {sample}")
+                if context_parts:
+                    content += (
+                        "\n\n[Context: "
+                        + " | ".join(context_parts)
+                        + "]"
+                    )
+            result.append(Message(role=m.role, content=content))
+        return result
 
     async def update_session_title(
         self,

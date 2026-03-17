@@ -155,3 +155,18 @@ class TestGenerateSummaryDoc:
         )
         doc = generate_summary_doc(knowledge)
         assert doc.content.startswith("# Project Data Model Summary")
+
+    def test_summary_with_live_table_names(self):
+        knowledge = ProjectKnowledge()
+        knowledge.entities["User"] = EntityInfo(
+            name="User",
+            table_name="users",
+        )
+        doc = generate_summary_doc(knowledge, live_table_names=["users", "audit_log"])
+        assert "Schema Cross-Reference" in doc.content
+        assert "audit_log" in doc.content
+
+    def test_summary_without_live_tables_no_cross_ref(self):
+        knowledge = ProjectKnowledge()
+        doc = generate_summary_doc(knowledge, live_table_names=None)
+        assert "Schema Cross-Reference" not in doc.content

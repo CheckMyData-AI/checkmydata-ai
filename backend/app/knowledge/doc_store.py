@@ -86,13 +86,29 @@ class DocStore:
         )
         await session.commit()
         count = result.rowcount  # type: ignore[union-attr]
-        logger.info(
+        logger.debug(
             "Deleted %d knowledge docs for %d paths in project %s",
             count,
             len(source_paths),
             project_id,
         )
         return count
+
+    async def get_doc_by_path(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        source_path: str,
+    ) -> KnowledgeDoc | None:
+        result = await session.execute(
+            select(KnowledgeDoc).where(
+                and_(
+                    KnowledgeDoc.project_id == project_id,
+                    KnowledgeDoc.source_path == source_path,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_latest_docs(
         self,

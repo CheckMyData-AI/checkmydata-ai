@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
+    chroma_embedding_model: str = ""
 
     default_llm_provider: str = "openai"
     openai_api_key: str = ""
@@ -54,6 +55,11 @@ class Settings(BaseSettings):
 
     max_history_tokens: int = 4000
     history_summary_model: str = ""
+
+    # Database index settings
+    db_index_ttl_hours: int = 24
+    db_index_batch_size: int = 5
+    auto_index_db_on_test: bool = False
 
     cors_origins: list[str] = ["http://localhost:3000"]
 

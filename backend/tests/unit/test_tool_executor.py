@@ -167,6 +167,54 @@ class TestToolExecutorRouting:
         assert "no database connection" in result.lower()
 
 
+class TestSqlConfigForwarding:
+    """ToolExecutor forwards sql_provider/sql_model to ValidationLoop."""
+
+    @pytest.mark.asyncio
+    async def test_sql_config_used_for_validation_loop(
+        self, config, mock_llm, mock_vector_store,
+        mock_schema_indexer, mock_rules_engine, mock_tracker,
+    ):
+        exec_with_sql = ToolExecutor(
+            project_id="proj-1",
+            connection_config=config,
+            llm_router=mock_llm,
+            vector_store=mock_vector_store,
+            schema_indexer=mock_schema_indexer,
+            rules_engine=mock_rules_engine,
+            tracker=mock_tracker,
+            preferred_provider="openai",
+            model="gpt-4o",
+            sql_provider="anthropic",
+            sql_model="claude-3-opus",
+        )
+
+        assert exec_with_sql._preferred_provider == "openai"
+        assert exec_with_sql._model == "gpt-4o"
+        assert exec_with_sql._sql_provider == "anthropic"
+        assert exec_with_sql._sql_model == "claude-3-opus"
+
+    @pytest.mark.asyncio
+    async def test_sql_config_defaults_to_agent(
+        self, config, mock_llm, mock_vector_store,
+        mock_schema_indexer, mock_rules_engine, mock_tracker,
+    ):
+        exec_no_sql = ToolExecutor(
+            project_id="proj-1",
+            connection_config=config,
+            llm_router=mock_llm,
+            vector_store=mock_vector_store,
+            schema_indexer=mock_schema_indexer,
+            rules_engine=mock_rules_engine,
+            tracker=mock_tracker,
+            preferred_provider="openai",
+            model="gpt-4o",
+        )
+
+        assert exec_no_sql._sql_provider == "openai"
+        assert exec_no_sql._sql_model == "gpt-4o"
+
+
 class TestSchemaFormatting:
     def test_format_schema_overview(self):
         schema = SchemaInfo(
@@ -220,6 +268,78 @@ class TestSchemaFormatting:
         schema = SchemaInfo(tables=[], db_type="postgres", db_name="testdb")
         result = ToolExecutor._format_table_detail(schema, "nonexistent")
         assert "not found" in result.lower()
+
+
+class TestGetEntityInfo:
+    @pytest.mark.asyncio
+    async def test_get_entity_info_list(self, executor, mock_tracker):
+        from app.knowledge.entity_extractor import ColumnInfo as EColumnInfo
+        from app.knowledge.entity_extractor import EntityInfo, ProjectKnowledge
+
+        knowledge = ProjectKnowledge()
+        knowledge.entities["User"] = EntityInfo(
+            name="User",
+            table_name="users",
+            file_path="models/user.py",
+            columns=[EColumnInfo(name="id", col_type="Integer")],
+        )
+        executor._knowledge_cache = knowledge
+
+        tc = ToolCall(id="1", name="get_entity_info", arguments={"scope": "list"})
+        result = await executor.execute(tc, "wf-1")
+        assert "User" in result
+        assert "users" in result
+        assert "1 entities" in result
+
+    @pytest.mark.asyncio
+    async def test_get_entity_info_detail(self, executor, mock_tracker):
+        from app.knowledge.entity_extractor import ColumnInfo as EColumnInfo
+        from app.knowledge.entity_extractor import EntityInfo, ProjectKnowledge
+
+        knowledge = ProjectKnowledge()
+        knowledge.entities["User"] = EntityInfo(
+            name="User",
+            table_name="users",
+            file_path="models/user.py",
+            columns=[
+                EColumnInfo(name="id", col_type="Integer"),
+                EColumnInfo(name="email", col_type="String"),
+            ],
+            relationships=["Post"],
+        )
+        executor._knowledge_cache = knowledge
+
+        tc = ToolCall(
+            id="1", name="get_entity_info", arguments={"scope": "detail", "entity_name": "User"}
+        )
+        result = await executor.execute(tc, "wf-1")
+        assert "## User" in result
+        assert "email" in result
+        assert "Post" in result
+
+    @pytest.mark.asyncio
+    async def test_get_entity_info_no_knowledge(self, executor, mock_tracker):
+        executor._knowledge_cache = None
+        executor._load_knowledge = AsyncMock(return_value=None)
+
+        tc = ToolCall(id="1", name="get_entity_info", arguments={"scope": "list"})
+        result = await executor.execute(tc, "wf-1")
+        assert "no entity information" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_get_entity_info_enums(self, executor, mock_tracker):
+        from app.knowledge.entity_extractor import EnumDefinition, ProjectKnowledge
+
+        knowledge = ProjectKnowledge()
+        knowledge.enums.append(
+            EnumDefinition(name="UserStatus", file_path="enums.py", values=["ACTIVE", "INACTIVE"])
+        )
+        executor._knowledge_cache = knowledge
+
+        tc = ToolCall(id="1", name="get_entity_info", arguments={"scope": "enums"})
+        result = await executor.execute(tc, "wf-1")
+        assert "UserStatus" in result
+        assert "ACTIVE" in result
 
 
 class TestQueryResultFormatting:

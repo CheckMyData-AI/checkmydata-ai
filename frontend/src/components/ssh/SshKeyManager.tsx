@@ -14,6 +14,8 @@ function CopyButton({ text }: { text: string }) {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {
+      toast("Failed to copy to clipboard", "error");
     });
   }, [text]);
 
@@ -107,6 +109,7 @@ export function SshKeyManager() {
       useAppStore.setState((state) => ({ sshKeys: [key, ...state.sshKeys] }));
       setForm({ name: "", private_key: "", passphrase: "" });
       setShowCreate(false);
+      toast("SSH key added", "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add key");
     } finally {
@@ -122,6 +125,7 @@ export function SshKeyManager() {
       useAppStore.setState((state) => ({
         sshKeys: state.sshKeys.filter((k) => k.id !== id),
       }));
+      toast("SSH key deleted", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to delete key", "error");
     }

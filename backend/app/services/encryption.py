@@ -28,4 +28,8 @@ def encrypt(plaintext: str) -> str:
 
 
 def decrypt(ciphertext: str) -> str:
-    return _get_fernet().decrypt(ciphertext.encode()).decode()
+    try:
+        return _get_fernet().decrypt(ciphertext.encode()).decode()
+    except Exception:
+        logger.error("Decryption failed", exc_info=True)
+        raise

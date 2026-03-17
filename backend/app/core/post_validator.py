@@ -26,6 +26,7 @@ class PostValidator:
         config: ValidationConfig,
     ) -> ValidationResult:
         if result.error:
+            logger.debug("Post-validation: query error — %s", result.error[:200])
             classified = _classifier.classify(result.error, schema.db_type)
             return ValidationResult(is_valid=False, error=classified)
 

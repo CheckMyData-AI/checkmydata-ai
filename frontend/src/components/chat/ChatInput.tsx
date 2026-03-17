@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { type ReactNode, useState, useRef, useCallback } from "react";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  rightSlot?: ReactNode;
 }
 
-export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInputProps) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,6 +46,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         >
           Send
         </button>
+        {rightSlot}
       </div>
     </div>
   );

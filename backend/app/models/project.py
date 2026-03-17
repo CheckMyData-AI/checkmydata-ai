@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -23,8 +23,15 @@ class Project(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    default_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    default_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    indexing_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    indexing_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    agent_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    agent_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sql_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    sql_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    default_rule_initialized: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

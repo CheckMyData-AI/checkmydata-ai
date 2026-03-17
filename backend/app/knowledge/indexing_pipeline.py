@@ -17,7 +17,7 @@ from pathlib import Path
 from app.knowledge.entity_extractor import ProjectKnowledge, build_project_knowledge
 from app.knowledge.file_splitter import split_large_file
 from app.knowledge.project_profiler import ProjectProfile, detect_project_profile
-from app.knowledge.project_summarizer import build_project_summary
+from app.knowledge.project_summarizer import build_project_summary, build_schema_cross_reference
 from app.knowledge.repo_analyzer import ExtractedSchema
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,7 @@ class EnrichedDoc:
 
 def run_pass1_profile(repo_dir: Path) -> ProjectProfile:
     """Pass 1: Detect project type and directory structure."""
+    logger.info("Indexing pass 1: detecting project profile for %s", repo_dir.name)
     return detect_project_profile(repo_dir)
 
 
@@ -59,12 +60,18 @@ def run_pass2_3_knowledge(
     changed_files: list[str] | None = None,
     deleted_files: list[str] | None = None,
     cached_knowledge: ProjectKnowledge | None = None,
+    detected_orms: list[str] | None = None,
 ) -> ProjectKnowledge:
     """Pass 2-3: Extract entities, build relationships, scan usage.
 
     When *cached_knowledge* and *changed_files* are both provided, only
     changed files are re-scanned (incremental mode).
     """
+    logger.info(
+        "Indexing pass 2-3: extracting entities (%d schemas, changed=%s)",
+        len(schemas),
+        len(changed_files) if changed_files else "all",
+    )
     return build_project_knowledge(
         repo_dir,
         schemas,
@@ -72,6 +79,7 @@ def run_pass2_3_knowledge(
         changed_files=changed_files,
         deleted_files=deleted_files,
         cached_knowledge=cached_knowledge,
+        detected_orms=detected_orms,
     )
 
 
@@ -84,6 +92,7 @@ def run_pass4_enrich(
 
     Also splits large files into per-class segments.
     """
+    logger.info("Indexing pass 4: enriching %d schemas for doc generation", len(schemas))
     docs: list[EnrichedDoc] = []
 
     for schema in schemas:
@@ -154,9 +163,18 @@ def run_pass4_enrich(
 def generate_summary_doc(
     knowledge: ProjectKnowledge,
     profile: ProjectProfile | None = None,
+    live_table_names: list[str] | None = None,
 ) -> EnrichedDoc:
-    """Create the project-level summary document."""
+    """Create the project-level summary document.
+
+    When *live_table_names* is provided (from a connected database),
+    a schema cross-reference section is appended comparing code-discovered
+    tables against the live DB.
+    """
     summary_md = build_project_summary(knowledge, profile)
+    if live_table_names:
+        cross_ref = build_schema_cross_reference(knowledge, live_table_names)
+        summary_md += "\n" + cross_ref
     return EnrichedDoc(
         file_path="__project_summary__",
         doc_type="project_summary",
