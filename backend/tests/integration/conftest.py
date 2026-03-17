@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import (  # noqa: F401
     chat_session,
+    code_db_sync,
     commit_index,
     connection,
     custom_rule,

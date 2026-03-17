@@ -9,6 +9,7 @@ import { ChatMessage } from "./ChatMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { StreamWorkflowProgress } from "../workflow/StreamWorkflowProgress";
 import { LogToggleButton } from "../log/LogPanel";
+import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 
 export function ChatPanel() {
   const {
@@ -31,6 +32,7 @@ export function ChatPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const [readinessBypassed, setReadinessBypassed] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -192,6 +194,8 @@ export function ChatPanel() {
     );
   }
 
+  const showReadinessGate = activeProject && activeConnection && messages.length === 0 && !readinessBypassed;
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {chatMode === "knowledge_only" && !activeConnection && (
@@ -205,6 +209,16 @@ export function ChatPanel() {
           </button>
         </div>
       )}
+      {readinessBypassed && activeProject && (
+        <ReadinessBanner projectId={activeProject.id} />
+      )}
+      {showReadinessGate ? (
+        <ReadinessGate
+          projectId={activeProject.id}
+          connectionId={activeConnection.id}
+          onBypass={() => setReadinessBypassed(true)}
+        />
+      ) : (
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-zinc-500 text-sm mt-20">
@@ -259,7 +273,10 @@ export function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
-      <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
+      )}
+      {!showReadinessGate && (
+        <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
+      )}
     </div>
   );
 }

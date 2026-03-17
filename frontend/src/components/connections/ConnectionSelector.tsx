@@ -346,6 +346,50 @@ export function ConnectionSelector() {
     }
   };
 
+  const handleSync = async (id: string) => {
+    setSyncing(id);
+    try {
+      await api.connections.triggerSync(id);
+      toast("Code-DB sync started", "success");
+      setSyncStatus((prev) => ({
+        ...prev,
+        [id]: { ...prev[id], is_syncing: true, is_synced: prev[id]?.is_synced ?? false },
+      }));
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
+      syncPollRef.current = setInterval(async () => {
+        try {
+          const s = await api.connections.syncStatus(id);
+          setSyncStatus((prev) => ({
+            ...prev,
+            [id]: {
+              is_synced: s.is_synced,
+              is_syncing: s.is_syncing,
+              synced_tables: s.synced_tables,
+              total_tables: s.total_tables,
+              synced_at: s.synced_at ?? undefined,
+              sync_status: s.sync_status,
+            },
+          }));
+          if (!s.is_syncing) {
+            if (syncPollRef.current) clearInterval(syncPollRef.current);
+            syncPollRef.current = null;
+            setSyncing(null);
+            if (s.is_synced) {
+              toast(`Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`, "success");
+            }
+          }
+        } catch {
+          if (syncPollRef.current) clearInterval(syncPollRef.current);
+          syncPollRef.current = null;
+          setSyncing(null);
+        }
+      }, 3000);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Code-DB sync failed", "error");
+      setSyncing(null);
+    }
+  };
+
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!(await confirmAction("Delete this connection?"))) return;
@@ -742,6 +786,40 @@ export function ConnectionSelector() {
                       : indexStatus[c.id]?.is_indexed
                         ? "IDX"
                         : "IDX"}
+                  </button>
+                  <button
+                    onClick={() => handleSync(c.id)}
+                    disabled={
+                      syncing === c.id ||
+                      syncStatus[c.id]?.is_syncing === true ||
+                      !indexStatus[c.id]?.is_indexed
+                    }
+                    className={`text-[10px] px-1.5 py-1 rounded transition-opacity ${
+                      syncStatus[c.id]?.is_syncing
+                        ? "text-amber-400 animate-pulse"
+                        : syncStatus[c.id]?.is_synced
+                          ? "text-green-500 hover:text-green-400 opacity-0 group-hover:opacity-100"
+                          : syncStatus[c.id]?.sync_status === "stale"
+                            ? "text-amber-500 hover:text-amber-400 opacity-0 group-hover:opacity-100"
+                            : !indexStatus[c.id]?.is_indexed
+                              ? "text-zinc-600 cursor-not-allowed opacity-0 group-hover:opacity-100"
+                              : "text-zinc-500 hover:text-blue-400 opacity-0 group-hover:opacity-100"
+                    }`}
+                    title={
+                      syncStatus[c.id]?.is_syncing
+                        ? "Sync in progress..."
+                        : syncStatus[c.id]?.is_synced
+                          ? `Synced: ${syncStatus[c.id]?.synced_tables ?? "?"}/${syncStatus[c.id]?.total_tables ?? "?"} tables${syncStatus[c.id]?.synced_at ? ` (${formatAge(syncStatus[c.id]!.synced_at!)})` : ""} — click to re-sync`
+                          : syncStatus[c.id]?.sync_status === "stale"
+                            ? "Sync data is stale — click to re-sync"
+                            : !indexStatus[c.id]?.is_indexed
+                              ? "Index database first"
+                              : "Run Code-DB Sync"
+                    }
+                  >
+                    {syncStatus[c.id]?.is_syncing
+                      ? "SYNC..."
+                      : "SYNC"}
                   </button>
                 </>
               )}

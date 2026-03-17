@@ -3,6 +3,7 @@
 import { SshKeyManager } from "./ssh/SshKeyManager";
 import { ProjectSelector } from "./projects/ProjectSelector";
 import { ConnectionSelector } from "./connections/ConnectionSelector";
+import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
 import { ChatSessionList } from "./chat/ChatSessionList";
 import { RulesManager } from "./rules/RulesManager";
 import { KnowledgeDocs } from "./knowledge/KnowledgeDocs";
@@ -310,7 +311,12 @@ export function Sidebar() {
                 <SectionToggle {...connCollapse} />
                 <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={connCollapse.toggle}>Connections</h3>
               </div>
-              {connCollapse.open && <ConnectionSelector />}
+              {connCollapse.open && (
+                <>
+                  <ConnectionSelector />
+                  <SyncStatusIndicator />
+                </>
+              )}
             </div>
 
             <div>
