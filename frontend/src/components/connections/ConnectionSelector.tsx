@@ -140,7 +140,7 @@ export function ConnectionSelector() {
             active_tables: s.active_tables,
             total_tables: s.total_tables,
             is_indexing: s.is_indexing,
-            indexed_at: s.indexed_at,
+            indexed_at: s.indexed_at ?? undefined,
           },
         }));
       }).catch(() => {});
@@ -303,7 +303,7 @@ export function ConnectionSelector() {
               active_tables: s.active_tables,
               total_tables: s.total_tables,
               is_indexing: s.is_indexing,
-              indexed_at: s.indexed_at,
+              indexed_at: s.indexed_at ?? undefined,
             },
           }));
           if (!s.is_indexing) {
