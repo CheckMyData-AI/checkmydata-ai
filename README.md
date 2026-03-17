@@ -814,10 +814,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 460 across 46 files
-- Backend integration tests: 82 across 13 files
-- Frontend tests: 11 across 3 files
-- **Total: 553 tests**
+- Backend unit tests: 452 across 26 test files
+- Backend integration tests: 79 across 13 test files
+- Frontend tests: 27 across 5 test files
+- **Total: 558 tests**
 
 ### Test Coverage by Module
 
@@ -1002,3 +1002,4 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 | Connection test fails | Verify SSH tunnel config: SSH host/user/key must reach the server, DB host should be `127.0.0.1` for tunneled connections |
 | 429 Too Many Requests | Rate limiting active. Wait and retry. Limits: 20 chat/min, 5 register/min |
 | Indexing returns 409 | Indexing is already running as a background task. Wait for it to finish (check `/status` endpoint or SSE events) |
+| `CharacterNotInRepertoireError` during indexing | Binary files (ELF, images) were previously not filtered. Now fixed: `is_binary_file()` checks extension and null bytes before processing |
