@@ -24,21 +24,25 @@ FK_UPDATES = [
     ("chat_messages", "chat_messages_session_id_fkey", "session_id", "chat_sessions", "id"),
 ]
 
+_NAMING = {"fk": "%(table_name)s_%(column_0_name)s_fkey"}
+
 
 def upgrade() -> None:
     for table, constraint, local_col, ref_table, ref_col in FK_UPDATES:
-        op.drop_constraint(constraint, table, type_="foreignkey")
-        op.create_foreign_key(
-            constraint, table, ref_table,
-            [local_col], [ref_col],
-            ondelete="CASCADE",
-        )
+        with op.batch_alter_table(table, naming_convention=_NAMING) as batch_op:
+            batch_op.drop_constraint(constraint, type_="foreignkey")
+            batch_op.create_foreign_key(
+                constraint, ref_table,
+                [local_col], [ref_col],
+                ondelete="CASCADE",
+            )
 
 
 def downgrade() -> None:
     for table, constraint, local_col, ref_table, ref_col in FK_UPDATES:
-        op.drop_constraint(constraint, table, type_="foreignkey")
-        op.create_foreign_key(
-            constraint, table, ref_table,
-            [local_col], [ref_col],
-        )
+        with op.batch_alter_table(table, naming_convention=_NAMING) as batch_op:
+            batch_op.drop_constraint(constraint, type_="foreignkey")
+            batch_op.create_foreign_key(
+                constraint, ref_table,
+                [local_col], [ref_col],
+            )
