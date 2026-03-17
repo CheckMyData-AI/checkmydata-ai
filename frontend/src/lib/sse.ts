@@ -22,9 +22,18 @@ function parseSSEChunk(buffer: string, onEvent: WorkflowEventHandler): string {
   const parts = buffer.split("\n\n");
   const remaining = parts.pop() || "";
   for (const part of parts) {
-    const eventMatch = part.match(/^event:\s*(\w+)\ndata:\s*(.+)$/s);
-    if (!eventMatch) continue;
-    const [, , jsonStr] = eventMatch;
+    let eventType = "";
+    const dataLines: string[] = [];
+    for (const line of part.split("\n")) {
+      if (line.startsWith("event:")) {
+        eventType = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trimStart());
+      }
+      // ignore id:, retry:, and comments (lines starting with :)
+    }
+    if (dataLines.length === 0) continue;
+    const jsonStr = dataLines.join("\n");
     try {
       onEvent(JSON.parse(jsonStr) as WorkflowEvent);
     } catch {
@@ -38,6 +47,7 @@ function createSSEStream(
   url: string,
   onEvent: WorkflowEventHandler,
   onError?: (err: unknown) => void,
+  onEnd?: () => void,
 ): () => void {
   const ctrl = new AbortController();
   const token = getToken();
@@ -60,6 +70,7 @@ function createSSEStream(
         buffer += decoder.decode(value, { stream: true });
         buffer = parseSSEChunk(buffer, onEvent);
       }
+      onEnd?.();
     })
     .catch((err) => {
       if (err?.name !== "AbortError") onError?.(err);
@@ -72,15 +83,17 @@ export function subscribeToWorkflow(
   workflowId: string,
   onEvent: WorkflowEventHandler,
   onError?: (err: unknown) => void,
+  onEnd?: () => void,
 ): () => void {
   const url = `${API_BASE}/workflows/events?workflow_id=${encodeURIComponent(workflowId)}`;
-  return createSSEStream(url, onEvent, onError);
+  return createSSEStream(url, onEvent, onError, onEnd);
 }
 
 export function subscribeToAllEvents(
   onEvent: WorkflowEventHandler,
   onError?: (err: unknown) => void,
+  onEnd?: () => void,
 ): () => void {
   const url = `${API_BASE}/workflows/events`;
-  return createSSEStream(url, onEvent, onError);
+  return createSSEStream(url, onEvent, onError, onEnd);
 }

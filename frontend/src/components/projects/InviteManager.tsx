@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type ProjectInvite, type ProjectMember } from "@/lib/api";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
@@ -29,7 +29,8 @@ export function InviteManager({ projectId, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [refreshLoading, setRefreshLoading] = useState(true);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    setRefreshLoading(true);
     try {
       const [inv, mem] = await Promise.all([
         api.invites.list(projectId),
@@ -42,12 +43,11 @@ export function InviteManager({ projectId, onClose }: Props) {
     } finally {
       setRefreshLoading(false);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
-    setRefreshLoading(true);
     refresh();
-  }, [projectId]);
+  }, [refresh]);
 
   const handleInvite = async () => {
     if (!email.trim()) return;

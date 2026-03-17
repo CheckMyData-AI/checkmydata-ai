@@ -32,6 +32,16 @@ export function useGlobalEvents(enabled: boolean) {
       return;
     }
 
+    function scheduleReconnect() {
+      useLogStore.getState().setConnected(false);
+      const delay = Math.min(
+        RECONNECT_BASE_MS * 2 ** attemptRef.current,
+        RECONNECT_MAX_MS,
+      );
+      attemptRef.current++;
+      timerRef.current = setTimeout(connect, delay);
+    }
+
     function connect() {
       unsubRef.current?.();
 
@@ -41,15 +51,8 @@ export function useGlobalEvents(enabled: boolean) {
           useLogStore.getState().setConnected(true);
           useLogStore.getState().addEntry(toLogEntry(event));
         },
-        () => {
-          useLogStore.getState().setConnected(false);
-          const delay = Math.min(
-            RECONNECT_BASE_MS * 2 ** attemptRef.current,
-            RECONNECT_MAX_MS,
-          );
-          attemptRef.current++;
-          timerRef.current = setTimeout(connect, delay);
-        },
+        () => scheduleReconnect(),
+        () => scheduleReconnect(),
       );
 
       unsubRef.current = unsub;

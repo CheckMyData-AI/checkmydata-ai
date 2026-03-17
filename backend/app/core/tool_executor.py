@@ -230,7 +230,8 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _connector_key(self, cfg: ConnectionConfig) -> str:
-        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name]
+        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name,
+                 str(cfg.ssh_exec_mode)]
         if cfg.ssh_host:
             parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
         return ":".join(parts)

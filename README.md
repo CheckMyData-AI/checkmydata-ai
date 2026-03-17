@@ -139,15 +139,18 @@ To add a connection:
 2. Enter connection name and select **db type**
 3. **Option A — Direct fields**: Fill in host, port, database name, username, password
 4. **Option B — Connection string**: Toggle "Use connection string" and paste a full URI like `postgresql://user:pass@host:5432/dbname`
-5. **SSH Tunnel** (for databases accessible only via a jump server):
+5. **SSH Tunnel** (recommended for databases accessible only via a jump server):
    - Enter SSH host IP, port (default 22), SSH user
    - Select an SSH key from the dropdown
    - The system creates an SSH tunnel automatically — the database fields should point to the *remote* host (usually `127.0.0.1:3306`)
-6. **SSH Exec Mode** (alternative to port forwarding — runs queries via CLI on the remote server):
-   - Enable the **SSH Exec Mode** checkbox (appears when SSH host is configured)
-   - Select a **command template preset** (MySQL, PostgreSQL, ClickHouse) or write a custom one
+   - No CLI tools (e.g. `mysql`, `psql`) are needed on the server — the agent connects via a native Python driver through the port-forwarded tunnel
+   - The form validates that SSH user and key are set before allowing save
+   - **Note:** SSH fields are hidden when "Use connection string" is enabled — SSH tunnel only works with individual host/port fields
+6. **SSH Exec Mode** (alternative — use only if port forwarding is blocked):
+   - Enable the **SSH Exec Mode** checkbox (appears when SSH host is configured; not available for MongoDB)
+   - A command template is auto-filled based on the selected DB type; you can also select a preset or write a custom one
    - Templates use placeholders: `{db_host}`, `{db_port}`, `{db_user}`, `{db_password}`, `{db_name}`. The query is piped via stdin.
-   - Optionally add **pre-commands** (one per line) — e.g., `source ~/.bashrc`, `export PATH=/opt/mysql/bin:$PATH`
+   - Optionally add **pre-commands** (one per line) — e.g., `source ~/.bashrc`, `export PATH=/opt/mysql/bin:$PATH`. Pre-commands apply to both queries and schema introspection.
    - Use this mode when: port forwarding is blocked, the DB client is only installed on the server, or custom setup commands are required
 7. **Read-only mode** (checked by default) — blocks `INSERT`, `UPDATE`, `DELETE`, `DROP` queries
 8. Click **Create Connection**
@@ -192,6 +195,14 @@ If your project has a Git repo URL configured:
 After indexing, the **Knowledge Docs** section in the sidebar shows all indexed documents (including a project-level summary). You can click any doc to view its generated content.
 
 **Incremental indexing**: Re-indexing only processes files that changed since the last indexed commit. Cross-file analysis is also incremental — `ProjectKnowledge` is persisted between runs so only changed/deleted files are re-scanned. `ProjectProfile` is cached and only re-detected when marker files (e.g. `package.json`, `requirements.txt`) change. Indexing is per-project locked — rapid clicks are rejected with 409.
+
+**Resumable indexing**: If the pipeline is interrupted (crash, deploy, timeout, LLM error), the next "Index Repository" click **automatically resumes** from the last completed step. Intermediate state is stored in the `indexing_checkpoint` table:
+- Completed pipeline steps (SSH key, clone, detect changes, profile, etc.) are skipped on resume
+- Each successfully generated doc is recorded per-file — the expensive `generate_docs` step (LLM calls per file) skips already-processed documents
+- The checkpoint stores cached `ProjectProfile` and `ProjectKnowledge` to avoid re-computation
+- On successful completion, the checkpoint is deleted (no garbage accumulation)
+- `force_full=true` discards any existing checkpoint and starts fresh
+- Stale checkpoints (>24h) are automatically cleaned up on app startup
 
 **Check for updates**: Click the "Check" button next to "Index Repository" to fetch remote and see how many new commits are available without starting a full re-index.
 
@@ -360,6 +371,7 @@ app/
 │   └── exec_templates.py    ← Predefined CLI command templates per db_type
 ├── knowledge/          ← Repository analysis & RAG (multi-pass pipeline)
 │   ├── indexing_pipeline.py ← Multi-pass orchestrator (profile → extract → enrich → store)
+│   ├── pipeline_runner.py  ← Resumable pipeline runner with checkpoint-based step skipping
 │   ├── project_profiler.py  ← Pass 1: Auto-detect framework/ORM/language/dirs
 │   ├── entity_extractor.py  ← Pass 2-3: Cross-file entity map, usage tracking, enums
 │   ├── project_summarizer.py← Pass 4: Project-level summary + schema cross-reference
@@ -395,6 +407,7 @@ app/
 │   ├── invite_service.py ← Create/accept/revoke invites, auto-accept on registration
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
+│   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)
@@ -561,7 +574,7 @@ User's Machine                        Target Server
 
 SSH keys are loaded directly into memory via `asyncssh.import_private_key()` — no temporary files needed for database connections. For Git operations (which use the `git` CLI), the key is briefly written to a temp file with `0600` permissions and deleted immediately after.
 
-SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check actively pings the server (not just socket inspection). The SSH test endpoint (`POST /connections/{id}/test-ssh`) allows testing SSH connectivity independently from the database.
+SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check actively pings the server (not just socket inspection). If an SSH connection drops mid-query, the exec connector automatically attempts one reconnection before failing. The SSH test endpoint (`POST /connections/{id}/test-ssh`) allows testing SSH connectivity independently from the database.
 
 ### Data Flow for Repository Indexing (Multi-Pass Pipeline)
 
@@ -651,7 +664,9 @@ src/
 
 **State management**: Zustand stores persist the active project, connection, chat session, and messages. Auth state is synced with `localStorage` for persistence across refreshes. Sidebar collapse state is persisted in `localStorage`.
 
-**Error handling**: All API errors flow through a centralized parser that handles FastAPI 422 validation arrays. Destructive actions use a custom confirmation modal. Errors are surfaced via toast notifications instead of `console.error` or `alert()`. A global `ErrorBoundary` prevents white-screen crashes.
+**Error handling**: All API errors flow through a centralized parser that handles FastAPI 422 validation arrays (with fallback for missing `msg` fields). Destructive actions use a custom confirmation modal with Escape key and backdrop-click dismissal (race-condition safe for overlapping calls). Errors are surfaced via toast notifications instead of `console.error` or `alert()`. A global `ErrorBoundary` prevents white-screen crashes. The viz export endpoint includes 401 session-expiry handling matching the shared `request()` helper.
+
+**Backend validation**: Project names are whitespace-stripped and require `min_length=1` on both create and update. Connection names and connection strings are whitespace-stripped. The connection update endpoint validates the merged state to prevent clearing required fields (must have either `connection_string` or `db_host + db_name`). Stale sessions/connections are cleared synchronously when switching projects to prevent race conditions.
 
 **Loading states**: All data-fetching components show loading spinners during initial load. Empty states display helpful guidance messages.
 
@@ -814,10 +829,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 452 across 26 test files
+- Backend unit tests: 461 across 26 test files
 - Backend integration tests: 79 across 13 test files
 - Frontend tests: 27 across 5 test files
-- **Total: 558 tests**
+- **Total: 567 tests**
 
 ### Test Coverage by Module
 
@@ -1002,4 +1017,6 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 | Connection test fails | Verify SSH tunnel config: SSH host/user/key must reach the server, DB host should be `127.0.0.1` for tunneled connections |
 | 429 Too Many Requests | Rate limiting active. Wait and retry. Limits: 20 chat/min, 5 register/min |
 | Indexing returns 409 | Indexing is already running as a background task. Wait for it to finish (check `/status` endpoint or SSE events) |
+| Indexing interrupted, want to restart fresh | Click "Index Repository" with `force_full=true` to discard the checkpoint and start from scratch |
+| Stale checkpoint blocking indexing | Checkpoints older than 24h are auto-cleaned on startup. You can also use `force_full=true` to discard manually |
 | `CharacterNotInRepertoireError` during indexing | Binary files (ELF, images) were previously not filtered. Now fixed: `is_binary_file()` checks extension and null bytes before processing |

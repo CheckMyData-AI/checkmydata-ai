@@ -4,6 +4,7 @@ Instead of port-forwarding + native DB driver, this connector SSHes into the
 remote server and runs queries through the CLI client (mysql, psql, etc.).
 """
 
+import asyncio
 import logging
 import shlex
 import time
@@ -71,22 +72,23 @@ class SSHExecConnector(BaseConnector):
             )
         return template
 
+    def _prepend_pre_commands(self, cmd: str) -> str:
+        """Prepend ssh_pre_commands (e.g. PATH exports) to any command string."""
+        pre = self._config.ssh_pre_commands if self._config else None
+        if pre:
+            return " && ".join(pre) + " && " + cmd
+        return cmd
+
     def _build_command(self, kind: str, query: str | None = None) -> str:
         """Build the full SSH command string."""
         template = self._get_template(kind)
         variables = self._config_vars()
         cmd = format_template(template, variables)
 
-        pre_commands = self._config.ssh_pre_commands if self._config else None
-        prefix = ""
-        if pre_commands:
-            prefix = " && ".join(pre_commands) + " && "
-
         if query is not None and kind == "query":
-            escaped_query = query.replace("\\", "\\\\").replace("'", "'\\''")
-            cmd = f"echo {shlex.quote(escaped_query)} | {cmd}"
+            cmd = f"echo {shlex.quote(query)} | {cmd}"
 
-        return prefix + cmd
+        return self._prepend_pre_commands(cmd)
 
     async def connect(self, config: ConnectionConfig) -> None:
         self._config = config
@@ -118,18 +120,31 @@ class SSHExecConnector(BaseConnector):
     async def disconnect(self) -> None:
         if self._conn:
             self._conn.close()
+            await asyncio.sleep(0.1)
+            try:
+                await asyncio.wait_for(self._conn.wait_closed(), timeout=5)
+            except (asyncio.TimeoutError, Exception):
+                pass
             self._conn = None
 
     async def _run_command(self, command: str, timeout: int = SSH_COMMAND_TIMEOUT) -> tuple[str, str, int]:
-        """Run a command over SSH and return (stdout, stderr, exit_code)."""
+        """Run a command over SSH and return (stdout, stderr, exit_code).
+
+        Automatically attempts one reconnection if the SSH connection is lost.
+        """
         if not self._conn:
             raise RuntimeError("Not connected")
 
-        result = await self._conn.run(
-            command,
-            timeout=timeout,
-            check=False,
-        )
+        try:
+            result = await self._conn.run(command, timeout=timeout, check=False)
+        except (asyncssh.ConnectionLost, asyncssh.DisconnectError, BrokenPipeError, OSError) as exc:
+            logger.warning("SSH connection lost (%s), attempting reconnect", exc)
+            self._conn = None
+            if self._config:
+                await self.connect(self._config)
+                result = await self._conn.run(command, timeout=timeout, check=False)
+            else:
+                raise RuntimeError("SSH connection lost and no config to reconnect") from exc
 
         stdout = result.stdout or ""
         stderr = result.stderr or ""
@@ -187,20 +202,20 @@ class SSHExecConnector(BaseConnector):
     async def _introspect_mysql(self, db_name: str) -> SchemaInfo:
         variables = self._config_vars()
 
-        tables_cmd = format_template(
-            self._get_template("introspect_tables"), variables
+        tables_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_tables"), variables)
         )
         stdout, _, _ = await self._run_command(tables_cmd)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
-        cols_cmd = format_template(
-            self._get_template("introspect_columns"), variables
+        cols_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_columns"), variables)
         )
         stdout, _, _ = await self._run_command(cols_cmd)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
-        fks_cmd = format_template(
-            self._get_template("introspect_fks"), variables
+        fks_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_fks"), variables)
         )
         stdout, _, _ = await self._run_command(fks_cmd)
         _, fk_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
@@ -248,16 +263,16 @@ class SSHExecConnector(BaseConnector):
     async def _introspect_postgres(self, db_name: str) -> SchemaInfo:
         variables = self._config_vars()
 
-        tables_cmd = format_template(
-            self._get_template("introspect_tables"), variables
+        tables_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_tables"), variables)
         )
         stdout, _, _ = await self._run_command(tables_cmd)
         table_names = [
             line.strip() for line in stdout.strip().splitlines() if line.strip()
         ]
 
-        cols_cmd = format_template(
-            self._get_template("introspect_columns"), variables
+        cols_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_columns"), variables)
         )
         stdout, _, _ = await self._run_command(cols_cmd)
         lines = [l.strip() for l in stdout.strip().splitlines() if l.strip()]
@@ -285,15 +300,15 @@ class SSHExecConnector(BaseConnector):
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:
         variables = self._config_vars()
 
-        tables_cmd = format_template(
-            self._get_template("introspect_tables"), variables
+        tables_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_tables"), variables)
         )
         stdout, _, _ = await self._run_command(tables_cmd)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         table_names = [r[0] for r in table_rows if r]
 
-        cols_cmd = format_template(
-            self._get_template("introspect_columns"), variables
+        cols_cmd = self._prepend_pre_commands(
+            format_template(self._get_template("introspect_columns"), variables)
         )
         stdout, _, _ = await self._run_command(cols_cmd)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
@@ -345,5 +360,12 @@ class SSHExecConnector(BaseConnector):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _quote_identifier(self, name: str) -> str:
+        """Quote a SQL identifier based on the DB type."""
+        if self.db_type == "mysql":
+            return f"`{name.replace('`', '``')}`"
+        return f'"{name.replace(chr(34), chr(34)+chr(34))}"'
+
     async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
-        return await self.execute_query(f"SELECT * FROM {table_name} LIMIT {limit}")
+        quoted = self._quote_identifier(table_name)
+        return await self.execute_query(f"SELECT * FROM {quoted} LIMIT {limit}")

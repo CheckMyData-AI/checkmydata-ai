@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useLogStore, type LogEntry } from "@/stores/log-store";
 
 const PIPELINE_COLORS: Record<string, string> = {
@@ -40,7 +40,7 @@ function formatElapsed(ms: number | null): string {
   return `${Math.round(ms)}ms`;
 }
 
-function LogLine({ entry }: { entry: LogEntry }) {
+const LogLine = memo(function LogLine({ entry }: { entry: LogEntry }) {
   const pipelineColor = PIPELINE_COLORS[entry.pipeline] || PIPELINE_COLORS.system;
   const statusColor = STATUS_COLORS[entry.status] || "text-zinc-400";
   const label = PIPELINE_LABELS[entry.pipeline] || entry.pipeline.toUpperCase();
@@ -62,7 +62,7 @@ function LogLine({ entry }: { entry: LogEntry }) {
       )}
     </div>
   );
-}
+});
 
 export function LogPanel() {
   const { entries, isOpen, isConnected, unreadCount, toggle, clear, resetUnread } = useLogStore();

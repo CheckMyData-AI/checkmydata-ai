@@ -23,7 +23,8 @@ from app.api.routes import (
 from app.config import settings
 from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
-from app.models.base import init_db, run_migrations
+from app.models.base import async_session_factory, init_db, run_migrations
+from app.services.checkpoint_service import CheckpointService
 
 configure_logging(
     json_format=os.getenv("LOG_FORMAT", "text") == "json",
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     run_migrations()
     await init_db()
+    await _cleanup_stale_checkpoints()
     yield
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
@@ -86,6 +88,18 @@ app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"]
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
+
+
+async def _cleanup_stale_checkpoints() -> None:
+    """Mark orphaned 'running' checkpoints as interrupted and remove stale ones."""
+    try:
+        async with async_session_factory() as session:
+            svc = CheckpointService()
+            cleaned = await svc.cleanup_stale(session, max_age_hours=24)
+            if cleaned:
+                logger.info("Startup: cleaned %d stale checkpoints", cleaned)
+    except Exception:
+        logger.warning("Failed to clean stale checkpoints at startup", exc_info=True)
 
 
 @app.get("/api/health")

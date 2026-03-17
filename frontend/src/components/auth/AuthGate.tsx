@@ -25,6 +25,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [googleLoading, setGoogleLoading] = useState(false);
+  const googleLoadingRef = useRef(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,15 +34,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const handleGoogleResponse = useCallback(
     async (response: { credential: string }) => {
-      if (googleLoading) return;
+      if (googleLoadingRef.current) return;
+      googleLoadingRef.current = true;
       setGoogleLoading(true);
       try {
         await googleLogin(response.credential);
       } finally {
+        googleLoadingRef.current = false;
         setGoogleLoading(false);
       }
     },
-    [googleLogin, googleLoading],
+    [googleLogin],
   );
 
   useEffect(() => {

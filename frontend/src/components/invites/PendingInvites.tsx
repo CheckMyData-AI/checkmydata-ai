@@ -16,8 +16,10 @@ export function PendingInvites() {
     try {
       const pending = await api.invites.listPending();
       setInvites(pending);
-    } catch {
-      /* no-op if not logged in */
+    } catch (err) {
+      if (err instanceof Error && !err.message.includes("401") && !err.message.includes("Session expired")) {
+        toast(err.message, "error");
+      }
     } finally {
       setListLoading(false);
     }

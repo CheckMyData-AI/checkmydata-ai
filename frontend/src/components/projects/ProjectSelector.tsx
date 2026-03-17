@@ -226,6 +226,9 @@ export function ProjectSelector() {
     setUserRole(project.user_role || null);
     clearMessages();
     setActiveSession(null);
+    setChatSessions([]);
+    setConnections([]);
+    setActiveConnection(null);
     try {
       const [conns, sessions] = await Promise.all([
         api.connections.listByProject(project.id),

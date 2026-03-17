@@ -231,7 +231,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
-            {metadata.token_usage && metadata.token_usage.total_tokens > 0 && (
+            {metadata.token_usage?.total_tokens != null && metadata.token_usage.total_tokens > 0 && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
                 {metadata.token_usage.total_tokens.toLocaleString()} tokens
               </span>
@@ -257,7 +257,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
             {metadata.viz_type && <div>Visualization: {metadata.viz_type}</div>}
             {metadata.error && <div className="text-red-400">Error: {metadata.error}</div>}
 
-            {metadata.token_usage && metadata.token_usage.total_tokens > 0 && (
+            {metadata.token_usage?.total_tokens != null && metadata.token_usage.total_tokens > 0 && (
               <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
                 <div className="font-medium text-zinc-400 mb-1">Token Usage</div>
                 <div>Prompt: {metadata.token_usage.prompt_tokens?.toLocaleString() ?? 0}</div>

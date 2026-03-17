@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -20,9 +20,19 @@ class ProjectCreate(BaseModel):
     default_llm_provider: str | None = None
     default_llm_model: str | None = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
 
 class ProjectUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(None, min_length=1)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
     description: str | None = None
     repo_url: str | None = None
     repo_branch: str | None = None

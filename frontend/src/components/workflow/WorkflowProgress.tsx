@@ -92,34 +92,41 @@ export function WorkflowProgress({ workflowId, compact = false, onComplete }: Wo
     setSteps([]);
     setPipelineStatus("running");
 
-    const unsub = subscribeToWorkflow(workflowId, (event: WorkflowEvent) => {
-      if (event.step === "pipeline_end") {
-        const finalStatus = event.status === "failed" ? "failed" : "completed";
-        setPipelineStatus(finalStatus);
-        onCompleteRef.current?.(finalStatus as "completed" | "failed", event.detail);
-        return;
-      }
-      if (event.step === "pipeline_start") return;
-
-      setSteps((prev) => {
-        const existing = prev.findIndex((s) => s.name === event.step);
-        const prevCount = existing >= 0 ? prev[existing].count : 0;
-        const updated: StepState = {
-          name: event.step,
-          status: event.status,
-          detail: event.detail,
-          elapsed_ms: event.elapsed_ms,
-          count: event.status === "started" ? prevCount + 1 : (existing >= 0 ? prev[existing].count : 1),
-        };
-
-        if (existing >= 0) {
-          const copy = [...prev];
-          copy[existing] = updated;
-          return copy;
+    const unsub = subscribeToWorkflow(
+      workflowId,
+      (event: WorkflowEvent) => {
+        if (event.step === "pipeline_end") {
+          const finalStatus = event.status === "failed" ? "failed" : "completed";
+          setPipelineStatus(finalStatus);
+          onCompleteRef.current?.(finalStatus as "completed" | "failed", event.detail);
+          return;
         }
-        return [...prev, updated];
-      });
-    });
+        if (event.step === "pipeline_start") return;
+
+        setSteps((prev) => {
+          const existing = prev.findIndex((s) => s.name === event.step);
+          const prevCount = existing >= 0 ? prev[existing].count : 0;
+          const updated: StepState = {
+            name: event.step,
+            status: event.status,
+            detail: event.detail,
+            elapsed_ms: event.elapsed_ms,
+            count: event.status === "started" ? prevCount + 1 : (existing >= 0 ? prev[existing].count : 1),
+          };
+
+          if (existing >= 0) {
+            const copy = [...prev];
+            copy[existing] = updated;
+            return copy;
+          }
+          return [...prev, updated];
+        });
+      },
+      () => {
+        setPipelineStatus("failed");
+        onCompleteRef.current?.("failed", "Connection lost");
+      },
+    );
 
     unsubRef.current = unsub;
     return () => {

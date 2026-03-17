@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,19 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.config import settings
 from app.core.workflow_tracker import tracker
-from app.knowledge.chunker import chunk_document
 from app.knowledge.doc_generator import DocGenerator
 from app.knowledge.doc_store import DocStore
 from app.knowledge.git_tracker import GitTracker
-from app.knowledge.indexing_pipeline import (
-    generate_summary_doc,
-    run_pass1_profile,
-    run_pass2_3_knowledge,
-    run_pass4_enrich,
-)
+from app.knowledge.pipeline_runner import IndexingPipelineRunner
 from app.knowledge.repo_analyzer import RepoAnalyzer
 from app.knowledge.vector_store import VectorStore
 from app.models.base import async_session_factory
+from app.services.checkpoint_service import CheckpointService
 from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
 from app.services.project_service import ProjectService
@@ -40,10 +34,22 @@ _doc_store = DocStore()
 _doc_generator = DocGenerator()
 _vector_store = VectorStore()
 _cache_svc = ProjectCacheService()
+_checkpoint_svc = CheckpointService()
 
 _membership_svc = MembershipService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
+
+_pipeline_runner = IndexingPipelineRunner(
+    ssh_key_svc=_ssh_key_svc,
+    git_tracker=_git_tracker,
+    repo_analyzer=_repo_analyzer,
+    doc_store=_doc_store,
+    doc_generator=_doc_generator,
+    vector_store=_vector_store,
+    cache_svc=_cache_svc,
+    checkpoint_svc=_checkpoint_svc,
+)
 
 
 class RepoCheckRequest(BaseModel):
@@ -117,16 +123,40 @@ async def index_repo(
             detail="Project has no repository URL configured",
         )
 
-    lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
-    if lock.locked():
+    existing_task = _indexing_tasks.get(project_id)
+    if existing_task and not existing_task.done():
         raise HTTPException(
             status_code=409,
             detail="Indexing already in progress for this project",
         )
 
+    lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
+
+    existing_cp = await _checkpoint_svc.get_active(db, project_id)
+    resumed = False
+
+    if existing_cp and not body.force_full:
+        if existing_cp.status == "running":
+            existing_cp.status = "interrupted"
+            await db.commit()
+        resumed = True
+        logger.info(
+            "Found checkpoint for project %s (status=%s, %s steps done)",
+            project_id, existing_cp.status,
+            len(CheckpointService.get_completed_steps(existing_cp)),
+        )
+    elif existing_cp and body.force_full:
+        await _checkpoint_svc.delete(db, existing_cp.id)
+        existing_cp = None
+        logger.info("Discarded existing checkpoint for project %s (force_full)", project_id)
+
     wf_id = await tracker.begin(
         "index_repo",
-        {"project_id": project_id, "repo_url": project.repo_url},
+        {
+            "project_id": project_id,
+            "repo_url": project.repo_url,
+            "resumed": resumed,
+        },
     )
 
     task = asyncio.create_task(
@@ -137,8 +167,9 @@ async def index_repo(
     return JSONResponse(
         status_code=202,
         content={
-            "status": "started",
+            "status": "resumed" if resumed else "started",
             "workflow_id": wf_id,
+            "resumed": resumed,
         },
     )
 
@@ -151,260 +182,37 @@ async def _run_index_background(
     async with lock:
         try:
             async with async_session_factory() as db:
-                await _run_index(project_id, project, body, db, wf_id)
+                existing_cp = await _checkpoint_svc.get_active(db, project_id)
+
+                if existing_cp and not body.force_full:
+                    existing_cp.workflow_id = wf_id
+                    existing_cp.status = "running"
+                    await db.commit()
+                    await db.refresh(existing_cp)
+                    checkpoint = existing_cp
+                else:
+                    checkpoint = await _checkpoint_svc.create(
+                        db, project_id, wf_id, head_sha="", last_sha=None,
+                    )
+
+                try:
+                    await _pipeline_runner.run(
+                        project_id, project, body.force_full, db, wf_id, checkpoint,
+                    )
+                except Exception as exc:
+                    logger.exception("Indexing pipeline failed for project %s", project_id)
+                    try:
+                        cp = await _checkpoint_svc.get_active(db, project_id)
+                        if cp:
+                            await _checkpoint_svc.mark_failed(db, cp.id, "pipeline", str(exc))
+                    except Exception:
+                        logger.exception("Failed to mark checkpoint as failed for project %s", project_id)
+                    await tracker.end(wf_id, "index_repo", "failed", str(exc))
         except Exception as exc:
             logger.exception("Background indexing failed for project %s", project_id)
             await tracker.end(wf_id, "index_repo", "failed", str(exc))
         finally:
             _indexing_tasks.pop(project_id, None)
-
-
-async def _run_index(
-    project_id: str, project, body: IndexRequest,
-    db: AsyncSession, wf_id: str,
-) -> IndexResponse:
-    async with tracker.step(wf_id, "resolve_ssh_key", "Decrypting SSH key"):
-        ssh_key_content = None
-        ssh_key_passphrase = None
-        if project.ssh_key_id:
-            decrypted = await _ssh_key_svc.get_decrypted(db, project.ssh_key_id)
-            if decrypted:
-                ssh_key_content, ssh_key_passphrase = decrypted
-
-    async with tracker.step(
-        wf_id, "clone_or_pull", f"Cloning/pulling {project.repo_url}",
-    ):
-        repo_dir = await asyncio.to_thread(
-            _repo_analyzer.clone_or_pull,
-            repo_url=project.repo_url,
-            project_id=project_id,
-            branch=project.repo_branch,
-            ssh_key_content=ssh_key_content,
-            ssh_key_passphrase=ssh_key_passphrase,
-        )
-
-    async with tracker.step(wf_id, "detect_changes", "Computing changed files"):
-        head_sha = await asyncio.to_thread(_git_tracker.get_head_sha, repo_dir)
-        if body.force_full:
-            last_sha = None
-        else:
-            last_sha = await _git_tracker.get_last_indexed_sha(
-                db, project_id, branch=project.repo_branch,
-            )
-        diff_result = await asyncio.to_thread(
-            _git_tracker.get_changed_files, repo_dir, last_sha, head_sha,
-        )
-        changed_files = diff_result.changed
-        deleted_files = diff_result.deleted
-    await tracker.emit(
-        wf_id, "detect_changes", "completed",
-        f"{len(changed_files)} changed, {len(deleted_files)} deleted",
-    )
-
-    if deleted_files:
-        async with tracker.step(
-            wf_id, "cleanup_deleted",
-            f"Removing {len(deleted_files)} deleted file(s) from knowledge base",
-        ):
-            await _doc_store.delete_docs_for_paths(db, project_id, deleted_files)
-            for dpath in deleted_files:
-                await asyncio.to_thread(
-                    _vector_store.delete_by_source_path, project_id, dpath,
-                )
-
-    async with tracker.step(
-        wf_id, "project_profile", "Detecting project framework and structure",
-    ):
-        cached_profile = await _cache_svc.load_profile(db, project_id)
-        marker_overlap = False
-        if cached_profile and not body.force_full:
-            markers = cached_profile.marker_files
-            marker_overlap = bool(markers & set(changed_files))
-
-        if cached_profile and not body.force_full and not marker_overlap:
-            profile = cached_profile
-            logger.info("Using cached project profile")
-        else:
-            profile = await asyncio.to_thread(run_pass1_profile, repo_dir)
-    await tracker.emit(
-        wf_id, "project_profile", "completed", profile.summary,
-    )
-
-    async with tracker.step(
-        wf_id, "analyze_files", f"Analyzing {len(changed_files)} files",
-    ):
-        raw_schemas = await asyncio.to_thread(
-            _repo_analyzer.analyze, repo_dir, changed_files, profile,
-        )
-        merged: dict[str, object] = {}
-        for s in raw_schemas:
-            key = s.file_path
-            if key in merged:
-                existing = merged[key]
-                existing.doc_type = (
-                    s.doc_type if s.doc_type == "orm_model" else existing.doc_type
-                )
-                existing.models = list(
-                    dict.fromkeys(existing.models + s.models),
-                )
-                existing.tables = list(
-                    dict.fromkeys(existing.tables + s.tables),
-                )
-                if (
-                    s.doc_type == "query_pattern"
-                    and s.content not in existing.content
-                ):
-                    existing.content += f"\n\n---\n\n{s.content}"
-            else:
-                merged[key] = s
-        schemas = list(merged.values())
-
-    async with tracker.step(
-        wf_id, "cross_file_analysis",
-        "Building entity map, usage tracking, and enum extraction",
-    ):
-        cached_knowledge = None
-        if not body.force_full:
-            cached_knowledge = await _cache_svc.load_knowledge(
-                db, project_id,
-            )
-        is_incremental = cached_knowledge is not None and last_sha is not None
-        knowledge = await asyncio.to_thread(
-            run_pass2_3_knowledge,
-            repo_dir,
-            schemas,
-            changed_files=changed_files if is_incremental else None,
-            deleted_files=deleted_files if is_incremental else None,
-            cached_knowledge=cached_knowledge,
-        )
-    await tracker.emit(
-        wf_id, "cross_file_analysis", "completed",
-        f"{len(knowledge.entities)} entities, "
-        f"{len(knowledge.dead_tables)} dead tables, "
-        f"{len(knowledge.enums)} enums"
-        + (" (incremental)" if is_incremental else " (full)"),
-    )
-
-    enriched_docs = await asyncio.to_thread(
-        run_pass4_enrich, schemas, knowledge, profile,
-    )
-
-    summary_doc = generate_summary_doc(knowledge, profile)
-    enriched_docs.append(summary_doc)
-
-    existing_summary = await _doc_store.get_docs_for_project(
-        db, project_id, doc_type="project_summary",
-    )
-    existing_summary_hash = ""
-    if existing_summary:
-        existing_summary_hash = hashlib.md5(
-            existing_summary[0].content.encode(),
-        ).hexdigest()
-
-    doc_ids: list[str] = []
-    documents: list[str] = []
-    metadatas: list[dict] = []
-
-    async with tracker.step(
-        wf_id, "generate_docs",
-        f"Generating docs for {len(enriched_docs)} items",
-    ):
-        for i, edoc in enumerate(enriched_docs):
-            await tracker.emit(
-                wf_id, "generate_docs", "started",
-                f"Processing {edoc.file_path} ({i + 1}/{len(enriched_docs)})",
-            )
-
-            if edoc.file_path == "__project_summary__":
-                new_hash = hashlib.md5(edoc.content.encode()).hexdigest()
-                if new_hash == existing_summary_hash:
-                    logger.info(
-                        "Project summary unchanged, skipping LLM call",
-                    )
-                    continue
-
-            generated_content = await _doc_generator.generate(
-                file_path=edoc.file_path,
-                content=edoc.content,
-                doc_type=edoc.doc_type,
-                preferred_provider=project.default_llm_provider,
-                model=project.default_llm_model,
-                enrichment_context=edoc.enrichment_context,
-            )
-
-            doc = await _doc_store.upsert(
-                session=db,
-                project_id=project_id,
-                doc_type=edoc.doc_type,
-                source_path=edoc.file_path,
-                content=generated_content,
-                commit_sha=head_sha,
-            )
-
-            await asyncio.to_thread(
-                _vector_store.delete_by_source_path,
-                project_id, edoc.file_path,
-            )
-
-            chunks = chunk_document(
-                content=generated_content,
-                file_path=edoc.file_path,
-                doc_type=edoc.doc_type,
-                extra_metadata={
-                    "commit_sha": head_sha,
-                    "models": ",".join(edoc.models),
-                    "tables": ",".join(edoc.tables),
-                },
-            )
-            for chunk in chunks:
-                chunk_id = (
-                    f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}"
-                )
-                doc_ids.append(chunk_id)
-                documents.append(chunk.content)
-                metadatas.append(chunk.metadata)
-
-    async with tracker.step(
-        wf_id, "chunk_and_store",
-        f"Storing {len(doc_ids)} chunks in vector store",
-    ):
-        if doc_ids:
-            await asyncio.to_thread(
-                _vector_store.add_documents,
-                project_id=project_id,
-                doc_ids=doc_ids,
-                documents=documents,
-                metadatas=metadatas,
-            )
-
-    async with tracker.step(wf_id, "record_index", "Recording commit index"):
-        repo = await asyncio.to_thread(Repo, str(repo_dir))
-        commit_msg = repo.head.commit.message.strip()[:200]
-        await _git_tracker.record_index(
-            session=db,
-            project_id=project_id,
-            commit_sha=head_sha,
-            commit_message=commit_msg,
-            indexed_files=changed_files,
-            branch=project.repo_branch,
-        )
-        await _git_tracker.cleanup_old_records(db, project_id, keep=10)
-        await _cache_svc.save(
-            db, project_id, knowledge=knowledge, profile=profile,
-        )
-
-    await tracker.end(
-        wf_id, "index_repo", "completed",
-        f"Indexed {len(changed_files)} files, {len(schemas)} schemas",
-    )
-
-    return IndexResponse(
-        status="completed",
-        commit_sha=head_sha,
-        files_indexed=len(changed_files),
-        schemas_found=len(schemas),
-        workflow_id=wf_id,
-    )
 
 
 @router.get("/{project_id}/status")
@@ -422,7 +230,6 @@ async def repo_status(
         db, project_id, branch=project.repo_branch,
     )
     docs = await _doc_store.get_docs_for_project(db, project_id)
-    lock = _indexing_locks.get(project_id)
 
     indexed_files_count = 0
     if record and record.indexed_files:
@@ -431,6 +238,8 @@ async def repo_status(
             indexed_files_count = len(_json.loads(record.indexed_files))
         except Exception:
             pass
+
+    checkpoint = await _checkpoint_svc.get_active(db, project_id)
 
     return {
         "project_id": project_id,
@@ -442,7 +251,11 @@ async def repo_status(
         "branch": record.branch if record else project.repo_branch,
         "indexed_files_count": indexed_files_count,
         "total_documents": len(docs),
-        "is_indexing": bool(lock and lock.locked()),
+        "is_indexing": bool(
+            _indexing_tasks.get(project_id) and not _indexing_tasks[project_id].done()
+        ),
+        "has_checkpoint": checkpoint is not None,
+        "checkpoint_status": checkpoint.status if checkpoint else None,
     }
 
 

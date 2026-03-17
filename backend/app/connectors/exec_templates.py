@@ -51,7 +51,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
         "query": (
             'PGPASSWORD="{db_password}" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
-            " -t -A -F $'\\t' --pset footer=off --csv"
+            " -A -F $'\\t' --pset footer=off"
         ),
         "introspect_tables": (
             'PGPASSWORD="{db_password}" psql'

@@ -19,7 +19,7 @@ const EXEC_TEMPLATE_PRESETS: Record<string, string> = {
   mysql:
     'MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch --raw',
   postgres:
-    'PGPASSWORD="{db_password}" psql -h {db_host} -p {db_port} -U {db_user} -d {db_name} -t -A -F $\'\\t\' --pset footer=off --csv',
+    'PGPASSWORD="{db_password}" psql -h {db_host} -p {db_port} -U {db_user} -d {db_name} -A -F $\'\\t\' --pset footer=off',
   clickhouse:
     'clickhouse-client -h {db_host} --port {db_port} -u {db_user} --password "{db_password}" -d {db_name} --format TabSeparatedWithNames',
 };
@@ -106,34 +106,42 @@ export function ConnectionSelector() {
 
   const handleCreate = async () => {
     if (!activeProject || !form.name.trim()) return;
+    if (form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
+      toast("SSH host is set — please provide an SSH user and key.", "error");
+      return;
+    }
     const preCommandsList = form.ssh_pre_commands.trim()
       ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
       : null;
-    const conn = await api.connections.create({
-      project_id: activeProject.id,
-      name: form.name,
-      db_type: form.db_type,
-      db_host: form.db_host,
-      db_port: parseInt(form.db_port),
-      db_name: form.db_name,
-      db_user: form.db_user || null,
-      db_password: form.db_password || null,
-      ssh_host: form.ssh_host || null,
-      ssh_port: parseInt(form.ssh_port) || 22,
-      ssh_user: form.ssh_user || null,
-      ssh_key_id: form.ssh_key_id || null,
-      connection_string: useConnString ? form.connection_string || null : null,
-      is_read_only: form.is_read_only,
-      ssh_exec_mode: form.ssh_exec_mode,
-      ssh_command_template: form.ssh_command_template || null,
-      ssh_pre_commands: preCommandsList,
-    });
-    useAppStore.setState((state) => ({
-      connections: [conn, ...state.connections],
-    }));
-    setActiveConnection(conn);
-    setShowCreate(false);
-    resetForm();
+    try {
+      const conn = await api.connections.create({
+        project_id: activeProject.id,
+        name: form.name,
+        db_type: form.db_type,
+        db_host: form.db_host,
+        db_port: parseInt(form.db_port),
+        db_name: form.db_name,
+        db_user: form.db_user || null,
+        db_password: form.db_password || null,
+        ssh_host: form.ssh_host || null,
+        ssh_port: parseInt(form.ssh_port) || 22,
+        ssh_user: form.ssh_user || null,
+        ssh_key_id: form.ssh_key_id || null,
+        connection_string: useConnString ? form.connection_string || null : null,
+        is_read_only: form.is_read_only,
+        ssh_exec_mode: form.ssh_exec_mode,
+        ssh_command_template: form.ssh_command_template || null,
+        ssh_pre_commands: preCommandsList,
+      });
+      useAppStore.setState((state) => ({
+        connections: [conn, ...state.connections],
+      }));
+      setActiveConnection(conn);
+      setShowCreate(false);
+      resetForm();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to create connection", "error");
+    }
   };
 
   const handleEdit = (c: Connection) => {
@@ -145,19 +153,29 @@ export function ConnectionSelector() {
 
   const handleUpdate = async () => {
     if (!editingId) return;
+    if (!form.name.trim()) {
+      toast("Connection name is required.", "error");
+      return;
+    }
+    if (form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
+      toast("SSH host is set — please provide an SSH user and key.", "error");
+      return;
+    }
     const updates: Record<string, unknown> = {};
     const fields = [
       "name", "db_type", "db_host", "db_name", "db_user", "ssh_host",
-      "ssh_user", "ssh_key_id", "is_read_only",
+      "ssh_user", "ssh_key_id",
     ] as const;
     for (const f of fields) {
-      updates[f] = form[f] || null;
+      updates[f] = form[f] !== "" ? form[f] : null;
     }
     updates.db_port = parseInt(form.db_port);
     updates.ssh_port = parseInt(form.ssh_port) || 22;
     if (form.db_password) updates.db_password = form.db_password;
     if (useConnString && form.connection_string) {
       updates.connection_string = form.connection_string;
+    } else if (!useConnString) {
+      updates.connection_string = null;
     }
     updates.name = form.name;
     updates.is_read_only = form.is_read_only;
@@ -168,13 +186,19 @@ export function ConnectionSelector() {
       : null;
     updates.ssh_pre_commands = preCommandsList;
 
-    const updated = await api.connections.update(editingId, updates);
-    useAppStore.setState((state) => ({
-      connections: state.connections.map((c) => (c.id === updated.id ? updated : c)),
-      ...(state.activeConnection?.id === updated.id ? { activeConnection: updated } : {}),
-    }));
-    setEditingId(null);
-    resetForm();
+    try {
+      const updated = await api.connections.update(editingId, updates);
+      useAppStore.setState((state) => ({
+        connections: state.connections.map((c) => (c.id === updated.id ? updated : c)),
+        ...(state.activeConnection?.id === updated.id ? { activeConnection: updated } : {}),
+      }));
+      setTestResult((prev) => { const next = { ...prev }; delete next[editingId]; return next; });
+      setSshTestResult((prev) => { const next = { ...prev }; delete next[editingId]; return next; });
+      setEditingId(null);
+      resetForm();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update connection", "error");
+    }
   };
 
   const handleTest = async (id: string) => {
@@ -227,6 +251,8 @@ export function ConnectionSelector() {
         connections: state.connections.filter((c) => c.id !== id),
         ...(state.activeConnection?.id === id ? { activeConnection: null } : {}),
       }));
+      setTestResult((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      setSshTestResult((prev) => { const next = { ...prev }; delete next[id]; return next; });
     } catch {
       toast("Failed to delete connection", "error");
     }
@@ -249,13 +275,24 @@ export function ConnectionSelector() {
         onChange={(e) => {
           const newType = e.target.value;
           const knownDefaults = Object.values(DEFAULT_PORTS);
-          setForm((prev) => ({
-            ...prev,
-            db_type: newType,
-            ...(knownDefaults.includes(prev.db_port)
-              ? { db_port: DEFAULT_PORTS[newType] || "5432" }
-              : {}),
-          }));
+          const presetValues = Object.values(EXEC_TEMPLATE_PRESETS);
+          setForm((prev) => {
+            const autoTemplate =
+              prev.ssh_exec_mode &&
+              newType !== "mongodb" &&
+              (!prev.ssh_command_template || presetValues.includes(prev.ssh_command_template))
+                ? EXEC_TEMPLATE_PRESETS[newType] || ""
+                : prev.ssh_command_template;
+            return {
+              ...prev,
+              db_type: newType,
+              ...(knownDefaults.includes(prev.db_port)
+                ? { db_port: DEFAULT_PORTS[newType] || "5432" }
+                : {}),
+              ...(newType === "mongodb" ? { ssh_exec_mode: false } : {}),
+              ssh_command_template: autoTemplate,
+            };
+          });
         }}
         className={inputCls}
       >
@@ -324,6 +361,12 @@ export function ConnectionSelector() {
         </>
       )}
 
+      {useConnString ? (
+        <p className="text-[10px] text-zinc-500 px-1">
+          SSH tunnel is not used with connection strings. Switch to individual fields to configure SSH.
+        </p>
+      ) : (
+        <>
       <div className="grid grid-cols-2 gap-2">
         <input
           value={form.ssh_host}
@@ -361,22 +404,46 @@ export function ConnectionSelector() {
       {hasSSH && (!form.ssh_user.trim() || !form.ssh_key_id) && (
         <p className="text-[10px] text-amber-400 px-1">SSH tunnel requires a user and key.</p>
       )}
+      {hasSSH && form.ssh_user.trim() && form.ssh_key_id && !form.ssh_exec_mode && (
+        <p className="text-[10px] text-zinc-500 px-1">
+          SSH tunnel mode: connects via port-forwarding and a native driver. No CLI tools needed on the server.
+        </p>
+      )}
 
-      {/* SSH Exec Mode (visible only when SSH is configured) */}
+      {/* SSH Exec Mode (visible only when SSH is configured, not available for MongoDB) */}
       {hasSSH && (
         <div className="space-y-2 border border-zinc-700 rounded p-2">
-          <label className="flex items-center gap-2 text-zinc-400 cursor-pointer select-none">
+          <label className={`flex items-center gap-2 cursor-pointer select-none ${form.db_type === "mongodb" ? "text-zinc-600" : "text-zinc-400"}`}>
             <input
               type="checkbox"
               checked={form.ssh_exec_mode}
-              onChange={(e) => setForm({ ...form, ssh_exec_mode: e.target.checked })}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setForm((prev) => ({
+                  ...prev,
+                  ssh_exec_mode: on,
+                  ...(on && !prev.ssh_command_template
+                    ? { ssh_command_template: EXEC_TEMPLATE_PRESETS[prev.db_type] || "" }
+                    : {}),
+                }));
+              }}
               className="accent-purple-500"
+              disabled={form.db_type === "mongodb"}
             />
             <span>
               SSH Exec Mode
-              <span className="text-[9px] ml-1 text-zinc-500">(run queries via CLI on server)</span>
+              {form.db_type === "mongodb" ? (
+                <span className="text-[9px] ml-1 text-zinc-600">(not supported for MongoDB)</span>
+              ) : (
+                <span className="text-[9px] ml-1 text-zinc-500">(CLI on server, use if port-forwarding is blocked)</span>
+              )}
             </span>
           </label>
+          {!form.ssh_exec_mode && (
+            <p className="text-[9px] text-zinc-600 px-1">
+              Enable only if port forwarding is blocked or you need specific CLI options. Default tunnel mode works for most setups.
+            </p>
+          )}
 
           {form.ssh_exec_mode && (
             <>
@@ -421,6 +488,8 @@ export function ConnectionSelector() {
             </>
           )}
         </div>
+      )}
+        </>
       )}
 
       {/* Read-only toggle */}

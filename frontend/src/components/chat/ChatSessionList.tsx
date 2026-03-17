@@ -36,7 +36,7 @@ export function ChatSessionList() {
           role: m.role as "user" | "assistant" | "system",
           content: m.content,
           query: meta.query || undefined,
-          visualization: meta.viz_type ? undefined : undefined,
+          visualization: meta.visualization ?? undefined,
           error: meta.error || undefined,
           metadataJson: m.metadata_json || undefined,
           timestamp: new Date(m.created_at).getTime(),

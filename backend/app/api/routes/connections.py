@@ -1,7 +1,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -32,6 +32,11 @@ class ConnectionCreate(BaseModel):
     ssh_command_template: str | None = None
     ssh_pre_commands: list[str] | None = None
 
+    @field_validator("name", "connection_string", mode="before")
+    @classmethod
+    def strip_strings(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
+
     @model_validator(mode="after")
     def require_conn_string_or_host(self):
         if not self.connection_string and not (self.db_host and self.db_name):
@@ -59,6 +64,8 @@ class ConnectionUpdate(BaseModel):
 
 
 class ConnectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     project_id: str
     name: str
@@ -124,6 +131,16 @@ async def update_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     updates = body.model_dump(exclude_unset=True)
+
+    merged_conn_string = updates.get("connection_string", conn.connection_string if hasattr(conn, "connection_string") else None)
+    merged_db_host = updates.get("db_host", conn.db_host)
+    merged_db_name = updates.get("db_name", conn.db_name)
+    if not merged_conn_string and not (merged_db_host and merged_db_name):
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either a connection string or db_host + db_name",
+        )
+
     conn = await _svc.update(db, connection_id, **updates)
     return conn
 

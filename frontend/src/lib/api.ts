@@ -33,7 +33,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     }
     const body = await res.json().catch(() => ({}));
     const detail = Array.isArray(body.detail)
-      ? body.detail.map((e: { msg: string }) => e.msg).join("; ")
+      ? body.detail.map((e: { msg?: string; message?: string }) => e.msg ?? e.message ?? "Validation error").join("; ")
       : body.detail || `Request failed: ${res.status}`;
     throw new Error(detail);
   }
@@ -336,7 +336,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     index: (projectId: string, forceFull = false) =>
-      request<{ status: string; workflow_id: string | null; commit_sha?: string; files_indexed?: number; schemas_found?: number }>(
+      request<{ status: string; workflow_id: string | null; resumed?: boolean; commit_sha?: string; files_indexed?: number; schemas_found?: number }>(
         `/repos/${projectId}/index`,
         { method: "POST", body: JSON.stringify({ force_full: forceFull }) }
       ),
@@ -412,6 +412,17 @@ export const api = {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ columns, rows, format }),
       });
+      if (res.status === 401 && typeof window !== "undefined") {
+        try {
+          const { useAuthStore } = await import("@/stores/auth-store");
+          useAuthStore.getState().logout();
+        } catch {
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("auth_user");
+        }
+        window.location.reload();
+        throw new Error("Session expired. Please log in again.");
+      }
       if (!res.ok) throw new Error("Export failed");
       return res.blob();
     },

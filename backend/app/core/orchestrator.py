@@ -73,7 +73,8 @@ class Orchestrator:
         self._tracker = workflow_tracker or default_tracker
 
     def _connector_key(self, cfg: ConnectionConfig) -> str:
-        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name]
+        parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name,
+                 str(cfg.ssh_exec_mode)]
         if cfg.ssh_host:
             parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
         return ":".join(parts)
@@ -485,6 +486,12 @@ class Orchestrator:
         key = self._connector_key(connection_config)
         self._schema_cache.pop(key, None)
         self._query_result_cache.invalidate(key)
+        old_connector = self._connectors.pop(key, None)
+        if old_connector:
+            try:
+                await old_connector.disconnect()
+            except Exception:
+                pass
         connector = await self.get_or_create_connector(connection_config)
         schema = await connector.introspect_schema()
         self._schema_cache[key] = (schema, time.monotonic())

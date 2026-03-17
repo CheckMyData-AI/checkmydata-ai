@@ -135,7 +135,12 @@ export function Sidebar() {
     }
   };
 
-  const { sshKeys, projects, connections } = useAppStore();
+  const { sshKeys, setSshKeys, projects, connections } = useAppStore();
+
+  useEffect(() => {
+    api.sshKeys.list().then(setSshKeys).catch(() => {});
+  }, [setSshKeys]);
+
   const showOnboarding = projects.length === 0;
 
   const sshCollapse = useSectionCollapse("ssh-keys");
