@@ -532,6 +532,7 @@ class IndexingPipelineRunner:
             )
 
             await self._mark_db_index_code_stale(db, project_id)
+            await self._mark_sync_stale(db, project_id)
 
         # --- Cleanup checkpoint ---
         await self._cp_svc.delete(db, cp_id)
@@ -580,6 +581,27 @@ class IndexingPipelineRunner:
         except Exception:
             logger.debug(
                 "Failed to mark DB index as code-stale for project %s",
+                project_id[:8],
+                exc_info=True,
+            )
+
+    @staticmethod
+    async def _mark_sync_stale(
+        db: AsyncSession,
+        project_id: str,
+    ) -> None:
+        """After a code re-index, mark code-DB sync as stale for this project."""
+        try:
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            await svc.mark_stale_for_project(db, project_id)
+            logger.info(
+                "Marked code-DB sync as stale for project %s", project_id[:8],
+            )
+        except Exception:
+            logger.debug(
+                "Failed to mark code-DB sync as stale for project %s",
                 project_id[:8],
                 exc_info=True,
             )

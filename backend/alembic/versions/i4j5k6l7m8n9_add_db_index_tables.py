@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("sample_data_json", sa.Text, server_default="[]"),
         sa.Column("ordering_column", sa.String(255), nullable=True),
         sa.Column("latest_record_at", sa.String(100), nullable=True),
-        sa.Column("is_active", sa.Boolean, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean, server_default=sa.text("true")),
         sa.Column("relevance_score", sa.Integer, server_default="3"),
         sa.Column("business_description", sa.Text, server_default=""),
         sa.Column("data_patterns", sa.Text, server_default=""),

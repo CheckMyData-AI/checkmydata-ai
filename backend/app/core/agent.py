@@ -104,6 +104,7 @@ class ConversationalAgent:
             has_kb = self._has_knowledge_base(project_id)
             has_db_idx = await self._has_db_index(project_id, connection_config)
             db_idx_stale = await self._is_db_index_stale(connection_config) if has_db_idx else False
+            has_sync = await self._has_code_db_sync(connection_config) if has_db_idx else False
             db_type = connection_config.db_type if connection_config else None
 
             system_prompt = build_agent_system_prompt(
@@ -113,12 +114,14 @@ class ConversationalAgent:
                 has_knowledge_base=has_kb,
                 has_db_index=has_db_idx,
                 db_index_stale=db_idx_stale,
+                has_code_db_sync=has_sync,
             )
 
             tools = get_available_tools(
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
                 has_db_index=has_db_idx,
+                has_code_db_sync=has_sync,
             )
 
             executor = ToolExecutor(
@@ -328,6 +331,24 @@ class ConversationalAgent:
                 )
         except Exception:
             logger.debug("DB index staleness check failed", exc_info=True)
+            return False
+
+    async def _has_code_db_sync(
+        self,
+        connection_config: ConnectionConfig | None,
+    ) -> bool:
+        """Check whether code-DB sync data exists for the active connection."""
+        if not connection_config or not connection_config.connection_id:
+            return False
+        try:
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                return await svc.is_synced(session, connection_config.connection_id)
+        except Exception:
+            logger.debug("Code-DB sync check failed", exc_info=True)
             return False
 
     def _has_knowledge_base(self, project_id: str) -> bool:

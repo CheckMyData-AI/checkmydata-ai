@@ -112,6 +112,7 @@ class ToolExecutor:
             "get_custom_rules": self._get_custom_rules,
             "get_entity_info": self._get_entity_info,
             "get_db_index": self._get_db_index,
+            "get_sync_context": self._get_sync_context,
         }.get(tool_call.name)
 
         if handler is None:
@@ -314,6 +315,47 @@ class ToolExecutor:
                     return "Database index not available. Run 'Index DB' first."
 
                 return db_index_svc.index_to_prompt_context(entries, summary)
+
+    async def _get_sync_context(self, args: dict, wf_id: str) -> str:
+        scope: str = args.get("scope", "overview")
+        table_name: str | None = args.get("table_name")
+
+        if not self._connection_config:
+            return "Error: no database connection configured for this project."
+
+        from app.models.base import async_session_factory
+        from app.services.code_db_sync_service import CodeDbSyncService
+
+        sync_svc = CodeDbSyncService()
+
+        async with self._tracker.step(
+            wf_id, "get_sync_context", f"Loading sync context ({scope})"
+        ):
+            connection_id = self._connection_config.connection_id
+            if not connection_id:
+                return "Code-DB sync not available. Run 'Sync' first."
+
+            async with async_session_factory() as session:
+                if scope == "table_detail":
+                    if not table_name:
+                        return "Error: table_name is required when scope is 'table_detail'."
+                    entry = await sync_svc.get_table_sync(
+                        session, connection_id, table_name
+                    )
+                    if not entry:
+                        return (
+                            f"No sync data for table '{table_name}'. "
+                            "The table may not have been synced yet."
+                        )
+                    return sync_svc.table_sync_to_detail(entry)
+
+                entries = await sync_svc.get_sync(session, connection_id)
+                summary = await sync_svc.get_summary(session, connection_id)
+
+                if not entries:
+                    return "Code-DB sync not available. Run 'Sync' first."
+
+                return sync_svc.sync_to_prompt_context(entries, summary)
 
     async def _load_db_index_hints(self) -> str:
         """Load compact DB index hints for query repair context."""

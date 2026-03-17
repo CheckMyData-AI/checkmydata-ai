@@ -136,11 +136,38 @@ GET_DB_INDEX_TOOL = Tool(
 )
 
 
+GET_SYNC_CONTEXT_TOOL = Tool(
+    name="get_sync_context",
+    description=(
+        "Get code-database synchronization notes: data format conventions, "
+        "conversion warnings (e.g. money stored in cents vs dollars), "
+        "column-level notes, and query recommendations derived from "
+        "analyzing the codebase. Call this BEFORE writing queries to "
+        "prevent data-interpretation errors."
+    ),
+    parameters=[
+        ToolParameter(
+            name="scope",
+            type="string",
+            description="Level of detail to return",
+            enum=["overview", "table_detail"],
+        ),
+        ToolParameter(
+            name="table_name",
+            type="string",
+            description="Table name (required when scope is 'table_detail')",
+            required=False,
+        ),
+    ],
+)
+
+
 def get_available_tools(
     *,
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_db_index: bool = False,
+    has_code_db_sync: bool = False,
 ) -> list[Tool]:
     """Return the subset of tools available given the current context."""
     tools: list[Tool] = []
@@ -150,6 +177,8 @@ def get_available_tools(
         tools.append(GET_CUSTOM_RULES_TOOL)
         if has_db_index:
             tools.append(GET_DB_INDEX_TOOL)
+        if has_code_db_sync:
+            tools.append(GET_SYNC_CONTEXT_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_KNOWLEDGE_TOOL)
         tools.append(GET_ENTITY_INFO_TOOL)

@@ -330,6 +330,16 @@ class DbIndexPipeline:
                     )
                     await session.commit()
 
+            try:
+                from app.services.code_db_sync_service import CodeDbSyncService
+
+                sync_svc = CodeDbSyncService()
+                async with async_session_factory() as session:
+                    await sync_svc.mark_stale(session, connection_id)
+                    await session.commit()
+            except Exception:
+                logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
+
             await self._tracker.end(
                 wf_id, "db_index", "completed",
                 f"{total_tables} tables indexed ({active_count} active)",

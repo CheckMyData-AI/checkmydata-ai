@@ -6,6 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.services.code_db_sync_service import CodeDbSyncService
+from app.services.connection_service import ConnectionService
+from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rule_service import RuleService
@@ -16,6 +19,9 @@ router = APIRouter()
 _svc = ProjectService()
 _membership_svc = MembershipService()
 _rule_svc = RuleService()
+_conn_svc = ConnectionService()
+_db_index_svc = DbIndexService()
+_sync_svc = CodeDbSyncService()
 
 
 class ProjectCreate(BaseModel):
@@ -189,3 +195,71 @@ async def delete_project(
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
+
+
+@router.get("/{project_id}/readiness")
+async def project_readiness(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Check project readiness for chat: repo, DB, index, and sync status."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    project = await _svc.get(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo_connected = bool(project.repo_url)
+
+    repo_indexed = False
+    if repo_connected:
+        try:
+            from app.knowledge.vector_store import VectorStore
+
+            vs = VectorStore()
+            col = vs.get_or_create_collection(project_id)
+            repo_indexed = col.count() > 0
+        except Exception:
+            pass
+
+    connections = await _conn_svc.list_by_project(db, project_id)
+    db_connected = len(connections) > 0
+
+    db_indexed = False
+    code_db_synced = False
+    active_connection_id = None
+
+    for conn in connections:
+        active_connection_id = conn.id
+        indexed = await _db_index_svc.is_indexed(db, conn.id)
+        if indexed:
+            db_indexed = True
+            synced = await _sync_svc.is_synced(db, conn.id)
+            if synced:
+                code_db_synced = True
+            break
+
+    missing_steps = []
+    if not repo_connected:
+        missing_steps.append({"step": "connect_repo", "label": "Connect a Git repository"})
+    if not repo_indexed:
+        missing_steps.append({"step": "index_repo", "label": "Index the repository"})
+    if not db_connected:
+        missing_steps.append({"step": "connect_db", "label": "Add a database connection"})
+    if not db_indexed:
+        missing_steps.append({"step": "index_db", "label": "Index the database"})
+    if not code_db_synced:
+        missing_steps.append({"step": "sync", "label": "Run Code-DB Sync"})
+
+    ready = repo_connected and repo_indexed and db_connected and db_indexed and code_db_synced
+
+    return {
+        "repo_connected": repo_connected,
+        "repo_indexed": repo_indexed,
+        "db_connected": db_connected,
+        "db_indexed": db_indexed,
+        "code_db_synced": code_db_synced,
+        "ready": ready,
+        "missing_steps": missing_steps,
+        "active_connection_id": active_connection_id,
+    }

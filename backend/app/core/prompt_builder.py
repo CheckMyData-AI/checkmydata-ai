@@ -44,6 +44,7 @@ def build_agent_system_prompt(
     has_knowledge_base: bool = False,
     has_db_index: bool = False,
     db_index_stale: bool = False,
+    has_code_db_sync: bool = False,
 ) -> str:
     """Assemble a role-aware, capability-aware system prompt."""
 
@@ -97,6 +98,15 @@ def build_agent_system_prompt(
                 + stale_note
             )
 
+    if has_connection and has_code_db_sync:
+        sections.append(
+            "- Code-DB Sync: Synchronized code analysis is available. "
+            "Use `get_sync_context` BEFORE writing queries to understand "
+            "data format conventions (money in cents vs dollars, date "
+            "formats, enum values, soft-delete patterns). This prevents "
+            "common data-interpretation errors."
+        )
+
     if has_knowledge_base:
         sections.append(
             "- Knowledge Base: Project documentation is indexed.  "
@@ -117,13 +127,19 @@ def build_agent_system_prompt(
 
     guideline_num = 1
     if has_connection:
+        sync_hint = ""
+        if has_code_db_sync:
+            sync_hint = (
+                "FIRST check `get_sync_context` for data format warnings "
+                "(money, dates, enums), then "
+            )
         db_index_hint = ""
         if has_db_index:
             db_index_hint = (
                 "check the database index with `get_db_index` for table relevance and query hints, "
             )
         sections.append(
-            f"{guideline_num}. For data questions: {db_index_hint}"
+            f"{guideline_num}. For data questions: {sync_hint}{db_index_hint}"
             "check the schema with `get_schema_info`, load rules with "
             "`get_custom_rules`, then build and run a query with `execute_query`."
         )

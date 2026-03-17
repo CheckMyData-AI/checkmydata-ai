@@ -204,6 +204,55 @@ export interface DbIndexResponse {
   } | null;
 }
 
+export interface SyncStatus {
+  is_synced: boolean;
+  is_syncing?: boolean;
+  synced_at?: string | null;
+  total_tables?: number;
+  synced_tables?: number;
+  code_only_tables?: number;
+  db_only_tables?: number;
+  mismatch_tables?: number;
+  sync_status?: string;
+}
+
+export interface SyncResponse {
+  tables: {
+    table_name: string;
+    entity_name: string | null;
+    sync_status: string;
+    confidence_score: number;
+    conversion_warnings: string;
+    data_format_notes: string;
+    query_recommendations: string;
+    read_count: number;
+    write_count: number;
+    synced_at: string | null;
+  }[];
+  summary?: {
+    total_tables: number;
+    synced_tables: number;
+    code_only_tables: number;
+    db_only_tables: number;
+    mismatch_tables: number;
+    global_notes: string;
+    data_conventions: string;
+    query_guidelines: string;
+    synced_at: string | null;
+  } | null;
+}
+
+export interface ProjectReadiness {
+  repo_connected: boolean;
+  repo_indexed: boolean;
+  db_connected: boolean;
+  db_indexed: boolean;
+  code_db_synced: boolean;
+  ready: boolean;
+  missing_steps: { step: string; label: string }[];
+  active_connection_id: string | null;
+}
+
 export interface LLMModel {
   id: string;
   name: string;
@@ -250,6 +299,8 @@ export const api = {
       request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+    readiness: (id: string) =>
+      request<ProjectReadiness>(`/projects/${id}/readiness`),
   },
 
   connections: {
@@ -287,6 +338,17 @@ export const api = {
       request<DbIndexResponse>(`/connections/${id}/index-db`),
     deleteDbIndex: (id: string) =>
       request<{ ok: boolean }>(`/connections/${id}/index-db`, { method: "DELETE" }),
+
+    triggerSync: (id: string) =>
+      request<{ status: string; connection_id: string }>(`/connections/${id}/sync`, {
+        method: "POST",
+      }),
+    syncStatus: (id: string) =>
+      request<SyncStatus>(`/connections/${id}/sync/status`),
+    getSync: (id: string) =>
+      request<SyncResponse>(`/connections/${id}/sync`),
+    deleteSync: (id: string) =>
+      request<{ ok: boolean }>(`/connections/${id}/sync`, { method: "DELETE" }),
   },
 
   chat: {

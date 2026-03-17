@@ -113,11 +113,17 @@ export function ConnectionSelector() {
   const [indexStatus, setIndexStatus] = useState<
     Record<string, { is_indexed: boolean; active_tables?: number; total_tables?: number; is_indexing?: boolean; indexed_at?: string }>
   >({});
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<
+    Record<string, { is_synced: boolean; is_syncing?: boolean; synced_tables?: number; total_tables?: number; synced_at?: string; sync_status?: string }>
+  >({});
   const indexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     return () => {
       if (indexPollRef.current) clearInterval(indexPollRef.current);
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
     };
   }, []);
 
@@ -126,6 +132,7 @@ export function ConnectionSelector() {
     setEditingId(null);
     setShowCreate(false);
     setIndexStatus({});
+    setSyncStatus({});
     resetForm();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject?.id]);
@@ -141,6 +148,19 @@ export function ConnectionSelector() {
             total_tables: s.total_tables,
             is_indexing: s.is_indexing,
             indexed_at: s.indexed_at ?? undefined,
+          },
+        }));
+      }).catch(() => {});
+      api.connections.syncStatus(c.id).then((s) => {
+        setSyncStatus((prev) => ({
+          ...prev,
+          [c.id]: {
+            is_synced: s.is_synced,
+            is_syncing: s.is_syncing,
+            synced_tables: s.synced_tables,
+            total_tables: s.total_tables,
+            synced_at: s.synced_at ?? undefined,
+            sync_status: s.sync_status,
           },
         }));
       }).catch(() => {});

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
@@ -23,8 +24,10 @@ router = APIRouter()
 _svc = ConnectionService()
 _membership_svc = MembershipService()
 _db_index_svc = DbIndexService()
+_sync_svc = CodeDbSyncService()
 
 _db_index_tasks: dict[str, asyncio.Task] = {}
+_sync_tasks: dict[str, asyncio.Task] = {}
 
 
 class ConnectionCreate(BaseModel):
@@ -404,3 +407,153 @@ async def _run_db_index_background(
                 await session.commit()
         except Exception:
             logger.debug("Failed to update indexing_status", exc_info=True)
+
+
+# ------------------------------------------------------------------
+# Code-DB Sync endpoints
+# ------------------------------------------------------------------
+
+
+@router.post("/{connection_id}/sync", status_code=202)
+async def trigger_sync(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Trigger code-database synchronization (runs in background)."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    existing = _sync_tasks.get(connection_id)
+    if existing and not existing.done():
+        raise HTTPException(
+            status_code=409,
+            detail="Code-DB sync already in progress for this connection",
+        )
+
+    sync_status = await _sync_svc.get_sync_status(db, connection_id)
+    if sync_status == "running" and not (existing and existing.done()):
+        raise HTTPException(
+            status_code=409,
+            detail="Code-DB sync already in progress for this connection",
+        )
+
+    db_indexed = await _db_index_svc.is_indexed(db, connection_id)
+    if not db_indexed:
+        raise HTTPException(
+            status_code=400,
+            detail="Database must be indexed before running sync. Run 'Index DB' first.",
+        )
+
+    await _sync_svc.set_sync_status(db, connection_id, "running")
+    await db.commit()
+
+    project_id = conn.project_id
+    task = asyncio.create_task(
+        _run_sync_background(connection_id, project_id)
+    )
+    _sync_tasks[connection_id] = task
+
+    logger.info(
+        "Code-DB sync started: connection=%s project=%s",
+        connection_id[:8], project_id[:8],
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"status": "started", "connection_id": connection_id},
+    )
+
+
+@router.get("/{connection_id}/sync/status")
+async def sync_status(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get code-DB sync status for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    status = await _sync_svc.get_status(db, connection_id)
+
+    existing = _sync_tasks.get(connection_id)
+    in_memory_running = existing is not None and not existing.done()
+    db_running = status.get("sync_status") == "running"
+    status["is_syncing"] = in_memory_running or db_running
+
+    return status
+
+
+@router.get("/{connection_id}/sync")
+async def get_sync(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get the full code-DB sync results for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    entries = await _sync_svc.get_sync(db, connection_id)
+    summary = await _sync_svc.get_summary(db, connection_id)
+
+    if not entries:
+        return {"tables": [], "summary": None}
+
+    return _sync_svc.sync_to_response(entries, summary)
+
+
+@router.delete("/{connection_id}/sync")
+async def delete_sync(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Clear the code-DB sync data for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+
+    await _sync_svc.delete_all(db, connection_id)
+    logger.info("Code-DB sync cleared: connection=%s", connection_id[:8])
+    return {"ok": True}
+
+
+async def _run_sync_background(
+    connection_id: str,
+    project_id: str,
+) -> None:
+    from app.models.base import async_session_factory
+
+    try:
+        from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
+
+        pipeline = CodeDbSyncPipeline()
+        result = await pipeline.run(
+            connection_id=connection_id,
+            project_id=project_id,
+        )
+        logger.info(
+            "Code-DB sync completed: connection=%s result=%s",
+            connection_id[:8], result,
+        )
+    except Exception:
+        logger.exception(
+            "Code-DB sync background task failed: connection=%s", connection_id[:8]
+        )
+        try:
+            async with async_session_factory() as session:
+                await _sync_svc.set_sync_status(session, connection_id, "failed")
+                await session.commit()
+        except Exception:
+            logger.debug("Failed to update sync_status", exc_info=True)
+    finally:
+        _sync_tasks.pop(connection_id, None)
