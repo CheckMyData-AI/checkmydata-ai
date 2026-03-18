@@ -98,6 +98,7 @@ class TestSshKeyRoutes:
 
     def test_delete_success(self, client):
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
+            mock_svc.get = AsyncMock(return_value=MagicMock())
             mock_svc.delete = AsyncMock(return_value=True)
             resp = client.delete("/api/ssh-keys/key-1")
             assert resp.status_code == 200
@@ -105,7 +106,7 @@ class TestSshKeyRoutes:
 
     def test_delete_not_found(self, client):
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
-            mock_svc.delete = AsyncMock(return_value=False)
+            mock_svc.get = AsyncMock(return_value=None)
             resp = client.delete("/api/ssh-keys/nonexistent")
             assert resp.status_code == 404
 
@@ -113,6 +114,7 @@ class TestSshKeyRoutes:
         from app.services.ssh_key_service import SshKeyInUseError
 
         with patch("app.api.routes.ssh_keys._svc") as mock_svc:
+            mock_svc.get = AsyncMock(return_value=MagicMock())
             mock_svc.delete = AsyncMock(side_effect=SshKeyInUseError(["project:MyProject"]))
             resp = client.delete("/api/ssh-keys/key-1")
             assert resp.status_code == 409

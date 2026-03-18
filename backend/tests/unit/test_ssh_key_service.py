@@ -80,7 +80,7 @@ class TestSshKeyServiceCRUD:
         result = await svc.get_decrypted(mock_session, "key-123")
         assert result is not None
         key_content, passphrase = result
-        assert key_content == VALID_ED25519_KEY
+        assert key_content == VALID_ED25519_KEY.strip()
         assert passphrase is None
 
     @pytest.mark.asyncio

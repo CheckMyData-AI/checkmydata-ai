@@ -3,13 +3,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_current_user
 from app.api.routes.models import _cache, _sort_openrouter_models
 from app.main import app
+
+_FAKE_USER = {"user_id": "test-user-1", "email": "unit@test.local"}
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
+    yield TestClient(app)
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture(autouse=True)

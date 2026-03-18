@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -23,9 +24,30 @@ from app.services.chat_service import ChatService
 from app.services.project_service import ProjectService
 
 
+def _enable_sqlite_fks(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 @pytest_asyncio.fixture
 async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as session:
+        yield session
+
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_session_fk():
+    """Session with SQLite FK enforcement enabled (for cascade tests)."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    event.listen(engine.sync_engine, "connect", _enable_sqlite_fks)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -81,9 +103,9 @@ class TestProjectService:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_delete_cascades_to_knowledge_docs(self, db_session):
+    async def test_delete_cascades_to_knowledge_docs(self, db_session_fk):
         svc = ProjectService()
-        project = await svc.create(db_session, name="CascadeTest")
+        project = await svc.create(db_session_fk, name="CascadeTest")
 
         doc = KnowledgeDoc(
             project_id=project.id,
@@ -91,15 +113,15 @@ class TestProjectService:
             source_path="models/user.py",
             content="class User: pass",
         )
-        db_session.add(doc)
-        await db_session.commit()
+        db_session_fk.add(doc)
+        await db_session_fk.commit()
 
-        deleted = await svc.delete(db_session, project.id)
+        deleted = await svc.delete(db_session_fk, project.id)
         assert deleted is True
 
         from sqlalchemy import select
 
-        result = await db_session.execute(
+        result = await db_session_fk.execute(
             select(KnowledgeDoc).where(KnowledgeDoc.project_id == project.id)
         )
         assert result.scalars().all() == []

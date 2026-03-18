@@ -31,13 +31,13 @@ jobs:
         run: pytest tests/unit/ -v
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'ZmFrZS1rZXktZm9yLWNpLXRlc3Rpbmc=' }}
+          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'nLZmh-RM9BzY16kIlQv-7JTHH517sG66NoRIC6mHpuA=' }}
 
       - name: Integration tests
         run: pytest tests/integration/ -v
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'ZmFrZS1rZXktZm9yLWNpLXRlc3Rpbmc=' }}
+          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'nLZmh-RM9BzY16kIlQv-7JTHH517sG66NoRIC6mHpuA=' }}
 
   frontend-build:
     runs-on: ubuntu-latest
