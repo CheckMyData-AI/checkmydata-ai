@@ -14,15 +14,20 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (  # noqa: F401
+    agent_learning,
     chat_session,
     code_db_sync,
     commit_index,
     connection,
     custom_rule,
+    db_index,
+    indexing_checkpoint,
     knowledge_doc,
     project,
+    project_cache,
     project_invite,
     project_member,
+    rag_feedback,
     ssh_key,
     user,
 )
