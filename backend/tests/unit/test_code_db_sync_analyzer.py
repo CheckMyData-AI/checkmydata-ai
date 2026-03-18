@@ -257,3 +257,39 @@ class TestGenerateSummary:
 
         result = await analyzer.generate_summary([], "ctx")
         assert "0 tables" in result.global_notes
+
+
+class TestSyncStatusClamping:
+    def test_valid_statuses_pass_through(self):
+        from app.knowledge.code_db_sync_analyzer import _clamp_sync_status
+        for status in ("matched", "code_only", "db_only", "mismatch", "unknown"):
+            assert _clamp_sync_status(status) == status
+
+    def test_invalid_status_falls_back(self):
+        from app.knowledge.code_db_sync_analyzer import _clamp_sync_status
+        assert _clamp_sync_status("synced") == "unknown"
+        assert _clamp_sync_status("") == "unknown"
+        assert _clamp_sync_status("MATCHED") == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_llm_invalid_sync_status_clamped(self, analyzer, mock_llm):
+        mock_llm.complete.return_value = LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="call_1",
+                    name="table_sync_analysis",
+                    arguments={
+                        "data_format_notes": "",
+                        "column_sync_notes": "{}",
+                        "business_logic_notes": "",
+                        "conversion_warnings": "",
+                        "query_recommendations": "",
+                        "sync_status": "synced",
+                        "confidence_score": 3,
+                    },
+                )
+            ],
+        )
+        result = await analyzer.analyze_table("orders", "schema", "code")
+        assert result.sync_status == "unknown"

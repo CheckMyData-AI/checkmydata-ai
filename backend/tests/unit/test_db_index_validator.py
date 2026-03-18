@@ -394,3 +394,36 @@ class TestAnalyzeTableBatch:
             tables=[], code_context="", rules_context=""
         )
         assert results == []
+
+
+class TestCodeMatchStatusClamping:
+    def test_valid_statuses_pass_through(self):
+        from app.knowledge.db_index_validator import _clamp_code_match
+        for status in ("matched", "orphan", "mismatch", "no_code_info"):
+            assert _clamp_code_match(status) == status
+
+    def test_invalid_status_falls_back(self):
+        from app.knowledge.db_index_validator import _clamp_code_match
+        assert _clamp_code_match("hallucinated_value") == "no_code_info"
+        assert _clamp_code_match("") == "no_code_info"
+        assert _clamp_code_match("MATCHED") == "no_code_info"
+
+    @pytest.mark.asyncio
+    async def test_llm_invalid_code_match_clamped(self):
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            return_value=_make_llm_response({
+                "is_active": True,
+                "relevance_score": 3,
+                "business_description": "test",
+                "data_patterns": "",
+                "column_notes": "{}",
+                "query_hints": "",
+                "code_match_status": "hallucinated",
+            })
+        )
+        validator = DbIndexValidator(mock_llm)
+        result = await validator.analyze_table(
+            table=_make_table(), sample_data=None, code_context="", rules_context=""
+        )
+        assert result.code_match_status == "no_code_info"
