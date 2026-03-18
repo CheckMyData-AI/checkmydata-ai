@@ -52,23 +52,28 @@ jobs:
 
       - name: Release backend
         run: |
-          heroku container:release web --app ${{ env.BACKEND_APP }}
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/web)
+          curl -s -X PATCH https://api.heroku.com/apps/${{ env.BACKEND_APP }}/formation \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"}]}'
 
       - name: Release frontend
         run: |
-          heroku container:release web --app ${{ env.FRONTEND_APP }}
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.FRONTEND_APP }}/web)
+          curl -s -X PATCH https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/formation \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"}]}'
 
       - name: Verify backend health
         run: |
-          sleep 20
+          sleep 30
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.BACKEND_API_URL }}/health)
           if [ "$STATUS" != "200" ]; then
             echo "Backend health check failed with status $STATUS"
-            heroku logs --tail -n 30 --app ${{ env.BACKEND_APP }}
             exit 1
           fi
           echo "Backend is healthy (HTTP $STATUS)"

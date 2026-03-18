@@ -527,7 +527,7 @@ class TestGetSyncContext:
 
         mock_entry = MagicMock()
         mock_entry.table_name = "orders"
-        mock_entry.sync_status = "synced"
+        mock_entry.sync_status = "matched"
 
         mock_svc = MagicMock()
         mock_svc.get_sync = AsyncMock(return_value=[mock_entry])

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type ProjectReadiness } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 
@@ -18,25 +18,71 @@ const STEP_LABELS: Record<string, string> = {
   sync: "Sync code ↔ database",
 };
 
+const POLL_INTERVAL_MS = 4000;
+const MAX_POLL_MS = 10 * 60 * 1000;
+
 export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGateProps) {
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const fetchReadiness = useCallback(async () => {
     try {
       const r = await api.projects.readiness(projectId);
-      setReadiness(r);
+      if (mountedRef.current) setReadiness(r);
     } catch {
       /* ignore */
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [projectId]);
 
   useEffect(() => {
     fetchReadiness();
   }, [fetchReadiness, connectionId]);
+
+  const startPolling = useCallback((stepKey: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    const start = Date.now();
+    pollRef.current = setInterval(async () => {
+      if (Date.now() - start > MAX_POLL_MS) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        if (mountedRef.current) {
+          setActionInProgress(null);
+          toast(`${STEP_LABELS[stepKey] || stepKey} timed out`, "error");
+        }
+        return;
+      }
+      try {
+        const r = await api.projects.readiness(projectId);
+        if (!mountedRef.current) return;
+        setReadiness(r);
+        const stepDone =
+          (stepKey === "index_repo" && r.repo_indexed) ||
+          (stepKey === "index_db" && r.db_indexed) ||
+          (stepKey === "sync" && r.code_db_synced);
+        if (stepDone) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setActionInProgress(null);
+          toast(`${STEP_LABELS[stepKey] || stepKey} completed`, "success");
+        }
+      } catch {
+        /* poll silently */
+      }
+    }, POLL_INTERVAL_MS);
+  }, [projectId]);
 
   const handleAction = async (step: string) => {
     const cid = connectionId || readiness?.active_connection_id;
@@ -52,10 +98,9 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         await api.connections.triggerSync(cid);
         toast("Code-DB sync started", "success");
       }
-      setTimeout(fetchReadiness, 3000);
+      startPolling(step);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Action failed", "error");
-    } finally {
       setActionInProgress(null);
     }
   };
