@@ -179,8 +179,11 @@ export function ChatPanel() {
 
   if (!activeProject) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500">
-        Select a project to start chatting
+      <div className="flex-1 flex flex-col p-6 gap-4">
+        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-3/4" />
+        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-1/2" />
+        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-2/3" />
+        <p className="text-zinc-500 text-sm mt-4">Select a project to start chatting</p>
       </div>
     );
   }
@@ -192,6 +195,7 @@ export function ChatPanel() {
         <button
           onClick={() => useAppStore.getState().setChatMode("knowledge_only")}
           className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-500 transition-colors"
+          aria-label="Chat with Knowledge Base"
         >
           Chat with Knowledge Base
         </button>
@@ -209,6 +213,7 @@ export function ChatPanel() {
           <button
             onClick={() => useAppStore.getState().setChatMode("full")}
             className="text-[10px] text-purple-400 hover:text-purple-300"
+            aria-label="Exit Knowledge Base Mode"
           >
             Exit
           </button>
@@ -217,15 +222,14 @@ export function ChatPanel() {
       {readinessBypassed && activeProject && (
         <ReadinessBanner projectId={activeProject.id} />
       )}
-      {showReadinessGate ? (
-        <ReadinessGate
-          projectId={activeProject.id}
-          connectionId={activeConnection.id}
-          onBypass={() => setReadinessBypassed(true)}
-        />
-      ) : (
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {messages.length === 0 && (
+        {showReadinessGate ? (
+          <ReadinessGate
+            projectId={activeProject.id}
+            connectionId={activeConnection.id}
+            onBypass={() => setReadinessBypassed(true)}
+          />
+        ) : messages.length === 0 ? (
           <div className="text-center text-zinc-500 text-sm mt-20">
             <p className="text-lg font-medium mb-2">
               {activeConnection ? "Ready to query" : "Knowledge Base Mode"}
@@ -241,7 +245,7 @@ export function ChatPanel() {
             )}
             <p className="mt-1">Ask a question about your data…</p>
           </div>
-        )}
+        ) : null}
         {messages.map((msg, idx) => {
           const canRetry =
             msg.responseType === "error" &&
@@ -278,10 +282,7 @@ export function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
-      )}
-      {!showReadinessGate && (
-        <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
-      )}
+      <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
     </div>
   );
 }

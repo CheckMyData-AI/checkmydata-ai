@@ -69,13 +69,16 @@ class MySQLConnector(BaseConnector):
     def _dict_to_positional(query: str, params: dict[str, Any]) -> tuple[str, tuple]:
         """Convert :name style params to %s positional params for aiomysql."""
         import re
+
         ordered: list[Any] = []
+
         def _replacer(m: re.Match) -> str:
             name = m.group(1)
             if name not in params:
                 return m.group(0)
             ordered.append(params[name])
             return "%s"
+
         converted = re.sub(r":(\w+)", _replacer, query)
         return converted, tuple(ordered)
 
@@ -131,7 +134,8 @@ class MySQLConnector(BaseConnector):
                 if attempt == 0 and self._config:
                     logger.warning(
                         "MySQL introspect_schema lost connection (attempt %d): %s — reconnecting",
-                        attempt + 1, exc,
+                        attempt + 1,
+                        exc,
                     )
                     await self._reconnect()
                 else:

@@ -72,7 +72,10 @@ class SshKeyService:
         return list(result.scalars().all())
 
     async def get(
-        self, session: AsyncSession, key_id: str, user_id: str | None = None,
+        self,
+        session: AsyncSession,
+        key_id: str,
+        user_id: str | None = None,
     ) -> SshKey | None:
         stmt = select(SshKey).where(SshKey.id == key_id)
         if user_id:
@@ -81,7 +84,10 @@ class SshKeyService:
         return result.scalar_one_or_none()
 
     async def get_decrypted(
-        self, session: AsyncSession, key_id: str, user_id: str | None = None,
+        self,
+        session: AsyncSession,
+        key_id: str,
+        user_id: str | None = None,
     ) -> tuple[str, str | None] | None:
         """Return (private_key_pem, passphrase) decrypted.
 
@@ -93,15 +99,12 @@ class SshKeyService:
         try:
             private_key_pem = decrypt(ssh_key.private_key_encrypted).strip()
             passphrase = (
-                decrypt(ssh_key.passphrase_encrypted)
-                if ssh_key.passphrase_encrypted
-                else None
+                decrypt(ssh_key.passphrase_encrypted) if ssh_key.passphrase_encrypted else None
             )
         except Exception as exc:
             logger.error("Failed to decrypt SSH key '%s': %s", ssh_key.name, exc)
             raise ValueError(
-                f"Cannot decrypt SSH key '{ssh_key.name}'."
-                " The encryption key may have changed."
+                f"Cannot decrypt SSH key '{ssh_key.name}'. The encryption key may have changed."
             ) from exc
         return private_key_pem, passphrase
 

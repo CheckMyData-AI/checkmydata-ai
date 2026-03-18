@@ -73,6 +73,10 @@ describe("app store", () => {
       ssh_exec_mode: false,
       ssh_command_template: null,
       ssh_pre_commands: null,
+      source_type: "database",
+      mcp_server_command: null,
+      mcp_server_url: null,
+      mcp_transport_type: null,
     });
     useAppStore.getState().setActiveProject(null);
     expect(localStorage.getItem("active_project_id")).toBeNull();
@@ -99,6 +103,10 @@ describe("app store", () => {
       ssh_exec_mode: false,
       ssh_command_template: null,
       ssh_pre_commands: null,
+      source_type: "database",
+      mcp_server_command: null,
+      mcp_server_url: null,
+      mcp_transport_type: null,
     });
     expect(localStorage.getItem("active_connection_id")).toBe("c2");
   });

@@ -88,9 +88,7 @@ class LearningAnalyzer:
 
         if stored:
             await session.commit()
-            logger.info(
-                "Extracted %d learnings for connection %s", len(stored), connection_id
-            )
+            logger.info("Extracted %d learnings for connection %s", len(stored), connection_id)
 
         return stored
 
@@ -111,15 +109,17 @@ class LearningAnalyzer:
         subject = tables[0] if tables else "unknown"
 
         if error_detail:
-            lessons.append(ExtractedLesson(
-                category="query_pattern",
-                subject=subject,
-                lesson=f"User flagged incorrect results for query on {subject}. "
-                       f"Detail: {error_detail[:300]}",
-                confidence=0.7,
-                source_query=query,
-                source_error="user_negative_feedback",
-            ))
+            lessons.append(
+                ExtractedLesson(
+                    category="query_pattern",
+                    subject=subject,
+                    lesson=f"User flagged incorrect results for query on {subject}. "
+                    f"Detail: {error_detail[:300]}",
+                    confidence=0.7,
+                    source_query=query,
+                    source_error="user_negative_feedback",
+                )
+            )
 
         if not lessons:
             return []
@@ -177,27 +177,21 @@ class LearningAnalyzer:
             added = next_tables - failed_tables
 
             if removed and added:
-                is_success = (
-                    next_attempt.results is not None
-                    and next_attempt.error is None
-                )
-                if is_success or (
-                    i + 2 < len(attempts) and attempts[-1].error is None
-                ):
+                is_success = next_attempt.results is not None and next_attempt.error is None
+                if is_success or (i + 2 < len(attempts) and attempts[-1].error is None):
                     for old_t in removed:
                         for new_t in added:
                             topic = question[:80] if question else "data queries"
-                            lessons.append(ExtractedLesson(
-                                category="table_preference",
-                                subject=old_t,
-                                lesson=(
-                                    f"Use `{new_t}` instead of `{old_t}` "
-                                    f"for {topic}"
-                                ),
-                                confidence=0.65,
-                                source_query=next_attempt.query,
-                                source_error=failed.error.message if failed.error else None,
-                            ))
+                            lessons.append(
+                                ExtractedLesson(
+                                    category="table_preference",
+                                    subject=old_t,
+                                    lesson=(f"Use `{new_t}` instead of `{old_t}` for {topic}"),
+                                    confidence=0.65,
+                                    source_query=next_attempt.query,
+                                    source_error=failed.error.message if failed.error else None,
+                                )
+                            )
 
         return lessons
 
@@ -233,17 +227,19 @@ class LearningAnalyzer:
 
             if suggested:
                 correct_col = suggested[0]
-                lessons.append(ExtractedLesson(
-                    category="column_usage",
-                    subject=subject,
-                    lesson=(
-                        f"Column `{wrong_col}` does not exist on `{subject}`. "
-                        f"Use `{correct_col}` instead."
-                    ),
-                    confidence=0.7,
-                    source_query=failed.query,
-                    source_error=failed.error.message,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="column_usage",
+                        subject=subject,
+                        lesson=(
+                            f"Column `{wrong_col}` does not exist on `{subject}`. "
+                            f"Use `{correct_col}` instead."
+                        ),
+                        confidence=0.7,
+                        source_query=failed.query,
+                        source_error=failed.error.message,
+                    )
+                )
 
         return lessons
 
@@ -265,44 +261,50 @@ class LearningAnalyzer:
             subject = tables[0] if tables else "unknown"
 
             if "/ 100" in fixed_q and "/ 100" not in failed_q:
-                col_match = re.search(r'(\w+)\s*/\s*100', fixed_q)
+                col_match = re.search(r"(\w+)\s*/\s*100", fixed_q)
                 col_name = col_match.group(1) if col_match else "amount"
-                lessons.append(ExtractedLesson(
-                    category="data_format",
-                    subject=subject,
-                    lesson=(
-                        f"Column `{col_name}` on `{subject}` stores values in "
-                        f"cents (integer). Divide by 100 for dollar amounts."
-                    ),
-                    confidence=0.7,
-                    source_query=attempts[i + 1].query,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="data_format",
+                        subject=subject,
+                        lesson=(
+                            f"Column `{col_name}` on `{subject}` stores values in "
+                            f"cents (integer). Divide by 100 for dollar amounts."
+                        ),
+                        confidence=0.7,
+                        source_query=attempts[i + 1].query,
+                    )
+                )
 
             if "/ 1000" in fixed_q and "/ 1000" not in failed_q:
-                col_match = re.search(r'(\w+)\s*/\s*1000', fixed_q)
+                col_match = re.search(r"(\w+)\s*/\s*1000", fixed_q)
                 col_name = col_match.group(1) if col_match else "amount"
-                lessons.append(ExtractedLesson(
-                    category="data_format",
-                    subject=subject,
-                    lesson=(
-                        f"Column `{col_name}` on `{subject}` stores values in "
-                        f"minor units. Divide by 1000 for display values."
-                    ),
-                    confidence=0.65,
-                    source_query=attempts[i + 1].query,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="data_format",
+                        subject=subject,
+                        lesson=(
+                            f"Column `{col_name}` on `{subject}` stores values in "
+                            f"minor units. Divide by 1000 for display values."
+                        ),
+                        confidence=0.65,
+                        source_query=attempts[i + 1].query,
+                    )
+                )
 
             if "::text" in fixed_q and "::text" not in failed_q:
-                lessons.append(ExtractedLesson(
-                    category="data_format",
-                    subject=subject,
-                    lesson=(
-                        f"Some columns on `{subject}` require explicit "
-                        f"::text cast for string operations."
-                    ),
-                    confidence=0.55,
-                    source_query=attempts[i + 1].query,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="data_format",
+                        subject=subject,
+                        lesson=(
+                            f"Some columns on `{subject}` require explicit "
+                            f"::text cast for string operations."
+                        ),
+                        confidence=0.55,
+                        source_query=attempts[i + 1].query,
+                    )
+                )
 
         return lessons
 
@@ -326,49 +328,55 @@ class LearningAnalyzer:
             subject = tables[0] if tables else "unknown"
 
             if "deleted_at is null" in fixed_q and "deleted_at" not in failed_q:
-                lessons.append(ExtractedLesson(
-                    category="schema_gotcha",
-                    subject=subject,
-                    lesson=(
-                        f"Table `{subject}` uses soft-delete pattern. "
-                        f"Always filter with `WHERE deleted_at IS NULL` for active records."
-                    ),
-                    confidence=0.75,
-                    source_query=next_attempt.query,
-                    source_error=failed.error.message,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="schema_gotcha",
+                        subject=subject,
+                        lesson=(
+                            f"Table `{subject}` uses soft-delete pattern. "
+                            f"Always filter with `WHERE deleted_at IS NULL` for active records."
+                        ),
+                        confidence=0.75,
+                        source_query=next_attempt.query,
+                        source_error=failed.error.message,
+                    )
+                )
 
             if "is_deleted" in fixed_q and "is_deleted" not in failed_q:
-                lessons.append(ExtractedLesson(
-                    category="schema_gotcha",
-                    subject=subject,
-                    lesson=(
-                        f"Table `{subject}` has `is_deleted` flag. "
-                        f"Filter with `WHERE is_deleted = 0` for active records."
-                    ),
-                    confidence=0.7,
-                    source_query=next_attempt.query,
-                    source_error=failed.error.message,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="schema_gotcha",
+                        subject=subject,
+                        lesson=(
+                            f"Table `{subject}` has `is_deleted` flag. "
+                            f"Filter with `WHERE is_deleted = 0` for active records."
+                        ),
+                        confidence=0.7,
+                        source_query=next_attempt.query,
+                        source_error=failed.error.message,
+                    )
+                )
 
             if (
                 failed.error.error_type == QueryErrorType.SYNTAX_ERROR
                 and "schema" in failed.error.message.lower()
             ):
-                schema_match = re.search(r'(\w+)\.(\w+)', fixed_q)
-                if schema_match and '.' not in failed_q.split('from')[-1].split('join')[0][:50]:
+                schema_match = re.search(r"(\w+)\.(\w+)", fixed_q)
+                if schema_match and "." not in failed_q.split("from")[-1].split("join")[0][:50]:
                     schema_name = schema_match.group(1)
-                    lessons.append(ExtractedLesson(
-                        category="schema_gotcha",
-                        subject=subject,
-                        lesson=(
-                            f"Tables in this database require schema prefix "
-                            f"`{schema_name}`. Use `{schema_name}.{subject}` format."
-                        ),
-                        confidence=0.8,
-                        source_query=next_attempt.query,
-                        source_error=failed.error.message,
-                    ))
+                    lessons.append(
+                        ExtractedLesson(
+                            category="schema_gotcha",
+                            subject=subject,
+                            lesson=(
+                                f"Tables in this database require schema prefix "
+                                f"`{schema_name}`. Use `{schema_name}.{subject}` format."
+                            ),
+                            confidence=0.8,
+                            source_query=next_attempt.query,
+                            source_error=failed.error.message,
+                        )
+                    )
 
         return lessons
 
@@ -400,23 +408,25 @@ class LearningAnalyzer:
             hints: list[str] = []
             if "limit" in fixed_q and "limit" not in failed_q:
                 hints.append("add LIMIT clause")
-            if re.search(r'where.*(?:date|created|updated)', fixed_q) and not re.search(
-                r'where.*(?:date|created|updated)', failed_q
+            if re.search(r"where.*(?:date|created|updated)", fixed_q) and not re.search(
+                r"where.*(?:date|created|updated)", failed_q
             ):
                 hints.append("filter by date range")
 
             if hints:
                 advice = " and ".join(hints)
-                lessons.append(ExtractedLesson(
-                    category="performance_hint",
-                    subject=subject,
-                    lesson=(
-                        f"Table `{subject}` can timeout on unfiltered queries. "
-                        f"Always {advice} to avoid timeouts."
-                    ),
-                    confidence=0.7,
-                    source_query=next_attempt.query,
-                    source_error=attempt.error.message,
-                ))
+                lessons.append(
+                    ExtractedLesson(
+                        category="performance_hint",
+                        subject=subject,
+                        lesson=(
+                            f"Table `{subject}` can timeout on unfiltered queries. "
+                            f"Always {advice} to avoid timeouts."
+                        ),
+                        confidence=0.7,
+                        source_query=next_attempt.query,
+                        source_error=attempt.error.message,
+                    )
+                )
 
         return lessons

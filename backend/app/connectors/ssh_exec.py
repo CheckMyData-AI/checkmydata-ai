@@ -106,7 +106,8 @@ class SSHExecConnector(BaseConnector):
         }
         if config.ssh_key_content:
             key = asyncssh.import_private_key(
-                config.ssh_key_content.strip(), config.ssh_key_passphrase,
+                config.ssh_key_content.strip(),
+                config.ssh_key_passphrase,
             )
             connect_kwargs["client_keys"] = [key]
 
@@ -153,7 +154,9 @@ class SSHExecConnector(BaseConnector):
                 elif self._conn:
                     try:
                         _chk = await self._conn.run(
-                            "echo __SSH_EXEC_ALIVE__", timeout=5, check=False,
+                            "echo __SSH_EXEC_ALIVE__",
+                            timeout=5,
+                            check=False,
                         )
                         if "__SSH_EXEC_ALIVE__" not in (_chk.stdout or ""):
                             raise RuntimeError("marker not in stdout")
@@ -218,12 +221,18 @@ class SSHExecConnector(BaseConnector):
             return await self._introspect_via_query(db_name, db_type)
 
     def _check_introspection_result(
-        self, step: str, stdout: str, stderr: str, exit_code: int,
+        self,
+        step: str,
+        stdout: str,
+        stderr: str,
+        exit_code: int,
     ) -> None:
         if exit_code != 0:
             logger.warning(
                 "SSH exec introspection '%s' failed (exit=%d): %s",
-                step, exit_code, stderr.strip()[:300],
+                step,
+                exit_code,
+                stderr.strip()[:300],
             )
         elif stderr.strip():
             logger.debug("SSH exec introspection '%s' stderr: %s", step, stderr.strip()[:200])
@@ -374,7 +383,8 @@ class SSHExecConnector(BaseConnector):
             if exit_code != 0:
                 logger.warning(
                     "SSH exec test_connection failed (exit=%d): %s",
-                    exit_code, stderr.strip()[:200],
+                    exit_code,
+                    stderr.strip()[:200],
                 )
             return exit_code == 0
         except Exception as exc:
@@ -388,7 +398,8 @@ class SSHExecConnector(BaseConnector):
         _marker = "__SSH_EXEC_TEST__"
         try:
             stdout, _, _ = await self._run_command(
-                f"echo {_marker} && hostname", timeout=10,
+                f"echo {_marker} && hostname",
+                timeout=10,
             )
             ok = _marker in stdout
             hostname = "unknown"

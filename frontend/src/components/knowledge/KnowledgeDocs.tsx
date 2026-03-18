@@ -22,10 +22,13 @@ const DOC_TYPE_ICONS: Record<string, string> = {
   sql: "terminal",
 };
 
+const VISIBLE_CAP = 5;
+
 export function KnowledgeDocs() {
   const { activeProject } = useAppStore();
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [listLoading, setListLoading] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const [viewingDoc, setViewingDoc] = useState<{
     id: string;
     content: string;
@@ -68,8 +71,11 @@ export function KnowledgeDocs() {
 
   if (!activeProject) return null;
 
+  const visibleDocs = showAll ? docs : docs.slice(0, VISIBLE_CAP);
+  const hasMore = docs.length > VISIBLE_CAP;
+
   return (
-    <div className="space-y-1.5 px-1">
+    <div className="px-1">
       {listLoading && <Spinner />}
       {!listLoading && docs.length === 0 && (
         <p className="text-[10px] text-text-muted px-3 py-1">
@@ -77,44 +83,58 @@ export function KnowledgeDocs() {
           docs.
         </p>
       )}
-      <div className="space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden sidebar-scroll">
-        {docs.map((d) => {
+      <div>
+        {visibleDocs.map((d) => {
           const iconName =
             (DOC_TYPE_ICONS[d.doc_type] as import("@/components/ui/Icon").IconName) || "file-text";
+          const isViewing = viewingDoc?.id === d.id;
           return (
-            <button
+            <div
               key={d.id}
-              onClick={() => handleView(d)}
-              className={`w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                viewingDoc?.id === d.id
-                  ? "bg-surface-2 text-text-primary"
-                  : "text-text-secondary hover:bg-surface-2/50 hover:text-text-primary"
+              className={`relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                isViewing ? "bg-surface-1" : "hover:bg-surface-1"
               }`}
+              onClick={() => handleView(d)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleView(d);
+                }
+              }}
             >
+              {isViewing && (
+                <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
+              )}
               <Icon
                 name={iconName}
                 size={12}
-                className={
-                  viewingDoc?.id === d.id
-                    ? "text-accent"
-                    : "text-text-muted"
-                }
+                className={`shrink-0 ${isViewing ? "text-accent" : "text-text-muted"}`}
               />
-              <span className="flex-1 min-w-0 overflow-hidden">
-                <span className="text-[9px] text-text-muted uppercase font-mono mr-1">
+              <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                <span className="text-[8px] text-text-muted uppercase font-mono shrink-0 leading-none">
                   {d.doc_type}
                 </span>
-                <span className="block truncate">
+                <span className={`text-xs truncate ${isViewing ? "text-text-primary" : "text-text-secondary"}`}>
                   {d.source_path.split("/").pop()}
                 </span>
-              </span>
-            </button>
+              </div>
+            </div>
           );
         })}
       </div>
+      {hasMore && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full text-[10px] text-text-muted hover:text-accent py-1 transition-colors"
+        >
+          {showAll ? "Show less" : `Show all ${docs.length}`} →
+        </button>
+      )}
 
       {viewingDoc && (
-        <div className="mt-2 p-3 bg-surface-1 rounded-lg border border-border-subtle max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
+        <div className="mt-1.5 p-3 bg-surface-1 rounded-lg border border-border-subtle max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] text-text-muted truncate flex-1 font-mono">
               {viewingDoc.source_path}

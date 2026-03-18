@@ -226,7 +226,10 @@ class TestChatServiceHistoryEnrichment:
         svc = ChatService()
         session = await svc.create_session(db_session, "project-1")
         await svc.add_message(
-            db_session, session.id, "assistant", "Info",
+            db_session,
+            session.id,
+            "assistant",
+            "Info",
             metadata={"response_type": "text"},
         )
 

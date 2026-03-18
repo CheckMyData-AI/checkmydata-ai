@@ -227,7 +227,8 @@ class ToolExecutor:
             return "No relevant documents found in the knowledge base."
 
         filtered = [
-            r for r in results
+            r
+            for r in results
             if r.get("distance") is None or r["distance"] <= self.RAG_RELEVANCE_THRESHOLD
         ]
 
@@ -312,14 +313,10 @@ class ToolExecutor:
         membership_svc = MembershipService()
         rule_svc = RuleService()
 
-        async with self._tracker.step(
-            wf_id, "manage_rules", f"Managing custom rule ({action})"
-        ):
+        async with self._tracker.step(wf_id, "manage_rules", f"Managing custom rule ({action})"):
             async with async_session_factory() as session:
                 if self._user_id:
-                    role = await membership_svc.get_role(
-                        session, self._project_id, self._user_id
-                    )
+                    role = await membership_svc.get_role(session, self._project_id, self._user_id)
                     if role != "owner":
                         return (
                             "Permission denied: only project owners can manage rules. "
@@ -400,9 +397,7 @@ class ToolExecutor:
 
         db_index_svc = DbIndexService()
 
-        async with self._tracker.step(
-            wf_id, "get_db_index", f"Loading database index ({scope})"
-        ):
+        async with self._tracker.step(wf_id, "get_db_index", f"Loading database index ({scope})"):
             connection_id = self._connection_config.connection_id
             if not connection_id:
                 return "Database index not available. Run 'Index DB' first."
@@ -411,9 +406,7 @@ class ToolExecutor:
                 if scope == "table_detail":
                     if not table_name:
                         return "Error: table_name is required when scope is 'table_detail'."
-                    entry = await db_index_svc.get_table_index(
-                        session, connection_id, table_name
-                    )
+                    entry = await db_index_svc.get_table_index(session, connection_id, table_name)
                     if not entry:
                         return (
                             f"No index entry for table '{table_name}'. "
@@ -441,9 +434,7 @@ class ToolExecutor:
 
         sync_svc = CodeDbSyncService()
 
-        async with self._tracker.step(
-            wf_id, "get_sync_context", f"Loading sync context ({scope})"
-        ):
+        async with self._tracker.step(wf_id, "get_sync_context", f"Loading sync context ({scope})"):
             connection_id = self._connection_config.connection_id
             if not connection_id:
                 return "Code-DB sync not available. Run 'Sync' first."
@@ -452,9 +443,7 @@ class ToolExecutor:
                 if scope == "table_detail":
                     if not table_name:
                         return "Error: table_name is required when scope is 'table_detail'."
-                    entry = await sync_svc.get_table_sync(
-                        session, connection_id, table_name
-                    )
+                    entry = await sync_svc.get_table_sync(session, connection_id, table_name)
                     if not entry:
                         return (
                             f"No sync data for table '{table_name}'. "
@@ -481,12 +470,8 @@ class ToolExecutor:
         if not connection_id:
             return "Query context not available. Run 'Index DB' first."
 
-        async with self._tracker.step(
-            wf_id, "get_query_context", "Building unified query context"
-        ):
-            return await self._build_query_context(
-                question, table_names_raw, connection_id
-            )
+        async with self._tracker.step(wf_id, "get_query_context", "Building unified query context"):
+            return await self._build_query_context(question, table_names_raw, connection_id)
 
     async def _get_agent_learnings(self, args: dict, wf_id: str) -> str:
         scope: str = args.get("scope", "all")
@@ -633,7 +618,8 @@ class ToolExecutor:
 
         relevant_table_names = {e.table_name.lower() for e in relevant}
         relevant_learnings = [
-            lrn for lrn in learnings
+            lrn
+            for lrn in learnings
             if lrn.subject.lower() in relevant_table_names
             or any(t in lrn.lesson.lower() for t in relevant_table_names)
         ]
@@ -658,7 +644,9 @@ class ToolExecutor:
         return "\n".join(parts)
 
     def _auto_detect_tables(
-        self, question: str, entries: list,
+        self,
+        question: str,
+        entries: list,
     ) -> list:
         q_lower = question.lower()
         scored: list[tuple[int, object]] = []
@@ -689,7 +677,10 @@ class ToolExecutor:
 
     @staticmethod
     def _format_table_context(
-        db_entry, schema_table, sync_entry, knowledge,
+        db_entry,
+        schema_table,
+        sync_entry,
+        knowledge,
     ) -> str:
         import json as _json
 
@@ -847,8 +838,10 @@ class ToolExecutor:
             svc = AgentLearningService()
             async with async_session_factory() as session:
                 learnings = await svc.get_learnings(
-                    session, self._connection_config.connection_id,
-                    min_confidence=0.5, active_only=True,
+                    session,
+                    self._connection_config.connection_id,
+                    min_confidence=0.5,
+                    active_only=True,
                 )
             if not learnings:
                 return ""
@@ -949,9 +942,7 @@ class ToolExecutor:
         from app.models.base import async_session_factory
 
         async with async_session_factory() as session:
-            self._knowledge_cache = await self._cache_svc.load_knowledge(
-                session, self._project_id
-            )
+            self._knowledge_cache = await self._cache_svc.load_knowledge(session, self._project_id)
         return self._knowledge_cache
 
     # ------------------------------------------------------------------

@@ -42,7 +42,8 @@ class SSHTunnel:
         }
         if config.ssh_key_content:
             key = asyncssh.import_private_key(
-                config.ssh_key_content.strip(), config.ssh_key_passphrase,
+                config.ssh_key_content.strip(),
+                config.ssh_key_passphrase,
             )
 
             connect_kwargs["client_keys"] = [key]
@@ -95,8 +96,7 @@ class SSHTunnel:
             alive = self._ALIVE_MARKER in (result.stdout or "")
             if not alive:
                 logger.warning(
-                    "SSH tunnel is_alive: marker not found in stdout "
-                    "(exit=%s, stdout=%r)",
+                    "SSH tunnel is_alive: marker not found in stdout (exit=%s, stdout=%r)",
                     result.exit_status,
                     (result.stdout or "")[:200],
                 )

@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git openssh-client gcc libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
+RUN adduser --disabled-password --gecos "" --home /home/appuser appuser
+
 WORKDIR /app
 
 COPY backend/pyproject.toml .
@@ -11,8 +13,11 @@ RUN pip install --no-cache-dir "."
 
 COPY backend/ .
 
-RUN mkdir -p data rules
+RUN mkdir -p data rules /home/appuser/.cache/chroma \
+    && chown -R appuser:appuser /app /home/appuser/.cache
 
-EXPOSE ${PORT:-8000}
+USER appuser
+
+EXPOSE 8000
 
 CMD ["sh", "-c", "PYTHONPATH=/app uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

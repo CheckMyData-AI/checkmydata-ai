@@ -63,6 +63,7 @@ export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizT
             onClick={() => onTypeChange(vt.key)}
             disabled={disabled || loading}
             title={vt.label}
+            aria-label={`Show as ${vt.label}`}
             className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors ${
               isActive
                 ? "bg-blue-600 text-white"

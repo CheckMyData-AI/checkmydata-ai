@@ -36,9 +36,7 @@ async def project_and_connection(auth_client: AsyncClient):
 
 class TestSyncStatusEndpoint:
     @pytest.mark.asyncio
-    async def test_initial_status(
-        self, auth_client: AsyncClient, project_and_connection
-    ):
+    async def test_initial_status(self, auth_client: AsyncClient, project_and_connection):
         _, connection_id = project_and_connection
         resp = await auth_client.get(f"/api/connections/{connection_id}/sync/status")
         assert resp.status_code == 200
@@ -58,9 +56,7 @@ class TestSyncStatusEndpoint:
 
 class TestGetSyncEndpoint:
     @pytest.mark.asyncio
-    async def test_empty_sync(
-        self, auth_client: AsyncClient, project_and_connection
-    ):
+    async def test_empty_sync(self, auth_client: AsyncClient, project_and_connection):
         _, connection_id = project_and_connection
         resp = await auth_client.get(f"/api/connections/{connection_id}/sync")
         assert resp.status_code == 200
@@ -71,9 +67,7 @@ class TestGetSyncEndpoint:
 
 class TestDeleteSyncEndpoint:
     @pytest.mark.asyncio
-    async def test_delete_empty_sync(
-        self, auth_client: AsyncClient, project_and_connection
-    ):
+    async def test_delete_empty_sync(self, auth_client: AsyncClient, project_and_connection):
         _, connection_id = project_and_connection
         resp = await auth_client.delete(f"/api/connections/{connection_id}/sync")
         assert resp.status_code == 200
@@ -82,9 +76,7 @@ class TestDeleteSyncEndpoint:
 
 class TestReadinessEndpoint:
     @pytest.mark.asyncio
-    async def test_project_readiness(
-        self, auth_client: AsyncClient, project_and_connection
-    ):
+    async def test_project_readiness(self, auth_client: AsyncClient, project_and_connection):
         project_id, _ = project_and_connection
         resp = await auth_client.get(f"/api/projects/{project_id}/readiness")
         assert resp.status_code == 200

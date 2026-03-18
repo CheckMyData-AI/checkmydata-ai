@@ -57,7 +57,8 @@ class PreValidator:
                     if col.lower() not in self._column_map[resolved_table]:
                         logger.debug(
                             "Pre-validation failed: column '%s' not in table '%s'",
-                            col, resolved_table,
+                            col,
+                            resolved_table,
                         )
                         similar = find_similar_columns(col, self._schema)
                         table_cols = [s[1] for s in similar if s[0].lower() == resolved_table]

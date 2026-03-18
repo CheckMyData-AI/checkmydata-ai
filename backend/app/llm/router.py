@@ -96,6 +96,7 @@ class LLMRouter:
         last_error: Exception | None = None
 
         for provider_name in chain:
+            tokens_yielded = False
             try:
                 provider = self._get_provider(provider_name)
                 async for token in provider.stream(
@@ -105,10 +106,22 @@ class LLMRouter:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 ):
+                    tokens_yielded = True
                     yield token
                 return
             except Exception as e:
-                logger.warning("Provider %s streaming failed: %s", provider_name, e)
+                if tokens_yielded:
+                    logger.error(
+                        "Provider %s streaming failed after yielding tokens; "
+                        "cannot retry safely: %s",
+                        provider_name,
+                        e,
+                    )
+                    raise
+                logger.warning(
+                    "Provider %s streaming failed before tokens: %s",
+                    provider_name, e,
+                )
                 last_error = e
                 continue
 

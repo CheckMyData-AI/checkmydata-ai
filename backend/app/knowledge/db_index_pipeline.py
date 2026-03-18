@@ -23,10 +23,20 @@ from app.services.db_index_service import DbIndexService
 logger = logging.getLogger(__name__)
 
 PREFERRED_ORDER_COLS = [
-    "created_at", "createdat", "create_date", "creation_date",
-    "updated_at", "updatedat", "update_date", "modified_at",
-    "modifiedat", "modify_date", "timestamp", "date_created",
-    "inserted_at", "insertedat",
+    "created_at",
+    "createdat",
+    "create_date",
+    "creation_date",
+    "updated_at",
+    "updatedat",
+    "update_date",
+    "modified_at",
+    "modifiedat",
+    "modify_date",
+    "timestamp",
+    "date_created",
+    "inserted_at",
+    "insertedat",
 ]
 
 
@@ -91,10 +101,31 @@ def _sample_to_json(result: QueryResult) -> str:
 
 
 CANDIDATE_ENUM_PATTERNS = {
-    "status", "state", "type", "kind", "category", "role", "level",
-    "priority", "severity", "gender", "country", "currency", "lang",
-    "language", "plan", "tier", "phase", "mode", "source", "channel",
-    "platform", "provider", "method", "payment_method", "billing_type",
+    "status",
+    "state",
+    "type",
+    "kind",
+    "category",
+    "role",
+    "level",
+    "priority",
+    "severity",
+    "gender",
+    "country",
+    "currency",
+    "lang",
+    "language",
+    "plan",
+    "tier",
+    "phase",
+    "mode",
+    "source",
+    "channel",
+    "platform",
+    "provider",
+    "method",
+    "payment_method",
+    "billing_type",
 }
 
 MAX_DISTINCT_VALUES = 30
@@ -119,7 +150,9 @@ def _is_enum_candidate(col_name: str, data_type: str, row_count: int | None) -> 
 
 
 def _build_distinct_query(
-    table: TableInfo, col_name: str, db_type: str,
+    table: TableInfo,
+    col_name: str,
+    db_type: str,
 ) -> str:
     tbl_q = table.name
     col_q = col_name
@@ -195,7 +228,8 @@ class DbIndexPipeline:
         try:
             # Step 1: Connect and introspect schema
             async with self._tracker.step(
-                wf_id, "introspect_schema",
+                wf_id,
+                "introspect_schema",
                 f"Introspecting {connection_config.db_type} schema",
             ):
                 connector = get_connector(
@@ -215,20 +249,17 @@ class DbIndexPipeline:
             total_tables = len(schema.tables)
 
             async with self._tracker.step(
-                wf_id, "fetch_samples",
+                wf_id,
+                "fetch_samples",
                 f"Fetching sample data from {total_tables} tables",
             ):
                 for table in schema.tables:
                     try:
-                        query, ordering_col = _sample_query(
-                            table, connection_config.db_type
-                        )
+                        query, ordering_col = _sample_query(table, connection_config.db_type)
                         result = await connector.execute_query(query)
                         samples[table.name] = (result, ordering_col)
                     except Exception:
-                        logger.debug(
-                            "Sample fetch failed for %s", table.name, exc_info=True
-                        )
+                        logger.debug("Sample fetch failed for %s", table.name, exc_info=True)
                         samples[table.name] = (
                             QueryResult(columns=[], rows=[], row_count=0),
                             None,
@@ -239,9 +270,7 @@ class DbIndexPipeline:
                         if not _is_enum_candidate(col.name, col.data_type, table.row_count):
                             continue
                         try:
-                            dq = _build_distinct_query(
-                                table, col.name, connection_config.db_type
-                            )
+                            dq = _build_distinct_query(table, col.name, connection_config.db_type)
                             dr = await connector.execute_query(dq)
                             if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
                                 vals = [str(r[0]) for r in dr.rows if r[0] is not None]
@@ -250,7 +279,9 @@ class DbIndexPipeline:
                         except Exception:
                             logger.debug(
                                 "Distinct query failed for %s.%s",
-                                table.name, col.name, exc_info=True,
+                                table.name,
+                                col.name,
+                                exc_info=True,
                             )
                     if tbl_distinct:
                         distinct_values[table.name] = tbl_distinct
@@ -261,7 +292,9 @@ class DbIndexPipeline:
             code_tables: set[str] = set()
 
             async with self._tracker.step(
-                wf_id, "load_context", "Loading project knowledge and rules",
+                wf_id,
+                "load_context",
+                "Loading project knowledge and rules",
             ):
                 code_context, code_tables = await self._load_code_context(project_id)
                 rules_context = await self._load_rules_context(project_id)
@@ -270,7 +303,8 @@ class DbIndexPipeline:
             analyses: list[TableAnalysis] = []
 
             async with self._tracker.step(
-                wf_id, "validate_tables",
+                wf_id,
+                "validate_tables",
                 f"Analyzing {total_tables} tables via LLM",
             ):
                 large_tables = []
@@ -287,12 +321,8 @@ class DbIndexPipeline:
                         small_tables.append(table)
 
                 for table in large_tables:
-                    sample_result, _ = samples.get(
-                        table.name, (QueryResult(), None)
-                    )
-                    table_code_ctx = self._filter_code_context(
-                        code_context, table.name
-                    )
+                    sample_result, _ = samples.get(table.name, (QueryResult(), None))
+                    table_code_ctx = self._filter_code_context(code_context, table.name)
                     analysis = await self._validator.analyze_table(
                         table=table,
                         sample_data=sample_result,
@@ -304,12 +334,10 @@ class DbIndexPipeline:
                     analyses.append(analysis)
 
                 for batch_start in range(0, len(small_tables), self._batch_size):
-                    batch = small_tables[batch_start:batch_start + self._batch_size]
+                    batch = small_tables[batch_start : batch_start + self._batch_size]
                     batch_items: list[tuple[TableInfo, QueryResult | None]] = []
                     for table in batch:
-                        sample_result, _ = samples.get(
-                            table.name, (QueryResult(), None)
-                        )
+                        sample_result, _ = samples.get(table.name, (QueryResult(), None))
                         batch_items.append((table, sample_result))
 
                     batch_code_ctx = ""
@@ -329,7 +357,9 @@ class DbIndexPipeline:
 
             # Step 5: Store results
             async with self._tracker.step(
-                wf_id, "store_results", "Persisting index to database",
+                wf_id,
+                "store_results",
+                "Persisting index to database",
             ):
                 async with async_session_factory() as session:
                     current_table_names = {t.name for t in schema.tables}
@@ -357,9 +387,7 @@ class DbIndexPipeline:
                             "sample_data_json": _sample_to_json(sample_result),
                             "column_distinct_values_json": json.dumps(tbl_distinct, default=str),
                             "ordering_column": ordering_col,
-                            "latest_record_at": _detect_latest_record(
-                                sample_result, ordering_col
-                            ),
+                            "latest_record_at": _detect_latest_record(sample_result, ordering_col),
                             "is_active": analysis.is_active,
                             "relevance_score": analysis.relevance_score,
                             "business_description": analysis.business_description,
@@ -375,7 +403,9 @@ class DbIndexPipeline:
 
             # Step 6: Generate connection summary
             async with self._tracker.step(
-                wf_id, "generate_summary", "Generating database summary",
+                wf_id,
+                "generate_summary",
+                "Generating database summary",
             ):
                 summary_result = await self._validator.generate_summary(
                     analyses=analyses,
@@ -419,7 +449,9 @@ class DbIndexPipeline:
                 logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
 
             await self._tracker.end(
-                wf_id, "db_index", "completed",
+                wf_id,
+                "db_index",
+                "completed",
                 f"{total_tables} tables indexed ({active_count} active)",
             )
 
@@ -489,9 +521,7 @@ class DbIndexPipeline:
 
     async def _load_rules_context(self, project_id: str) -> str:
         try:
-            file_rules = self._rules_engine.load_rules(
-                project_rules_dir=f"./rules/{project_id}"
-            )
+            file_rules = self._rules_engine.load_rules(project_rules_dir=f"./rules/{project_id}")
             db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
             return self._rules_engine.rules_to_context(file_rules + db_rules)
         except Exception:

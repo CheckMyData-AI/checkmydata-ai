@@ -100,9 +100,7 @@ class TestDiffAwareGeneration:
         """When previous_content and existing_doc are provided with a small change,
         the DOC_UPDATE_PROMPT should be used (contains 'CHANGES (unified diff)')."""
         mock_router = MagicMock()
-        mock_router.complete = AsyncMock(
-            return_value=LLMResponse(content="Updated documentation")
-        )
+        mock_router.complete = AsyncMock(return_value=LLMResponse(content="Updated documentation"))
         gen = DocGenerator(llm_router=mock_router)
 
         old_content = "class User(Base):\n    id = Column(Integer)\n    name = Column(String)\n"
@@ -126,9 +124,7 @@ class TestDiffAwareGeneration:
     async def test_large_change_uses_full_prompt(self):
         """When the diff is too large, the full generation prompt should be used."""
         mock_router = MagicMock()
-        mock_router.complete = AsyncMock(
-            return_value=LLMResponse(content="Full documentation")
-        )
+        mock_router.complete = AsyncMock(return_value=LLMResponse(content="Full documentation"))
         gen = DocGenerator(llm_router=mock_router)
 
         old_content = "line A\n" * 10

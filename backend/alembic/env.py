@@ -5,16 +5,21 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import app.models.agent_learning  # noqa: F401
 import app.models.chat_session  # noqa: F401
+import app.models.code_db_sync  # noqa: F401
 import app.models.commit_index  # noqa: F401
 import app.models.connection  # noqa: F401
+import app.models.custom_rule  # noqa: F401
+import app.models.db_index  # noqa: F401
+import app.models.indexing_checkpoint  # noqa: F401
 import app.models.knowledge_doc  # noqa: F401
 import app.models.project  # noqa: F401
+import app.models.project_cache  # noqa: F401
 import app.models.project_invite  # noqa: F401
 import app.models.project_member  # noqa: F401
-import app.models.ssh_key  # noqa: F401
-import app.models.custom_rule  # noqa: F401
-import app.models.project_cache  # noqa: F401
 import app.models.rag_feedback  # noqa: F401
+import app.models.repository  # noqa: F401
+import app.models.ssh_key  # noqa: F401
+import app.models.user  # noqa: F401
 from alembic import context
 from app.config import settings
 from app.models.base import Base

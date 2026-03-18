@@ -20,6 +20,7 @@ class RAGFeedback(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     chunk_id: Mapped[str] = mapped_column(String(200), nullable=False)
     source_path: Mapped[str] = mapped_column(String(512), nullable=False)

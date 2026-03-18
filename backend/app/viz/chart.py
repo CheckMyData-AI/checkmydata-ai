@@ -100,8 +100,7 @@ def generate_scatter(result: QueryResult, config: dict) -> dict[str, Any]:
     y_idx = result.columns.index(y_col) if y_col in result.columns else 1
 
     points = [
-        {"x": serialize_value(row[x_idx]), "y": serialize_value(row[y_idx])}
-        for row in result.rows
+        {"x": serialize_value(row[x_idx]), "y": serialize_value(row[y_idx])} for row in result.rows
     ]
 
     return {

@@ -16,6 +16,7 @@ env:
   FRONTEND_APP: esim-db-agent-web
   BACKEND_API_URL: https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api
   BACKEND_WS_URL: wss://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/chat/ws
+  FRONTEND_URL: https://esim-db-agent-web.herokuapp.com
 
 jobs:
   deploy:
@@ -77,3 +78,13 @@ jobs:
             exit 1
           fi
           echo "Backend is healthy (HTTP $STATUS)"
+
+      - name: Verify frontend health
+        run: |
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.FRONTEND_URL }})
+          if [ "$STATUS" != "200" ]; then
+            echo "Frontend health check failed with status $STATUS"
+            exit 1
+          fi
+          echo "Frontend is healthy (HTTP $STATUS)"

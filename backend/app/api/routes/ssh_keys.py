@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.ssh_key_service import SshKeyInUseError, SshKeyService
 
 router = APIRouter()
@@ -10,8 +12,8 @@ _svc = SshKeyService()
 
 
 class SshKeyCreate(BaseModel):
-    name: str
-    private_key: str
+    name: str = Field(max_length=255)
+    private_key: str = Field(max_length=16000)
     passphrase: str | None = None
 
 
@@ -24,24 +26,35 @@ class SshKeyResponse(BaseModel):
 
 
 @router.post("", response_model=SshKeyResponse)
+@limiter.limit("10/minute")
 async def create_ssh_key(
+    request: Request,
     body: SshKeyCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     try:
         key = await _svc.create(
-            db, body.name, body.private_key, body.passphrase,
+            db,
+            body.name,
+            body.private_key,
+            body.passphrase,
             user_id=user["user_id"],
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid SSH key")
     except Exception as e:
         if "UNIQUE constraint" in str(e) or "unique" in str(e).lower():
             raise HTTPException(
                 status_code=409, detail=f"SSH key with name '{body.name}' already exists"
             )
         raise
+    audit_log(
+        "ssh_key.create",
+        user_id=user["user_id"],
+        resource_type="ssh_key",
+        resource_id=key.id,
+    )
     return SshKeyResponse(
         id=key.id,
         name=key.name,
@@ -105,4 +118,10 @@ async def delete_ssh_key(
         )
     if not deleted:
         raise HTTPException(status_code=404, detail="SSH key not found")
+    audit_log(
+        "ssh_key.delete",
+        user_id=user["user_id"],
+        resource_type="ssh_key",
+        resource_id=key_id,
+    )
     return {"ok": True}

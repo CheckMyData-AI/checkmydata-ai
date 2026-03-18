@@ -11,7 +11,7 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
 
-const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse"];
+const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"];
 
 function formatAge(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -57,6 +57,11 @@ const EMPTY_FORM = {
   ssh_exec_mode: false,
   ssh_command_template: "",
   ssh_pre_commands: "",
+  mcp_transport_type: "stdio" as "stdio" | "sse",
+  mcp_server_command: "",
+  mcp_server_args: "",
+  mcp_server_url: "",
+  mcp_env: "",
 };
 
 type FormState = typeof EMPTY_FORM;
@@ -99,6 +104,11 @@ function connToForm(c: Connection): FormState {
     ssh_exec_mode: c.ssh_exec_mode,
     ssh_command_template: c.ssh_command_template || "",
     ssh_pre_commands: preCommands,
+    mcp_transport_type: (c.mcp_transport_type || "stdio") as "stdio" | "sse",
+    mcp_server_command: c.mcp_server_command || "",
+    mcp_server_args: "",
+    mcp_server_url: c.mcp_server_url || "",
+    mcp_env: "",
   };
 }
 
@@ -150,9 +160,12 @@ export function ConnectionSelector() {
   >({});
   const indexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (indexPollRef.current) clearInterval(indexPollRef.current);
       if (syncPollRef.current) clearInterval(syncPollRef.current);
     };
@@ -173,38 +186,44 @@ export function ConnectionSelector() {
       api.connections
         .indexDbStatus(c.id)
         .then((s) => {
-          setIndexStatus((prev) => ({
-            ...prev,
-            [c.id]: {
-              is_indexed: s.is_indexed,
-              active_tables: s.active_tables,
-              total_tables: s.total_tables,
-              is_indexing: s.is_indexing,
-              indexed_at: s.indexed_at ?? undefined,
-            },
-          }));
+          if (mountedRef.current) {
+            setIndexStatus((prev) => ({
+              ...prev,
+              [c.id]: {
+                is_indexed: s.is_indexed,
+                active_tables: s.active_tables,
+                total_tables: s.total_tables,
+                is_indexing: s.is_indexing,
+                indexed_at: s.indexed_at ?? undefined,
+              },
+            }));
+          }
         })
         .catch(() => {});
       api.connections
         .syncStatus(c.id)
         .then((s) => {
-          setSyncStatus((prev) => ({
-            ...prev,
-            [c.id]: {
-              is_synced: s.is_synced,
-              is_syncing: s.is_syncing,
-              synced_tables: s.synced_tables,
-              total_tables: s.total_tables,
-              synced_at: s.synced_at ?? undefined,
-              sync_status: s.sync_status,
-            },
-          }));
+          if (mountedRef.current) {
+            setSyncStatus((prev) => ({
+              ...prev,
+              [c.id]: {
+                is_synced: s.is_synced,
+                is_syncing: s.is_syncing,
+                synced_tables: s.synced_tables,
+                total_tables: s.total_tables,
+                synced_at: s.synced_at ?? undefined,
+                sync_status: s.sync_status,
+              },
+            }));
+          }
         })
         .catch(() => {});
       api.connections
         .learningsStatus(c.id)
         .then((s) => {
-          setLearningsCount((prev) => ({ ...prev, [c.id]: s.total_active }));
+          if (mountedRef.current) {
+            setLearningsCount((prev) => ({ ...prev, [c.id]: s.total_active }));
+          }
         })
         .catch(() => {});
     });
@@ -215,37 +234,68 @@ export function ConnectionSelector() {
     setUseConnString(false);
   };
 
-  const hasSSH = form.ssh_host.trim().length > 0;
+  const isMCP = form.db_type === "mcp";
+  const hasSSH = !isMCP && form.ssh_host.trim().length > 0;
 
   const handleCreate = async () => {
     if (!activeProject || !form.name.trim()) return;
-    if (form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
+    if (!isMCP && form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
       toast("SSH host is set — please provide an SSH user and key.", "error");
       return;
     }
+    if (isMCP) {
+      if (form.mcp_transport_type === "stdio" && !form.mcp_server_command.trim()) {
+        toast("MCP stdio transport requires a server command.", "error");
+        return;
+      }
+      if (form.mcp_transport_type === "sse" && !form.mcp_server_url.trim()) {
+        toast("MCP SSE transport requires a server URL.", "error");
+        return;
+      }
+    }
     const preCommandsList = form.ssh_pre_commands.trim()
       ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
+      : null;
+    let mcpEnv: Record<string, string> | null = null;
+    if (isMCP && form.mcp_env.trim()) {
+      try {
+        mcpEnv = JSON.parse(form.mcp_env);
+      } catch {
+        toast("MCP env must be valid JSON (e.g. {\"KEY\": \"value\"})", "error");
+        return;
+      }
+    }
+    const mcpArgs = isMCP && form.mcp_server_args.trim()
+      ? form.mcp_server_args.split(/\s+/).filter(Boolean)
       : null;
     try {
       const conn = await api.connections.create({
         project_id: activeProject.id,
         name: form.name,
         db_type: form.db_type,
-        db_host: form.db_host,
-        db_port: safePort(form.db_port, 5432),
-        db_name: form.db_name,
-        db_user: form.db_user || null,
-        db_password: form.db_password || null,
-        ssh_host: form.ssh_host || null,
-        ssh_port: safePort(form.ssh_port, 22),
-        ssh_user: form.ssh_user || null,
-        ssh_key_id: form.ssh_key_id || null,
-        connection_string: useConnString ? form.connection_string || null : null,
+        ...(isMCP ? { source_type: "mcp" } : {}),
+        db_host: isMCP ? "mcp" : form.db_host,
+        db_port: isMCP ? 0 : safePort(form.db_port, 5432),
+        db_name: isMCP ? form.name : form.db_name,
+        db_user: isMCP ? null : form.db_user || null,
+        db_password: isMCP ? null : form.db_password || null,
+        ssh_host: isMCP ? null : form.ssh_host || null,
+        ssh_port: isMCP ? 22 : safePort(form.ssh_port, 22),
+        ssh_user: isMCP ? null : form.ssh_user || null,
+        ssh_key_id: isMCP ? null : form.ssh_key_id || null,
+        connection_string: !isMCP && useConnString ? form.connection_string || null : null,
         is_read_only: form.is_read_only,
-        ssh_exec_mode: form.ssh_exec_mode,
-        ssh_command_template: form.ssh_command_template || null,
-        ssh_pre_commands: preCommandsList,
-      });
+        ssh_exec_mode: isMCP ? false : form.ssh_exec_mode,
+        ssh_command_template: isMCP ? null : form.ssh_command_template || null,
+        ssh_pre_commands: isMCP ? null : preCommandsList,
+        ...(isMCP ? {
+          mcp_transport_type: form.mcp_transport_type,
+          mcp_server_command: form.mcp_server_command || null,
+          mcp_server_args: mcpArgs,
+          mcp_server_url: form.mcp_server_url || null,
+          mcp_env: mcpEnv,
+        } : {}),
+      } as Parameters<typeof api.connections.create>[0]);
       useAppStore.setState((state) => ({
         connections: [conn, ...state.connections],
       }));
@@ -274,9 +324,19 @@ export function ConnectionSelector() {
       toast("Connection name is required.", "error");
       return;
     }
-    if (form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
+    if (!isMCP && form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
       toast("SSH host is set — please provide an SSH user and key.", "error");
       return;
+    }
+    if (isMCP) {
+      if (form.mcp_transport_type === "stdio" && !form.mcp_server_command.trim()) {
+        toast("MCP stdio transport requires a server command.", "error");
+        return;
+      }
+      if (form.mcp_transport_type === "sse" && !form.mcp_server_url.trim()) {
+        toast("MCP SSE transport requires a server URL.", "error");
+        return;
+      }
     }
     const updates: Record<string, unknown> = {};
     const fields = [
@@ -308,6 +368,27 @@ export function ConnectionSelector() {
       ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
       : null;
     updates.ssh_pre_commands = preCommandsList;
+
+    if (isMCP) {
+      updates.source_type = "mcp";
+      updates.mcp_transport_type = form.mcp_transport_type;
+      updates.mcp_server_command = form.mcp_server_command || null;
+      updates.mcp_server_url = form.mcp_server_url || null;
+      const mcpArgs = form.mcp_server_args.trim()
+        ? form.mcp_server_args.split(/\s+/).filter(Boolean)
+        : null;
+      updates.mcp_server_args = mcpArgs;
+      if (form.mcp_env.trim()) {
+        try {
+          updates.mcp_env = JSON.parse(form.mcp_env);
+        } catch {
+          toast("MCP env must be valid JSON (e.g. {\"KEY\": \"value\"})", "error");
+          return;
+        }
+      } else {
+        updates.mcp_env = null;
+      }
+    }
 
     try {
       const updated = await api.connections.update(editingId, updates);
@@ -573,76 +654,147 @@ export function ConnectionSelector() {
         ))}
       </select>
 
-      <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={useConnString}
-          onChange={(e) => setUseConnString(e.target.checked)}
-          className="accent-accent"
-        />
-        Use connection string
-      </label>
+      {isMCP ? (
+        <div className="space-y-2.5">
+          <select
+            value={form.mcp_transport_type}
+            aria-label="MCP transport type"
+            onChange={(e) =>
+              setForm({ ...form, mcp_transport_type: e.target.value as "stdio" | "sse" })
+            }
+            className={inputCls}
+          >
+            <option value="stdio">stdio (local command)</option>
+            <option value="sse">SSE (remote URL)</option>
+          </select>
 
-      {useConnString ? (
-        <input
-          value={form.connection_string}
-          onChange={(e) =>
-            setForm({ ...form, connection_string: e.target.value })
-          }
-          placeholder="postgresql://user:pass@host:5432/dbname"
-          aria-label="Connection string"
-          className={inputCls}
-        />
+          {form.mcp_transport_type === "stdio" ? (
+            <>
+              <input
+                value={form.mcp_server_command}
+                onChange={(e) =>
+                  setForm({ ...form, mcp_server_command: e.target.value })
+                }
+                placeholder="Command (e.g. npx -y @anthropic/mcp-server)"
+                aria-label="MCP server command"
+                className={inputCls}
+              />
+              <input
+                value={form.mcp_server_args}
+                onChange={(e) =>
+                  setForm({ ...form, mcp_server_args: e.target.value })
+                }
+                placeholder="Arguments (space-separated)"
+                aria-label="MCP server arguments"
+                className={inputCls}
+              />
+            </>
+          ) : (
+            <input
+              value={form.mcp_server_url}
+              onChange={(e) =>
+                setForm({ ...form, mcp_server_url: e.target.value })
+              }
+              placeholder="Server URL (e.g. http://localhost:8100/sse)"
+              aria-label="MCP server URL"
+              className={inputCls}
+            />
+          )}
+
+          <textarea
+            value={form.mcp_env}
+            onChange={(e) => setForm({ ...form, mcp_env: e.target.value })}
+            placeholder={'Environment variables (JSON, optional):\n{"API_KEY": "..."}'}
+            rows={2}
+            className={inputCls + " font-mono text-[10px] resize-y"}
+          />
+          <p className="text-[10px] text-text-muted px-1">
+            Connect to an external MCP server to query data from services like
+            Google Analytics, Stripe, Jira, etc.
+          </p>
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
             <input
-              value={form.db_host}
-              onChange={(e) => setForm({ ...form, db_host: e.target.value })}
-              placeholder="Host"
-              aria-label="Database host"
-              className={halfInputCls}
+              type="checkbox"
+              checked={useConnString}
+              onChange={(e) => setUseConnString(e.target.checked)}
+              className="accent-accent"
             />
+            Use connection string
+          </label>
+
+          {useConnString ? (
             <input
-              value={form.db_port}
-              onChange={(e) => setForm({ ...form, db_port: e.target.value })}
-              placeholder="Port"
-              aria-label="Database port"
-              className={halfInputCls}
-            />
-          </div>
-          <input
-            value={form.db_name}
-            onChange={(e) => setForm({ ...form, db_name: e.target.value })}
-            placeholder="Database name"
-            aria-label="Database name"
-            className={inputCls}
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              value={form.db_user}
-              onChange={(e) => setForm({ ...form, db_user: e.target.value })}
-              placeholder="Username"
-              aria-label="Database username"
-              className={halfInputCls}
-            />
-            <input
-              type="password"
-              value={form.db_password}
+              value={form.connection_string}
               onChange={(e) =>
-                setForm({ ...form, db_password: e.target.value })
+                setForm({ ...form, connection_string: e.target.value })
               }
-              placeholder={
-                editingId ? "New password (leave blank)" : "Password"
-              }
-              aria-label="Database password"
-              className={halfInputCls}
+              placeholder="postgresql://user:pass@host:5432/dbname"
+              aria-label="Connection string"
+              className={inputCls}
             />
-          </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={form.db_host}
+                  onChange={(e) =>
+                    setForm({ ...form, db_host: e.target.value })
+                  }
+                  placeholder="Host"
+                  aria-label="Database host"
+                  className={halfInputCls}
+                />
+                <input
+                  value={form.db_port}
+                  onChange={(e) =>
+                    setForm({ ...form, db_port: e.target.value })
+                  }
+                  placeholder="Port"
+                  aria-label="Database port"
+                  className={halfInputCls}
+                />
+              </div>
+              <input
+                value={form.db_name}
+                onChange={(e) =>
+                  setForm({ ...form, db_name: e.target.value })
+                }
+                placeholder="Database name"
+                aria-label="Database name"
+                className={inputCls}
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={form.db_user}
+                  onChange={(e) =>
+                    setForm({ ...form, db_user: e.target.value })
+                  }
+                  placeholder="Username"
+                  aria-label="Database username"
+                  className={halfInputCls}
+                />
+                <input
+                  type="password"
+                  value={form.db_password}
+                  onChange={(e) =>
+                    setForm({ ...form, db_password: e.target.value })
+                  }
+                  placeholder={
+                    editingId ? "New password (leave blank)" : "Password"
+                  }
+                  aria-label="Database password"
+                  className={halfInputCls}
+                />
+              </div>
+            </>
+          )}
         </>
       )}
 
-      {useConnString ? (
+      {!isMCP && (useConnString ? (
         <p className="text-[10px] text-text-muted px-1">
           SSH tunnel is not used with connection strings. Switch to individual
           fields to configure SSH.
@@ -811,22 +963,24 @@ export function ConnectionSelector() {
             </div>
           )}
         </>
-      )}
+      ))}
 
-      <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={form.is_read_only}
-          onChange={(e) =>
-            setForm({ ...form, is_read_only: e.target.checked })
-          }
-          className="accent-accent"
-        />
-        <span className="flex items-center gap-1.5">
-          <Icon name="shield" size={12} />
-          Read-only mode
-        </span>
-      </label>
+      {!isMCP && (
+        <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={form.is_read_only}
+            onChange={(e) =>
+              setForm({ ...form, is_read_only: e.target.checked })
+            }
+            className="accent-accent"
+          />
+          <span className="flex items-center gap-1.5">
+            <Icon name="shield" size={12} />
+            Read-only mode
+          </span>
+        </label>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button
@@ -865,8 +1019,8 @@ export function ConnectionSelector() {
   }
 
   return (
-    <div className="space-y-1.5 px-1">
-      <div className="flex justify-end px-1">
+    <div className="px-1">
+      <div className="flex justify-end px-1 mb-1">
         <button
           onClick={() => {
             if (showCreate) {
@@ -891,22 +1045,20 @@ export function ConnectionSelector() {
         </button>
       </div>
 
-      {isFormOpen && formUI}
+      {isFormOpen && <div className="mb-1.5">{formUI}</div>}
 
-      <div className="space-y-0.5 max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
+      <div>
         {connections.map((c) => {
           const isActive = activeConnection?.id === c.id;
           const idx = indexStatus[c.id];
           const sync = syncStatus[c.id];
 
           return (
-            <div
-              key={c.id}
-              className={`group rounded-lg transition-colors ${
-                isActive ? "bg-surface-2" : "hover:bg-surface-2/50"
-              }`}
-            >
+            <div key={c.id}>
               <div
+                className={`group relative flex items-start gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  isActive ? "bg-surface-1" : "hover:bg-surface-1"
+                }`}
                 role="button"
                 tabIndex={0}
                 onClick={() => setActiveConnection(c)}
@@ -916,170 +1068,169 @@ export function ConnectionSelector() {
                     setActiveConnection(c);
                   }
                 }}
-                className="w-full text-left px-2.5 py-2 cursor-pointer rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <StatusDot
-                    status={getConnStatus(c.id)}
-                    title={getConnStatusTitle(c.id)}
-                    size="md"
-                  />
+                {isActive && (
+                  <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
+                )}
+                <StatusDot
+                  status={getConnStatus(c.id)}
+                  title={getConnStatusTitle(c.id)}
+                  size="md"
+                  className="mt-1"
+                />
+                <div className="flex-1 min-w-0 py-0.5">
                   <span
-                    className={`flex-1 text-[13px] font-medium truncate min-w-0 ${
-                      isActive
-                        ? "text-text-primary"
-                        : "text-text-secondary"
+                    className={`text-xs font-medium truncate block ${
+                      isActive ? "text-text-primary" : "text-text-secondary"
                     }`}
                   >
                     {c.name}
                   </span>
+                  <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                    <span className="text-[9px] text-text-muted font-mono uppercase">
+                      {c.source_type === "mcp" ? "MCP" : c.db_type}
+                    </span>
+                    {c.is_read_only && (
+                      <span className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
+                        RO
+                      </span>
+                    )}
+                    {c.ssh_exec_mode && (
+                      <span className="text-[8px] px-1 py-px rounded-full bg-purple-900/30 text-purple-400 leading-none">
+                        EXEC
+                      </span>
+                    )}
+                    {idx?.is_indexing ? (
+                      <span className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                        IDX...
+                      </span>
+                    ) : idx?.is_indexed ? (
+                      <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Re-index database"
+                          className="text-[8px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleIndexDb(c.id);
+                          }}
+                        >
+                          IDX
+                        </button>
+                      </Tooltip>
+                    ) : isActive ? (
+                      <Tooltip label="Index database schema" position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Index database schema"
+                          className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleIndexDb(c.id);
+                          }}
+                        >
+                          IDX
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                    {sync?.is_syncing ? (
+                      <span className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                        SYNC...
+                      </span>
+                    ) : sync?.is_synced ? (
+                      <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}. Click to re-sync`} position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Re-sync database"
+                          className="text-[8px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSync(c.id);
+                          }}
+                        >
+                          SYNC
+                        </button>
+                      </Tooltip>
+                    ) : sync?.sync_status === "stale" ? (
+                      <Tooltip label="Sync data is stale -- click to re-sync" position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Re-sync stale data"
+                          className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSync(c.id);
+                          }}
+                        >
+                          SYNC
+                        </button>
+                      </Tooltip>
+                    ) : isActive && idx?.is_indexed ? (
+                      <Tooltip label="Run Code-DB Sync" position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Run Code-DB Sync"
+                          className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSync(c.id);
+                          }}
+                        >
+                          SYNC
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                    {(learningsCount[c.id] ?? 0) > 0 ? (
+                      <Tooltip label={`${learningsCount[c.id]} agent learnings. Click to manage`} position="bottom">
+                        <button
+                          type="button"
+                          aria-label="Manage agent learnings"
+                          className="text-[8px] px-1 py-px rounded-full bg-blue-900/30 text-blue-400 cursor-pointer hover:bg-blue-900/50 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowLearnings(showLearnings === c.id ? null : c.id);
+                          }}
+                        >
+                          LEARN {learningsCount[c.id]}
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 mt-1 ml-4 flex-wrap">
-                  <span className="text-[10px] text-text-muted font-mono uppercase">
-                    {c.db_type}
-                  </span>
-                  {c.is_read_only && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-tertiary">
-                      RO
-                    </span>
-                  )}
-                  {c.ssh_exec_mode && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-900/30 text-purple-400">
-                      EXEC
-                    </span>
-                  )}
-                  {idx?.is_indexing ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning-muted text-warning animate-pulse-dot">
-                      IDX...
-                    </span>
-                  ) : idx?.is_indexed ? (
-                    <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Re-index database"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleIndexDb(c.id);
-                        }}
-                      >
-                        IDX
-                      </button>
-                    </Tooltip>
-                  ) : isActive ? (
-                    <Tooltip label="Index database schema" position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Index database schema"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleIndexDb(c.id);
-                        }}
-                      >
-                        IDX
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                  {sync?.is_syncing ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning-muted text-warning animate-pulse-dot">
-                      SYNC...
-                    </span>
-                  ) : sync?.is_synced ? (
-                    <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}. Click to re-sync`} position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Re-sync database"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSync(c.id);
-                        }}
-                      >
-                        SYNC
-                      </button>
-                    </Tooltip>
-                  ) : sync?.sync_status === "stale" ? (
-                    <Tooltip label="Sync data is stale -- click to re-sync" position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Re-sync stale data"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSync(c.id);
-                        }}
-                      >
-                        SYNC
-                      </button>
-                    </Tooltip>
-                  ) : isActive && idx?.is_indexed ? (
-                    <Tooltip label="Run Code-DB Sync" position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Run Code-DB Sync"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSync(c.id);
-                        }}
-                      >
-                        SYNC
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                  {(learningsCount[c.id] ?? 0) > 0 ? (
-                    <Tooltip label={`${learningsCount[c.id]} agent learnings. Click to manage`} position="bottom">
-                      <button
-                        type="button"
-                        aria-label="Manage agent learnings"
-                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-900/30 text-blue-400 cursor-pointer hover:bg-blue-900/50 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowLearnings(showLearnings === c.id ? null : c.id);
-                        }}
-                      >
-                        LEARN {learningsCount[c.id]}
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                </div>
-              </div>
-              <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
-                <ActionButton
-                  icon="refresh-cw"
-                  title={
-                    checking === c.id ? "Checking..." : "Test connection"
-                  }
-                  onClick={() => handleCheckStatus(c.id)}
-                  disabled={checking === c.id}
-                  size="sm"
-                />
-                <ActionButton
-                  icon="pencil"
-                  title="Edit"
-                  onClick={() => handleEdit(c)}
-                  size="sm"
-                />
-                {isActive && (
+                <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
                   <ActionButton
-                    icon="database"
-                    title="Refresh schema cache"
-                    onClick={() => handleRefreshSchema(c.id)}
-                    disabled={refreshing === c.id}
-                    size="sm"
+                    icon="refresh-cw"
+                    title={checking === c.id ? "Checking..." : "Test connection"}
+                    onClick={(e) => { e.stopPropagation(); handleCheckStatus(c.id); }}
+                    disabled={checking === c.id}
+                    size="xs"
                   />
-                )}
-                <ActionButton
-                  icon="trash"
-                  title="Delete connection"
-                  onClick={(e) => handleDelete(e, c.id)}
-                  variant="danger"
-                  size="sm"
-                />
+                  <ActionButton
+                    icon="pencil"
+                    title="Edit"
+                    onClick={(e) => { e.stopPropagation(); handleEdit(c); }}
+                    size="xs"
+                  />
+                  {isActive && c.source_type !== "mcp" && (
+                    <ActionButton
+                      icon="database"
+                      title="Refresh schema cache"
+                      onClick={(e) => { e.stopPropagation(); handleRefreshSchema(c.id); }}
+                      disabled={refreshing === c.id}
+                      size="xs"
+                    />
+                  )}
+                  <ActionButton
+                    icon="trash"
+                    title="Delete connection"
+                    onClick={(e) => handleDelete(e, c.id)}
+                    variant="danger"
+                    size="xs"
+                  />
+                </div>
               </div>
               {showLearnings === c.id && (
-                <div className="px-2 pb-2">
+                <div className="px-2 pb-1.5">
                   <LearningsPanel
                     connectionId={c.id}
                     onClose={() => setShowLearnings(null)}

@@ -23,6 +23,20 @@ const STEP_LABELS: Record<string, string> = {
   error_classify: "Error Analysis",
   query_repair: "Query Repair",
   interpret_results: "Interpret",
+  "orchestrator:llm_call": "Orchestrator Thinking",
+  "orchestrator:sql_agent": "SQL Agent",
+  "orchestrator:knowledge_agent": "Knowledge Agent",
+  "orchestrator:viz": "Visualization",
+  "orchestrator:manage_rules": "Managing Rules",
+  "sql:llm_call": "SQL Agent Thinking",
+  "sql:get_schema": "Loading Schema",
+  "sql:load_rules": "Loading Rules",
+  "sql:get_db_index": "Loading DB Index",
+  "sql:get_sync": "Loading Sync Context",
+  "sql:get_query_ctx": "Building Query Context",
+  "sql:learnings": "Loading Learnings",
+  "sql:record_learn": "Recording Learning",
+  "knowledge:llm_call": "Knowledge Agent Thinking",
 };
 
 function StepIcon({ status }: { status: StepState["status"] }) {

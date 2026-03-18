@@ -191,10 +191,14 @@ class TestOpenRouterFormatMessages:
 
     def test_tool_result_message(self):
         adapter = self._make_adapter()
-        msgs = [Message(
-            role="tool", content="result data",
-            tool_call_id="tc-1", name="search_knowledge",
-        )]
+        msgs = [
+            Message(
+                role="tool",
+                content="result data",
+                tool_call_id="tc-1",
+                name="search_knowledge",
+            )
+        ]
         result = adapter._format_messages(msgs)
         assert result[0]["role"] == "tool"
         assert result[0]["tool_call_id"] == "tc-1"
@@ -208,8 +212,10 @@ class TestOpenRouterFormatMessages:
             Message(role="user", content="What is the project?"),
             Message(role="assistant", content="", tool_calls=tool_calls),
             Message(
-                role="tool", content="Project docs...",
-                tool_call_id="tc-1", name="search_knowledge",
+                role="tool",
+                content="Project docs...",
+                tool_call_id="tc-1",
+                name="search_knowledge",
             ),
         ]
         result = adapter._format_messages(msgs)

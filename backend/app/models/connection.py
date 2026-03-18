@@ -15,6 +15,7 @@ class Connection(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), default="database")
     db_type: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # SSH tunnel settings
@@ -39,6 +40,13 @@ class Connection(Base):
     ssh_exec_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     ssh_command_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_pre_commands: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # MCP source fields (used when source_type = "mcp")
+    mcp_server_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_server_args: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_server_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    mcp_transport_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    mcp_env_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

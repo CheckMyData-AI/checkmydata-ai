@@ -30,15 +30,12 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
-│  │  Core Orchestrator                                             │   │
-│  │  1. Introspect schema (cached 5min)                           │   │
-│  │  2. Load rules (file + DB)                                    │   │
-│  │  3. RAG: vector search for relevant code docs                 │   │
-│  │  4. Build SQL/query via LLM (dialect-aware prompts)           │   │
-│  │  5. Safety guard (block DML in read-only mode)                │   │
-│  │  6. Execute query on target database                          │   │
-│  │  7. Interpret results via LLM                                 │   │
-│  │  8. Recommend visualization format                            │   │
+│  │  Multi-Agent System                                            │   │
+│  │  OrchestratorAgent → routes to specialised sub-agents:        │   │
+│  │    SQLAgent:       schema + SQL gen + validation + execution   │   │
+│  │    VizAgent:       chart type + config (rule-based / LLM)     │   │
+│  │    KnowledgeAgent: RAG search + entity info + codebase Q&A    │   │
+│  │  AgentResultValidator: validates before returning to user     │   │
 │  └──┬────────┬───────────┬────────────┬───────────────────────────┘   │
 │     │        │           │            │                               │
 │     ▼        ▼           ▼            ▼                               │
@@ -58,7 +55,7 @@ AI-powered database query agent that analyzes Git repositories, understands data
 The system has **four main flows**:
 
 1. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-2. **Chat flow**: Ask a question in natural language -> the **ConversationalAgent** decides whether to chat, search knowledge, or query the database -> results returned with visualization. Uses SSE streaming for real-time progress updates. Chat history is token-budget-managed and older messages are summarized to stay within limits.
+2. **Chat flow**: Ask a question in natural language -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits.
 3. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
 4. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
 
@@ -76,7 +73,7 @@ make setup       # creates venv, installs Python & Node deps, generates .env & e
 make dev         # backend on :8000, frontend on :3000
 ```
 
-Open `http://localhost:3000` in your browser.
+Open `http://localhost:3100` in your browser.
 
 ### 2. Register / Login
 
@@ -363,7 +360,7 @@ The log connects via SSE to `GET /api/workflows/events` (global mode, no workflo
 With a project selected (and optionally a connection):
 
 1. Open a chat session (or create one via the session list in the sidebar)
-2. Type your question in natural language. The **ConversationalAgent** handles different types of interactions:
+2. Type your question in natural language. The **OrchestratorAgent** routes to the right sub-agent:
 
    **Data questions** (requires a database connection):
    - _"How many active plans were created last month?"_
@@ -380,28 +377,30 @@ With a project selected (and optionally a connection):
    - _"Can you explain that result in more detail?"_
    - _"Thanks, that's very helpful"_
 
-3. The agent decides which tools to call based on the question:
+3. The agent decides which sub-agent to delegate to based on the question:
 
 ```
 Your question
     ↓
-[ConversationalAgent] — LLM with tools decides what to do
+[OrchestratorAgent] — LLM with meta-tools decides routing
     ↓
-├── Data question → calls get_db_index, get_schema_info, get_custom_rules, execute_query
+├── Data question → query_database → SQLAgent → VizAgent
+│   SQLAgent: gather context → generate SQL → validation loop → execute
+│   VizAgent: rule-based or LLM chart type selection
 │   ↓
 │   [Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute
 │   ↓  (if error: Classify → Enrich → Repair → retry, up to 3 attempts)
-│   [Interpret results] → Table / Chart / Text + Export
+│   Results + visualization config
 │
-├── Knowledge question → calls search_knowledge, get_entity_info
+├── Knowledge question → search_codebase → KnowledgeAgent
 │   ↓
 │   Returns answer with source citations
 │
-├── Rule management → calls manage_custom_rules
+├── Rule management → manage_rules (handled directly by orchestrator)
 │   ↓
 │   Creates/updates/deletes a project rule, sidebar refreshes
 │
-└── Conversation → responds directly (no tool calls)
+└── Conversation → responds directly (no sub-agent calls)
 ```
 
 4. Each assistant message shows:
@@ -487,17 +486,725 @@ Project owners can invite other users to collaborate on a project via email:
 
 ## Architecture Deep Dive
 
-### Backend Layers
+This section is the authoritative reference for how every major flow works in code. It covers connection creation, the multi-agent chat pipeline, indexing, MCP integration (client and server), and a step-by-step extension protocol for adding new data sources and agents.
+
+---
+
+### 1. Connection Flow (End-to-End)
+
+Every data source the system can talk to is represented by a `Connection` row. The flow from the user clicking "Create" to a usable `ConnectionConfig` at runtime is:
+
+```
+Frontend Form (ConnectionSelector.tsx)
+    │
+    │  POST /api/connections
+    ▼
+API Route — ConnectionCreate Pydantic validator
+    │         validates required fields per db_type
+    │         sets source_type = "mcp" for MCP connections
+    ▼
+ConnectionService.create()
+    │  encrypts: db_password, connection_string, mcp_env
+    │  JSON-serializes: mcp_server_args (list → JSON string)
+    ▼
+Connection ORM model → SQLite / PostgreSQL
+```
+
+At runtime, when the system needs to actually connect, it calls `ConnectionService.to_config(session, conn)`, which reverses the process — decrypting secrets and deserializing JSON back into a `ConnectionConfig` dataclass. For MCP connections, all MCP-specific fields are placed into `ConnectionConfig.extra`.
+
+**Supported source types:**
+
+| `source_type` | `db_type` values | Adapter class | Transport |
+|---|---|---|---|
+| `database` | `postgres`, `mysql`, `mongodb`, `clickhouse` | `PostgresConnector`, `MySQLConnector`, `MongoDBConnector`, `ClickHouseConnector` | Native driver (+ optional SSH tunnel) |
+| `mcp` | `mcp` | `MCPClientAdapter` | stdio or SSE to external MCP server |
+
+**Key files:**
+
+| File | What it does |
+|---|---|
+| `frontend/src/components/connections/ConnectionSelector.tsx` | Renders form; `DB_TYPES` array controls the dropdown; conditional rendering shows MCP fields (transport type, command/args or URL, env vars JSON) when `db_type === "mcp"`, and hides DB/SSH fields |
+| `backend/app/api/routes/connections.py` | `ConnectionCreate` Pydantic model with `@model_validator` — when `db_type == "mcp"`, requires either `mcp_server_command` (stdio) or `mcp_server_url` (SSE) and forces `source_type = "mcp"` |
+| `backend/app/services/connection_service.py` | `create()` encrypts secrets and serializes lists; `to_config()` decrypts and builds `ConnectionConfig` with `extra` dict for MCP fields |
+| `backend/app/models/connection.py` | ORM model with both database fields (`db_host`, `db_port`, etc.) and MCP fields (`mcp_server_command`, `mcp_server_args`, `mcp_server_url`, `mcp_transport_type`, `mcp_env_encrypted`) |
+| `backend/app/connectors/base.py` | `ConnectionConfig` dataclass — the runtime config passed to adapters; `extra: dict` carries source-type-specific data |
+
+**MCP connection fields on the `Connection` model:**
+
+| Column | Type | Purpose |
+|---|---|---|
+| `mcp_server_command` | `Text` | Executable to spawn for stdio transport (e.g. `npx`, `python`) |
+| `mcp_server_args` | `Text` | JSON-serialized `list[str]` of CLI arguments |
+| `mcp_server_url` | `String(1024)` | URL for SSE transport |
+| `mcp_transport_type` | `String(50)` | `"stdio"` or `"sse"` |
+| `mcp_env_encrypted` | `Text` | Fernet-encrypted JSON `dict[str, str]` of env vars passed to the MCP subprocess |
+
+---
+
+### 2. Chat / Agent Orchestration Flow
+
+When a user sends a question, the request travels through a multi-agent pipeline. The `OrchestratorAgent` is the central coordinator that uses LLM tool calling to decide which sub-agent handles the question.
+
+**Request path:**
+
+```
+User sends question
+    │
+    │  POST /api/chat/ask  (or /ask/stream for SSE)
+    ▼
+Chat route (chat.py)
+    │  loads ConnectionConfig from connection_id
+    │  creates/fetches ChatSession, adds user message, loads history
+    ▼
+ConversationalAgent (core/agent.py)
+    │  builds AgentContext, delegates to:
+    ▼
+OrchestratorAgent.run(context)
+    │
+    │  1. Trim chat history (token-budget-aware summarization)
+    │  2. Check project state:
+    │     has_connection = context.connection_config is not None
+    │     has_kb = ChromaDB collection has documents
+    │     has_mcp = any Connection with source_type == "mcp" in project
+    │  3. Build table_map from DB index (if connection exists)
+    │  4. Build system prompt and meta-tools list
+    │  5. Enter orchestrator LLM loop (max 5 iterations)
+    ▼
+┌──────── Orchestrator LLM Loop ────────┐
+│                                        │
+│  LLM receives the system prompt and   │
+│  available meta-tools. It decides:     │
+│                                        │
+│  query_database  → _handle_query_database()  → SQLAgent.run()
+│                    SQLAgent validates results with AgentResultValidator
+│                    If SQL results exist → VizAgent.run() picks chart type
+│                                                                  │
+│  search_codebase → _handle_search_codebase() → KnowledgeAgent.run()
+│                    Results validated before returning             │
+│                                                                  │
+│  manage_rules    → _handle_manage_rules()                        │
+│                    Direct CRUD (no sub-agent)                    │
+│                                                                  │
+│  query_mcp_source → _handle_query_mcp_source()                   │
+│                     Connects MCPClientAdapter → MCPSourceAgent.run()
+│                     Disconnects adapter after completion         │
+│                                                                  │
+│  text response   → exit loop                                    │
+│                                                                  │
+│  Tool results are appended as tool messages.                     │
+│  Loop continues until LLM responds without tool calls.           │
+└────────────────────────────────────────┘
+    │
+    ▼
+AgentResponse
+    (answer, query, results, viz_type, viz_config,
+     knowledge_sources, token_usage, tool_call_log)
+```
+
+**How meta-tools are selected** (`agents/tools/orchestrator_tools.py`):
+
+The function `get_orchestrator_tools()` accepts three booleans and returns only the tools relevant to the current project state:
+
+| Condition | Tools included |
+|---|---|
+| `has_connection = True` | `query_database`, `manage_rules` |
+| `has_knowledge_base = True` | `search_codebase` |
+| `has_mcp_sources = True` | `query_mcp_source` |
+
+The LLM itself decides which tool to call based on the user's question — there is no hardcoded routing logic. If no tools are available, the LLM responds conversationally.
+
+**Sub-agent retry logic:**
+
+`_handle_query_database` retries the SQLAgent up to `MAX_SUB_AGENT_RETRIES` (1 extra attempt) when the `AgentResultValidator` reports failures. `AgentRetryableError` exceptions also trigger retries. `AgentFatalError` and `AgentError` abort immediately.
+
+**Resource management & resilience:**
+
+- **MCP adapter cleanup** — `_handle_query_mcp_source` wraps the entire adapter lifecycle (connect → work → disconnect) in a `try/finally` block. The `disconnect()` call is itself wrapped in a safety `try/except` so a disconnect failure never masks the real error.
+- **External call retry** — `ConnectionService.test_connection()` retries `connector.connect()` up to 3 times with exponential backoff for transient errors (`TimeoutError`, `ConnectionError`, `OSError`). The MCP pipeline's `adapter.connect()` uses the same retry pattern.
+- **Pipeline failure cleanup** — `IndexingPipelineRunner.run()` catches exceptions from the entire step pipeline, marks the checkpoint as `pipeline_failed`, emits a tracker failure event, and returns a result with `status="failed"` instead of propagating the exception.
+- **Streaming fallback safety** — `LLMRouter.stream()` tracks whether any tokens have been yielded. If the provider stream fails *after* tokens were sent, it raises immediately (to avoid duplicate/corrupted output). Fallback to the next provider only happens if the failure occurs before any tokens are yielded.
+
+**Result validation:**
+
+Every sub-agent result passes through `AgentResultValidator` before being returned:
+- SQL results: checks for error status, empty results, query presence
+- Knowledge results: checks for answer presence, source quality
+- Viz results: checks config validity, falls back to `bar_chart` or `table` on warnings
+
+**Key files:**
+
+| File | What it does |
+|---|---|
+| `backend/app/api/routes/chat.py` | HTTP endpoint, session management, history loading |
+| `backend/app/core/agent.py` | `ConversationalAgent` — thin wrapper that builds `AgentContext` and calls `OrchestratorAgent.run()` |
+| `backend/app/agents/orchestrator.py` | `OrchestratorAgent.run()` (the main loop), `_handle_meta_tool()` dispatch, `_has_mcp_sources()` check |
+| `backend/app/agents/tools/orchestrator_tools.py` | `get_orchestrator_tools()` — conditional tool list, tool definitions (`QUERY_DATABASE_TOOL`, `SEARCH_CODEBASE_TOOL`, `MANAGE_RULES_TOOL`, `QUERY_MCP_SOURCE_TOOL`) |
+| `backend/app/agents/sql_agent.py` | `SQLAgent` — schema introspection, SQL generation, validation loop, execution, learning extraction |
+| `backend/app/agents/viz_agent.py` | `VizAgent` — rule-based + LLM chart type selection |
+| `backend/app/agents/knowledge_agent.py` | `KnowledgeAgent` — RAG search, entity info, codebase Q&A |
+| `backend/app/agents/mcp_source_agent.py` | `MCPSourceAgent` — LLM loop for external MCP tool calls |
+| `backend/app/agents/validation.py` | `AgentResultValidator` — validates sub-agent outputs |
+
+**Agent hierarchy:**
+
+| Agent | Location | Responsibility | Triggered by |
+|---|---|---|---|
+| **OrchestratorAgent** | `agents/orchestrator.py` | Routes questions, composes final response, manages VizAgent | Every chat request |
+| **SQLAgent** | `agents/sql_agent.py` | Schema context, SQL gen, validation loop, execution, learnings | `query_database` meta-tool |
+| **VizAgent** | `agents/viz_agent.py` | Chart type selection (rule-based + LLM fallback), config gen | Auto-runs after SQLAgent returns results |
+| **KnowledgeAgent** | `agents/knowledge_agent.py` | RAG search, entity info, codebase Q&A | `search_codebase` meta-tool |
+| **MCPSourceAgent** | `agents/mcp_source_agent.py` | Queries external MCP servers via MCPClientAdapter | `query_mcp_source` meta-tool |
+
+**Agent communication protocol (`agents/base.py`):**
+
+- All agents implement `BaseAgent` with `async def run(context: AgentContext, **kwargs) -> AgentResult`
+- `AgentContext` carries: `project_id`, `connection_config`, `user_question`, `chat_history`, `llm_router`, `tracker`, `workflow_id`, `user_id`, LLM model preferences, and an `extra` dict
+- Each agent returns a typed `AgentResult` subclass (`SQLAgentResult`, `KnowledgeResult`, `VizResult`, `MCPSourceResult`)
+- Token usage is accumulated via `BaseAgent.accum_usage()` and summed into the orchestrator's `total_usage`
+- Errors are classified via the `agents/errors.py` hierarchy: `AgentRetryableError` (can retry), `AgentFatalError` (abort), `AgentValidationError` (data issue)
+
+---
+
+### 3. Indexing Flows
+
+The system has three independent indexing pipelines: **repository indexing** (Git + ChromaDB), **database indexing** (schema + LLM analysis), and **MCP tool schema indexing**. Each operates on a different data source type and stores results in different backends.
+
+#### 3a. Repository Indexing (Knowledge Base)
+
+Covered in detail in the User Guide section "Index the Repository." This is the multi-pass pipeline: project profiling, entity extraction, cross-file analysis, LLM doc generation, and ChromaDB vector storage. Triggered via `POST /api/repos/{project_id}/index`.
+
+#### 3b. Database Indexing
+
+Triggered via `POST /api/connections/{connection_id}/index-db`. Runs `DbIndexPipeline` as a background task:
+
+```
+Trigger: POST /{connection_id}/index-db
+    │
+    ▼
+_run_db_index_background() — background task
+    │  uses DbIndexPipeline (knowledge/db_index_pipeline.py)
+    ▼
+Step 1: Connect via get_connector(db_type) → introspect schema
+Step 2: Fetch sample data (3 newest rows per table)
+Step 3: Load code context + custom rules
+Step 4: LLM validation per table (active?, relevance 1-5, description, patterns)
+Step 5: Persist via DbIndexService → db_index + db_index_summary tables
+Step 6: LLM generates overall database summary + recommendations
+```
+
+Results are stored in the internal database (`db_index`, `db_index_summary` tables) and made available to the SQLAgent through the `get_db_index` and `get_query_context` tools.
+
+#### 3c. MCP Tool Schema Indexing
+
+`MCPPipeline` (`pipelines/mcp_pipeline.py`) handles indexing for MCP data sources. It connects to the external MCP server, discovers its tools, and stores the schemas in the project's ChromaDB collection:
+
+```
+MCPPipeline.index(source_id, context)
+    │
+    ▼
+Connect via MCPClientAdapter → list_tools()
+    │  gets tool names, descriptions, input schemas
+    ▼
+Format each tool as a text document:
+    "MCP Tool: {name}\nDescription: {desc}\nInput Schema: {json}"
+    │
+    ▼
+Upsert into ChromaDB collection for project
+    with metadata: source="mcp:{conn_name}", type="mcp_tool_schema"
+```
+
+#### 3d. Pipeline Plugin System
+
+All indexing pipelines implement the `DataSourcePipeline` abstract base class (`pipelines/base.py`):
+
+```python
+class DataSourcePipeline(ABC):
+    source_type: str                                    # matches Connection.source_type
+    async def index(source_id, context) -> PipelineResult
+    async def sync_with_code(source_id, context) -> PipelineResult
+    async def get_status(source_id) -> PipelineStatus
+    def get_agent_tools() -> list[Tool]
+```
+
+Pipelines are registered in `PIPELINE_REGISTRY` (`pipelines/registry.py`):
+
+| `source_type` | Pipeline class | What it indexes |
+|---|---|---|
+| `database` | `DatabasePipeline` | Wraps `DbIndexPipeline` + `CodeDbSyncPipeline` |
+| `mcp` | `MCPPipeline` | MCP tool schemas into ChromaDB |
+
+Use `get_pipeline(source_type)` to instantiate a pipeline, or `register_pipeline(source_type, cls)` to add a new one at runtime.
+
+**Key types:**
+
+| Type | Location | Purpose |
+|---|---|---|
+| `PipelineContext` | `pipelines/base.py` | Carries `project_id`, `workflow_id`, `force_full`, `extra` |
+| `PipelineResult` | `pipelines/base.py` | `success`, `items_processed`, `error`, `metadata` |
+| `PipelineStatus` | `pipelines/base.py` | `is_indexed`, `is_synced`, `is_stale`, `last_indexed_at`, `items_count` |
+
+---
+
+### 4. MCP Server (Exposing the Agent as MCP Tools)
+
+The MCP server lets external clients (Claude Desktop, Cursor IDE, Python scripts) query databases, search codebases, and access project metadata through the standard Model Context Protocol.
+
+**Architecture:**
+
+```
+External MCP Clients                        eSIM Database Agent
+┌──────────────┐                           ┌─────────────────────────────────┐
+│ Claude       │──stdio──────────────────▶│ FastMCP Server                  │
+│ Desktop      │                           │ (app/mcp_server/server.py)      │
+├──────────────┤                           │                                 │
+│ Cursor IDE   │──SSE (port 8100)────────▶│ Tools:                          │
+├──────────────┤                           │   query_database(project_id,    │
+│ Python       │──streamable-http────────▶│     question, connection_id?)   │
+│ script       │                           │   search_codebase(project_id,   │
+└──────────────┘                           │     question)                   │
+                                           │   list_projects()               │
+                                           │   list_connections(project_id)  │
+                                           │   get_schema(connection_id)     │
+                                           │   execute_raw_query(            │
+                                           │     connection_id, query)       │
+                                           │                                 │
+                                           │ Resources:                      │
+                                           │   project://{id}/schema         │
+                                           │   project://{id}/rules          │
+                                           │   project://{id}/knowledge      │
+                                           └─────────────────────────────────┘
+```
+
+**How tool calls are handled (`mcp_server/tools.py`):**
+
+Each MCP tool handler creates an `AgentContext`, instantiates an `OrchestratorAgent`, and calls `orchestrator.run(ctx)`. The response is serialized to JSON and returned to the MCP client. This means MCP clients get the same multi-agent intelligence (SQL generation, validation loop, visualization) as the web UI.
+
+Example flow for `query_database`:
+1. Load project and connection from the internal DB
+2. Build `ConnectionConfig` via `ConnectionService.to_config()`
+3. Create `AgentContext` with `user_id="mcp-user"`, empty chat history
+4. Run `OrchestratorAgent.run()` — full SQLAgent + VizAgent pipeline
+5. Serialize `AgentResponse` to JSON (answer, query, results, viz config)
+
+**Authentication (`mcp_server/auth.py`):**
+
+| Method | How it works |
+|---|---|
+| **API key** | Set `ESIM_API_KEY` (or `MCP_API_KEY`) env var on the server. Client sends the same key. Returns synthetic user `mcp-api-key-user`. |
+| **JWT** | Client sends a JWT token issued by the auth system. Validated via `AuthService.decode_token()`. Returns the real user identity. |
+| **No auth** | If no `ESIM_API_KEY` is configured and no credentials are provided, requests proceed as `mcp-anonymous`. |
+
+**Running the MCP server (`mcp_server/__main__.py`):**
+
+```bash
+# stdio (default) — for Claude Desktop, Cursor IDE
+cd backend && python -m app.mcp_server
+
+# SSE — for HTTP-based clients
+cd backend && python -m app.mcp_server --transport sse --host 127.0.0.1 --port 8100
+
+# streamable-http — for newer MCP clients
+cd backend && python -m app.mcp_server --transport streamable-http --port 8100
+```
+
+**Configuring in Claude Desktop (`claude_desktop_config.json`):**
+
+```json
+{
+  "mcpServers": {
+    "esim-agent": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/path/to/backend",
+      "env": {
+        "ESIM_API_KEY": "your-secret-key"
+      }
+    }
+  }
+}
+```
+
+---
+
+### 5. MCP Client (Consuming External MCP Servers)
+
+The system can connect to any MCP-compliant server as a data source, enabling queries against services like Google Analytics, Stripe, Jira, or custom internal tools.
+
+**Data flow:**
+
+```
+User asks about external data (e.g. "Show me GA pageviews")
+    │
+    ▼
+OrchestratorAgent detects has_mcp_sources=True
+    │  LLM calls query_mcp_source meta-tool
+    ▼
+_handle_query_mcp_source()
+    │  1. Resolve MCP connection (by connection_id or first MCP conn in project)
+    │  2. Build ConnectionConfig via to_config()
+    │  3. Create MCPClientAdapter and connect()
+    ▼
+MCPClientAdapter.connect(config)
+    │  reads config.extra: mcp_transport_type, mcp_server_command,
+    │  mcp_server_args, mcp_server_url, mcp_env
+    │
+    │  stdio: spawn subprocess via StdioServerParameters
+    │  SSE:   connect via sse_client(url)
+    │
+    │  Initialize ClientSession → list_tools()
+    │  Store discovered tool schemas (name, description, input_schema)
+    ▼
+MCPSourceAgent.run(context, question, source_name)
+    │
+    │  1. Convert discovered MCP tool schemas → LLM Tool objects
+    │     (each tool's input_schema.properties → ToolParameter list)
+    │  2. Build system prompt with tool descriptions
+    │  3. Enter LLM loop (max 5 iterations):
+    │     - LLM sees tools and decides which to call
+    │     - For each tool call: adapter.call_tool(name, arguments)
+    │     - Tool result appended as tool message
+    │     - Loop until LLM responds with text (no more tool calls)
+    ▼
+MCPSourceResult (answer, tool_calls_made, raw_results)
+    │
+    ▼
+adapter.disconnect()  ← always runs (finally block)
+    │
+    ▼
+Answer returned to OrchestratorAgent → user
+```
+
+**MCPClientAdapter (`connectors/mcp_client.py`):**
+
+This is a `DataSourceAdapter` subclass that speaks the MCP protocol:
+
+| Method | What it does |
+|---|---|
+| `connect(config)` | Starts stdio subprocess or SSE connection; initializes `ClientSession`; calls `list_tools()` to discover available tools |
+| `disconnect()` | Closes the async exit stack (kills subprocess / closes HTTP) |
+| `test_connection()` | Calls `list_tools()` — returns `True` if it succeeds |
+| `list_entities()` | Returns tool names as the "entity" list |
+| `get_tool_schemas()` | Returns full tool metadata (name, description, input_schema) |
+| `query(tool_name, params)` | Calls an MCP tool; tries to parse JSON response into `QueryResult` rows/columns |
+| `call_tool(name, arguments)` | Convenience method returning raw text from the MCP tool call |
+
+**MCPSourceAgent (`agents/mcp_source_agent.py`):**
+
+The agent has its own LLM loop (separate from the orchestrator's loop) with dynamically discovered tools. The key method `_build_llm_tools()` converts MCP `input_schema` JSON into `Tool` / `ToolParameter` objects that the LLM can call:
+
+```
+MCP tool schema:               →  LLM Tool object:
+{                                  Tool(
+  "name": "get_pageviews",           name="get_pageviews",
+  "description": "...",              description="...",
+  "input_schema": {                  parameters=[
+    "properties": {                    ToolParameter(name="date_range", type="string", ...),
+      "date_range": {                  ToolParameter(name="page_path", type="string", ...),
+        "type": "string"            ]
+      }                            )
+    }
+  }
+}
+```
+
+**Adding an MCP source connection (frontend):**
+
+1. In the sidebar Connections section, click **+ New**
+2. Select **mcp** from the database type dropdown
+3. Choose transport:
+   - **stdio**: Enter the command (e.g. `npx`) and arguments (e.g. `-y @anthropic/mcp-server-filesystem /path`)
+   - **SSE**: Enter the server URL (e.g. `http://localhost:8100/sse`)
+4. Optionally add environment variables as JSON (e.g. `{"API_KEY": "sk-..."}`)
+5. Click **Create Connection**
+
+---
+
+### 6. Data Source Adapter Hierarchy
+
+All data source connectors implement a common interface defined in `connectors/base.py`:
+
+```
+DataSourceAdapter (ABC)          ← generic interface for ALL sources
+    │
+    │  source_type, connect(), disconnect(),
+    │  test_connection(), list_entities(), query()
+    │
+    ├── DatabaseAdapter           ← adds introspect_schema(), execute_query(), db_type
+    │   (alias: BaseConnector)
+    │   ├── PostgresConnector
+    │   ├── MySQLConnector
+    │   ├── MongoDBConnector
+    │   └── ClickHouseConnector
+    │
+    └── MCPClientAdapter          ← adds get_tool_schemas(), call_tool()
+```
+
+The `ADAPTER_REGISTRY` in `connectors/registry.py` maps type strings to adapter classes:
+
+```python
+ADAPTER_REGISTRY = {
+    "postgres": PostgresConnector,
+    "postgresql": PostgresConnector,
+    "mysql": MySQLConnector,
+    "mongodb": MongoDBConnector,
+    "mongo": MongoDBConnector,
+    "clickhouse": ClickHouseConnector,
+    "mcp": MCPClientAdapter,
+}
+```
+
+Use `get_adapter(source_type, db_type)` to instantiate an adapter. For SSH exec mode, pass `ssh_exec_mode=True` to get `SSHExecConnector` instead. The backward-compatible `get_connector(db_type)` function raises `TypeError` if the adapter is not a `DatabaseAdapter`.
+
+---
+
+### 7. Extension Protocol — Adding New Data Sources
+
+This section documents the exact steps to add a new data source type to the system. Follow each step in order. The example below uses a hypothetical "google_analytics" source.
+
+#### Step 1: Create the Adapter
+
+Create `backend/app/connectors/google_analytics.py` implementing `DataSourceAdapter`:
+
+```python
+from app.connectors.base import ConnectionConfig, DataSourceAdapter, QueryResult
+
+class GoogleAnalyticsAdapter(DataSourceAdapter):
+    source_type = "google_analytics"
+
+    async def connect(self, config: ConnectionConfig) -> None:
+        # Read credentials from config.extra
+        # Initialize API client
+        ...
+
+    async def disconnect(self) -> None:
+        # Close API client
+        ...
+
+    async def test_connection(self) -> bool:
+        # Make a lightweight API call to verify credentials
+        ...
+
+    async def list_entities(self) -> list[str]:
+        # Return available data streams / property names
+        ...
+
+    async def query(self, query: str, params=None) -> QueryResult:
+        # Execute an analytics query, return rows + columns
+        ...
+```
+
+Register it in `backend/app/connectors/registry.py`:
+
+```python
+from app.connectors.google_analytics import GoogleAnalyticsAdapter
+
+ADAPTER_REGISTRY = {
+    ...
+    "google_analytics": GoogleAnalyticsAdapter,
+}
+```
+
+#### Step 2: Extend the Connection Model
+
+Add any source-specific columns to `backend/app/models/connection.py`:
+
+```python
+ga_property_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+ga_credentials_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+```
+
+Create an Alembic migration:
+
+```bash
+cd backend && alembic revision --autogenerate -m "add_google_analytics_fields"
+```
+
+#### Step 3: Update the API Layer
+
+In `backend/app/api/routes/connections.py`:
+
+1. Add `"google_analytics"` to the `ConnectionCreate.db_type` Literal type
+2. Add optional fields to `ConnectionCreate` (`ga_property_id`, `ga_credentials`, etc.)
+3. Add a validation branch in `@model_validator` for the new type
+4. Add corresponding fields to `ConnectionUpdate` and `ConnectionResponse`
+
+#### Step 4: Update ConnectionService
+
+In `backend/app/services/connection_service.py`:
+
+1. Handle encryption of new credentials in `create()`
+2. Add the new fields to `_UPDATABLE_FIELDS`
+3. In `to_config()`, populate `ConnectionConfig.extra` with the new fields when `source_type == "google_analytics"`
+
+#### Step 5: Create a Pipeline (Optional)
+
+If the data source needs indexing, create `backend/app/pipelines/google_analytics_pipeline.py`:
+
+```python
+from app.pipelines.base import DataSourcePipeline, PipelineContext, PipelineResult, PipelineStatus
+from app.llm.base import Tool
+
+class GoogleAnalyticsPipeline(DataSourcePipeline):
+    source_type = "google_analytics"
+
+    async def index(self, source_id: str, context: PipelineContext) -> PipelineResult:
+        # Connect, discover available metrics/dimensions, store metadata
+        ...
+
+    async def sync_with_code(self, source_id: str, context: PipelineContext) -> PipelineResult:
+        # Cross-reference analytics events with code (or no-op)
+        ...
+
+    async def get_status(self, source_id: str) -> PipelineStatus:
+        ...
+
+    def get_agent_tools(self) -> list[Tool]:
+        # Return any extra tools this pipeline provides to agents
+        return []
+```
+
+Register in `backend/app/pipelines/registry.py`:
+
+```python
+from app.pipelines.google_analytics_pipeline import GoogleAnalyticsPipeline
+
+PIPELINE_REGISTRY = {
+    ...
+    "google_analytics": GoogleAnalyticsPipeline,
+}
+```
+
+#### Step 6: Create an Agent (Optional)
+
+If the source needs custom LLM interaction (beyond what the existing agents handle), create a sub-agent:
+
+**6a. Agent class** (`backend/app/agents/ga_agent.py`):
+
+```python
+from app.agents.base import AgentContext, AgentResult, BaseAgent
+
+class GAAgent(BaseAgent):
+    name = "google_analytics"
+
+    async def run(self, context: AgentContext, **kwargs) -> AgentResult:
+        # Custom LLM loop for analytics queries
+        ...
+```
+
+**6b. Meta-tool definition** (`backend/app/agents/tools/ga_tools.py`):
+
+```python
+from app.llm.base import Tool, ToolParameter
+
+QUERY_ANALYTICS_TOOL = Tool(
+    name="query_analytics",
+    description="Query Google Analytics data for traffic, events, and conversions.",
+    parameters=[
+        ToolParameter(name="question", type="string", description="The analytics question"),
+    ],
+)
+```
+
+**6c. System prompt** (`backend/app/agents/prompts/ga_prompt.py`):
+
+```python
+def build_ga_system_prompt(**kwargs) -> str:
+    return "You are an analytics assistant..."
+```
+
+**6d. Wire into OrchestratorAgent** (`backend/app/agents/orchestrator.py`):
+
+1. Import the agent and result type in `__init__`
+2. Add `ga_agent` parameter to `__init__` and store as `self._ga`
+3. Add `_has_analytics(project_id)` helper method
+4. Call it in `run()` and pass `has_analytics` to `get_orchestrator_tools()`
+5. Add `if tc.name == "query_analytics":` branch in `_handle_meta_tool()`
+
+**6e. Update `get_orchestrator_tools()`** (`backend/app/agents/tools/orchestrator_tools.py`):
+
+```python
+def get_orchestrator_tools(
+    *,
+    has_connection: bool = False,
+    has_knowledge_base: bool = False,
+    has_mcp_sources: bool = False,
+    has_analytics: bool = False,    # new
+) -> list[Tool]:
+    ...
+    if has_analytics:
+        from app.agents.tools.ga_tools import QUERY_ANALYTICS_TOOL
+        tools.append(QUERY_ANALYTICS_TOOL)
+    return tools
+```
+
+#### Step 7: Update the Frontend
+
+In `frontend/src/components/connections/ConnectionSelector.tsx`:
+
+1. Add `"google_analytics"` to the `DB_TYPES` array
+2. Add initial values for new fields in `EMPTY_FORM`
+3. Update `connToForm()` to map existing connection data
+4. Update `handleCreate()` to include new fields in the API payload
+5. Add conditional rendering for the new source type's form fields (similar to the `isMCP` pattern)
+
+#### Step 8: Write Tests
+
+- Unit tests for the adapter (`backend/tests/unit/test_ga_connector.py`)
+- Unit tests for the pipeline (`backend/tests/unit/test_ga_pipeline.py`)
+- Unit tests for the agent (`backend/tests/unit/test_ga_agent.py`)
+- Update `backend/tests/unit/test_api_routes.py` to include the new connection type in mock objects
+
+---
+
+### 8. Extension Protocol — Adding New Agents
+
+To add a new agent that handles a specific type of question (without a new data source):
+
+| Step | File(s) to modify / create |
+|---|---|
+| 1. Create agent class | `backend/app/agents/<name>_agent.py` — subclass `BaseAgent`, implement `run()` and `name` |
+| 2. Define meta-tool | `backend/app/agents/tools/<name>_tools.py` — create `Tool` with parameters |
+| 3. Create system prompt | `backend/app/agents/prompts/<name>_prompt.py` — build prompt function |
+| 4. Wire into orchestrator | `backend/app/agents/orchestrator.py` — add to `__init__`, `_handle_meta_tool`, and capability check |
+| 5. Update tool selection | `backend/app/agents/tools/orchestrator_tools.py` — add parameter to `get_orchestrator_tools()`, conditionally include the new tool |
+| 6. Write tests | `backend/tests/unit/test_<name>_agent.py` |
+
+The pattern is always the same: define the agent, define its meta-tool, create its prompt, and wire it into the orchestrator's dispatch table.
+
+---
+
+### Backend Directory Structure
 
 ```
 app/
+├── agents/             ← Multi-agent framework
+│   ├── base.py         ← AgentContext, AgentResult, BaseAgent ABC
+│   ├── errors.py       ← AgentError hierarchy (timeout, retryable, fatal, validation)
+│   ├── validation.py   ← Inter-agent result validation
+│   ├── orchestrator.py ← OrchestratorAgent: routes to sub-agents, composes responses
+│   ├── sql_agent.py    ← SQLAgent: schema → SQL gen → validation → execution → learnings
+│   ├── viz_agent.py    ← VizAgent: rule-based + LLM chart type selection
+│   ├── knowledge_agent.py ← KnowledgeAgent: RAG search, entity info, codebase Q&A
+│   ├── mcp_source_agent.py ← MCPSourceAgent: queries external MCP servers
+│   ├── tools/          ← Per-agent tool definitions
+│   │   ├── orchestrator_tools.py ← Meta-tools (query_database, search_codebase, manage_rules, query_mcp_source)
+│   │   ├── sql_tools.py ← execute_query, get_schema_info, get_query_context, etc.
+│   │   ├── knowledge_tools.py ← search_knowledge, get_entity_info
+│   │   ├── mcp_tools.py ← query_mcp_source meta-tool definition
+│   │   └── viz_tools.py ← recommend_visualization
+│   └── prompts/        ← Per-agent system prompts
+│       ├── orchestrator_prompt.py
+│       ├── sql_prompt.py
+│       ├── viz_prompt.py
+│       ├── knowledge_prompt.py
+│       └── mcp_prompt.py ← System prompt for MCPSourceAgent
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
-├── core/               ← Business logic
-│   ├── agent.py        ← ConversationalAgent: multi-tool loop (replaces rigid orchestrator for chat)
-│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, manage_custom_rules, get_db_index, get_entity_info, get_agent_learnings, record_learning)
-│   ├── tool_executor.py← Executes tool calls, wraps ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
-│   ├── prompt_builder.py← Dynamic system prompt builder (role-aware, capability-aware)
-│   ├── orchestrator.py ← Original SQL pipeline (preserved, used by tool_executor)
+├── core/               ← Utilities + backward-compatible wrappers
+│   ├── agent.py        ← ConversationalAgent wrapper → delegates to OrchestratorAgent
+│   ├── tools.py        ← Deprecated: re-exports from agents/tools/
+│   ├── prompt_builder.py ← Deprecated: delegates to agents/prompts/
+│   ├── tool_executor.py← Executes tool calls (used by SQLAgent internally)
+│   ├── orchestrator.py ← Original SQL pipeline (preserved, used by SQLAgent)
 │   ├── query_builder.py← LLM prompt construction + tool calling
 │   ├── validation_loop.py ← Self-healing query loop (pre/execute/post/repair)
 │   ├── query_validation.py ← Data models (QueryAttempt, QueryError, etc.)
@@ -512,14 +1219,16 @@ app/
 │   ├── sql_parser.py   ← Lightweight SQL parser for pre-validation
 │   ├── safety.py       ← Query safety validation
 │   ├── workflow_tracker.py ← Event bus for pipeline tracking
-│   ├── history_trimmer.py ← Token-budget-aware chat history summarization (handles tool messages)
-│   ├── query_cache.py ← LRU result cache (connection_key + query_hash)
+│   ├── history_trimmer.py ← Token-budget-aware chat history summarization
+│   ├── query_cache.py  ← LRU result cache (connection_key + query_hash)
 │   ├── retry.py        ← Async retry decorator with backoff
 │   ├── rate_limit.py   ← slowapi rate limiting config
+│   ├── audit.py        ← Structured audit logging for sensitive operations
 │   └── logging_config.py ← Structured logging setup
-├── connectors/         ← Database adapters
-│   ├── base.py         ← Abstract interface (ConnectionConfig, QueryResult, SchemaInfo)
-│   ├── registry.py     ← Connector factory (routes to SSHExecConnector when exec_mode=True)
+├── connectors/         ← Data source adapters
+│   ├── base.py         ← DataSourceAdapter ABC → DatabaseAdapter → BaseConnector alias
+│   ├── registry.py     ← ADAPTER_REGISTRY + backward-compatible get_connector
+│   ├── mcp_client.py   ← MCPClientAdapter: connects to external MCP servers
 │   ├── postgres.py     ← asyncpg + SSH tunnel via asyncssh
 │   ├── mysql.py        ← aiomysql + SSH tunnel
 │   ├── mongodb.py      ← motor (async MongoDB driver)
@@ -528,6 +1237,18 @@ app/
 │   ├── ssh_tunnel.py   ← SSH tunnel (port forwarding) with keepalive + timeout
 │   ├── cli_output_parser.py ← Parse MySQL/psql/ClickHouse CLI tabular output
 │   └── exec_templates.py    ← Predefined CLI command templates per db_type
+├── pipelines/          ← Data source pipeline plugin system
+│   ├── base.py         ← DataSourcePipeline ABC (index, sync, get_status, get_agent_tools)
+│   ├── registry.py     ← Pipeline registry (register_pipeline, get_pipeline)
+│   ├── database_pipeline.py ← Wraps DbIndexPipeline + CodeDbSyncPipeline
+│   └── mcp_pipeline.py ← MCPPipeline: indexes MCP tool schemas in vector store
+├── mcp_server/         ← MCP Server: exposes agent capabilities as MCP tools
+│   ├── __init__.py
+│   ├── __main__.py     ← CLI entry point (python -m app.mcp_server)
+│   ├── server.py       ← FastMCP server with tools and resources
+│   ├── auth.py         ← API key / JWT auth for MCP clients
+│   ├── tools.py        ← MCP tool handlers → OrchestratorAgent
+│   └── resources.py    ← MCP resources (schema, rules, knowledge)
 ├── knowledge/          ← Repository analysis & RAG (multi-pass pipeline)
 │   ├── indexing_pipeline.py ← Multi-pass orchestrator (profile → extract → enrich → store)
 │   ├── pipeline_runner.py  ← Resumable pipeline runner with checkpoint-based step skipping
@@ -545,7 +1266,7 @@ app/
 │   ├── doc_store.py    ← Doc storage keyed by (project_id, source_path)
 │   ├── db_index_pipeline.py  ← 6-step DB indexing pipeline (introspect → sample → validate → store)
 │   ├── db_index_validator.py ← LLM-powered per-table analysis with structured output
-│   └── learning_analyzer.py  ← Heuristic lesson extractors (table switch, column fix, format, performance)
+│   └── learning_analyzer.py  ← Heuristic lesson extractors
 ├── llm/                ← LLM provider abstraction
 │   ├── base.py         ← Message, LLMResponse, ToolCall types
 │   ├── router.py       ← Provider chain with fallback + retry
@@ -553,18 +1274,20 @@ app/
 │   ├── anthropic_provider.py
 │   └── openrouter_provider.py
 ├── models/             ← SQLAlchemy models (internal DB)
-│   ├── project.py, connection.py, ssh_key.py
+│   ├── project.py, connection.py (+source_type + MCP fields), ssh_key.py
+│   ├── repository.py   ← ProjectRepository: multi-repo support per project
 │   ├── chat_session.py, chat_message.py
 │   ├── custom_rule.py, user.py
 │   ├── project_member.py ← Role-based project membership (owner/editor/viewer)
 │   ├── project_invite.py ← Email-based project invitations
 │   ├── knowledge_doc.py, commit_index.py (branch-aware)
 │   ├── project_cache.py ← Cached ProjectKnowledge + ProjectProfile per project
-│   ├── agent_learning.py ← AgentLearning + AgentLearningSummary: per-connection experience-based lessons
+│   ├── agent_learning.py ← AgentLearning + AgentLearningSummary
 │   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
 │   └── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
 ├── services/           ← Business logic layer
 │   ├── project_service.py, connection_service.py
+│   ├── repository_service.py ← CRUD for ProjectRepository
 │   ├── ssh_key_service.py, chat_service.py
 │   ├── rule_service.py, default_rule_template.py, auth_service.py
 │   ├── membership_service.py ← Role checking, member CRUD, accessible projects
@@ -572,7 +1295,7 @@ app/
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
-│   ├── agent_learning_service.py ← CRUD, dedup, confidence management, prompt compilation for learnings
+│   ├── agent_learning_service.py ← CRUD, dedup, confidence management for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
@@ -582,72 +1305,15 @@ app/
     └── export.py       ← CSV, JSON, XLSX export
 ```
 
-### How the Conversational Agent Works
+### How the SQLAgent Works
 
-The `ConversationalAgent` (`backend/app/core/agent.py`) is the brain of the system.  It replaced the rigid "always-generate-SQL" pipeline with a **multi-tool agent loop** where the LLM decides which tools (if any) to call.
+When the orchestrator delegates to the SQLAgent via `query_database`:
 
-```
-User Message
-    ↓
-[ConversationalAgent.run()]
-    ↓
-Build system prompt (role-aware, capability-aware)
-    ↓
-┌──────────── Tool Loop (max 5 iterations) ────────────┐
-│                                                        │
-│  Send messages + available tools to LLM                │
-│    ↓                                                   │
-│  LLM responds with:                                    │
-│    • Tool call → execute tool → feed result back       │
-│    • Text → final answer → exit loop                   │
-│                                                        │
-│  Available tools (conditional):                        │
-│    • execute_query  (if DB connected)                  │
-│    • get_schema_info (if DB connected)                 │
-│    • get_custom_rules (if DB connected)                │
-│    • manage_custom_rules (if DB connected)             │
-│    • record_learning (if DB connected)                 │
-│    • get_agent_learnings (if DB connected + learnings) │
-│    • get_db_index   (if DB connected + indexed)        │
-│    • search_knowledge (if knowledge base indexed)      │
-│    • get_entity_info (if knowledge base indexed)       │
-│                                                        │
-└────────────────────────────────────────────────────────┘
-    ↓
-[If SQL results: interpret + recommend visualization]
-    ↓
-Return AgentResponse (text | sql_result | knowledge | error)
-```
-
-**Key architectural decisions:**
-- **Tools are lazy**: Schema, RAG, and rules are only fetched when the LLM explicitly requests them, not on every message.
-- **Conversation is natural**: The LLM can respond without calling any tool for greetings, follow-ups, and discussions about previous results.
-- **Knowledge-only mode**: Users can chat without a database connection — only `search_knowledge` is available.
-- **Response types**: Each response is tagged as `text`, `sql_result`, `knowledge`, or `error` — the frontend renders each type differently.
-- **Backward compatible**: The original `Orchestrator` is preserved and used internally by the `ToolExecutor` for SQL execution.
-
-### Multi-Tool Agent Architecture
-
-```
-backend/app/core/
-├── agent.py           ← ConversationalAgent: main loop, tool iteration, response building
-├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, manage_custom_rules, get_entity_info, get_agent_learnings, record_learning)
-├── tool_executor.py   ← Executes tool calls, wraps existing ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
-├── prompt_builder.py  ← Dynamic system prompt (capability-aware, dialect-aware)
-├── orchestrator.py    ← Original pipeline (preserved, used by tool_executor for SQL)
-└── ...
-```
-
-### How the Original Orchestrator Works (used by ToolExecutor)
-
-The `Orchestrator` handles SQL query execution. When the agent calls `execute_query`:
-
-1. **Schema context** — Live DB introspection + RAG search in ChromaDB
-2. **Rules context** — Merge file-based + DB-based custom rules
-3. **Build query** — LLM generates SQL using tool calling (dialect-aware prompts)
-4. **Validation loop** — The query goes through a self-healing cycle (see below)
-5. **Interpret results** — LLM explains results and picks viz type
-6. Return `OrchestratorResponse` with answer, query, results, visualization, and attempt history
+1. **Context gathering** — Check for DB index, sync context, learnings
+2. **Tool loop** — SQLAgent has its own LLM loop (max 3 iterations) with SQL-specific tools
+3. **Validation loop** — Generated queries go through the self-healing cycle (see below)
+4. **Learning extraction** — After multiple attempts, patterns are recorded for future queries
+5. **Result** — Returns `SQLAgentResult` with query, results, and attempt history
 
 ### Query Validation & Self-Healing Loop
 
@@ -821,9 +1487,9 @@ src/
 └── components/
     ├── ui/
     │   ├── Icon.tsx           ← Centralized SVG icon system (~30 Lucide-style icons, no npm dep)
-    │   ├── SidebarSection.tsx ← Reusable collapsible section with icon, title, count badge, action
+    │   ├── SidebarSection.tsx ← Notion-style collapsible section: CSS grid animated expand/collapse, chevron-first header, hover-reveal action
     │   ├── StatusDot.tsx      ← Animated status indicator (success/warning/error/idle/loading, ARIA)
-    │   ├── ActionButton.tsx   ← Consistent icon button (ghost/danger/accent, tooltip, focus ring, a11y)
+    │   ├── ActionButton.tsx   ← Consistent icon button (xs/sm/md sizes, ghost/danger/accent, tooltip, focus ring, a11y)
     │   ├── Tooltip.tsx        ← Accessible tooltip (hover + focus, role=tooltip, aria-describedby)
     │   ├── ClientShell.tsx    ← Client wrapper: ErrorBoundary + ToastContainer + ConfirmModal
     │   ├── ErrorBoundary.tsx  ← Global React error boundary (prevents white-screen crashes)
@@ -832,21 +1498,21 @@ src/
     │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout)
     │   └── Spinner.tsx        ← Reusable loading spinner
     ├── auth/AuthGate.tsx   ← Login/register with branded header, Google OAuth
-    ├── Sidebar.tsx         ← Collapsible sidebar (w-64 ↔ w-16), grouped Setup/Workspace sections,
-    │                          sticky header with logo, user avatar + sign-out, section toggles
+    ├── Sidebar.tsx         ← Collapsible sidebar (w-64 ↔ w-16), Notion/Linear-style navigation with
+    │                          single scroll area, grouped Setup/Workspace sections, subtle dividers
     ├── chat/
     │   ├── ChatPanel.tsx   ← Message list + knowledge-only mode toggle + error retry
     │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering + retry button
-    │   ├── ChatSessionList.tsx ← Session switcher with icons, loading states
+    │   ├── ChatSessionList.tsx ← Session switcher with active left bar, "Show all N" cap, inline hover delete
     │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
-    │   ├── ProjectSelector.tsx  ← CRUD + role badges + ActionButton icons + card-style items
+    │   ├── ProjectSelector.tsx  ← CRUD + role badges + active left bar + inline hover action overlay
     │   └── InviteManager.tsx    ← Invite users, manage members, error toasts
     ├── invites/PendingInvites.tsx ← Accept/decline incoming invites with error toasts
-    ├── connections/ConnectionSelector.tsx ← CRUD + StatusDot + two-line items + IDX/SYNC badges
-    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with key icon cards
-    ├── rules/RulesManager.tsx ← CRUD with icon buttons + default/global badges
-    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs with doc-type icons
+    ├── connections/ConnectionSelector.tsx ← CRUD + StatusDot + active left bar + compact badges + inline hover actions
+    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with inline icon + type badge + hover delete
+    ├── rules/RulesManager.tsx ← CRUD with inline badges (default/global) + hover edit/delete overlay
+    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs with "Show all N" cap + active left bar
     ├── tasks/ActiveTasksWidget.tsx ← Header widget: running background tasks with live progress
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
@@ -981,7 +1647,7 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `OPENROUTER_API_KEY` | One of three | OpenRouter API key (multi-model proxy) |
 | `DATABASE_URL` | No | Default: `sqlite+aiosqlite:///./data/agent.db`. For production: `postgresql+asyncpg://...` |
 | `JWT_EXPIRE_MINUTES` | No | Token expiry (default: 1440 = 24h) |
-| `CORS_ORIGINS` | No | JSON array of allowed origins (default: `["http://localhost:3000"]`) |
+| `CORS_ORIGINS` | No | JSON array of allowed origins (default: `["http://localhost:3100"]`) |
 | `CHROMA_SERVER_URL` | No | Remote ChromaDB server URL. If empty (default), uses embedded PersistentClient |
 | `CHROMA_EMBEDDING_MODEL` | No | Custom sentence-transformer model for ChromaDB embeddings (e.g. `nomic-ai/nomic-embed-text-v1`). If empty, uses ChromaDB's default `all-MiniLM-L6-v2` |
 | `MAX_HISTORY_TOKENS` | No | Token budget for chat history before summarization kicks in (default: 4000) |
@@ -1045,10 +1711,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 759 across 31 test files
-- Backend integration tests: 100 across 13 test files
-- Frontend tests: 57 across 7 test files
-- **Total: 916 tests**
+- Backend unit tests: 918 across 69 test files
+- Backend integration tests: 153 across 19 test files
+- Frontend tests: 135 across 18 test files
+- **Grand total: 1,206 tests**
 
 ### Test Coverage by Module
 
@@ -1093,14 +1759,20 @@ make test-frontend    # frontend vitest
 | DB Index Service | 25 (prompt context, table detail, response format, status check, is_indexed guard, stale status handling) | — |
 | Learning Analyzer | 10 (table extraction, table preference, column correction, format discovery, schema gotcha, performance hint) | — |
 | Agent Learning Service | 4 (compile prompt empty/with learnings, category labels, invalid category) | — |
+| MCP Server | 19 (auth: API key/JWT/anonymous, tools: list/query/schema/raw, resources: rules/knowledge/schema, server creation) | — |
 | Custom Rules | 16 (file loading, YAML, context generation, default template, DB rule IDs in context) | 9 (CRUD, access control, default rule auto-creation) |
 | Retry | 5 (success, retry, max attempts, callback) | — |
-| ConversationalAgent | 12 (text reply, SQL tool call, knowledge search, multi-tool, no-connection, error handling, table_map, user_id passthrough, manage_rules tool call log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
+| ConversationalAgent / OrchestratorAgent | 8 (text reply, text with connection, knowledge search, max iterations, error handling, token accumulation, workflow_id, tool_call_log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
 | ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
-| API Routes | 21 (projects, connections, viz routes, active tasks, stale index/sync status reset, pipeline failure propagation, startup stale reset) | — |
+| API Routes | 23 (projects, connections, viz routes, active tasks, stale index/sync status reset, pipeline failure propagation, sync background failure propagation, startup stale reset) | — |
 | Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
+| Connection Service | 25 (create, encrypt, sanitize, get, list, update, delete, test_connection, to_config: basic/SSH/MCP) | — |
+| Repository Service | 10 (create, get, list_by_project, update, delete, error cases) | — |
+| Rule Service | 15 (create, get, list_all scoping, update, delete, ensure_default_rule) | — |
+| Project Cache Service | 8 (load_knowledge, load_profile, save create/update, deserialization error) | — |
+| RAG Feedback Service | 7 (record single/multi/empty, truncation, get_stats aggregation/scoping) | — |
 | Membership Service | 12 (add, get_role, require_role, remove, list, accessible) | — |
 | Invite Service | 11 (create, duplicate, reject, revoke, accept, pending, auto-accept) | — |
 | Auth | — | 11 (register, login, duplicate, wrong password, Google login, account linking, token validation) |
@@ -1109,12 +1781,35 @@ make test-frontend    # frontend vitest
 | Connections | — | 5 (CRUD lifecycle + viewer access control) |
 | Rules | — | 5 (CRUD + viewer access control) |
 | Chat Sessions | — | 8 (create, delete, not found, session isolation, cross-user protection, connection_id, tool_calls_json in messages) |
+| Chat Extended | — | 10 (update title, generate title, messages empty/not found, feedback submit/missing/analytics, auth checks) |
+| Connection Operations | — | 18 (test connection: not found/mock success/failure, test-ssh, refresh-schema, index-db CRUD/status, learnings CRUD/status/summary/recompile, RBAC, auth) |
+| Repo Operations | — | 12 (repo status, docs list/get, check-updates, repository CRUD, auth) |
+| Visualizations | — | 8 (export CSV/JSON/XLSX, missing data, empty rows, render table, missing fields, auth) |
+| Models | — | 5 (list default/openai/anthropic/openrouter mocked, auth) |
 | WebSocket Auth | — | 4 (valid/invalid/empty/tampered token) |
 | Health | — | 2 (basic, modules) |
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
 | Frontend (app-store) | 10 (setActiveProject, addMessage, localStorage persistence, updateMessageId, userRating, rawResult) | — |
 | Frontend (task-store) | 13 (processEvent lifecycle, pipeline filtering, step updates with/without pipeline field, completed/failed, auto-dismiss timers, seedFromApi merge, manual dismiss, untracked pipeline_end ignored) | — |
+| Frontend (ProjectSelector) | 8 (render, new button, list items, click selects project, edit form, delete button, create form, empty state) | — |
+| Frontend (ConnectionSelector) | 10 (render, create button, list items, DB type badge, test button, index button, sync button, delete button, form fields, DB type switch) | — |
+| Frontend (ChatPanel) | 8 (render, empty state, user/assistant messages, loading indicator, error display, scroll-to-bottom, input area) | — |
+| Frontend (ChatMessage) | 8 (user/assistant content, feedback buttons, no feedback for user, SQL query block, visualization, error+retry, markdown) | — |
+| SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
+| KnowledgeAgent | 12 (name, text response, search_knowledge results/empty/below threshold, get_entity_info list/detail/table_map/enums, unknown tool, max iterations, token usage) | — |
+| VizAgent | 15 (name, empty/error results, single value numeric/text, preferred viz bar/pie cap, LLM recommendation/no tool, post-validate pie/line/bar, token usage, truncation, invalid JSON config) | — |
+| MCPSourceAgent | 10 (name, no adapter, no tools, text response, tool call success/multiple/error, max iterations, set_adapter, token usage) | — |
+| DatabasePipeline | 8 (index delegates, error propagates, sync delegates, get_status combines/no index/no sync, source_type, constructor) | — |
+| MCPPipeline | 8 (index stores schemas/no tools/connection failure, sync noop, get_status with/without docs, source_type, constructor) | — |
+| Pipeline Registry | 6 (get database/mcp/unknown/case-insensitive, registry entries, subclass check) | — |
+| Frontend (AuthGate) | 8 (login/register form, inputs, submit, google SSO, error, loading, auth passthrough) | — |
+| Frontend (ChatInput) | 6 (render, typing, submit, empty guard, disabled, placeholder) | — |
+| Frontend (RulesManager) | 8 (new button, empty state, rule items, edit/delete buttons, create form, cancel edit) | — |
+| Frontend (SshKeyManager) | 6 (add button, empty state, key items, delete button, create form, submit) | — |
+| Frontend (ReadinessGate) | 5 (checklist, bypass button, callback, warning, null when ready) | — |
+| Frontend (Sidebar) | 5 (render, nav sections, collapse, workspace sections, sign out) | — |
+| Frontend (InviteManager) | 6 (render, email+role inputs, invite button, members list, remove button except owner, pending invites) | — |
 
 ---
 
@@ -1244,3 +1939,123 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 | Stale checkpoint blocking indexing | Checkpoints older than 24h are auto-cleaned on startup. You can also use `force_full=true` to discard manually |
 | `CharacterNotInRepertoireError` during indexing | Binary files (ELF, images) could leak null bytes into PostgreSQL. Multi-layer fix: (1) git-sourced `changed_files` now filtered by `DB_RELEVANT_EXTENSIONS` matching `_find_db_relevant_files()`, (2) `is_binary_file()` checks extension + null bytes, (3) post-read null-byte content guard in `analyze()`, (4) `doc_store.upsert()` strips `\x00` before INSERT, (5) `doc_generator` fallback detects binary content and returns placeholder, (6) `pipeline_runner` pre-filters binary files from `changed_files` before analysis and skips binary-looking enriched docs |
 | `NotImplementedError: No support for ALTER of constraints in SQLite` | Migration `c7d2e8f31a45` now uses `op.batch_alter_table()` with `naming_convention` for SQLite compatibility. Pull latest and re-run `make migrate`. For Docker, run `docker compose down -v && docker compose up --build` to start fresh |
+
+---
+
+## Backup, Restore, and Migration Runbook
+
+### Database Backup
+
+**SQLite (development):**
+
+```bash
+cp backend/data/agent.db backend/data/agent.db.bak
+```
+
+**PostgreSQL (production):**
+
+```bash
+pg_dump -Fc "$DATABASE_URL" > backup_$(date +%Y%m%d_%H%M%S).dump
+```
+
+### Database Restore
+
+**SQLite:**
+
+```bash
+cp backend/data/agent.db.bak backend/data/agent.db
+```
+
+**PostgreSQL:**
+
+```bash
+pg_restore --clean --if-exists -d "$DATABASE_URL" backup_YYYYMMDD_HHMMSS.dump
+```
+
+### Alembic Migrations
+
+**Apply all pending migrations:**
+
+```bash
+cd backend && alembic upgrade head
+```
+
+**Check current migration state:**
+
+```bash
+cd backend && alembic current
+```
+
+**Rollback last migration:**
+
+```bash
+cd backend && alembic downgrade -1
+```
+
+**Rollback to a specific revision:**
+
+```bash
+cd backend && alembic downgrade <revision_id>
+```
+
+**Generate a new migration after model changes:**
+
+```bash
+cd backend && alembic revision --autogenerate -m "description_of_changes"
+```
+
+### Disaster Recovery
+
+1. **Stop the service:** `docker compose down`
+2. **Restore the database** from the latest backup (see above)
+3. **Apply migrations:** `cd backend && alembic upgrade head`
+4. **Restart:** `docker compose up -d`
+5. **Verify health:** `curl http://localhost:8000/api/health`
+
+### Vector Store (ChromaDB)
+
+ChromaDB data is stored in `backend/data/chroma/`. To reset:
+
+```bash
+rm -rf backend/data/chroma/
+# Restart the backend — it will recreate collections on next index
+```
+
+To back up ChromaDB, copy the directory:
+
+```bash
+cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
+```
+
+---
+
+## Changelog
+
+### 2026-03-18 — Comprehensive Audit Fixes
+
+**Critical runtime fixes (backend):**
+
+- **main.py:** Fixed shutdown crash — `chat._orchestrator` did not exist; corrected to `chat._agent._orchestrator._sql._connectors`. Made `run_migrations()` non-blocking via `asyncio.to_thread()`.
+- **models/base.py:** Fixed `_fallback_create_all()` calling `asyncio.run()` inside an already-running event loop; now delegates to a thread pool when a loop is active.
+- **chat.py (streaming):** Fixed SSE streaming generator using the request-scoped DB session after it was closed; the generator now creates its own session via `async_session_factory()`. Awaited WebSocket `relay_task` cancellation properly.
+- **connections.py:** Fixed `_run_sync_background` never setting status to `"completed"` (now `"idle"`) on success — status was stuck at `"running"` forever.
+- **workflow_tracker.py:** Increased subscriber queue size from 256 to 1024 and added logging when subscribers are dropped due to full queues.
+
+**Critical fixes (frontend):**
+
+- **ConnectionSelector:** `handleUpdate` now includes all MCP fields (`mcp_transport_type`, `mcp_server_command`, `mcp_server_args`, `mcp_server_url`, `mcp_env`) and MCP validation on update path.
+- **ReadinessGate:** No longer silently bypasses the gate when the readiness fetch fails; shows an error state with Retry and Chat Anyway options.
+- **useRestoreState:** Now toasts on all restore failures (not just 403). Resets the `ran` flag when `isAuthenticated` becomes false so restore re-runs after logout/login.
+
+**Medium fixes (backend):**
+
+- **connection_service.py:** Added `mcp_env` encryption/handling in `update()`, `mcp_server_args` serialization in update path, and null-guard for `ssh_pre_commands` slicing.
+- **orchestrator.py:** Guarded `tc.arguments` for `None` in all handler methods; improved unknown tool error message to list available tools and added a `logger.warning`.
+
+**UX improvements (frontend):**
+
+- **AuthGate:** Added email regex validation, clear error on mode switch, descriptive loading text ("Signing in..." / "Creating account..."), and a loading state during `restore()` to avoid a flash of the login form.
+- **ChatMessage:** Synced `userRating` state with the message prop via `useEffect`; added loading/disabled state on feedback buttons; replaced non-null assertions with optional chaining for metadata access. Fixed stale closure in `handleVizTypeChange`.
+- **ProjectSelector:** Added loading spinner and error toast during project selection.
+- **ConfirmModal:** Now supports a `destructive` option — non-destructive confirmations show an accent-colored button instead of red.
+- **API client:** Added 60-second request timeout, explicit 403 handling with user-friendly message, and ensured `askStream` rejects its promise on 401/403.

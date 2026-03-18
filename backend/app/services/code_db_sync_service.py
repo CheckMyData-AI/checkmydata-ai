@@ -100,13 +100,9 @@ class CodeDbSyncService:
         session: AsyncSession,
         connection_id: str,
     ) -> None:
+        await session.execute(delete(CodeDbSync).where(CodeDbSync.connection_id == connection_id))
         await session.execute(
-            delete(CodeDbSync).where(CodeDbSync.connection_id == connection_id)
-        )
-        await session.execute(
-            delete(CodeDbSyncSummary).where(
-                CodeDbSyncSummary.connection_id == connection_id
-            )
+            delete(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id == connection_id)
         )
         await session.commit()
 
@@ -121,9 +117,7 @@ class CodeDbSyncService:
         summary_data: dict,
     ) -> CodeDbSyncSummary:
         result = await session.execute(
-            select(CodeDbSyncSummary).where(
-                CodeDbSyncSummary.connection_id == connection_id
-            )
+            select(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id == connection_id)
         )
         entry = result.scalar_one_or_none()
 
@@ -138,6 +132,12 @@ class CodeDbSyncService:
             session.add(entry)
 
         await session.flush()
+        logger.info(
+            "Sync summary saved: %s/%s tables for connection=%s",
+            summary_data.get("synced_tables", "?"),
+            summary_data.get("total_tables", "?"),
+            connection_id[:8],
+        )
         return entry
 
     async def get_summary(
@@ -146,9 +146,7 @@ class CodeDbSyncService:
         connection_id: str,
     ) -> CodeDbSyncSummary | None:
         result = await session.execute(
-            select(CodeDbSyncSummary).where(
-                CodeDbSyncSummary.connection_id == connection_id
-            )
+            select(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id == connection_id)
         )
         return result.scalar_one_or_none()
 
@@ -180,6 +178,11 @@ class CodeDbSyncService:
             )
             session.add(summary)
         await session.flush()
+        logger.info(
+            "Sync status → %s for connection=%s",
+            status,
+            connection_id[:8],
+        )
 
     async def get_sync_status(
         self,
@@ -262,8 +265,7 @@ class CodeDbSyncService:
 
         if summary and summary.synced_at:
             parts.append(
-                f"## Code-DB Sync "
-                f"(analyzed {summary.synced_at.strftime('%Y-%m-%d %H:%M')})\n"
+                f"## Code-DB Sync (analyzed {summary.synced_at.strftime('%Y-%m-%d %H:%M')})\n"
             )
         else:
             parts.append("## Code-DB Sync\n")
@@ -349,9 +351,7 @@ class CodeDbSyncService:
             try:
                 files = json.loads(entry.used_in_files_json)
                 if files:
-                    parts.append(
-                        f"\n**Used in:** {', '.join(f'`{f}`' for f in files[:10])}"
-                    )
+                    parts.append(f"\n**Used in:** {', '.join(f'`{f}`' for f in files[:10])}")
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -364,18 +364,20 @@ class CodeDbSyncService:
     ) -> dict:
         tables = []
         for e in entries:
-            tables.append({
-                "table_name": e.table_name,
-                "entity_name": e.entity_name,
-                "sync_status": e.sync_status,
-                "confidence_score": e.confidence_score,
-                "conversion_warnings": e.conversion_warnings,
-                "data_format_notes": e.data_format_notes,
-                "query_recommendations": e.query_recommendations,
-                "read_count": e.read_count,
-                "write_count": e.write_count,
-                "synced_at": e.synced_at.isoformat() if e.synced_at else None,
-            })
+            tables.append(
+                {
+                    "table_name": e.table_name,
+                    "entity_name": e.entity_name,
+                    "sync_status": e.sync_status,
+                    "confidence_score": e.confidence_score,
+                    "conversion_warnings": e.conversion_warnings,
+                    "data_format_notes": e.data_format_notes,
+                    "query_recommendations": e.query_recommendations,
+                    "read_count": e.read_count,
+                    "write_count": e.write_count,
+                    "synced_at": e.synced_at.isoformat() if e.synced_at else None,
+                }
+            )
 
         result: dict = {"tables": tables}
         if summary:

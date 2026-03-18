@@ -100,9 +100,7 @@ class DbIndexService:
         session: AsyncSession,
         connection_id: str,
     ) -> None:
-        await session.execute(
-            delete(DbIndex).where(DbIndex.connection_id == connection_id)
-        )
+        await session.execute(delete(DbIndex).where(DbIndex.connection_id == connection_id))
         await session.execute(
             delete(DbIndexSummary).where(DbIndexSummary.connection_id == connection_id)
         )
@@ -222,9 +220,7 @@ class DbIndexService:
         if not summary:
             return {"is_indexed": False}
         indexing_status = getattr(summary, "indexing_status", "idle") or "idle"
-        actually_indexed = (
-            summary.indexed_at is not None and indexing_status != "running"
-        )
+        actually_indexed = summary.indexed_at is not None and indexing_status != "running"
         return {
             "is_indexed": actually_indexed,
             "indexed_at": summary.indexed_at.isoformat() if summary.indexed_at else None,
@@ -372,18 +368,20 @@ class DbIndexService:
     ) -> dict:
         tables = []
         for e in entries:
-            tables.append({
-                "table_name": e.table_name,
-                "table_schema": e.table_schema,
-                "column_count": e.column_count,
-                "row_count": e.row_count,
-                "is_active": e.is_active,
-                "relevance_score": e.relevance_score,
-                "business_description": e.business_description,
-                "query_hints": e.query_hints,
-                "code_match_status": e.code_match_status,
-                "indexed_at": e.indexed_at.isoformat() if e.indexed_at else None,
-            })
+            tables.append(
+                {
+                    "table_name": e.table_name,
+                    "table_schema": e.table_schema,
+                    "column_count": e.column_count,
+                    "row_count": e.row_count,
+                    "is_active": e.is_active,
+                    "relevance_score": e.relevance_score,
+                    "business_description": e.business_description,
+                    "query_hints": e.query_hints,
+                    "code_match_status": e.code_match_status,
+                    "indexed_at": e.indexed_at.isoformat() if e.indexed_at else None,
+                }
+            )
 
         result: dict = {"tables": tables}
         if summary:

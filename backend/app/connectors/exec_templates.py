@@ -140,13 +140,7 @@ def _dquote_escape(value: str) -> str:
     """Escape a value for safe embedding inside double quotes."""
     if not value:
         return value
-    return (
-        value
-        .replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("$", "\\$")
-        .replace("`", "\\`")
-    )
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
 def format_template(template: str, config_vars: dict[str, str]) -> str:

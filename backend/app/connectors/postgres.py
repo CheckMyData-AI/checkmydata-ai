@@ -98,14 +98,13 @@ class PostgresConnector(BaseConnector):
         for attempt in range(2):
             try:
                 return await self._introspect_schema_inner()
-            except (asyncpg.ConnectionDoesNotExistError,
-                    asyncpg.InterfaceError,
-                    OSError) as exc:
+            except (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, OSError) as exc:
                 if attempt == 0 and self._config:
                     logger.warning(
                         "Postgres introspect_schema lost connection "
                         "(attempt %d): %s — reconnecting",
-                        attempt + 1, exc,
+                        attempt + 1,
+                        exc,
                     )
                     await self._reconnect()
                 else:

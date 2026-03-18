@@ -12,7 +12,7 @@ class CommitIndex(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     commit_sha: Mapped[str] = mapped_column(String(40), nullable=False)
     branch: Mapped[str] = mapped_column(String(255), default="main")

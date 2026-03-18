@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
@@ -107,6 +107,11 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [userRating, setUserRating] = useState<number | null>(message.userRating ?? null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  useEffect(() => {
+    setUserRating(message.userRating ?? null);
+  }, [message.userRating]);
 
   let metadata: MessageMetadata | null = null;
   if (metadataJson) {
@@ -131,6 +136,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
   const handleVizTypeChange = useCallback(
     async (newType: VizTypeKey) => {
       if (newType === activeVizType || !message.rawResult) return;
+      const previousType = activeVizType;
       setActiveVizType(newType);
 
       if (newType === originalVizType) {
@@ -144,7 +150,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
         setOverrideViz(newViz);
       } catch (err) {
         toast(err instanceof Error ? err.message : "Failed to re-render visualization", "error");
-        setActiveVizType(activeVizType);
+        setActiveVizType(previousType);
       } finally {
         setVizLoading(false);
       }
@@ -153,11 +159,15 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
   );
 
   const handleFeedback = async (rating: number) => {
+    if (feedbackLoading) return;
+    setFeedbackLoading(true);
     try {
       await api.chat.submitFeedback(message.id, rating);
       setUserRating(rating);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
+    } finally {
+      setFeedbackLoading(false);
     }
   };
 
@@ -228,6 +238,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
             <div className="flex items-center gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg">
               <button
                 onClick={() => setViewMode("viz")}
+                aria-label="Show visualization"
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   viewMode === "viz"
                     ? "bg-zinc-700 text-zinc-100"
@@ -238,6 +249,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
               </button>
               <button
                 onClick={() => setViewMode("text")}
+                aria-label="Show data as text"
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   viewMode === "text"
                     ? "bg-zinc-700 text-zinc-100"
@@ -274,11 +286,11 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
-              {showSources ? "Hide" : "Show"} {metadata!.rag_sources!.length} source{metadata!.rag_sources!.length !== 1 ? "s" : ""}
+              {showSources ? "Hide" : "Show"} {metadata?.rag_sources?.length ?? 0} source{(metadata?.rag_sources?.length ?? 0) !== 1 ? "s" : ""}
             </button>
             {showSources && (
               <div className="mt-2 space-y-1">
-                {metadata!.rag_sources!.map((src, idx) => (
+                {(metadata?.rag_sources ?? []).map((src, idx) => (
                   <div
                     key={idx}
                     className="flex items-center gap-1.5 py-1 px-2 rounded bg-zinc-900/50 text-[11px] text-zinc-400"
@@ -320,7 +332,9 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
           <div className="mt-2 flex items-center gap-1">
             <button
               onClick={() => handleFeedback(1)}
-              className={`p-1 rounded transition-colors ${
+              aria-label="Helpful"
+              disabled={feedbackLoading}
+              className={`p-1 rounded transition-colors disabled:opacity-50 ${
                 userRating === 1
                   ? "text-emerald-400 bg-emerald-900/30"
                   : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
@@ -333,7 +347,9 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
             </button>
             <button
               onClick={() => handleFeedback(-1)}
-              className={`p-1 rounded transition-colors ${
+              aria-label="Not helpful"
+              disabled={feedbackLoading}
+              className={`p-1 rounded transition-colors disabled:opacity-50 ${
                 userRating === -1
                   ? "text-red-400 bg-red-900/30"
                   : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"

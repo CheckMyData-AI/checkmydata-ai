@@ -17,6 +17,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Icon } from "./ui/Icon";
 import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
+import { useLogStore } from "@/stores/log-store";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -80,6 +81,7 @@ export function Sidebar() {
     try {
       const result = await api.repos.index(activeProject.id);
       setIndexWorkflowId(result.workflow_id);
+      useLogStore.getState().setOpen(true);
     } catch (err) {
       setIndexResult(
         `Error: ${err instanceof Error ? err.message : "Unknown"}`,
@@ -213,6 +215,7 @@ export function Sidebar() {
             onClick={handleCheckUpdates}
             disabled={checking || indexing}
             title="Check for new commits"
+            aria-label="Check for new commits"
             className="px-3 py-2 text-xs bg-surface-2 text-text-tertiary rounded-lg hover:bg-surface-3 hover:text-text-secondary disabled:opacity-50 transition-colors"
           >
             {checking ? "..." : "Check"}
@@ -242,6 +245,7 @@ export function Sidebar() {
       {indexWorkflowId && (
         <WorkflowProgress
           workflowId={indexWorkflowId}
+          compact
           onComplete={handleIndexComplete}
         />
       )}
@@ -351,8 +355,8 @@ export function Sidebar() {
 
         {/* SETUP group */}
         {!collapsed && (
-          <div className="px-2 pt-2 pb-1">
-            <span className="text-[9px] font-semibold text-text-muted uppercase tracking-[0.1em] px-2">
+          <div className="px-4 pt-3 pb-1">
+            <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">
               Setup
             </span>
           </div>
@@ -384,16 +388,16 @@ export function Sidebar() {
           <>
             {/* WORKSPACE group */}
             {!collapsed && (
-              <div className="px-2 pt-3 pb-1">
-                <div className="border-t border-border-subtle mb-3" />
-                <span className="text-[9px] font-semibold text-text-muted uppercase tracking-[0.1em] px-2">
+              <div className="px-4 pt-3 pb-1">
+                <div className="border-t border-border-subtle/50 mb-3" />
+                <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">
                   Workspace
                 </span>
               </div>
             )}
             {collapsed && (
               <div className="px-4 py-1">
-                <div className="border-t border-border-subtle" />
+                <div className="border-t border-border-subtle/50" />
               </div>
             )}
 
@@ -475,6 +479,7 @@ export function Sidebar() {
               onClick={logout}
               className="p-1 rounded text-text-muted hover:text-error transition-colors shrink-0"
               title="Sign out"
+              aria-label="Sign out"
             >
               <Icon name="log-out" size={14} />
             </button>

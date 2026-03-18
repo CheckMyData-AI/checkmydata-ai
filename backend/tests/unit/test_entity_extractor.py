@@ -159,7 +159,7 @@ class TestExtractColumns:
             "import javax.persistence.*;\n"
             "\n"
             "@Entity\n"
-            "@Table(name = \"users\")\n"
+            '@Table(name = "users")\n'
             "public class User {\n"
             '    @Column(name = "user_name")\n'
             "    private String userName;\n"
@@ -179,14 +179,7 @@ class TestExtractColumns:
         assert len(fk_cols) >= 1
 
     def test_graphql_columns(self):
-        content = (
-            "type User {\n"
-            "  id: ID!\n"
-            "  name: String!\n"
-            "  email: String\n"
-            "  posts: [Post!]!\n"
-            "}\n"
-        )
+        content = "type User {\n  id: ID!\n  name: String!\n  email: String\n  posts: [Post!]!\n}\n"
         cols = _extract_columns(content, "schema.graphql")
         names = [c.name for c in cols]
         assert "id" in names

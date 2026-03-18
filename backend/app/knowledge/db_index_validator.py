@@ -41,8 +41,7 @@ ANALYZE_TABLE_TOOL = Tool(
             name="business_description",
             type="string",
             description=(
-                "One-sentence description of what this table stores"
-                " and its business purpose"
+                "One-sentence description of what this table stores and its business purpose"
             ),
         ),
         ToolParameter(
@@ -79,8 +78,7 @@ ANALYZE_TABLE_TOOL = Tool(
             name="code_match_details",
             type="string",
             description=(
-                "Explanation of any discrepancies between"
-                " live schema and code expectations"
+                "Explanation of any discrepancies between live schema and code expectations"
             ),
             required=False,
         ),
@@ -95,8 +93,7 @@ GENERATE_SUMMARY_TOOL = Tool(
             name="summary_text",
             type="string",
             description=(
-                "2-4 sentence overview of the database:"
-                " what domain, key entity groups, data volume"
+                "2-4 sentence overview of the database: what domain, key entity groups, data volume"
             ),
         ),
         ToolParameter(
@@ -209,7 +206,10 @@ class DbIndexValidator:
         for table, sample in tables:
             prompt_parts.append(
                 self._build_table_prompt(
-                    table, sample, code_context, rules_context,
+                    table,
+                    sample,
+                    code_context,
+                    rules_context,
                 )
             )
             prompt_parts.append("---\n")
@@ -238,19 +238,21 @@ class DbIndexValidator:
                     col_notes = args.get("column_notes", "{}")
                     if isinstance(col_notes, dict):
                         col_notes = json.dumps(col_notes)
-                    results.append(TableAnalysis(
-                        table_name=tbl.name,
-                        is_active=args.get("is_active", True),
-                        relevance_score=max(1, min(5, int(args.get("relevance_score", 3)))),
-                        business_description=args.get("business_description", ""),
-                        data_patterns=args.get("data_patterns", ""),
-                        column_notes_json=col_notes,
-                        query_hints=args.get("query_hints", ""),
-                        code_match_status=_clamp_code_match(
-                            args.get("code_match_status", "no_code_info"),
-                        ),
-                        code_match_details=args.get("code_match_details", ""),
-                    ))
+                    results.append(
+                        TableAnalysis(
+                            table_name=tbl.name,
+                            is_active=args.get("is_active", True),
+                            relevance_score=max(1, min(5, int(args.get("relevance_score", 3)))),
+                            business_description=args.get("business_description", ""),
+                            data_patterns=args.get("data_patterns", ""),
+                            column_notes_json=col_notes,
+                            query_hints=args.get("query_hints", ""),
+                            code_match_status=_clamp_code_match(
+                                args.get("code_match_status", "no_code_info"),
+                            ),
+                            code_match_details=args.get("code_match_details", ""),
+                        )
+                    )
                     tool_idx += 1
 
         except Exception:
@@ -288,8 +290,7 @@ class DbIndexValidator:
             prompt_parts.append(f"Orphan tables (in DB, not in code): {', '.join(sorted(orphan))}")
         if phantom:
             prompt_parts.append(
-                "Phantom tables (in code, not in DB): "
-                f"{', '.join(sorted(phantom))}"
+                f"Phantom tables (in code, not in DB): {', '.join(sorted(phantom))}"
             )
 
         prompt_parts.append("\nPer-table summaries:")

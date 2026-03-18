@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,7 @@ from app.api.routes import (
     chat,
     connections,
     invites,
+    metrics,
     models,
     projects,
     repos,
@@ -39,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations()
+    import asyncio
+    await asyncio.to_thread(run_migrations)
     await init_db()
     await _cleanup_stale_checkpoints()
     await _reset_stale_indexing_statuses()
@@ -47,9 +50,15 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
-        await chat._orchestrator.disconnect_all()
+        sql_agent = chat._agent._orchestrator._sql
+        for key, conn in list(sql_agent._connectors.items()):
+            try:
+                await conn.disconnect()
+            except Exception:
+                logger.warning("Error disconnecting connector %s", key)
+        sql_agent._connectors.clear()
     except Exception:
-        logger.exception("Error during orchestrator cleanup")
+        logger.exception("Error during connector cleanup")
     for mgr_module in (
         repos,
         __import__("app.connectors.postgres", fromlist=["_tunnel_mgr"]),
@@ -63,6 +72,12 @@ async def lifespan(app: FastAPI):
                 await mgr.close_all()
             except Exception:
                 logger.exception("Error closing tunnel manager")
+    try:
+        from app.models.base import engine
+        await engine.dispose()
+        logger.info("Database engine disposed")
+    except Exception:
+        logger.exception("Error disposing database engine")
 
 
 app = FastAPI(
@@ -73,6 +88,20 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > settings.max_request_body_bytes:
+            from starlette.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large"},
+            )
+        return await call_next(request)
+
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Assigns a short request ID to every incoming HTTP request for log correlation."""
@@ -90,7 +119,25 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             request_id_var.reset(token)
 
 
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        from app.api.routes.metrics import record_request
+
+        start = time.monotonic()
+        try:
+            response = await call_next(request)
+            latency_ms = (time.monotonic() - start) * 1000
+            record_request(request.url.path, latency_ms, response.status_code >= 400)
+            return response
+        except Exception:
+            latency_ms = (time.monotonic() - start) * 1000
+            record_request(request.url.path, latency_ms, True)
+            raise
+
+
+app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -111,6 +158,7 @@ app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 
 
 async def _cleanup_stale_checkpoints() -> None:
@@ -148,8 +196,7 @@ async def _reset_stale_indexing_statuses() -> None:
             if total:
                 await session.commit()
                 logger.info(
-                    "Startup: reset stale 'running' statuses — "
-                    "%d indexing, %d sync",
+                    "Startup: reset stale 'running' statuses — %d indexing, %d sync",
                     idx_result.rowcount or 0,
                     sync_result.rowcount or 0,
                 )
@@ -217,8 +264,8 @@ async def module_health():
         async with async_session_factory() as session:
             await session.execute(__import__("sqlalchemy").text("SELECT 1"))
         results["database"] = {"status": "ok"}
-    except Exception as e:
-        results["database"] = {"status": "error", "detail": str(e)}
+    except Exception:
+        results["database"] = {"status": "error", "detail": "Service unavailable"}
 
     # Vector store (ChromaDB)
     try:
@@ -227,8 +274,8 @@ async def module_health():
         vs = VectorStore()
         vs._client.heartbeat()
         results["vector_store"] = {"status": "ok"}
-    except Exception as e:
-        results["vector_store"] = {"status": "error", "detail": str(e)}
+    except Exception:
+        results["vector_store"] = {"status": "error", "detail": "Service unavailable"}
 
     # SSH tunnels
     try:
@@ -242,15 +289,15 @@ async def module_health():
             except Exception:
                 pass
         results["ssh_tunnels"] = {"status": "ok", "detail": tunnel_info}
-    except Exception as e:
-        results["ssh_tunnels"] = {"status": "error", "detail": str(e)}
+    except Exception:
+        results["ssh_tunnels"] = {"status": "error", "detail": "Service unavailable"}
 
     # Active connectors
     try:
-        active = list(chat._orchestrator._connectors.keys())
-        results["connectors"] = {"status": "ok", "active": len(active), "keys": active}
-    except Exception as e:
-        results["connectors"] = {"status": "error", "detail": str(e)}
+        active = list(chat._agent._orchestrator._sql._connectors.keys())
+        results["connectors"] = {"status": "ok", "active": len(active)}
+    except Exception:
+        results["connectors"] = {"status": "error", "detail": "Service unavailable"}
 
     # LLM provider
     try:
@@ -275,8 +322,8 @@ async def module_health():
         await llm.close()
     except TimeoutError:
         results["llm"] = {"status": "error", "detail": "Timeout (5s)"}
-    except Exception as e:
-        results["llm"] = {"status": "error", "detail": str(e)}
+    except Exception:
+        results["llm"] = {"status": "error", "detail": "Service unavailable"}
 
     overall = "ok" if all(r["status"] == "ok" for r in results.values()) else "degraded"
     return {"status": overall, "modules": results}

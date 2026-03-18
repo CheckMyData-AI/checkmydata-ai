@@ -168,10 +168,18 @@ class TestBuildTableMap:
 
     def test_basic_map(self, svc):
         entries = [
-            _make_entry(table_name="orders", row_count=125000, relevance_score=5,
-                        business_description="Customer orders and transactions"),
-            _make_entry(table_name="users", row_count=50000, relevance_score=4,
-                        business_description="User accounts"),
+            _make_entry(
+                table_name="orders",
+                row_count=125000,
+                relevance_score=5,
+                business_description="Customer orders and transactions",
+            ),
+            _make_entry(
+                table_name="users",
+                row_count=50000,
+                relevance_score=4,
+                business_description="User accounts",
+            ),
         ]
         result = svc.build_table_map(entries)
         assert "orders(~125,000" in result

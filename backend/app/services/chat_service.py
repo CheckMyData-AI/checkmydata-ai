@@ -41,11 +41,13 @@ class ChatService:
         session: AsyncSession,
         project_id: str,
         user_id: str | None = None,
+        skip: int = 0,
+        limit: int = 2000,
     ) -> list[ChatSession]:
         stmt = select(ChatSession).where(ChatSession.project_id == project_id)
         if user_id:
             stmt = stmt.where((ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None)))
-        stmt = stmt.order_by(ChatSession.created_at.desc())
+        stmt = stmt.order_by(ChatSession.created_at.desc()).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -90,26 +92,18 @@ class ChatService:
                 if meta.get("query"):
                     context_parts.append(f"SQL Query: {meta['query']}")
                 if meta.get("viz_type"):
-                    context_parts.append(
-                        f"Visualization: {meta['viz_type']}"
-                    )
+                    context_parts.append(f"Visualization: {meta['viz_type']}")
                 row_count = meta.get("row_count")
                 if row_count is not None:
                     context_parts.append(f"Rows: {row_count}")
                 raw = meta.get("raw_result")
                 if raw and raw.get("columns"):
-                    context_parts.append(
-                        f"Columns: {', '.join(raw['columns'])}"
-                    )
+                    context_parts.append(f"Columns: {', '.join(raw['columns'])}")
                     sample = raw.get("rows", [])[:3]
                     if sample:
                         context_parts.append(f"Sample data: {sample}")
                 if context_parts:
-                    content += (
-                        "\n\n[Context: "
-                        + " | ".join(context_parts)
-                        + "]"
-                    )
+                    content += "\n\n[Context: " + " | ".join(context_parts) + "]"
             result.append(Message(role=m.role, content=content))
         return result
 

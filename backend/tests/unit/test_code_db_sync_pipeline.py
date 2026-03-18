@@ -169,9 +169,7 @@ class TestBuildDbContext:
         assert "50,000" in result
 
     def test_includes_column_notes(self):
-        entry = _make_db_entry(
-            "users", column_notes_json='{"email": "unique not null"}'
-        )
+        entry = _make_db_entry("users", column_notes_json='{"email": "unique not null"}')
         result = self.pipeline._build_db_context(entry)
         assert "email" in result
         assert "unique" in result

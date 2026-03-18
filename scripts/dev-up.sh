@@ -66,7 +66,7 @@ fi
 
 # ── Wait for frontend health ─────────────────────────────────────
 
-FRONTEND_URL="http://localhost:3000"
+FRONTEND_URL="http://localhost:3100"
 ELAPSED=0
 
 info "Waiting for frontend to become healthy..."
@@ -90,7 +90,7 @@ fi
 echo ""
 echo -e "${BOLD}──────────────────────────────────${NC}"
 echo -e "  Backend:  ${GREEN}http://localhost:8000${NC}"
-echo -e "  Frontend: ${GREEN}http://localhost:3000${NC}"
+echo -e "  Frontend: ${GREEN}http://localhost:3100${NC}"
 echo -e "${BOLD}──────────────────────────────────${NC}"
 echo ""
 info "Tail logs with: docker compose logs -f"

@@ -191,9 +191,7 @@ class TestProjectLlmConfigUsed:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
-    async def test_agent_receives_project_llm_config(
-        self, mock_agent, auth_client
-    ):
+    async def test_agent_receives_project_llm_config(self, mock_agent, auth_client):
         from app.core.agent import AgentResponse
 
         resp = await auth_client.post(
@@ -208,9 +206,7 @@ class TestProjectLlmConfigUsed:
         )
         pid = resp.json()["id"]
 
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(answer="ok", response_type="text")
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(answer="ok", response_type="text"))
 
         resp = await auth_client.post(
             "/api/chat/ask",
@@ -226,9 +222,7 @@ class TestProjectLlmConfigUsed:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
-    async def test_request_overrides_project_agent_config(
-        self, mock_agent, auth_client
-    ):
+    async def test_request_overrides_project_agent_config(self, mock_agent, auth_client):
         from app.core.agent import AgentResponse
 
         resp = await auth_client.post(
@@ -241,9 +235,7 @@ class TestProjectLlmConfigUsed:
         )
         pid = resp.json()["id"]
 
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(answer="ok", response_type="text")
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(answer="ok", response_type="text"))
 
         resp = await auth_client.post(
             "/api/chat/ask",
@@ -292,7 +284,10 @@ class TestRulesChangedFlag:
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
     async def test_rules_changed_true_when_manage_rules_called(
-        self, mock_agent, auth_client, project_id,
+        self,
+        mock_agent,
+        auth_client,
+        project_id,
     ):
         from app.core.agent import AgentResponse
 
@@ -317,7 +312,10 @@ class TestRulesChangedFlag:
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
     async def test_rules_changed_false_for_normal_chat(
-        self, mock_agent, auth_client, project_id,
+        self,
+        mock_agent,
+        auth_client,
+        project_id,
     ):
         from app.core.agent import AgentResponse
 
@@ -340,13 +338,14 @@ class TestRulesChangedFlag:
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
     async def test_user_id_passed_to_agent(
-        self, mock_agent, auth_client, project_id,
+        self,
+        mock_agent,
+        auth_client,
+        project_id,
     ):
         from app.core.agent import AgentResponse
 
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(answer="ok", response_type="text")
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(answer="ok", response_type="text"))
 
         resp = await auth_client.post(
             "/api/chat/ask",

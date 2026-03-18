@@ -93,14 +93,55 @@ class QueryResult:
     error: str | None = None
 
 
-class BaseConnector(ABC):
+# -----------------------------------------------------------------------
+# DataSourceAdapter — generic interface for ALL data sources
+# -----------------------------------------------------------------------
+
+
+class DataSourceAdapter(ABC):
+    """Universal interface for all data sources (databases, APIs, etc.)."""
+
+    @property
+    @abstractmethod
+    def source_type(self) -> str:
+        """Return the source type identifier (e.g. 'database', 'analytics')."""
+
     @abstractmethod
     async def connect(self, config: ConnectionConfig) -> None:
-        """Establish connection to the database."""
+        """Establish a connection to the data source."""
 
     @abstractmethod
     async def disconnect(self) -> None:
         """Close the connection."""
+
+    @abstractmethod
+    async def test_connection(self) -> bool:
+        """Test if the connection is alive."""
+
+    @abstractmethod
+    async def list_entities(self) -> list[str]:
+        """List available entities (tables, collections, etc.)."""
+
+    @abstractmethod
+    async def query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+        """Execute a query against the data source."""
+
+
+# -----------------------------------------------------------------------
+# DatabaseAdapter — database-specific extension of DataSourceAdapter
+# -----------------------------------------------------------------------
+
+
+class DatabaseAdapter(DataSourceAdapter):
+    """Adapter for SQL / NoSQL databases.
+
+    Adds ``introspect_schema()`` and ``execute_query()`` on top of the
+    generic ``DataSourceAdapter``.
+    """
+
+    @property
+    def source_type(self) -> str:
+        return "database"
 
     @abstractmethod
     async def execute_query(self, query: str, params: dict | None = None) -> QueryResult:
@@ -110,9 +151,12 @@ class BaseConnector(ABC):
     async def introspect_schema(self) -> SchemaInfo:
         """Introspect the database schema."""
 
-    @abstractmethod
-    async def test_connection(self) -> bool:
-        """Test if the connection is alive."""
+    async def list_entities(self) -> list[str]:
+        schema = await self.introspect_schema()
+        return [t.name for t in schema.tables]
+
+    async def query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+        return await self.execute_query(query, params)
 
     def _quote_identifier(self, name: str) -> str:
         """Quote a SQL identifier based on the DB type."""
@@ -135,3 +179,7 @@ class BaseConnector(ABC):
     @abstractmethod
     def db_type(self) -> str:
         """Return the database type identifier."""
+
+
+# Backward compatibility — existing connectors extend BaseConnector
+BaseConnector = DatabaseAdapter

@@ -2,9 +2,17 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -33,7 +41,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     project_id: str
     connection_id: str | None = None
-    message: str
+    message: str = Field(max_length=20000)
     preferred_provider: str | None = None
     model: str | None = None
 
@@ -87,11 +95,15 @@ async def create_session(
 @router.get("/sessions/{project_id}", response_model=list[SessionResponse])
 async def list_sessions(
     project_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _chat_svc.list_sessions(db, project_id, user_id=user["user_id"])
+    return await _chat_svc.list_sessions(
+        db, project_id, user_id=user["user_id"], skip=skip, limit=limit,
+    )
 
 
 class SessionUpdate(BaseModel):
@@ -192,17 +204,25 @@ async def submit_feedback(
 ):
     """Record user feedback (thumbs up/down) on an assistant message."""
     from sqlalchemy import select
+    from sqlalchemy.orm import joinedload
 
     from app.models.chat_session import ChatMessage as ChatMessageModel
 
     result = await db.execute(
-        select(ChatMessageModel).where(ChatMessageModel.id == body.message_id)
+        select(ChatMessageModel)
+        .options(joinedload(ChatMessageModel.session))
+        .where(ChatMessageModel.id == body.message_id)
     )
     msg = result.scalar_one_or_none()
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
     if msg.role != "assistant":
         raise HTTPException(status_code=400, detail="Can only rate assistant messages")
+
+    if msg.session and msg.session.project_id:
+        await _membership_svc.require_role(
+            db, msg.session.project_id, user["user_id"], "viewer",
+        )
 
     msg.user_rating = max(-1, min(1, body.rating))
     await db.commit()
@@ -243,7 +263,9 @@ async def get_feedback_analytics(
     user: dict = Depends(get_current_user),
 ):
     """Return aggregated feedback stats for a project."""
-    from sqlalchemy import and_, func, select
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    from sqlalchemy import and_, case, func, select
 
     from app.models.chat_session import ChatMessage as ChatMessageModel
     from app.models.chat_session import ChatSession
@@ -251,8 +273,8 @@ async def get_feedback_analytics(
     stmt = (
         select(
             func.count().label("total_rated"),
-            func.sum((ChatMessageModel.user_rating == 1).cast(int)).label("positive"),
-            func.sum((ChatMessageModel.user_rating == -1).cast(int)).label("negative"),
+            func.sum(case((ChatMessageModel.user_rating == 1, 1), else_=0)).label("positive"),
+            func.sum(case((ChatMessageModel.user_rating == -1, 1), else_=0)).label("negative"),
         )
         .join(ChatSession, ChatMessageModel.session_id == ChatSession.id)
         .where(
@@ -306,10 +328,10 @@ _RAW_RESULT_ROW_CAP = 500
 
 
 def _has_rules_changed(tool_call_log: list[dict] | None) -> bool:
-    """Return True if any tool call in the log is ``manage_custom_rules``."""
+    """Return True if any tool call in the log modified rules."""
     if not tool_call_log:
         return False
-    return any(tc.get("tool") == "manage_custom_rules" for tc in tool_call_log)
+    return any(tc.get("tool") in ("manage_custom_rules", "manage_rules") for tc in tool_call_log)
 
 
 def _build_raw_result(results) -> dict | None:
@@ -324,10 +346,7 @@ def _build_raw_result(results) -> dict | None:
 
     return {
         "columns": list(cols),
-        "rows": [
-            [serialize_value(v) for v in row]
-            for row in (rows or [])[:_RAW_RESULT_ROW_CAP]
-        ],
+        "rows": [[serialize_value(v) for v in row] for row in (rows or [])[:_RAW_RESULT_ROW_CAP]],
         "total_rows": getattr(results, "row_count", len(rows or [])),
     }
 
@@ -365,7 +384,9 @@ async def ask(
 
     logger.info(
         "Chat request: project=%s session=%s conn=%s",
-        body.project_id[:8], session_id[:8], (body.connection_id or "none")[:8],
+        body.project_id[:8],
+        session_id[:8],
+        (body.connection_id or "none")[:8],
     )
 
     project = await _project_svc.get(db, body.project_id)
@@ -407,9 +428,7 @@ async def ask(
         for s in result.knowledge_sources
     ]
 
-    tool_calls_str = (
-        json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
-    )
+    tool_calls_str = json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
 
     assistant_msg = await _chat_svc.add_message(
         db,
@@ -424,14 +443,8 @@ async def ask(
             "raw_result": raw_result,
             "error": result.error,
             "workflow_id": result.workflow_id,
-            "row_count": (
-                result.results.row_count if result.results else None
-            ),
-            "execution_time_ms": (
-                result.results.execution_time_ms
-                if result.results
-                else None
-            ),
+            "row_count": (result.results.row_count if result.results else None),
+            "execution_time_ms": (result.results.execution_time_ms if result.results else None),
             "rag_sources": rag_source_dicts,
             "token_usage": result.token_usage or None,
             "response_type": result.response_type,
@@ -513,7 +526,9 @@ async def ask_stream(
 
     logger.info(
         "Chat stream request: project=%s session=%s conn=%s",
-        body.project_id[:8], session_id[:8], (body.connection_id or "none")[:8],
+        body.project_id[:8],
+        session_id[:8],
+        (body.connection_id or "none")[:8],
     )
 
     project = await _project_svc.get(db, body.project_id)
@@ -563,8 +578,17 @@ async def ask_stream(
                 "elapsed_ms": event.elapsed_ms,
             }
 
-            if event.step.startswith("tool:"):
+            if event.step.startswith("tool:") or ":tool:" in event.step:
                 yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
+            elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
+                agent_name = event.step.split(":")[0]
+                event_data["agent"] = agent_name
+                if event.status == "started":
+                    yield f"event: agent_start\ndata: {json.dumps(event_data, default=str)}\n\n"
+                elif event.status in ("completed", "failed"):
+                    yield f"event: agent_end\ndata: {json.dumps(event_data, default=str)}\n\n"
+                else:
+                    yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
             else:
                 yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
 
@@ -607,46 +631,45 @@ async def ask_stream(
             json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
         )
 
-        assistant_msg = await _chat_svc.add_message(
-            db,
-            session_id,
-            "assistant",
-            result.answer,
-            metadata={
-                "query": result.query,
-                "query_explanation": result.query_explanation,
-                "viz_type": result.viz_type,
-                "visualization": viz_data,
-                "raw_result": raw_result,
-                "error": result.error,
-                "workflow_id": result.workflow_id,
-                "row_count": (
-                    result.results.row_count if result.results else None
-                ),
-                "execution_time_ms": (
-                    result.results.execution_time_ms
-                    if result.results
-                    else None
-                ),
-                "rag_sources": stream_rag,
-                "token_usage": result.token_usage or None,
-                "response_type": result.response_type,
-                "staleness_warning": result.staleness_warning,
-            },
-            tool_calls_json=tool_calls_str,
-        )
+        from app.models.base import async_session_factory as _stream_session_factory
 
-        if stream_rag:
-            try:
-                await _rag_feedback_svc.record(
-                    session=db,
-                    project_id=body.project_id,
-                    rag_sources=stream_rag,
-                    query_succeeded=not result.error,
-                    question_snippet=body.message[:200],
-                )
-            except Exception:
-                logger.warning("Failed to record RAG feedback", exc_info=True)
+        async with _stream_session_factory() as stream_db:
+            assistant_msg = await _chat_svc.add_message(
+                stream_db,
+                session_id,
+                "assistant",
+                result.answer,
+                metadata={
+                    "query": result.query,
+                    "query_explanation": result.query_explanation,
+                    "viz_type": result.viz_type,
+                    "visualization": viz_data,
+                    "raw_result": raw_result,
+                    "error": result.error,
+                    "workflow_id": result.workflow_id,
+                    "row_count": (result.results.row_count if result.results else None),
+                    "execution_time_ms": (
+                        result.results.execution_time_ms if result.results else None
+                    ),
+                    "rag_sources": stream_rag,
+                    "token_usage": result.token_usage or None,
+                    "response_type": result.response_type,
+                    "staleness_warning": result.staleness_warning,
+                },
+                tool_calls_json=tool_calls_str,
+            )
+
+            if stream_rag:
+                try:
+                    await _rag_feedback_svc.record(
+                        session=stream_db,
+                        project_id=body.project_id,
+                        rag_sources=stream_rag,
+                        query_succeeded=not result.error,
+                        question_snippet=body.message[:200],
+                    )
+                except Exception:
+                    logger.warning("Failed to record RAG feedback", exc_info=True)
 
         final = {
             "session_id": session_id,
@@ -716,16 +739,27 @@ async def chat_websocket(
                     wf_id = event.workflow_id
                 if wf_id and event.workflow_id != wf_id:
                     continue
-                msg_type = "tool_call" if event.step.startswith("tool:") else "step"
-                await websocket.send_json(
-                    {
-                        "type": msg_type,
-                        "step": event.step,
-                        "status": event.status,
-                        "detail": event.detail,
-                        "elapsed_ms": event.elapsed_ms,
-                    }
-                )
+                if event.step.startswith("tool:") or ":tool:" in event.step:
+                    msg_type = "tool_call"
+                elif event.step.startswith(("orchestrator:", "sql:", "knowledge:")):
+                    agent_name = event.step.split(":")[0]
+                    msg_type = (
+                        "agent_start"
+                        if event.status == "started"
+                        else ("agent_end" if event.status in ("completed", "failed") else "step")
+                    )
+                else:
+                    msg_type = "step"
+                payload: dict = {
+                    "type": msg_type,
+                    "step": event.step,
+                    "status": event.status,
+                    "detail": event.detail,
+                    "elapsed_ms": event.elapsed_ms,
+                }
+                if msg_type in ("agent_start", "agent_end"):
+                    payload["agent"] = agent_name  # type: ignore[possibly-undefined]
+                await websocket.send_json(payload)
                 if event.step == "pipeline_end":
                     break
         except (TimeoutError, Exception):
@@ -824,9 +858,7 @@ async def chat_websocket(
                 ]
 
                 ws_tool_calls_str = (
-                    json.dumps(result.tool_call_log, default=str)
-                    if result.tool_call_log
-                    else None
+                    json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
                 )
 
                 async with async_session_factory() as db:
@@ -843,15 +875,9 @@ async def chat_websocket(
                             "raw_result": ws_raw_result,
                             "error": result.error,
                             "workflow_id": result.workflow_id,
-                            "row_count": (
-                                result.results.row_count
-                                if result.results
-                                else None
-                            ),
+                            "row_count": (result.results.row_count if result.results else None),
                             "execution_time_ms": (
-                                result.results.execution_time_ms
-                                if result.results
-                                else None
+                                result.results.execution_time_ms if result.results else None
                             ),
                             "rag_sources": rag_dicts,
                             "token_usage": result.token_usage or None,
@@ -881,6 +907,10 @@ async def chat_websocket(
             finally:
                 if not relay_task.done():
                     relay_task.cancel()
+                    try:
+                        await relay_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 tracker.unsubscribe(queue)
 
     except WebSocketDisconnect:

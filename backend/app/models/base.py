@@ -14,7 +14,16 @@ if settings.database_url.startswith("sqlite"):
     if _db_path and not _db_path.startswith(":"):
         Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+_engine_kwargs: dict = {"echo": settings.sql_echo}
+if not settings.database_url.startswith("sqlite"):
+    _engine_kwargs.update(
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_pool_overflow,
+        pool_pre_ping=True,
+        pool_recycle=settings.db_pool_recycle,
+    )
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -64,6 +73,7 @@ def _fallback_create_all() -> None:
         project_invite,
         project_member,
         rag_feedback,
+        repository,
         ssh_key,
         user,
     )
@@ -72,7 +82,17 @@ def _fallback_create_all() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    asyncio.run(_create())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(asyncio.run, _create()).result()
+    else:
+        asyncio.run(_create())
 
 
 async def init_db():
@@ -92,6 +112,7 @@ async def init_db():
         project_invite,
         project_member,
         rag_feedback,
+        repository,
         ssh_key,
         user,
     )

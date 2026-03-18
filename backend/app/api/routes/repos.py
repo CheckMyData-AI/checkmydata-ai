@@ -22,6 +22,7 @@ from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
 from app.services.project_service import ProjectService
+from app.services.repository_service import RepositoryService
 from app.services.ssh_key_service import SshKeyService
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ _checkpoint_svc = CheckpointService()
 
 _connection_svc = ConnectionService()
 _membership_svc = MembershipService()
+_repo_svc = RepositoryService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
 
@@ -148,7 +150,9 @@ async def index_repo(
 
     logger.info(
         "Index started: project=%s force=%s resumed=%s",
-        project_id[:8], body.force_full, resumed,
+        project_id[:8],
+        body.force_full,
+        resumed,
     )
 
     wf_id = await tracker.begin(
@@ -408,3 +412,108 @@ async def get_doc(
         "content": doc.content,
         "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
     }
+
+
+# -----------------------------------------------------------------------
+# Multi-Repository Management
+# -----------------------------------------------------------------------
+
+
+class AddRepoRequest(BaseModel):
+    name: str
+    repo_url: str
+    branch: str = "main"
+    provider: str = "git_ssh"
+    ssh_key_id: str | None = None
+
+
+class RepoResponse(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    provider: str
+    repo_url: str
+    branch: str
+    ssh_key_id: str | None = None
+    indexing_status: str = "idle"
+    last_indexed_commit: str | None = None
+
+
+@router.post("/{project_id}/repositories", response_model=RepoResponse, status_code=201)
+async def add_repository(
+    project_id: str,
+    body: AddRepoRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Add a new repository to a project."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    project = await _project_svc.get(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo = await _repo_svc.create(
+        db,
+        project_id=project_id,
+        name=body.name,
+        repo_url=body.repo_url,
+        branch=body.branch,
+        provider=body.provider,
+        ssh_key_id=body.ssh_key_id,
+    )
+    return repo
+
+
+@router.get("/{project_id}/repositories", response_model=list[RepoResponse])
+async def list_repositories(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List all repositories for a project."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    return await _repo_svc.list_by_project(db, project_id)
+
+
+class UpdateRepoRequest(BaseModel):
+    name: str | None = None
+    branch: str | None = None
+    ssh_key_id: str | None = None
+
+
+@router.patch("/repositories/{repo_id}", response_model=RepoResponse)
+async def update_repository(
+    repo_id: str,
+    body: UpdateRepoRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Update an existing repository."""
+    repo = await _repo_svc.get(db, repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "editor")
+
+    update_data = body.model_dump(exclude_unset=True)
+    updated = await _repo_svc.update(db, repo_id, **update_data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    return updated
+
+
+@router.delete("/repositories/{repo_id}")
+async def delete_repository(
+    repo_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Remove a repository from a project."""
+    repo = await _repo_svc.get(db, repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "editor")
+
+    deleted = await _repo_svc.delete(db, repo_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    return {"ok": True}

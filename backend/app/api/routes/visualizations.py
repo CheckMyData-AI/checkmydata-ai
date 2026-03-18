@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user
 from app.connectors.base import QueryResult
@@ -15,7 +15,7 @@ router = APIRouter()
 class RenderRequest(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
-    viz_type: str = "table"
+    viz_type: str = Field(default="table", max_length=50)
     config: dict = {}
     summary: str = ""
 
@@ -23,7 +23,7 @@ class RenderRequest(BaseModel):
 class ExportRequest(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
-    format: str = "csv"
+    format: str = Field(default="csv", max_length=50)
 
 
 @router.post("/render")

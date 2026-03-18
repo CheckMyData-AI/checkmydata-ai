@@ -173,8 +173,13 @@ class TestSqlConfigForwarding:
 
     @pytest.mark.asyncio
     async def test_sql_config_used_for_validation_loop(
-        self, config, mock_llm, mock_vector_store,
-        mock_schema_indexer, mock_rules_engine, mock_tracker,
+        self,
+        config,
+        mock_llm,
+        mock_vector_store,
+        mock_schema_indexer,
+        mock_rules_engine,
+        mock_tracker,
     ):
         exec_with_sql = ToolExecutor(
             project_id="proj-1",
@@ -197,8 +202,13 @@ class TestSqlConfigForwarding:
 
     @pytest.mark.asyncio
     async def test_sql_config_defaults_to_agent(
-        self, config, mock_llm, mock_vector_store,
-        mock_schema_indexer, mock_rules_engine, mock_tracker,
+        self,
+        config,
+        mock_llm,
+        mock_vector_store,
+        mock_schema_indexer,
+        mock_rules_engine,
+        mock_tracker,
     ):
         exec_no_sql = ToolExecutor(
             project_id="proj-1",
@@ -1037,8 +1047,13 @@ class TestManageCustomRules:
 
     @pytest.fixture
     def executor_with_user(
-        self, config, mock_llm, mock_vector_store, mock_schema_indexer,
-        mock_rules_engine, mock_tracker,
+        self,
+        config,
+        mock_llm,
+        mock_vector_store,
+        mock_schema_indexer,
+        mock_rules_engine,
+        mock_tracker,
     ):
         return ToolExecutor(
             project_id="proj-1",

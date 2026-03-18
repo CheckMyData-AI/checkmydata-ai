@@ -37,6 +37,11 @@ class Project(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    repositories: Mapped[list["ProjectRepository"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     connections: Mapped[list["Connection"]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -9,6 +9,10 @@ from app.models.base import Base
 
 class ProjectInvite(Base):
     __tablename__ = "project_invites"
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "email", "status", name="uq_invite_project_email_status"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36),
@@ -18,6 +22,7 @@ class ProjectInvite(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     invited_by: Mapped[str] = mapped_column(

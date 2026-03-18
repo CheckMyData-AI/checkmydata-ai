@@ -271,16 +271,22 @@ class TestEnricherReceivesSyncAndRules:
         with (
             _patch("app.core.orchestrator.get_connector", return_value=mock_connector),
             _patch.object(
-                orchestrator, "_get_sync_warnings",
-                new_callable=AsyncMock, return_value="- orders: amount in cents",
+                orchestrator,
+                "_get_sync_warnings",
+                new_callable=AsyncMock,
+                return_value="- orders: amount in cents",
             ),
             _patch.object(
-                orchestrator, "_get_repair_rules_context",
-                new_callable=AsyncMock, return_value="Use amount/100",
+                orchestrator,
+                "_get_repair_rules_context",
+                new_callable=AsyncMock,
+                return_value="Use amount/100",
             ),
             _patch.object(
-                orchestrator, "_get_distinct_values",
-                new_callable=AsyncMock, return_value={"orders": {"status": ["active"]}},
+                orchestrator,
+                "_get_distinct_values",
+                new_callable=AsyncMock,
+                return_value={"orders": {"status": ["active"]}},
             ),
             _patch.object(ContextEnricher, "__init__", side_effect=capture_enricher_init),
         ):

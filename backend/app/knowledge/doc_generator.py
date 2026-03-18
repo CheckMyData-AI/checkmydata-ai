@@ -113,9 +113,9 @@ class DocGenerator:
             diff_text = self._compute_diff(previous_content, content)
             if diff_text:
                 changed_lines = sum(
-                    1 for ln in diff_text.splitlines()
-                    if ln.startswith(("+", "-"))
-                    and not ln.startswith(("+++", "---"))
+                    1
+                    for ln in diff_text.splitlines()
+                    if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
                 )
                 total_lines = max(len(content.splitlines()), 1)
                 if changed_lines / total_lines < DIFF_THRESHOLD_RATIO:

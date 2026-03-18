@@ -6,34 +6,39 @@ import { useEffect } from "react";
 interface ConfirmState {
   open: boolean;
   message: string;
+  destructive: boolean;
   resolve: ((ok: boolean) => void) | null;
-  show: (message: string) => Promise<boolean>;
+  show: (message: string, opts?: { destructive?: boolean }) => Promise<boolean>;
   close: (ok: boolean) => void;
 }
 
 export const useConfirmStore = create<ConfirmState>((set, get) => ({
   open: false,
   message: "",
+  destructive: true,
   resolve: null,
-  show: (message) =>
+  show: (message, opts) =>
     new Promise<boolean>((resolve) => {
       const prev = get().resolve;
       prev?.(false);
-      set({ open: true, message, resolve });
+      set({ open: true, message, destructive: opts?.destructive ?? true, resolve });
     }),
   close: (ok) => {
     const { resolve } = get();
     resolve?.(ok);
-    set({ open: false, message: "", resolve: null });
+    set({ open: false, message: "", destructive: true, resolve: null });
   },
 }));
 
-export async function confirmAction(message: string): Promise<boolean> {
-  return useConfirmStore.getState().show(message);
+export async function confirmAction(
+  message: string,
+  opts?: { destructive?: boolean },
+): Promise<boolean> {
+  return useConfirmStore.getState().show(message, opts);
 }
 
 export function ConfirmModal() {
-  const { open, message, close } = useConfirmStore();
+  const { open, message, destructive, close } = useConfirmStore();
 
   useEffect(() => {
     if (!open) return;
@@ -64,7 +69,11 @@ export function ConfirmModal() {
           </button>
           <button
             onClick={() => close(true)}
-            className="px-4 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-500 transition-colors"
+            className={`px-4 py-1.5 text-xs text-white rounded transition-colors ${
+              destructive
+                ? "bg-red-600 hover:bg-red-500"
+                : "bg-accent hover:bg-accent-hover"
+            }`}
           >
             Confirm
           </button>

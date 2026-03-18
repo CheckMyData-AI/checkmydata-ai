@@ -1,11 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -83,7 +85,9 @@ class ProjectResponse(BaseModel):
 
 
 @router.post("", response_model=ProjectResponse)
+@limiter.limit("10/minute")
 async def create_project(
+    request: Request,
     body: ProjectCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -97,7 +101,13 @@ async def create_project(
     await db.refresh(project)
     logger.info(
         "Project created: name=%s id=%s owner=%s",
-        body.name, project.id[:8], user["user_id"][:8],
+        body.name,
+        project.id[:8],
+        user["user_id"][:8],
+    )
+    audit_log(
+        "project.create", user_id=user["user_id"],
+        project_id=project.id, resource_type="project",
     )
     return ProjectResponse(
         **{k: getattr(project, k) for k in ProjectResponse.model_fields if k not in ("user_role",)},
@@ -178,7 +188,9 @@ async def update_project(
 
 
 @router.delete("/{project_id}")
+@limiter.limit("5/minute")
 async def delete_project(
+    request: Request,
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -194,6 +206,10 @@ async def delete_project(
         )
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
+    audit_log(
+        "project.delete", user_id=user["user_id"],
+        project_id=project_id, resource_type="project",
+    )
     return {"ok": True}
 
 

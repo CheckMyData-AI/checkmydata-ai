@@ -10,7 +10,11 @@ export function useRestoreState(isAuthenticated: boolean) {
   const ran = useRef(false);
 
   useEffect(() => {
-    if (!isAuthenticated || ran.current) return;
+    if (!isAuthenticated) {
+      ran.current = false;
+      return;
+    }
+    if (ran.current) return;
     ran.current = true;
 
     const projectId = getPersistedId("active_project_id");
@@ -89,9 +93,11 @@ export function useRestoreState(isAuthenticated: boolean) {
           }
         }
       } catch (err) {
-        if (err instanceof Error && err.message.includes("403")) {
-          toast("You no longer have access to the previous project", "error");
-        }
+        const msg =
+          err instanceof Error && err.message.includes("403")
+            ? "You no longer have access to the previous project"
+            : "Failed to restore previous session — please select a project";
+        toast(msg, "error");
         localStorage.removeItem("active_project_id");
         localStorage.removeItem("active_connection_id");
         localStorage.removeItem("active_session_id");

@@ -176,7 +176,7 @@ class CodeDbSyncAnalyzer:
                 if isinstance(col_notes, dict):
                     col_notes = json.dumps(col_notes)
 
-                return TableSyncAnalysis(
+                result = TableSyncAnalysis(
                     table_name=table_name,
                     data_format_notes=args.get("data_format_notes", ""),
                     column_sync_notes_json=col_notes,
@@ -186,7 +186,15 @@ class CodeDbSyncAnalyzer:
                     sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
                     confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
                 )
+                logger.info(
+                    "LLM sync: %s → %s (confidence=%d)",
+                    table_name,
+                    result.sync_status,
+                    result.confidence_score,
+                )
+                return result
 
+            logger.info("LLM sync: %s → fallback (no tool call)", table_name)
             return self._fallback_analysis(table_name)
 
         except Exception:
@@ -208,13 +216,10 @@ class CodeDbSyncAnalyzer:
             return []
 
         prompt_parts = [
-            "Analyze each of the following tables and call "
-            "`table_sync_analysis` once per table.\n"
+            "Analyze each of the following tables and call `table_sync_analysis` once per table.\n"
         ]
         for table_name, db_ctx, code_ctx in tables:
-            prompt_parts.append(
-                self._build_prompt(table_name, db_ctx, code_ctx)
-            )
+            prompt_parts.append(self._build_prompt(table_name, db_ctx, code_ctx))
             prompt_parts.append("---\n")
 
         messages = [
@@ -241,23 +246,33 @@ class CodeDbSyncAnalyzer:
                     col_notes = args.get("column_sync_notes", "{}")
                     if isinstance(col_notes, dict):
                         col_notes = json.dumps(col_notes)
-                    results.append(TableSyncAnalysis(
-                        table_name=tbl_name,
-                        data_format_notes=args.get("data_format_notes", ""),
-                        column_sync_notes_json=col_notes,
-                        business_logic_notes=args.get("business_logic_notes", ""),
-                        conversion_warnings=args.get("conversion_warnings", ""),
-                        query_recommendations=args.get("query_recommendations", ""),
-                        sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
-                        confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
-                    ))
+                    results.append(
+                        TableSyncAnalysis(
+                            table_name=tbl_name,
+                            data_format_notes=args.get("data_format_notes", ""),
+                            column_sync_notes_json=col_notes,
+                            business_logic_notes=args.get("business_logic_notes", ""),
+                            conversion_warnings=args.get("conversion_warnings", ""),
+                            query_recommendations=args.get("query_recommendations", ""),
+                            sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
+                            confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
+                        )
+                    )
                     tool_idx += 1
 
         except Exception:
             logger.warning("Batch sync analysis failed", exc_info=True)
 
+        fallback_count = len(tables) - len(results)
         for i in range(len(results), len(tables)):
             results.append(self._fallback_analysis(tables[i][0]))
+
+        if fallback_count:
+            logger.info(
+                "LLM sync batch: %d/%d used fallback",
+                fallback_count,
+                len(tables),
+            )
 
         return results
 
@@ -275,8 +290,7 @@ class CodeDbSyncAnalyzer:
         for a in sorted(analyses, key=lambda x: -x.confidence_score):
             warn = f" ⚠ {a.conversion_warnings}" if a.conversion_warnings else ""
             prompt_parts.append(
-                f"- {a.table_name} (status={a.sync_status}, "
-                f"confidence={a.confidence_score}){warn}"
+                f"- {a.table_name} (status={a.sync_status}, confidence={a.confidence_score}){warn}"
             )
             if a.data_format_notes:
                 prompt_parts.append(f"  Format: {a.data_format_notes[:120]}")
@@ -303,12 +317,17 @@ class CodeDbSyncAnalyzer:
 
             if resp.tool_calls:
                 args = resp.tool_calls[0].arguments
+                logger.info(
+                    "LLM sync summary generated for %d tables",
+                    len(analyses),
+                )
                 return SyncSummaryResult(
                     global_notes=args.get("global_notes", ""),
                     data_conventions=args.get("data_conventions", ""),
                     query_guidelines=args.get("query_guidelines", ""),
                 )
 
+            logger.info("LLM sync summary: fallback (no tool call)")
             return SyncSummaryResult(
                 global_notes=resp.content[:500] if resp.content else "",
             )

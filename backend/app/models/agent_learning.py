@@ -28,14 +28,15 @@ class AgentLearning(Base):
     __tablename__ = "agent_learnings"
     __table_args__ = (
         UniqueConstraint(
-            "connection_id", "category", "subject", "lesson_hash",
+            "connection_id",
+            "category",
+            "subject",
+            "lesson_hash",
             name="uq_agent_learning_dedup",
         ),
     )
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     connection_id: Mapped[str] = mapped_column(
         ForeignKey("connections.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -62,9 +63,7 @@ class AgentLearningSummary(Base):
 
     __tablename__ = "agent_learning_summaries"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     connection_id: Mapped[str] = mapped_column(
         ForeignKey("connections.id", ondelete="CASCADE"), nullable=False, unique=True
     )

@@ -60,12 +60,16 @@ class TestCustomRules:
         engine = CustomRulesEngine(rules_dir="/nonexistent")
         rules = [
             CustomRule(
-                name="File rule", content="From file",
-                file_path="/rules/a.md", format="markdown",
+                name="File rule",
+                content="From file",
+                file_path="/rules/a.md",
+                format="markdown",
             ),
             CustomRule(
-                name="DB rule", content="From database",
-                file_path="db:abc-123", format="markdown",
+                name="DB rule",
+                content="From database",
+                file_path="db:abc-123",
+                format="markdown",
             ),
         ]
         context = engine.rules_to_context(rules)

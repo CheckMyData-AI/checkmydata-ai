@@ -233,9 +233,7 @@ class ErrorClassifier:
                             if pat.entity_group and pat.entity_group <= len(match.groups())
                             else None
                         )
-                        is_table = pat.error_type in (
-                            QueryErrorType.TABLE_NOT_FOUND,
-                        )
+                        is_table = pat.error_type in (QueryErrorType.TABLE_NOT_FOUND,)
                         is_col = pat.error_type in (
                             QueryErrorType.COLUMN_NOT_FOUND,
                             QueryErrorType.AMBIGUOUS_COLUMN,

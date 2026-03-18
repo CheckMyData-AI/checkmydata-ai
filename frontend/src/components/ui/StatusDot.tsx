@@ -3,6 +3,7 @@ interface StatusDotProps {
   pulse?: boolean;
   size?: "sm" | "md";
   title?: string;
+  className?: string;
 }
 
 const STATUS_CLASSES: Record<StatusDotProps["status"], string> = {
@@ -33,6 +34,7 @@ export function StatusDot({
   pulse,
   size = "sm",
   title,
+  className = "",
 }: StatusDotProps) {
   const shouldPulse = pulse ?? status === "loading";
 
@@ -42,7 +44,7 @@ export function StatusDot({
       aria-label={title || STATUS_LABELS[status]}
       className={`shrink-0 rounded-full inline-block ${STATUS_CLASSES[status]} ${SIZE_CLASSES[size]} ${
         shouldPulse ? "animate-pulse-dot" : ""
-      }`}
+      } ${className}`}
     />
   );
 }

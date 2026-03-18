@@ -66,11 +66,17 @@ class CodeDbSyncPipeline:
             # Step 1: Load code knowledge
             knowledge: ProjectKnowledge | None = None
             async with self._tracker.step(
-                wf_id, "load_code_knowledge", "Loading code knowledge",
+                wf_id,
+                "load_code_knowledge",
+                "Loading code knowledge",
             ):
                 knowledge = await self._load_code_knowledge(project_id)
 
             if not knowledge:
+                logger.warning(
+                    "CODE_DB_SYNC aborted: no code knowledge for project=%s",
+                    project_id[:8],
+                )
                 await self._tracker.end(
                     wf_id, "code_db_sync", "failed", "No code knowledge available"
                 )
@@ -78,42 +84,76 @@ class CodeDbSyncPipeline:
                     await self._sync_svc.set_sync_status(session, connection_id, "failed")
                     await session.commit()
                 return {"status": "failed", "error": "No code knowledge — index repository first"}
+            logger.info(
+                "CODE_DB_SYNC step1: loaded code knowledge — "
+                "%d entities, %d table usages, %d enums",
+                len(knowledge.entities),
+                len(knowledge.table_usage),
+                len(knowledge.enums),
+            )
 
             # Step 2: Load DB index
             db_entries: list[DbIndex] = []
             async with self._tracker.step(
-                wf_id, "load_db_index", "Loading database index",
+                wf_id,
+                "load_db_index",
+                "Loading database index",
             ):
                 async with async_session_factory() as session:
                     db_entries = await self._db_index_svc.get_index(session, connection_id)
 
             if not db_entries:
-                await self._tracker.end(
-                    wf_id, "code_db_sync", "failed", "No DB index available"
+                logger.warning(
+                    "CODE_DB_SYNC aborted: no DB index for connection=%s",
+                    connection_id[:8],
                 )
+                await self._tracker.end(wf_id, "code_db_sync", "failed", "No DB index available")
                 async with async_session_factory() as session:
                     await self._sync_svc.set_sync_status(session, connection_id, "failed")
                     await session.commit()
                 return {"status": "failed", "error": "No DB index — index database first"}
+            logger.info(
+                "CODE_DB_SYNC step2: loaded %d DB index entries for connection=%s",
+                len(db_entries),
+                connection_id[:8],
+            )
 
             # Step 3: Match tables
             matched_tables: list[_MatchedTable] = []
             async with self._tracker.step(
-                wf_id, "match_tables",
+                wf_id,
+                "match_tables",
                 f"Matching {len(db_entries)} DB tables with code entities",
             ):
                 matched_tables = self._match_tables(knowledge, db_entries)
 
+            code_info_count = sum(1 for m in matched_tables if m.has_code_info)
+            db_only_match = len(matched_tables) - code_info_count
+            logger.info(
+                "CODE_DB_SYNC step3: matched %d tables (%d with code info, %d DB-only)",
+                len(matched_tables),
+                code_info_count,
+                db_only_match,
+            )
+
             # Step 4: LLM analysis per table
             analyses: list[TableSyncAnalysis] = []
             async with self._tracker.step(
-                wf_id, "analyze_sync",
+                wf_id,
+                "analyze_sync",
                 f"Analyzing {len(matched_tables)} tables via LLM",
             ):
                 large_tables = [m for m in matched_tables if m.has_code_info]
                 small_tables = [m for m in matched_tables if not m.has_code_info]
 
-                for mt in large_tables:
+                logger.info(
+                    "CODE_DB_SYNC step4: analyzing %d tables individually, %d in batches of %d",
+                    len(large_tables),
+                    len(small_tables),
+                    BATCH_SIZE,
+                )
+
+                for i, mt in enumerate(large_tables, 1):
                     analysis = await self._analyzer.analyze_table(
                         table_name=mt.table_name,
                         db_context=mt.db_context,
@@ -122,22 +162,37 @@ class CodeDbSyncPipeline:
                         model=model,
                     )
                     analyses.append(analysis)
+                    logger.info(
+                        "CODE_DB_SYNC step4: [%d/%d] %s → %s (confidence=%d)",
+                        i,
+                        len(large_tables),
+                        mt.table_name,
+                        analysis.sync_status,
+                        analysis.confidence_score,
+                    )
 
                 for batch_start in range(0, len(small_tables), BATCH_SIZE):
-                    batch = small_tables[batch_start:batch_start + BATCH_SIZE]
-                    batch_items = [
-                        (m.table_name, m.db_context, m.code_context) for m in batch
-                    ]
+                    batch = small_tables[batch_start : batch_start + BATCH_SIZE]
+                    batch_items = [(m.table_name, m.db_context, m.code_context) for m in batch]
                     batch_results = await self._analyzer.analyze_table_batch(
                         tables=batch_items,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
                     analyses.extend(batch_results)
+                    batch_names = [m.table_name for m in batch]
+                    logger.info(
+                        "CODE_DB_SYNC step4: batch [%d..%d] done — %s",
+                        batch_start + 1,
+                        min(batch_start + BATCH_SIZE, len(small_tables)),
+                        ", ".join(batch_names),
+                    )
 
             # Step 5: Store results
             async with self._tracker.step(
-                wf_id, "store_sync", "Persisting sync results",
+                wf_id,
+                "store_sync",
+                "Persisting sync results",
             ):
                 async with async_session_factory() as session:
                     all_table_names = {m.table_name for m in matched_tables}
@@ -145,7 +200,10 @@ class CodeDbSyncPipeline:
                         session, connection_id, all_table_names
                     )
                     if deleted:
-                        logger.info("Removed %d stale sync entries", deleted)
+                        logger.info(
+                            "CODE_DB_SYNC step5: removed %d stale sync entries",
+                            deleted,
+                        )
 
                     mt_lookup = {m.table_name: m for m in matched_tables}
                     for analysis in analyses:
@@ -166,10 +224,13 @@ class CodeDbSyncPipeline:
                             "sync_status": analysis.sync_status,
                             "confidence_score": analysis.confidence_score,
                         }
-                        await self._sync_svc.upsert_table_sync(
-                            session, connection_id, sync_data
-                        )
+                        await self._sync_svc.upsert_table_sync(session, connection_id, sync_data)
                     await session.commit()
+
+            logger.info(
+                "CODE_DB_SYNC step5: stored %d sync entries",
+                len(analyses),
+            )
 
             # Step 6: Generate summary
             synced_count = sum(1 for a in analyses if a.sync_status == "matched")
@@ -178,7 +239,9 @@ class CodeDbSyncPipeline:
             mismatch_count = sum(1 for a in analyses if a.sync_status == "mismatch")
 
             async with self._tracker.step(
-                wf_id, "generate_sync_summary", "Generating sync summary",
+                wf_id,
+                "generate_sync_summary",
+                "Generating sync summary",
             ):
                 project_ctx = self._build_project_context(knowledge)
                 summary_result = await self._analyzer.generate_summary(
@@ -206,8 +269,20 @@ class CodeDbSyncPipeline:
                     )
                     await session.commit()
 
+            logger.info(
+                "CODE_DB_SYNC step6: summary — "
+                "%d total, %d matched, %d code-only, %d db-only, %d mismatch",
+                len(matched_tables),
+                synced_count,
+                code_only_count,
+                db_only_count,
+                mismatch_count,
+            )
+
             await self._tracker.end(
-                wf_id, "code_db_sync", "completed",
+                wf_id,
+                "code_db_sync",
+                "completed",
                 f"{len(matched_tables)} tables synced ({synced_count} matched)",
             )
 
@@ -241,7 +316,11 @@ class CodeDbSyncPipeline:
             async with async_session_factory() as session:
                 return await self._cache_svc.load_knowledge(session, project_id)
         except Exception:
-            logger.debug("Failed to load code knowledge", exc_info=True)
+            logger.warning(
+                "Failed to load code knowledge for project=%s",
+                project_id[:8],
+                exc_info=True,
+            )
             return None
 
     def _match_tables(
@@ -275,9 +354,7 @@ class CodeDbSyncPipeline:
             table_name = db_entry.table_name if db_entry else tbl_lower
 
             db_context = self._build_db_context(db_entry) if db_entry else ""
-            code_context = self._build_code_context(
-                entity, usage, knowledge, tbl_lower
-            )
+            code_context = self._build_code_context(entity, usage, knowledge, tbl_lower)
 
             has_code = bool(entity or (usage and usage.is_active))
             _has_db = db_entry is not None
@@ -295,8 +372,10 @@ class CodeDbSyncPipeline:
 
             if entity and entity.columns:
                 mt.code_columns_json = json.dumps(
-                    [{"name": c.name, "type": c.col_type, "fk_target": c.fk_target}
-                     for c in entity.columns]
+                    [
+                        {"name": c.name, "type": c.col_type, "fk_target": c.fk_target}
+                        for c in entity.columns
+                    ]
                 )
 
             if usage:
@@ -368,9 +447,9 @@ class CodeDbSyncPipeline:
                 parts.append(f"Written by: {', '.join(usage.writers[:10])}")
 
         relevant_enums = [
-            e for e in knowledge.enums
-            if table_lower in e.name.lower()
-            or any(table_lower in v.lower() for v in e.values[:5])
+            e
+            for e in knowledge.enums
+            if table_lower in e.name.lower() or any(table_lower in v.lower() for v in e.values[:5])
         ]
         if relevant_enums:
             parts.append("Related enums:")
@@ -378,7 +457,8 @@ class CodeDbSyncPipeline:
                 parts.append(f"  {en.name}: {', '.join(en.values[:8])}")
 
         relevant_services = [
-            sf for sf in knowledge.service_functions
+            sf
+            for sf in knowledge.service_functions
             if table_lower in json.dumps(sf.get("tables", [])).lower()
         ]
         if relevant_services:
@@ -387,7 +467,8 @@ class CodeDbSyncPipeline:
                 parts.append(f"  {sf['name']} in {sf['file_path']}")
 
         relevant_rules = [
-            r for r in knowledge.validation_rules
+            r
+            for r in knowledge.validation_rules
             if table_lower in r.model_name.lower() or table_lower in r.expression.lower()
         ]
         if relevant_rules:
@@ -414,9 +495,16 @@ class _MatchedTable:
     """Internal struct for a table matched between code and DB."""
 
     __slots__ = (
-        "table_name", "db_context", "code_context", "has_code_info",
-        "entity_name", "entity_file_path", "code_columns_json",
-        "used_in_files_json", "read_count", "write_count",
+        "table_name",
+        "db_context",
+        "code_context",
+        "has_code_info",
+        "entity_name",
+        "entity_file_path",
+        "code_columns_json",
+        "used_in_files_json",
+        "read_count",
+        "write_count",
     )
 
     def __init__(

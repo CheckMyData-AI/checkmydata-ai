@@ -30,6 +30,7 @@ dependencies = [
     "websockets>=14.1",
     "openpyxl>=3.1.5",
     "google-auth>=2.0.0",
+    "mcp>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,14 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

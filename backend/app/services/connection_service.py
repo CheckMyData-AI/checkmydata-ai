@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import ConnectionConfig
 from app.connectors.registry import get_connector
+from app.core.retry import retry
 from app.models.connection import Connection
 from app.services.encryption import decrypt, encrypt
 from app.services.ssh_key_service import SshKeyService
@@ -30,6 +31,11 @@ _UPDATABLE_FIELDS = {
     "ssh_exec_mode",
     "ssh_command_template",
     "ssh_pre_commands",
+    "mcp_server_command",
+    "mcp_server_args",
+    "mcp_server_url",
+    "mcp_transport_type",
+    "source_type",
 }
 
 
@@ -53,6 +59,13 @@ class ConnectionService:
 
         if "ssh_pre_commands" in kwargs and isinstance(kwargs["ssh_pre_commands"], list):
             kwargs["ssh_pre_commands"] = json.dumps(kwargs["ssh_pre_commands"])
+
+        if "mcp_env" in kwargs and kwargs["mcp_env"]:
+            kwargs["mcp_env_encrypted"] = encrypt(json.dumps(kwargs.pop("mcp_env")))
+        kwargs.pop("mcp_env", None)
+
+        if "mcp_server_args" in kwargs and isinstance(kwargs["mcp_server_args"], list):
+            kwargs["mcp_server_args"] = json.dumps(kwargs["mcp_server_args"])
 
         connection = Connection(**kwargs)
         session.add(connection)
@@ -81,6 +94,13 @@ class ConnectionService:
         if "ssh_pre_commands" in kwargs and isinstance(kwargs["ssh_pre_commands"], list):
             kwargs["ssh_pre_commands"] = json.dumps(kwargs["ssh_pre_commands"])
 
+        if "mcp_env" in kwargs:
+            mcp_env = kwargs.pop("mcp_env")
+            conn.mcp_env_encrypted = encrypt(json.dumps(mcp_env)) if mcp_env else None
+
+        if "mcp_server_args" in kwargs and isinstance(kwargs["mcp_server_args"], list):
+            kwargs["mcp_server_args"] = json.dumps(kwargs["mcp_server_args"])
+
         for key, value in kwargs.items():
             if key in _UPDATABLE_FIELDS:
                 setattr(conn, key, value)
@@ -94,11 +114,19 @@ class ConnectionService:
         result = await session.execute(select(Connection).where(Connection.id == connection_id))
         return result.scalar_one_or_none()
 
-    async def list_by_project(self, session: AsyncSession, project_id: str) -> list[Connection]:
+    async def list_by_project(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        skip: int = 0,
+        limit: int = 2000,
+    ) -> list[Connection]:
         result = await session.execute(
             select(Connection)
             .where(Connection.project_id == project_id)
             .order_by(Connection.created_at.desc())
+            .offset(skip)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
@@ -118,7 +146,16 @@ class ConnectionService:
         config = await self.to_config(session, conn)
         connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
         try:
-            await connector.connect(config)
+
+            @retry(
+                max_attempts=3,
+                backoff_seconds=1.0,
+                retryable_exceptions=(TimeoutError, ConnectionError, OSError),
+            )
+            async def _connect_with_retry():
+                await connector.connect(config)
+
+            await _connect_with_retry()
             try:
                 alive = await connector.test_connection()
             finally:
@@ -126,7 +163,9 @@ class ConnectionService:
             if not alive:
                 logger.warning(
                     "Connection test query failed for '%s' (id=%s, type=%s)",
-                    conn.name, connection_id, conn.db_type,
+                    conn.name,
+                    connection_id,
+                    conn.db_type,
                 )
                 return {"success": False, "error": "Database responded but test query failed"}
             logger.info("Connection test OK for '%s' (id=%s)", conn.name, connection_id)
@@ -134,12 +173,18 @@ class ConnectionService:
         except Exception as e:
             logger.warning(
                 "Connection test error for '%s' (id=%s, type=%s): %s",
-                conn.name, connection_id, conn.db_type, e,
+                conn.name,
+                connection_id,
+                conn.db_type,
+                e,
             )
             return {"success": False, "error": str(e)}
 
     async def test_ssh(
-        self, session: AsyncSession, connection_id: str, user_id: str | None = None,
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        user_id: str | None = None,
     ) -> dict:
         """Test SSH connectivity independently from the database."""
         import asyncssh
@@ -172,7 +217,9 @@ class ConnectionService:
         try:
             async with asyncssh.connect(**connect_kwargs) as ssh_conn:
                 result = await ssh_conn.run(
-                    f"echo {_marker} && hostname", timeout=10, check=False,
+                    f"echo {_marker} && hostname",
+                    timeout=10,
+                    check=False,
                 )
                 stdout = (result.stdout or "").strip()
                 ok = _marker in stdout
@@ -185,8 +232,7 @@ class ConnectionService:
                     logger.info("SSH test OK for '%s' -> %s", conn.name, hostname)
                 else:
                     logger.warning(
-                        "SSH test: marker not found for '%s' "
-                        "(exit=%s, stdout=%r)",
+                        "SSH test: marker not found for '%s' (exit=%s, stdout=%r)",
                         conn.name,
                         result.exit_status,
                         stdout[:200],
@@ -197,8 +243,10 @@ class ConnectionService:
                     **(
                         {}
                         if ok
-                        else {"error": "SSH connected but test command returned unexpected output",
-                              "stdout": stdout[:200]}
+                        else {
+                            "error": "SSH connected but test command returned unexpected output",
+                            "stdout": stdout[:200],
+                        }
                     ),
                 }
         except Exception as e:
@@ -206,7 +254,10 @@ class ConnectionService:
             return {"success": False, "error": str(e)}
 
     async def to_config(
-        self, session: AsyncSession, conn: Connection, user_id: str | None = None,
+        self,
+        session: AsyncSession,
+        conn: Connection,
+        user_id: str | None = None,
     ) -> ConnectionConfig:
         try:
             db_password = None
@@ -237,9 +288,28 @@ class ConnectionService:
             except (json.JSONDecodeError, TypeError):
                 logger.warning(
                     "Invalid JSON in ssh_pre_commands for connection '%s': %s",
-                    conn.name, conn.ssh_pre_commands[:100],
+                    conn.name,
+                    (conn.ssh_pre_commands or "")[:100],
                 )
                 pre_commands = None
+
+        extra: dict = {}
+        if conn.source_type == "mcp":
+            extra["mcp_transport_type"] = conn.mcp_transport_type or "stdio"
+            extra["mcp_server_command"] = conn.mcp_server_command or ""
+            try:
+                extra["mcp_server_args"] = (
+                    json.loads(conn.mcp_server_args) if conn.mcp_server_args else []
+                )
+            except (json.JSONDecodeError, TypeError):
+                extra["mcp_server_args"] = []
+            extra["mcp_server_url"] = conn.mcp_server_url or ""
+            if conn.mcp_env_encrypted:
+                try:
+                    extra["mcp_env"] = json.loads(decrypt(conn.mcp_env_encrypted))
+                except Exception:
+                    logger.warning("Failed to decrypt MCP env for connection '%s'", conn.name)
+                    extra["mcp_env"] = {}
 
         return ConnectionConfig(
             db_type=conn.db_type,
@@ -258,4 +328,5 @@ class ConnectionService:
             ssh_command_template=conn.ssh_command_template,
             ssh_pre_commands=pre_commands,
             is_read_only=conn.is_read_only,
+            extra=extra,
         )

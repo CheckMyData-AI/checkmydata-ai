@@ -18,14 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-VALID_CATEGORIES = frozenset({
-    "table_preference",
-    "column_usage",
-    "data_format",
-    "query_pattern",
-    "schema_gotcha",
-    "performance_hint",
-})
+VALID_CATEGORIES = frozenset(
+    {
+        "table_preference",
+        "column_usage",
+        "data_format",
+        "query_pattern",
+        "schema_gotcha",
+        "performance_hint",
+    }
+)
 
 CATEGORY_LABELS = {
     "table_preference": "Table Preferences",
@@ -80,9 +82,7 @@ class AgentLearningService:
             await session.flush()
             return entry
 
-        similar = await self.find_similar(
-            session, connection_id, category, subject, lesson
-        )
+        similar = await self.find_similar(session, connection_id, category, subject, lesson)
         if similar:
             similar.times_confirmed += 1
             similar.confidence = min(1.0, similar.confidence + 0.1)
@@ -136,9 +136,7 @@ class AgentLearningService:
         best_ratio = 0.0
 
         for c in candidates:
-            ratio = SequenceMatcher(
-                None, c.lesson.strip().lower(), lesson_lower
-            ).ratio()
+            ratio = SequenceMatcher(None, c.lesson.strip().lower(), lesson_lower).ratio()
             if ratio >= SIMILARITY_THRESHOLD and ratio > best_ratio:
                 best_ratio = ratio
                 best_match = c
@@ -243,7 +241,8 @@ class AgentLearningService:
         )
         all_learnings = result.scalars().all()
         return [
-            lrn for lrn in all_learnings
+            lrn
+            for lrn in all_learnings
             if tbl_lower in lrn.subject.lower() or tbl_lower in lrn.lesson.lower()
         ]
 
@@ -364,8 +363,12 @@ class AgentLearningService:
         parts: list[str] = ["AGENT LEARNINGS (from previous interactions with this database):\n"]
 
         for cat in [
-            "table_preference", "column_usage", "data_format",
-            "query_pattern", "schema_gotcha", "performance_hint",
+            "table_preference",
+            "column_usage",
+            "data_format",
+            "query_pattern",
+            "schema_gotcha",
+            "performance_hint",
         ]:
             items = by_category.get(cat)
             if not items:
@@ -383,9 +386,7 @@ class AgentLearningService:
         category_counts = Counter(lrn.category for lrn in learnings)
 
         summary_result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         summary = summary_result.scalar_one_or_none()
 
@@ -413,9 +414,7 @@ class AgentLearningService:
         connection_id: str,
     ) -> str:
         result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         summary = result.scalar_one_or_none()
 
@@ -430,9 +429,7 @@ class AgentLearningService:
         connection_id: str,
     ) -> AgentLearningSummary | None:
         result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         return result.scalar_one_or_none()
 
@@ -463,9 +460,7 @@ class AgentLearningService:
         connection_id: str,
     ) -> None:
         result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         summary = result.scalar_one_or_none()
         if summary:

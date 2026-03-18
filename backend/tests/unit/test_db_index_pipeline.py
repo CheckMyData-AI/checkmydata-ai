@@ -256,7 +256,7 @@ class TestBuildDistinctQuerySqlite:
         assert "events" in q
         assert "type" in q
         assert "DISTINCT" in q
-        assert '`' not in q
+        assert "`" not in q
         assert '"' not in q
 
 

@@ -1,4 +1,17 @@
+import { toast } from "@/stores/toast-store";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+export function handleSessionExpired(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("auth_user");
+  localStorage.removeItem("active_project_id");
+  localStorage.removeItem("active_connection_id");
+  localStorage.removeItem("active_session_id");
+  toast("Session expired, please log in again", "error");
+  window.location.href = "/";
+}
 
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
@@ -6,32 +19,50 @@ function getAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers: optHeaders, ...restOptions } = options ?? {};
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...restOptions,
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeaders(),
-      ...(optHeaders instanceof Headers
-        ? Object.fromEntries(optHeaders.entries())
-        : Array.isArray(optHeaders)
-          ? Object.fromEntries(optHeaders)
-          : optHeaders),
-    },
-  });
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+async function request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const { headers: optHeaders, timeoutMs, ...restOptions } = (options ?? {}) as RequestInit & { timeoutMs?: number };
+
+  const controller = new AbortController();
+  const existingSignal = restOptions.signal;
+  if (existingSignal) {
+    existingSignal.addEventListener("abort", () => controller.abort(existingSignal.reason));
+  }
+  const timeout = setTimeout(() => controller.abort("Request timed out"), timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...restOptions,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+        ...(optHeaders instanceof Headers
+          ? Object.fromEntries(optHeaders.entries())
+          : Array.isArray(optHeaders)
+            ? Object.fromEntries(optHeaders)
+            : optHeaders),
+      },
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
+    throw err;
+  }
+  clearTimeout(timeout);
+
   if (!res.ok) {
     const isAuthRoute = path.startsWith("/auth/");
     if (res.status === 401 && !isAuthRoute && typeof window !== "undefined") {
-      try {
-        const { useAuthStore } = await import("@/stores/auth-store");
-        useAuthStore.getState().logout();
-      } catch {
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("auth_user");
-      }
-      window.location.reload();
+      handleSessionExpired();
       throw new Error("Session expired. Please log in again.");
+    }
+    if (res.status === 403) {
+      throw new Error("You don't have permission to perform this action.");
     }
     if (res.status === 429) {
       throw new Error("Too many requests. Please wait a moment and try again.");
@@ -87,6 +118,7 @@ export interface Connection {
   project_id: string;
   name: string;
   db_type: string;
+  source_type: string;
   ssh_host: string | null;
   ssh_port: number;
   ssh_user: string | null;
@@ -100,6 +132,9 @@ export interface Connection {
   ssh_exec_mode: boolean;
   ssh_command_template: string | null;
   ssh_pre_commands: string | null;
+  mcp_server_command: string | null;
+  mcp_server_url: string | null;
+  mcp_transport_type: string | null;
 }
 
 export interface SshKey {
@@ -449,20 +484,26 @@ export const api = {
       onToolCall?: (event: Record<string, unknown>) => void,
     ) => {
       const ctrl = new AbortController();
-      fetch(`${API_BASE}/chat/ask/stream`, {
+      const streamPromise = fetch(`${API_BASE}/chat/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(data),
         signal: ctrl.signal,
       }).then(async (res) => {
-        if (res.status === 401) {
+        if (res.status === 401 && typeof window !== "undefined") {
+          handleSessionExpired();
           onError("Session expired");
-          window.location.reload();
-          return;
+          throw new Error("Session expired");
+        }
+        if (res.status === 403) {
+          const msg = "You don't have permission to perform this action.";
+          onError(msg);
+          throw new Error(msg);
         }
         if (!res.ok || !res.body) {
-          onError(`Stream failed: ${res.status}`);
-          return;
+          const msg = `Stream failed: ${res.status}`;
+          onError(msg);
+          throw new Error(msg);
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -488,8 +529,9 @@ export const api = {
         }
       }).catch((err) => {
         if (err.name !== "AbortError") onError(String(err));
+        throw err;
       });
-      return ctrl;
+      return Object.assign(ctrl, { done: streamPromise });
     },
   },
 
@@ -600,14 +642,7 @@ export const api = {
         body: JSON.stringify({ columns, rows, format }),
       });
       if (res.status === 401 && typeof window !== "undefined") {
-        try {
-          const { useAuthStore } = await import("@/stores/auth-store");
-          useAuthStore.getState().logout();
-        } catch {
-          localStorage.removeItem("auth_token");
-          localStorage.removeItem("auth_user");
-        }
-        window.location.reload();
+        handleSessionExpired();
         throw new Error("Session expired. Please log in again.");
       }
       if (!res.ok) throw new Error("Export failed");

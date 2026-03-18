@@ -1,3 +1,5 @@
+import { handleSessionExpired } from "@/lib/api";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export interface WorkflowEvent {
@@ -57,6 +59,11 @@ function createSSEStream(
     signal: ctrl.signal,
   })
     .then(async (res) => {
+      if (res.status === 401 && typeof window !== "undefined") {
+        handleSessionExpired();
+        onError?.(new Error("Session expired"));
+        return;
+      }
       if (!res.ok || !res.body) {
         onError?.(new Error(`SSE stream failed: ${res.status}`));
         return;

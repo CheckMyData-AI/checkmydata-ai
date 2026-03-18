@@ -139,9 +139,7 @@ class TestBuildTablePrompt:
 
     def test_with_rules(self):
         table = _make_table()
-        prompt = DbIndexValidator._build_table_prompt(
-            table, None, "", "Always use UTC timestamps"
-        )
+        prompt = DbIndexValidator._build_table_prompt(table, None, "", "Always use UTC timestamps")
         assert "UTC timestamps" in prompt
 
     def test_empty_sample(self):
@@ -167,16 +165,18 @@ class TestAnalyzeTable:
     async def test_successful_analysis(self):
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response({
-                "is_active": True,
-                "relevance_score": 5,
-                "business_description": "User accounts with authentication data",
-                "data_patterns": "email is unique, status enum: active/inactive",
-                "column_notes": '{"id": "auto-increment PK", "email": "unique"}',
-                "query_hints": "Filter by status, join via id FK",
-                "code_match_status": "matched",
-                "code_match_details": "",
-            })
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 5,
+                    "business_description": "User accounts with authentication data",
+                    "data_patterns": "email is unique, status enum: active/inactive",
+                    "column_notes": '{"id": "auto-increment PK", "email": "unique"}',
+                    "query_hints": "Filter by status, join via id FK",
+                    "code_match_status": "matched",
+                    "code_match_details": "",
+                }
+            )
         )
 
         validator = DbIndexValidator(mock_llm)
@@ -194,15 +194,17 @@ class TestAnalyzeTable:
     async def test_clamps_relevance(self):
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response({
-                "is_active": True,
-                "relevance_score": 10,
-                "business_description": "test",
-                "data_patterns": "",
-                "column_notes": "{}",
-                "query_hints": "",
-                "code_match_status": "matched",
-            })
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 10,
+                    "business_description": "test",
+                    "data_patterns": "",
+                    "column_notes": "{}",
+                    "query_hints": "",
+                    "code_match_status": "matched",
+                }
+            )
         )
 
         validator = DbIndexValidator(mock_llm)
@@ -218,8 +220,7 @@ class TestAnalyzeTable:
 
         validator = DbIndexValidator(mock_llm)
         result = await validator.analyze_table(
-            table=_make_table(), sample_data=_make_sample_data(),
-            code_context="", rules_context=""
+            table=_make_table(), sample_data=_make_sample_data(), code_context="", rules_context=""
         )
         assert result.table_name == "users"
         assert result.is_active is True
@@ -233,8 +234,7 @@ class TestAnalyzeTable:
 
         validator = DbIndexValidator(mock_llm)
         result = await validator.analyze_table(
-            table=_make_table(), sample_data=_make_sample_data(),
-            code_context="", rules_context=""
+            table=_make_table(), sample_data=_make_sample_data(), code_context="", rules_context=""
         )
         assert result.table_name == "users"
 
@@ -242,15 +242,17 @@ class TestAnalyzeTable:
     async def test_dict_column_notes(self):
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response({
-                "is_active": True,
-                "relevance_score": 3,
-                "business_description": "test",
-                "data_patterns": "",
-                "column_notes": {"id": "PK", "email": "unique"},
-                "query_hints": "",
-                "code_match_status": "no_code_info",
-            })
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 3,
+                    "business_description": "test",
+                    "data_patterns": "",
+                    "column_notes": {"id": "PK", "email": "unique"},
+                    "query_hints": "",
+                    "code_match_status": "no_code_info",
+                }
+            )
         )
 
         validator = DbIndexValidator(mock_llm)
@@ -258,6 +260,7 @@ class TestAnalyzeTable:
             table=_make_table(), sample_data=None, code_context="", rules_context=""
         )
         import json
+
         notes = json.loads(result.column_notes_json)
         assert notes["id"] == "PK"
 
@@ -330,18 +333,32 @@ class TestAnalyzeTableBatch:
             return_value=LLMResponse(
                 content="",
                 tool_calls=[
-                    ToolCall(id="c1", name="table_analysis", arguments={
-                        "is_active": False, "relevance_score": 1,
-                        "business_description": "Empty migration table",
-                        "data_patterns": "", "column_notes": "{}",
-                        "query_hints": "", "code_match_status": "orphan",
-                    }),
-                    ToolCall(id="c2", name="table_analysis", arguments={
-                        "is_active": False, "relevance_score": 1,
-                        "business_description": "Empty temp table",
-                        "data_patterns": "", "column_notes": "{}",
-                        "query_hints": "", "code_match_status": "orphan",
-                    }),
+                    ToolCall(
+                        id="c1",
+                        name="table_analysis",
+                        arguments={
+                            "is_active": False,
+                            "relevance_score": 1,
+                            "business_description": "Empty migration table",
+                            "data_patterns": "",
+                            "column_notes": "{}",
+                            "query_hints": "",
+                            "code_match_status": "orphan",
+                        },
+                    ),
+                    ToolCall(
+                        id="c2",
+                        name="table_analysis",
+                        arguments={
+                            "is_active": False,
+                            "relevance_score": 1,
+                            "business_description": "Empty temp table",
+                            "data_patterns": "",
+                            "column_notes": "{}",
+                            "query_hints": "",
+                            "code_match_status": "orphan",
+                        },
+                    ),
                 ],
             )
         )
@@ -365,12 +382,19 @@ class TestAnalyzeTableBatch:
             return_value=LLMResponse(
                 content="",
                 tool_calls=[
-                    ToolCall(id="c1", name="table_analysis", arguments={
-                        "is_active": True, "relevance_score": 3,
-                        "business_description": "First table",
-                        "data_patterns": "", "column_notes": "{}",
-                        "query_hints": "", "code_match_status": "no_code_info",
-                    }),
+                    ToolCall(
+                        id="c1",
+                        name="table_analysis",
+                        arguments={
+                            "is_active": True,
+                            "relevance_score": 3,
+                            "business_description": "First table",
+                            "data_patterns": "",
+                            "column_notes": "{}",
+                            "query_hints": "",
+                            "code_match_status": "no_code_info",
+                        },
+                    ),
                 ],
             )
         )
@@ -390,20 +414,20 @@ class TestAnalyzeTableBatch:
     @pytest.mark.asyncio
     async def test_empty_batch(self):
         validator = DbIndexValidator()
-        results = await validator.analyze_table_batch(
-            tables=[], code_context="", rules_context=""
-        )
+        results = await validator.analyze_table_batch(tables=[], code_context="", rules_context="")
         assert results == []
 
 
 class TestCodeMatchStatusClamping:
     def test_valid_statuses_pass_through(self):
         from app.knowledge.db_index_validator import _clamp_code_match
+
         for status in ("matched", "orphan", "mismatch", "no_code_info"):
             assert _clamp_code_match(status) == status
 
     def test_invalid_status_falls_back(self):
         from app.knowledge.db_index_validator import _clamp_code_match
+
         assert _clamp_code_match("hallucinated_value") == "no_code_info"
         assert _clamp_code_match("") == "no_code_info"
         assert _clamp_code_match("MATCHED") == "no_code_info"
@@ -412,15 +436,17 @@ class TestCodeMatchStatusClamping:
     async def test_llm_invalid_code_match_clamped(self):
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response({
-                "is_active": True,
-                "relevance_score": 3,
-                "business_description": "test",
-                "data_patterns": "",
-                "column_notes": "{}",
-                "query_hints": "",
-                "code_match_status": "hallucinated",
-            })
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 3,
+                    "business_description": "test",
+                    "data_patterns": "",
+                    "column_notes": "{}",
+                    "query_hints": "",
+                    "code_match_status": "hallucinated",
+                }
+            )
         )
         validator = DbIndexValidator(mock_llm)
         result = await validator.analyze_table(

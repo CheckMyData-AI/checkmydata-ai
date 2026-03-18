@@ -58,14 +58,25 @@ class ProjectCacheService:
         knowledge: ProjectKnowledge | None = None,
         profile: ProjectProfile | None = None,
     ) -> None:
-        cache = await self._get_row(session, project_id)
-        if not cache:
-            cache = ProjectCache(project_id=project_id)
-            session.add(cache)
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        values: dict = {"project_id": project_id}
         if knowledge is not None:
-            cache.knowledge_json = knowledge.to_json()
+            values["knowledge_json"] = knowledge.to_json()
         if profile is not None:
-            cache.profile_json = profile.to_json()
+            values["profile_json"] = profile.to_json()
+
+        stmt = sqlite_insert(ProjectCache).values(**values)
+        update_cols = {k: v for k, v in values.items() if k != "project_id"}
+        if update_cols:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["project_id"],
+                set_=update_cols,
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=["project_id"])
+
+        await session.execute(stmt)
         await session.commit()
 
     async def _get_row(

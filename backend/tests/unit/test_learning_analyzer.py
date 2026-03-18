@@ -1,6 +1,5 @@
 """Unit tests for LearningAnalyzer heuristic extractors."""
 
-
 from app.core.query_validation import QueryAttempt, QueryError, QueryErrorType
 from app.knowledge.learning_analyzer import LearningAnalyzer, _extract_tables
 

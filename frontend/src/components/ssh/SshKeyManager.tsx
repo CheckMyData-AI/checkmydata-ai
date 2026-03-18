@@ -192,8 +192,8 @@ export function SshKeyManager() {
     fp.length > 16 ? `${fp.slice(0, 8)}...${fp.slice(-8)}` : fp;
 
   return (
-    <div className="space-y-1.5 px-1">
-      <div className="flex justify-end px-1">
+    <div className="px-1">
+      <div className="flex justify-end px-1 mb-1">
         <button
           onClick={() => {
             setShowCreate(!showCreate);
@@ -214,7 +214,7 @@ export function SshKeyManager() {
       </div>
 
       {showCreate && (
-        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle text-xs">
+        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle text-xs mb-1.5">
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -274,40 +274,36 @@ export function SshKeyManager() {
       )}
 
       {listLoading && <Spinner />}
-      <div className="space-y-0.5 max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
+      <div>
         {sshKeys.map((k) => (
           <div
             key={k.id}
-            className="group rounded-lg hover:bg-surface-2/50 transition-colors"
+            className="group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md hover:bg-surface-1 transition-colors"
           >
-            <div className="flex items-center gap-2 px-2.5 py-2">
-              <div className="w-7 h-7 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
-                <Icon name="key" size={13} className="text-text-tertiary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-[13px] font-medium text-text-primary block truncate">
+            <Icon name="key" size={12} className="text-text-muted shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-text-secondary truncate">
                   {k.name}
                 </span>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[10px] text-accent/70 uppercase font-semibold font-mono shrink-0">
-                    {k.key_type}
-                  </span>
-                  <span
-                    className="text-[10px] text-text-muted font-mono truncate"
-                    title={k.fingerprint}
-                  >
-                    {truncateFingerprint(k.fingerprint)}
-                  </span>
-                </div>
+                <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono uppercase">
+                  {k.key_type}
+                </span>
               </div>
+              <span
+                className="text-[9px] text-text-muted font-mono truncate block mt-0.5"
+                title={k.fingerprint}
+              >
+                {truncateFingerprint(k.fingerprint)}
+              </span>
             </div>
-            <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+            <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
               <ActionButton
                 icon="trash"
                 title="Delete key"
                 onClick={(e) => handleDelete(e, k.id)}
                 variant="danger"
-                size="sm"
+                size="xs"
               />
             </div>
           </div>

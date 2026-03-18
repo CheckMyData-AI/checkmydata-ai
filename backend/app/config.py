@@ -1,14 +1,25 @@
+import logging
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_config_logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "eSIM Database Agent"
+    environment: str = "development"
     debug: bool = False
+    sql_echo: bool = False
 
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
+
+    # Connection pool settings
+    db_pool_size: int = 5
+    db_pool_overflow: int = 10
+    db_pool_recycle: int = 3600
 
     @model_validator(mode="after")
     def _fix_database_url(self) -> "Settings":
@@ -63,5 +74,47 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Agent settings
+    max_orchestrator_iterations: int = 5
+    max_sub_agent_retries: int = 2
+    max_sql_iterations: int = 3
+    max_mcp_iterations: int = 5
+    max_knowledge_iterations: int = 2
+    rag_relevance_threshold: float = 1.3
+    schema_cache_ttl_seconds: int = 300
+    max_pie_categories: int = 20
+
+    # Request limits
+    max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
+
+    @model_validator(mode="after")
+    def _validate_production_secrets(self) -> "Settings":
+        """Prevent insecure defaults from being used in production."""
+        is_prod = self.environment.lower() in ("production", "prod")
+        if not is_prod:
+            return self
+        if self.jwt_secret == "change-me-in-production":
+            raise ValueError(
+                "JWT_SECRET must be set to a secure value in production. "
+                "Do not use the default 'change-me-in-production'."
+            )
+        if not self.master_encryption_key:
+            raise ValueError(
+                "MASTER_ENCRYPTION_KEY must be set in production. "
+                "Generate one with: python -c "
+                "\"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\""
+            )
+        return self
+
 
 settings = Settings()
+
+if settings.jwt_secret == "change-me-in-production":
+    _config_logger.warning(
+        "JWT_SECRET is using the insecure default. Set JWT_SECRET env var for production."
+    )
+if not settings.master_encryption_key:
+    _config_logger.warning(
+        "MASTER_ENCRYPTION_KEY is empty. Credential encryption will not work."
+    )

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
 from app.services.membership_service import MembershipService
 from app.services.rule_service import RuleService
 
@@ -13,14 +14,14 @@ _membership_svc = MembershipService()
 
 class RuleCreate(BaseModel):
     project_id: str | None = None
-    name: str
-    content: str
+    name: str = Field(max_length=255)
+    content: str = Field(max_length=50000)
     format: str = "markdown"
 
 
 class RuleUpdate(BaseModel):
-    name: str | None = None
-    content: str | None = None
+    name: str | None = Field(None, max_length=255)
+    content: str | None = Field(None, max_length=50000)
     format: str | None = None
 
 
@@ -44,6 +45,13 @@ async def create_rule(
     if body.project_id:
         await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
     rule = await _svc.create(db, **body.model_dump())
+    audit_log(
+        "rule.create",
+        user_id=user["user_id"],
+        project_id=rule.project_id,
+        resource_type="rule",
+        resource_id=rule.id,
+    )
     return rule
 
 
@@ -86,6 +94,13 @@ async def update_rule(
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
     updates = body.model_dump(exclude_unset=True)
     rule = await _svc.update(db, rule_id, **updates)
+    audit_log(
+        "rule.update",
+        user_id=user["user_id"],
+        project_id=rule.project_id,
+        resource_type="rule",
+        resource_id=rule_id,
+    )
     return rule
 
 
@@ -101,4 +116,11 @@ async def delete_rule(
     if rule.project_id:
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
     await _svc.delete(db, rule_id)
+    audit_log(
+        "rule.delete",
+        user_id=user["user_id"],
+        project_id=rule.project_id,
+        resource_type="rule",
+        resource_id=rule_id,
+    )
     return {"ok": True}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type ProjectReadiness } from "@/lib/api";
+import { useLogStore } from "@/stores/log-store";
 import { toast } from "@/stores/toast-store";
 
 interface ReadinessGateProps {
@@ -24,6 +25,7 @@ const MAX_POLL_MS = 10 * 60 * 1000;
 export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGateProps) {
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -38,10 +40,11 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
 
   const fetchReadiness = useCallback(async () => {
     try {
+      setFetchError(false);
       const r = await api.projects.readiness(projectId);
       if (mountedRef.current) setReadiness(r);
     } catch {
-      /* ignore */
+      if (mountedRef.current) setFetchError(true);
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -99,6 +102,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         toast("Code-DB sync started", "success");
       }
       startPolling(step);
+      useLogStore.getState().setOpen(true);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Action failed", "error");
       setActionInProgress(null);
@@ -113,7 +117,34 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
     );
   }
 
-  if (!readiness || readiness.ready) return null;
+  if (fetchError) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="max-w-sm w-full mx-4 bg-zinc-800/50 border border-red-700/30 rounded-xl p-6 space-y-3 text-center">
+          <p className="text-sm text-red-400">Failed to check project readiness</p>
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={() => { setLoading(true); fetchReadiness(); }}
+              className="text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={onBypass}
+              className="text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+            >
+              Chat anyway
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!readiness || readiness.ready) {
+    onBypass();
+    return null;
+  }
 
   const completedSteps = [
     readiness.repo_connected ? "connect_repo" : null,
@@ -170,7 +201,10 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
             You can still chat, but SQL queries may be less accurate without sync.
           </p>
           <button
-            onClick={onBypass}
+            onClick={() => {
+              useLogStore.getState().setOpen(false);
+              onBypass();
+            }}
             className="w-full text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
           >
             Chat anyway
@@ -183,9 +217,16 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
 
 export function ReadinessBanner({ projectId }: { projectId: string }) {
   const [missing, setMissing] = useState<string[]>([]);
+  const bannerMountedRef = useRef(true);
+
+  useEffect(() => {
+    bannerMountedRef.current = true;
+    return () => { bannerMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     api.projects.readiness(projectId).then((r) => {
+      if (!bannerMountedRef.current) return;
       if (!r.ready) {
         setMissing(r.missing_steps.map((s) => s.label));
       } else {

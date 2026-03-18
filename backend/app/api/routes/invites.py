@@ -1,10 +1,12 @@
 """REST routes for project invitations and membership management."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.invite_service import InviteService
 from app.services.membership_service import MembershipService
 
@@ -39,7 +41,9 @@ class MemberResponse(BaseModel):
 
 
 @router.post("/{project_id}/invites", response_model=InviteResponse)
+@limiter.limit("20/minute")
 async def create_invite(
+    request: Request,
     project_id: str,
     body: InviteCreate,
     db: AsyncSession = Depends(get_db),
@@ -54,6 +58,14 @@ async def create_invite(
         body.email,
         body.role,
         user["user_id"],
+    )
+    audit_log(
+        "invite.create",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="invite",
+        resource_id=invite.id,
+        detail=body.email,
     )
     return InviteResponse(
         id=invite.id,
@@ -111,6 +123,13 @@ async def accept_invite(
     user: dict = Depends(get_current_user),
 ):
     member = await _invite_svc.accept_invite(db, invite_id, user["user_id"])
+    audit_log(
+        "invite.accept",
+        user_id=user["user_id"],
+        project_id=member.project_id,
+        resource_type="invite",
+        resource_id=invite_id,
+    )
     return {
         "ok": True,
         "project_id": member.project_id,

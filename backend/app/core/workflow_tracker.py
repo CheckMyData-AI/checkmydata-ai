@@ -150,8 +150,10 @@ class WorkflowTracker:
         )
         await self._broadcast(event)
 
+    _QUEUE_MAXSIZE = 1024
+
     def subscribe(self) -> asyncio.Queue[WorkflowEvent]:
-        queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue(maxsize=256)
+        queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue(maxsize=self._QUEUE_MAXSIZE)
         self._subscribers.append(queue)
         return queue
 
@@ -162,7 +164,7 @@ class WorkflowTracker:
             pass
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
-        logger.debug(
+        logger.info(
             "workflow[%s] %s: %s (%s)%s",
             event.workflow_id[:8],
             event.step,
@@ -170,14 +172,24 @@ class WorkflowTracker:
             event.detail,
             f" {event.elapsed_ms:.0f}ms" if event.elapsed_ms is not None else "",
         )
-        dead: list[asyncio.Queue[WorkflowEvent]] = []
-        for queue in self._subscribers:
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(queue)
-        for q in dead:
-            self._subscribers.remove(q)
+        async with self._lock:
+            dead: list[asyncio.Queue[WorkflowEvent]] = []
+            for queue in self._subscribers:
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    dead.append(queue)
+            if dead:
+                logger.warning(
+                    "Dropping %d subscriber(s) due to full queues (maxsize=%d)",
+                    len(dead),
+                    self._QUEUE_MAXSIZE,
+                )
+                for q in dead:
+                    try:
+                        self._subscribers.remove(q)
+                    except ValueError:
+                        pass
 
 
 tracker = WorkflowTracker()

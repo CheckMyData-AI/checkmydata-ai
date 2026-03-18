@@ -46,6 +46,8 @@ class RuleService:
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
+    ALLOWED_RULE_UPDATE_FIELDS = {"name", "content", "format", "is_default"}
+
     async def update(
         self,
         session: AsyncSession,
@@ -56,7 +58,7 @@ class RuleService:
         if not rule:
             return None
         for key, value in kwargs.items():
-            if hasattr(rule, key) and key not in ("id", "created_at"):
+            if key in self.ALLOWED_RULE_UPDATE_FIELDS:
                 setattr(rule, key, value)
         rule.updated_at = datetime.now(UTC)
         await session.commit()

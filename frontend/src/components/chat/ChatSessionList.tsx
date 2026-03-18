@@ -9,6 +9,8 @@ import { confirmAction } from "@/components/ui/ConfirmModal";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 
+const VISIBLE_CAP = 5;
+
 export function ChatSessionList() {
   const {
     activeProject,
@@ -22,6 +24,7 @@ export function ChatSessionList() {
   } = useAppStore();
 
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   if (!activeProject || chatSessions.length === 0) return null;
 
@@ -101,9 +104,14 @@ export function ChatSessionList() {
     setMessages([]);
   };
 
+  const visibleSessions = showAll
+    ? chatSessions
+    : chatSessions.slice(0, VISIBLE_CAP);
+  const hasMore = chatSessions.length > VISIBLE_CAP;
+
   return (
-    <div className="space-y-1.5 px-1">
-      <div className="flex justify-end px-1">
+    <div className="px-1">
+      <div className="flex justify-end px-1 mb-1">
         <button
           onClick={handleNewChat}
           className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
@@ -112,58 +120,65 @@ export function ChatSessionList() {
           New Chat
         </button>
       </div>
-      <div className="space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden sidebar-scroll">
-        {chatSessions.map((s) => (
-          <div
-            key={s.id}
-            className={`group rounded-lg transition-colors ${
-              activeSession?.id === s.id
-                ? "bg-surface-2"
-                : "hover:bg-surface-2/50"
-            }`}
-          >
-            <button
+      <div>
+        {visibleSessions.map((s) => {
+          const isActive = activeSession?.id === s.id;
+          return (
+            <div
+              key={s.id}
+              className={`group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                isActive ? "bg-surface-1" : "hover:bg-surface-1"
+              }`}
               onClick={() => handleSelect(s.id)}
-              disabled={loadingSession === s.id}
-              className="w-full flex items-center gap-2 text-left px-2.5 py-2"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleSelect(s.id);
+                }
+              }}
             >
+              {isActive && (
+                <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
+              )}
               <Icon
                 name="message-square"
                 size={12}
-                className={`shrink-0 ${
-                  activeSession?.id === s.id
-                    ? "text-accent"
-                    : "text-text-muted"
-                }`}
+                className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
               />
               <span
-                className={`text-xs truncate ${
-                  activeSession?.id === s.id
-                    ? "text-text-primary font-medium"
-                    : "text-text-secondary"
+                className={`flex-1 min-w-0 text-xs truncate ${
+                  isActive ? "text-text-primary font-medium" : "text-text-secondary"
                 }`}
               >
                 {loadingSession === s.id ? (
-                  <span className="animate-pulse text-text-muted">
-                    Loading...
-                  </span>
+                  <span className="animate-pulse text-text-muted">Loading...</span>
                 ) : (
                   s.title
                 )}
               </span>
-            </button>
-            <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
-              <ActionButton
-                icon="trash"
-                title="Delete session"
-                onClick={(e) => handleDelete(e, s.id)}
-                variant="danger"
-                size="sm"
-              />
+              <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+                <ActionButton
+                  icon="trash"
+                  title="Delete session"
+                  onClick={(e) => handleDelete(e, s.id)}
+                  variant="danger"
+                  size="xs"
+                />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {hasMore && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full text-[10px] text-text-muted hover:text-accent py-1 transition-colors"
+        >
+          {showAll ? "Show less" : `Show all ${chatSessions.length}`} →
+        </button>
+      )}
     </div>
   );
 }

@@ -146,6 +146,7 @@ export function ProjectSelector() {
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
   const [checking, setChecking] = useState(false);
+  const [selectingId, setSelectingId] = useState<string | null>(null);
   const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(
     null,
   );
@@ -315,6 +316,7 @@ export function ProjectSelector() {
   };
 
   const handleSelect = async (project: Project) => {
+    setSelectingId(project.id);
     setActiveProject(project);
     setUserRole(project.user_role || null);
     clearMessages();
@@ -330,10 +332,16 @@ export function ProjectSelector() {
       setConnections(conns);
       setActiveConnection(conns[0] || null);
       setChatSessions(sessions);
-    } catch {
+    } catch (err) {
       setConnections([]);
       setActiveConnection(null);
       setChatSessions([]);
+      toast(
+        err instanceof Error ? err.message : "Failed to load project data",
+        "error",
+      );
+    } finally {
+      setSelectingId(null);
     }
   };
 
@@ -558,8 +566,8 @@ export function ProjectSelector() {
   );
 
   return (
-    <div className="space-y-1.5 px-1">
-      <div className="flex justify-end px-1">
+    <div className="px-1">
+      <div className="flex justify-end px-1 mb-1">
         <button
           onClick={() => {
             if (showCreate) {
@@ -584,78 +592,98 @@ export function ProjectSelector() {
         </button>
       </div>
 
-      {isFormOpen && formUI}
+      {isFormOpen && <div className="mb-1.5">{formUI}</div>}
 
       {listLoading && <Spinner />}
-      <div className="space-y-0.5 max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
-        {projects.map((p) => (
-          <div
-            key={p.id}
-            className={`group rounded-lg transition-colors ${
-              activeProject?.id === p.id
-                ? "bg-surface-2"
-                : "hover:bg-surface-2/50"
-            }`}
-          >
-            <button
+      <div>
+        {projects.map((p) => {
+          const isActive = activeProject?.id === p.id;
+          return (
+            <div
+              key={p.id}
+              className={`group relative flex items-start gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                isActive
+                  ? "bg-surface-1"
+                  : "hover:bg-surface-1"
+              }`}
               onClick={() => handleSelect(p)}
-              className="w-full text-left px-2.5 py-2"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleSelect(p);
+                }
+              }}
             >
-              <span
-                className={`text-[13px] font-medium block truncate ${
-                  activeProject?.id === p.id
-                    ? "text-text-primary"
-                    : "text-text-secondary"
-                }`}
-              >
-                {p.name}
-              </span>
-              {p.user_role && (
-                <span
-                  className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium leading-none ${
-                    ROLE_STYLES[p.user_role] || ROLE_STYLES.viewer
-                  }`}
-                >
-                  {p.user_role}
-                </span>
+              {isActive && (
+                <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
               )}
-              {activeProject?.id === p.id && (
-                <div className="mt-1">
-                  <LlmBadges project={p} />
+              <div className="flex-1 min-w-0 py-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-medium truncate ${
+                      isActive
+                        ? "text-text-primary"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    {p.name}
+                  </span>
+                  {selectingId === p.id && (
+                    <Spinner />
+                  )}
+                  {p.user_role && (
+                    <span
+                      className={`shrink-0 px-1 py-0.5 rounded text-[9px] font-medium leading-none ${
+                        ROLE_STYLES[p.user_role] || ROLE_STYLES.viewer
+                      }`}
+                    >
+                      {p.user_role}
+                    </span>
+                  )}
+                </div>
+                {isActive && (
+                  <div className="mt-0.5">
+                    <LlmBadges project={p} />
+                  </div>
+                )}
+              </div>
+              {p.user_role === "owner" && (
+                <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+                  <ActionButton
+                    icon="users"
+                    title="Manage access"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setManagingAccessId(
+                        managingAccessId === p.id ? null : p.id,
+                      );
+                    }}
+                    variant="accent"
+                    size="xs"
+                  />
+                  <ActionButton
+                    icon="pencil"
+                    title="Edit project"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEdit(p);
+                    }}
+                    size="xs"
+                  />
+                  <ActionButton
+                    icon="trash"
+                    title="Delete project"
+                    onClick={(e) => handleDelete(e, p)}
+                    variant="danger"
+                    size="xs"
+                  />
                 </div>
               )}
-            </button>
-            {p.user_role === "owner" && (
-              <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
-                <ActionButton
-                  icon="users"
-                  title="Manage access"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setManagingAccessId(
-                      managingAccessId === p.id ? null : p.id,
-                    );
-                  }}
-                  variant="accent"
-                  size="sm"
-                />
-                <ActionButton
-                  icon="pencil"
-                  title="Edit project"
-                  onClick={() => handleEdit(p)}
-                  size="sm"
-                />
-                <ActionButton
-                  icon="trash"
-                  title="Delete project"
-                  onClick={(e) => handleDelete(e, p)}
-                  variant="danger"
-                  size="sm"
-                />
-              </div>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
 
       {managingAccessId && (

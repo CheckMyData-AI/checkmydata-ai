@@ -27,17 +27,26 @@ jobs:
       - name: Lint
         run: ruff check app/ tests/
 
+      - name: Format check
+        run: ruff format --check app/ tests/
+
+      - name: Type check
+        run: mypy app/ --ignore-missing-imports
+
+      - name: Generate CI encryption key
+        run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+
       - name: Unit tests
-        run: pytest tests/unit/ -v
+        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'nLZmh-RM9BzY16kIlQv-7JTHH517sG66NoRIC6mHpuA=' }}
+          MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
       - name: Integration tests
         run: pytest tests/integration/ -v
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY || 'nLZmh-RM9BzY16kIlQv-7JTHH517sG66NoRIC6mHpuA=' }}
+          MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -59,6 +68,12 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint . --max-warnings=0
+
+      - name: Tests
+        run: npm test
 
       - name: Build
         run: npm run build

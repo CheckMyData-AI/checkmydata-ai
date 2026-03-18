@@ -120,8 +120,8 @@ export function RulesManager() {
   const isFormOpen = showCreate || editingId !== null;
 
   return (
-    <div className="space-y-1.5 px-1">
-      <div className="flex justify-end px-1">
+    <div className="px-1">
+      <div className="flex justify-end px-1 mb-1">
         <button
           onClick={() => {
             if (showCreate) {
@@ -147,7 +147,7 @@ export function RulesManager() {
       </div>
 
       {isFormOpen && (
-        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle">
+        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle mb-1.5">
           {editingRule?.is_default && (
             <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
               <Icon name="zap" size={10} />
@@ -193,49 +193,47 @@ export function RulesManager() {
       )}
 
       {listLoading && <Spinner />}
-      <div className="space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden sidebar-scroll">
+      <div>
         {rules.map((rule) => (
           <div
             key={rule.id}
-            className="group rounded-lg hover:bg-surface-2/50 transition-colors"
+            className="group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md hover:bg-surface-1 transition-colors"
           >
-            <div className="flex items-center gap-1.5 px-2.5 py-2">
-              <Icon
-                name="file-text"
-                size={12}
-                className="text-text-muted shrink-0"
-              />
-              <div className="flex-1 min-w-0 text-xs">
-                <span className="text-text-secondary truncate block">
+            <Icon
+              name="file-text"
+              size={12}
+              className="text-text-muted shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-text-secondary truncate">
                   {rule.name}
                 </span>
-                <div className="flex items-center gap-1 mt-0.5">
-                  {rule.is_default && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning-muted text-warning">
-                      default
-                    </span>
-                  )}
-                  {!rule.project_id && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-muted">
-                      global
-                    </span>
-                  )}
-                </div>
+                {rule.is_default && (
+                  <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
+                    default
+                  </span>
+                )}
+                {!rule.project_id && (
+                  <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
+                    global
+                  </span>
+                )}
               </div>
             </div>
-            <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+            <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
               <ActionButton
                 icon="pencil"
                 title="Edit rule"
                 onClick={() => handleEdit(rule)}
-                size="sm"
+                size="xs"
               />
               <ActionButton
                 icon="trash"
                 title="Delete rule"
                 onClick={() => handleDelete(rule)}
                 variant="danger"
-                size="sm"
+                size="xs"
               />
             </div>
           </div>

@@ -121,6 +121,49 @@ class IndexingPipelineRunner:
                 f"{len(CheckpointService.get_processed_doc_paths(checkpoint))} docs processed)",
             )
 
+        try:
+            return await self._run_steps(
+                project_id=project_id,
+                project=project,
+                force_full=force_full,
+                db=db,
+                wf_id=wf_id,
+                checkpoint=checkpoint,
+                cp_id=cp_id,
+                done=done,
+                resuming=resuming,
+                result=result,
+                state=state,
+                live_table_names=live_table_names,
+            )
+        except Exception as exc:
+            logger.exception("Indexing pipeline failed for project %s", project_id[:8])
+            result.status = "failed"
+            try:
+                await self._cp_svc.complete_step(db, cp_id, "pipeline_failed")
+            except Exception:
+                logger.debug("Failed to update checkpoint on pipeline error", exc_info=True)
+            try:
+                await tracker.end(wf_id, "index_repo", "failed", str(exc))
+            except Exception:
+                logger.debug("Failed to emit pipeline failure event", exc_info=True)
+            return result
+
+    async def _run_steps(
+        self,
+        project_id: str,
+        project,
+        force_full: bool,
+        db: AsyncSession,
+        wf_id: str,
+        checkpoint: IndexingCheckpoint,
+        cp_id: str,
+        done: set,
+        resuming: bool,
+        result: PipelineResult,
+        state: _PipelineState,
+        live_table_names: list[str] | None = None,
+    ) -> PipelineResult:
         # --- Step 1: resolve_ssh_key (always re-run, fast) ---
         async with tracker.step(wf_id, "resolve_ssh_key", "Decrypting SSH key"):
             if project.ssh_key_id:
@@ -206,9 +249,7 @@ class IndexingPipelineRunner:
             ]
             filtered = before - len(state.changed_files)
             if filtered:
-                logger.info(
-                    "Pre-filtered %d binary/missing files from changed_files", filtered
-                )
+                logger.info("Pre-filtered %d binary/missing files from changed_files", filtered)
 
         # --- Step 4: cleanup_deleted ---
         if "cleanup_deleted" not in done:
@@ -410,7 +451,8 @@ class IndexingPipelineRunner:
 
                 if _is_binary_content(edoc.content):
                     logger.warning(
-                        "Skipping binary-looking doc %s", edoc.file_path,
+                        "Skipping binary-looking doc %s",
+                        edoc.file_path,
                     )
                     skipped += 1
                     pending_paths.append(edoc.file_path)
@@ -433,7 +475,9 @@ class IndexingPipelineRunner:
                 existing_doc_content = None
                 if state.last_sha is not None:
                     existing_kd = await self._doc_store.get_doc_by_path(
-                        db, project_id, edoc.file_path,
+                        db,
+                        project_id,
+                        edoc.file_path,
                     )
                     if existing_kd:
                         existing_doc_content = existing_kd.content
@@ -597,7 +641,8 @@ class IndexingPipelineRunner:
             svc = CodeDbSyncService()
             await svc.mark_stale_for_project(db, project_id)
             logger.info(
-                "Marked code-DB sync as stale for project %s", project_id[:8],
+                "Marked code-DB sync as stale for project %s",
+                project_id[:8],
             )
         except Exception:
             logger.debug(

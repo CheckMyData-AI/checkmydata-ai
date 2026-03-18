@@ -7,12 +7,14 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from app.connectors.base import ConnectionConfig
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.agent_learning_service import AgentLearningService
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
@@ -34,22 +36,29 @@ _learning_svc = AgentLearningService()
 
 class ConnectionCreate(BaseModel):
     project_id: str
-    name: str
-    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse"]
-    ssh_host: str | None = None
+    name: str = Field(max_length=255)
+    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] = Field(max_length=50)
+    source_type: str = "database"
+    ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int = 22
-    ssh_user: str | None = None
+    ssh_user: str | None = Field(None, max_length=255)
     ssh_key_id: str | None = None
-    db_host: str = "127.0.0.1"
+    db_host: str = Field(default="127.0.0.1", max_length=255)
     db_port: int = 5432
     db_name: str = ""
-    db_user: str | None = None
+    db_user: str | None = Field(None, max_length=255)
     db_password: str | None = None
-    connection_string: str | None = None
+    connection_string: str | None = Field(None, max_length=1024)
     is_read_only: bool = True
     ssh_exec_mode: bool = False
     ssh_command_template: str | None = None
     ssh_pre_commands: list[str] | None = None
+    # MCP-specific fields
+    mcp_server_command: str | None = None
+    mcp_server_args: list[str] | None = None
+    mcp_server_url: str | None = None
+    mcp_transport_type: Literal["stdio", "sse"] | None = None
+    mcp_env: dict[str, str] | None = None
 
     @field_validator("name", "connection_string", mode="before")
     @classmethod
@@ -58,6 +67,14 @@ class ConnectionCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_conn_string_or_host(self):
+        if self.db_type == "mcp":
+            if not self.mcp_server_command and not self.mcp_server_url:
+                raise ValueError(
+                    "MCP connections require either mcp_server_command (stdio) "
+                    "or mcp_server_url (SSE)"
+                )
+            self.source_type = "mcp"
+            return self
         if not self.connection_string and not (self.db_host and self.db_name):
             raise ValueError("Provide either a connection string or db_host + db_name")
         return self
@@ -66,6 +83,7 @@ class ConnectionCreate(BaseModel):
 class ConnectionUpdate(BaseModel):
     name: str | None = None
     db_type: str | None = None
+    source_type: str | None = None
     ssh_host: str | None = None
     ssh_port: int | None = None
     ssh_user: str | None = None
@@ -80,6 +98,11 @@ class ConnectionUpdate(BaseModel):
     ssh_exec_mode: bool | None = None
     ssh_command_template: str | None = None
     ssh_pre_commands: list[str] | None = None
+    mcp_server_command: str | None = None
+    mcp_server_args: list[str] | None = None
+    mcp_server_url: str | None = None
+    mcp_transport_type: str | None = None
+    mcp_env: dict[str, str] | None = None
 
 
 class ConnectionResponse(BaseModel):
@@ -89,6 +112,7 @@ class ConnectionResponse(BaseModel):
     project_id: str
     name: str
     db_type: str
+    source_type: str = "database"
     ssh_host: str | None
     ssh_port: int
     ssh_user: str | None
@@ -102,10 +126,15 @@ class ConnectionResponse(BaseModel):
     ssh_exec_mode: bool
     ssh_command_template: str | None
     ssh_pre_commands: str | None
+    mcp_server_command: str | None = None
+    mcp_server_url: str | None = None
+    mcp_transport_type: str | None = None
 
 
 @router.post("", response_model=ConnectionResponse)
+@limiter.limit("10/minute")
 async def create_connection(
+    request: Request,
     body: ConnectionCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -114,7 +143,16 @@ async def create_connection(
     conn = await _svc.create(db, **body.model_dump())
     logger.info(
         "Connection created: name=%s type=%s project=%s",
-        body.name, body.db_type, body.project_id[:8],
+        body.name,
+        body.db_type,
+        body.project_id[:8],
+    )
+    audit_log(
+        "connection.create",
+        user_id=user["user_id"],
+        project_id=body.project_id,
+        resource_type="connection",
+        resource_id=conn.id,
     )
     return conn
 
@@ -122,11 +160,13 @@ async def create_connection(
 @router.get("/project/{project_id}", response_model=list[ConnectionResponse])
 async def list_connections(
     project_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_by_project(db, project_id)
+    return await _svc.list_by_project(db, project_id, skip=skip, limit=limit)
 
 
 @router.get("/{connection_id}", response_model=ConnectionResponse)
@@ -182,11 +222,20 @@ async def delete_connection(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     await _svc.delete(db, connection_id)
     logger.info("Connection deleted: id=%s name=%s", connection_id[:8], conn.name)
+    audit_log(
+        "connection.delete",
+        user_id=user["user_id"],
+        project_id=conn.project_id,
+        resource_type="connection",
+        resource_id=connection_id,
+    )
     return {"ok": True}
 
 
 @router.post("/{connection_id}/test")
+@limiter.limit("20/minute")
 async def test_connection(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -261,7 +310,8 @@ async def refresh_schema(
             "db_type": schema.db_type,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schema refresh failed: {e}") from e
+        logger.exception("Schema refresh failed: %s", e)
+        raise HTTPException(status_code=500, detail="Schema refresh failed")
 
 
 # ------------------------------------------------------------------
@@ -301,14 +351,14 @@ async def index_database(
     await _db_index_svc.set_indexing_status(db, connection_id, "running")
     await db.commit()
 
-    task = asyncio.create_task(
-        _run_db_index_background(connection_id, config, project_id)
-    )
+    task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
     _db_index_tasks[connection_id] = task
 
     logger.info(
         "DB index started: connection=%s type=%s project=%s",
-        connection_id[:8], conn.db_type, project_id[:8],
+        connection_id[:8],
+        conn.db_type,
+        project_id[:8],
     )
 
     return JSONResponse(
@@ -412,7 +462,8 @@ async def _run_db_index_background(
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
                 "DB index pipeline returned failure: connection=%s error=%s",
-                connection_id[:8], result.get("error", "unknown"),
+                connection_id[:8],
+                result.get("error", "unknown"),
             )
             final_status = "failed"
         else:
@@ -472,14 +523,13 @@ async def trigger_sync(
     await db.commit()
 
     project_id = conn.project_id
-    task = asyncio.create_task(
-        _run_sync_background(connection_id, project_id)
-    )
+    task = asyncio.create_task(_run_sync_background(connection_id, project_id))
     _sync_tasks[connection_id] = task
 
     logger.info(
         "Code-DB sync started: connection=%s project=%s",
-        connection_id[:8], project_id[:8],
+        connection_id[:8],
+        project_id[:8],
     )
 
     return JSONResponse(
@@ -566,6 +616,7 @@ async def _run_sync_background(
 ) -> None:
     from app.models.base import async_session_factory
 
+    final_status = "failed"
     try:
         from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
 
@@ -574,22 +625,30 @@ async def _run_sync_background(
             connection_id=connection_id,
             project_id=project_id,
         )
-        logger.info(
-            "Code-DB sync completed: connection=%s result=%s",
-            connection_id[:8], result,
-        )
+        if isinstance(result, dict) and result.get("status") == "failed":
+            logger.error(
+                "Code-DB sync pipeline returned failure: connection=%s error=%s",
+                connection_id[:8],
+                result.get("error", "unknown"),
+            )
+            final_status = "failed"
+        else:
+            logger.info(
+                "Code-DB sync completed: connection=%s result=%s",
+                connection_id[:8],
+                result,
+            )
+            final_status = "idle"
     except Exception:
-        logger.exception(
-            "Code-DB sync background task failed: connection=%s", connection_id[:8]
-        )
+        logger.exception("Code-DB sync background task failed: connection=%s", connection_id[:8])
+    finally:
+        _sync_tasks.pop(connection_id, None)
         try:
             async with async_session_factory() as session:
-                await _sync_svc.set_sync_status(session, connection_id, "failed")
+                await _sync_svc.set_sync_status(session, connection_id, final_status)
                 await session.commit()
         except Exception:
             logger.debug("Failed to update sync_status", exc_info=True)
-    finally:
-        _sync_tasks.pop(connection_id, None)
 
 
 # ------------------------------------------------------------------
@@ -694,6 +753,8 @@ async def update_learning(
     entry = await _learning_svc.update_learning(db, learning_id, **kwargs)
     if not entry:
         raise HTTPException(status_code=404, detail="Learning not found")
+    if entry.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
     await db.commit()
     return {"ok": True, "id": entry.id}
 
@@ -710,6 +771,11 @@ async def delete_learning(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    from app.models.agent_learning import AgentLearning
+    check = await db.get(AgentLearning, learning_id)
+    if not check or check.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
 
     deleted = await _learning_svc.delete_learning(db, learning_id)
     if not deleted:

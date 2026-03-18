@@ -280,7 +280,7 @@ JPA_COLUMN = re.compile(
     r"""@Column\s*(?:\(([^)]*)\))?\s*.*?(?:private|protected|public)\s+(\w+(?:<[^>]+>)?)\s+(\w+)\s*[;=]""",
     re.DOTALL,
 )
-JPA_COLUMN_NAME = re.compile(r"""name\s*=\s*"(\w+)""" )
+JPA_COLUMN_NAME = re.compile(r"""name\s*=\s*"(\w+)""")
 JPA_FK = re.compile(
     r"""@(?:ManyToOne|OneToOne|ManyToMany|OneToMany)[^@]*?(?:private|protected|public)\s+(?:List<)?(\w+)>?\s+(\w+)\s*[;=]""",
     re.DOTALL,

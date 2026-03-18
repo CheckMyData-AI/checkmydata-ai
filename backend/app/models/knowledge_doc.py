@@ -12,7 +12,7 @@ class KnowledgeDoc(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     doc_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_path: Mapped[str] = mapped_column(String(512), nullable=False)

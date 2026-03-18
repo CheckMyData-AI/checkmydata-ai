@@ -153,7 +153,7 @@ class ContextEnricher:
             if tbl_name.lower() not in table_refs:
                 continue
             for col, vals in col_vals.items():
-                if re.search(r'\b' + re.escape(col.lower()) + r'\b', query_lower):
+                if re.search(r"\b" + re.escape(col.lower()) + r"\b", query_lower):
                     vals_str = " | ".join(str(v) for v in vals[:20])
                     lines.append(f"- {tbl_name}.{col}: [{vals_str}]")
 

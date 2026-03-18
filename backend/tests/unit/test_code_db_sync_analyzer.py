@@ -46,9 +46,7 @@ class TestAnalyzeTable:
             ],
         )
 
-        result = await analyzer.analyze_table(
-            "orders", "DB schema...", "Code context..."
-        )
+        result = await analyzer.analyze_table("orders", "DB schema...", "Code context...")
 
         assert isinstance(result, TableSyncAnalysis)
         assert result.table_name == "orders"
@@ -59,9 +57,7 @@ class TestAnalyzeTable:
 
     @pytest.mark.asyncio
     async def test_no_tool_call_returns_fallback(self, analyzer, mock_llm):
-        mock_llm.complete.return_value = LLMResponse(
-            content="Some text response"
-        )
+        mock_llm.complete.return_value = LLMResponse(content="Some text response")
 
         result = await analyzer.analyze_table("users", "schema", "code")
 
@@ -162,10 +158,12 @@ class TestAnalyzeTableBatch:
             ],
         )
 
-        results = await analyzer.analyze_table_batch([
-            ("t1", "db1", "code1"),
-            ("t2", "db2", "code2"),
-        ])
+        results = await analyzer.analyze_table_batch(
+            [
+                ("t1", "db1", "code1"),
+                ("t2", "db2", "code2"),
+            ]
+        )
 
         assert len(results) == 2
         assert results[0].table_name == "t1"
@@ -193,10 +191,12 @@ class TestAnalyzeTableBatch:
             ],
         )
 
-        results = await analyzer.analyze_table_batch([
-            ("t1", "db1", "code1"),
-            ("t2", "db2", "code2"),
-        ])
+        results = await analyzer.analyze_table_batch(
+            [
+                ("t1", "db1", "code1"),
+                ("t2", "db2", "code2"),
+            ]
+        )
 
         assert len(results) == 2
         assert results[0].sync_status == "matched"
@@ -240,9 +240,7 @@ class TestGenerateSummary:
 
     @pytest.mark.asyncio
     async def test_summary_fallback_on_no_tool_call(self, analyzer, mock_llm):
-        mock_llm.complete.return_value = LLMResponse(
-            content="Some analysis text"
-        )
+        mock_llm.complete.return_value = LLMResponse(content="Some analysis text")
 
         analyses = [
             TableSyncAnalysis(table_name="t1", sync_status="matched"),
@@ -262,11 +260,13 @@ class TestGenerateSummary:
 class TestSyncStatusClamping:
     def test_valid_statuses_pass_through(self):
         from app.knowledge.code_db_sync_analyzer import _clamp_sync_status
+
         for status in ("matched", "code_only", "db_only", "mismatch", "unknown"):
             assert _clamp_sync_status(status) == status
 
     def test_invalid_status_falls_back(self):
         from app.knowledge.code_db_sync_analyzer import _clamp_sync_status
+
         assert _clamp_sync_status("synced") == "unknown"
         assert _clamp_sync_status("") == "unknown"
         assert _clamp_sync_status("MATCHED") == "unknown"

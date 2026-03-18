@@ -210,13 +210,10 @@ class TestRepoAnalyzer:
         binary_file = repo_dir / "docker" / "myBinary"
         binary_file.write_bytes(b"\x7fELF\x00\x00\x00\x00" + b"\x00" * 8000)
         (repo_dir / "models.py").write_text(
-            "from sqlalchemy import Column, Integer\n"
-            "class User:\n    id = Column(Integer)\n"
+            "from sqlalchemy import Column, Integer\nclass User:\n    id = Column(Integer)\n"
         )
 
-        results = self.analyzer.analyze(
-            repo_dir, files=["docker/myBinary", "models.py"]
-        )
+        results = self.analyzer.analyze(repo_dir, files=["docker/myBinary", "models.py"])
         paths = [r.file_path for r in results]
         assert "docker/myBinary" not in paths
         assert "models.py" in paths
@@ -228,9 +225,7 @@ class TestRepoAnalyzer:
         repo_dir = Path(self.tmpdir) / "test_null_bytes"
         repo_dir.mkdir()
         trick_file = repo_dir / "sneaky.py"
-        trick_file.write_bytes(
-            b"from sqlalchemy import Column\x00\x00\x00class Foo: pass\n"
-        )
+        trick_file.write_bytes(b"from sqlalchemy import Column\x00\x00\x00class Foo: pass\n")
 
         results = self.analyzer.analyze(repo_dir, files=["sneaky.py"])
         assert len(results) == 0
@@ -297,9 +292,7 @@ class TestRepoAnalyzer:
         repo_dir.mkdir()
         (repo_dir / "custom_models").mkdir()
         model_file = repo_dir / "custom_models" / "schema.txt"
-        model_file.write_text(
-            "CREATE TABLE users (id INT PRIMARY KEY);\n"
-        )
+        model_file.write_text("CREATE TABLE users (id INT PRIMARY KEY);\n")
 
         profile = ProjectProfile(model_dirs=["custom_models"])
         results = self.analyzer.analyze(

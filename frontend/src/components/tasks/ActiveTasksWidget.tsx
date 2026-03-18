@@ -148,12 +148,29 @@ export function ActiveTasksWidget() {
   const runningCount = taskList.filter((t) => t.status === "running").length;
   const failedCount = taskList.filter((t) => t.status === "failed").length;
   const hasAny = taskList.length > 0;
+  const prevRunningRef = useRef(runningCount);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const close = useCallback(() => setExpanded(false), []);
 
   useEffect(() => {
     if (!hasAny && expanded) setExpanded(false);
   }, [hasAny, expanded]);
+
+  useEffect(() => {
+    if (runningCount > prevRunningRef.current && runningCount > 0) {
+      setExpanded(true);
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = setTimeout(() => {
+        setExpanded(false);
+        collapseTimerRef.current = null;
+      }, 5000);
+    }
+    prevRunningRef.current = runningCount;
+    return () => {
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+    };
+  }, [runningCount]);
 
   useEffect(() => {
     if (!expanded) return;

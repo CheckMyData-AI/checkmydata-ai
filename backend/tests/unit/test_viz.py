@@ -121,7 +121,8 @@ class TestBuildRawResult:
     def test_serializes_special_values(self):
         result = QueryResult(
             columns=["data"],
-            rows=[[b"\x00\x01"]], row_count=1,
+            rows=[[b"\x00\x01"]],
+            row_count=1,
         )
         raw = _build_raw_result(result)
         assert raw is not None

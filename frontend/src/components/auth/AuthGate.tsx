@@ -30,11 +30,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const googleLoadingRef = useRef(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    restore();
+    restore().finally(() => setRestoring(false));
   }, [restore]);
 
   const handleGoogleResponse = useCallback(
@@ -83,10 +84,29 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     document.head.appendChild(script);
   }, [user, handleGoogleResponse]);
 
+  if (restoring) {
+    return (
+      <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+        <p className="text-sm text-text-muted animate-pulse">Loading...</p>
+      </div>
+    );
+  }
+
   if (user) return <>{children}</>;
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const switchMode = (newMode: "login" | "register") => {
+    setMode(newMode);
+    useAuthStore.setState({ error: null });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!emailRegex.test(email)) {
+      useAuthStore.setState({ error: "Please enter a valid email address" });
+      return;
+    }
     if (mode === "login") {
       await login(email, password);
     } else {
@@ -127,6 +147,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               className={inputCls}
+              aria-label="Display Name"
             />
           )}
 
@@ -137,6 +158,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             onChange={(e) => setEmail(e.target.value)}
             required
             className={inputCls}
+            aria-label="Email"
+            aria-required="true"
           />
 
           <div>
@@ -148,6 +171,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               required
               minLength={6}
               className={inputCls}
+              aria-label="Password"
+              aria-required="true"
             />
             {mode === "register" && (
               <p className="text-[10px] text-text-muted mt-1 px-1">
@@ -169,7 +194,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
           >
             {isLoading
-              ? "..."
+              ? (mode === "login" ? "Signing in..." : "Creating account...")
               : mode === "login"
                 ? "Sign In"
                 : "Create Account"}
@@ -202,7 +227,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 No account?{" "}
                 <button
                   type="button"
-                  onClick={() => setMode("register")}
+                  onClick={() => switchMode("register")}
                   className="text-accent hover:text-accent-hover transition-colors"
                 >
                   Register
@@ -213,7 +238,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 Already have an account?{" "}
                 <button
                   type="button"
-                  onClick={() => setMode("login")}
+                  onClick={() => switchMode("login")}
                   className="text-accent hover:text-accent-hover transition-colors"
                 >
                   Sign In

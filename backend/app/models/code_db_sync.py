@@ -13,14 +13,13 @@ class CodeDbSync(Base):
     __tablename__ = "code_db_sync"
     __table_args__ = (
         UniqueConstraint(
-            "connection_id", "table_name",
+            "connection_id",
+            "table_name",
             name="uq_code_db_sync_conn_table",
         ),
     )
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     connection_id: Mapped[str] = mapped_column(
         ForeignKey("connections.id", ondelete="CASCADE"), nullable=False
     )
@@ -54,9 +53,7 @@ class CodeDbSyncSummary(Base):
 
     __tablename__ = "code_db_sync_summary"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     connection_id: Mapped[str] = mapped_column(
         ForeignKey("connections.id", ondelete="CASCADE"), nullable=False, unique=True
     )

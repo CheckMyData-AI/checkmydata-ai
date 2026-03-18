@@ -93,7 +93,10 @@ async def trim_history(
 
     if llm_router is not None:
         summary = await _summarise(
-            older, llm_router, preferred_provider, model,
+            older,
+            llm_router,
+            preferred_provider,
+            model,
         )
     else:
         summary = _fallback_summary(older)
