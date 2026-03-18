@@ -141,6 +141,8 @@ export function ProjectSelector() {
     setActiveSession,
   } = useAppStore();
   const setUserRole = useAppStore((s) => s.setUserRole);
+  const triggerProjectEdit = useAppStore((s) => s.triggerProjectEdit);
+  const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
@@ -211,6 +213,16 @@ export function ProjectSelector() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [form.repoUrl, form.sshKeyId, runAccessCheck]);
+
+  useEffect(() => {
+    if (!triggerProjectEdit || !activeProject) return;
+    setTriggerProjectEdit(false);
+    setEditingId(activeProject.id);
+    setForm(projectToForm(activeProject));
+    setShowCreate(false);
+    setAccessResult(null);
+    setChecking(false);
+  }, [triggerProjectEdit, activeProject, setTriggerProjectEdit]);
 
   useEffect(() => {
     const url = form.repoUrl.trim();

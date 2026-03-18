@@ -29,7 +29,14 @@ export function useSectionCollapse(id: string, defaultOpen = true) {
     });
   };
 
-  return { open, toggle };
+  const forceOpen = () => {
+    setOpen(true);
+    const saved = getCollapsed();
+    saved[id] = false;
+    localStorage.setItem("sidebar_collapsed", JSON.stringify(saved));
+  };
+
+  return { open, toggle, forceOpen };
 }
 
 interface SidebarSectionProps {

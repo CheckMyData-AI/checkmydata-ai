@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type ProjectReadiness } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
+import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 
 interface ReadinessGateProps {
@@ -17,6 +18,11 @@ const STEP_LABELS: Record<string, string> = {
   connect_db: "Add a database connection",
   index_db: "Index the database",
   sync: "Sync code ↔ database",
+};
+
+const NAVIGABLE_STEPS: Record<string, { section: string; editProject?: boolean }> = {
+  connect_repo: { section: "projects", editProject: true },
+  connect_db: { section: "connections" },
 };
 
 const POLL_INTERVAL_MS = 4000;
@@ -156,6 +162,16 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
   const allSteps = ["connect_repo", "index_repo", "connect_db", "index_db", "sync"];
   const actionableSteps = new Set(["index_repo", "index_db", "sync"]);
 
+  const handleNavigate = (step: string) => {
+    const nav = NAVIGABLE_STEPS[step];
+    if (!nav) return;
+    const store = useAppStore.getState();
+    store.setFocusSidebarSection(nav.section);
+    if (nav.editProject) {
+      store.setTriggerProjectEdit(true);
+    }
+  };
+
   return (
     <div className="flex-1 flex items-center justify-center">
       <div className="max-w-md w-full mx-4 bg-zinc-800/50 border border-zinc-700 rounded-xl p-6 space-y-4">
@@ -169,6 +185,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
             const canAct = actionableSteps.has(step) && !done;
             const prevStepDone = idx === 0 || completedSteps.includes(allSteps[idx - 1]);
             const isRunning = actionInProgress === step;
+            const isNavigable = !done && step in NAVIGABLE_STEPS;
 
             return (
               <div key={step} className="flex items-center gap-3">
@@ -179,9 +196,19 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
                     <span className="text-zinc-600">{idx + 1}</span>
                   )}
                 </span>
-                <span className={`flex-1 text-sm ${done ? "text-zinc-400 line-through" : "text-zinc-300"}`}>
-                  {STEP_LABELS[step] || step}
-                </span>
+                {isNavigable ? (
+                  <button
+                    onClick={() => handleNavigate(step)}
+                    className="flex-1 text-sm text-left text-blue-400 hover:text-blue-300 hover:underline cursor-pointer transition-colors"
+                  >
+                    {STEP_LABELS[step] || step}
+                    <span className="ml-1.5 text-[10px] opacity-60">→</span>
+                  </button>
+                ) : (
+                  <span className={`flex-1 text-sm ${done ? "text-zinc-400 line-through" : "text-zinc-300"}`}>
+                    {STEP_LABELS[step] || step}
+                  </span>
+                )}
                 {canAct && prevStepDone && (
                   <button
                     onClick={() => handleAction(step)}

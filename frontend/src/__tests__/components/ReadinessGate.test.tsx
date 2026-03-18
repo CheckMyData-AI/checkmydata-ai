@@ -54,8 +54,8 @@ describe("ReadinessGate", () => {
   it("shows setup checklist items", async () => {
     await renderReadinessGate();
     await waitFor(() => {
-      expect(screen.getByText("Connect a Git repository")).toBeInTheDocument();
-      expect(screen.getByText("Add a database connection")).toBeInTheDocument();
+      expect(screen.getByText(/Connect a Git repository/)).toBeInTheDocument();
+      expect(screen.getByText(/Add a database connection/)).toBeInTheDocument();
     });
   });
 

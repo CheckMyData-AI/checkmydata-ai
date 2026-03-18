@@ -35,7 +35,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    restore().finally(() => setRestoring(false));
+    restore();
+    setRestoring(false);
   }, [restore]);
 
   const handleGoogleResponse = useCallback(

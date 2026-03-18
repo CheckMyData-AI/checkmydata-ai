@@ -241,7 +241,7 @@ After both the **repository** is indexed and the **database** is indexed, you ca
 
 6. **Staleness**: When either the repository or the database is re-indexed, sync data is automatically marked as stale. The UI shows the SYNC button with an amber outline, prompting a re-sync.
 
-7. **Chat Readiness Gate**: When you open the chat for the first time, a readiness checklist shows which setup steps are complete and which are missing. If sync is not done, you can still chat (with reduced accuracy) or run sync inline from the checklist.
+7. **Chat Readiness Gate**: When you select a project and open the chat for the first time, a readiness checklist appears immediately — even if no repository or database connection exists yet. It shows which setup steps are complete and which are missing. Clicking "Connect a Git repository" focuses the Projects section and opens the edit form; clicking "Add a database connection" focuses the Connections section. If sync is not done, you can still chat (with reduced accuracy) or run sync inline from the checklist.
 
 **What the sync discovers (examples):**
 - `orders.amount` — "Stored in cents (integer). Divide by 100 for dollar values."

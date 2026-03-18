@@ -188,6 +188,22 @@ export function ChatPanel() {
     );
   }
 
+  const showReadinessGate = messages.length === 0 && !readinessBypassed;
+
+  if (showReadinessGate) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <ReadinessGate
+            projectId={activeProject.id}
+            connectionId={activeConnection?.id ?? null}
+            onBypass={() => setReadinessBypassed(true)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (!canChat) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
@@ -202,8 +218,6 @@ export function ChatPanel() {
       </div>
     );
   }
-
-  const showReadinessGate = activeProject && activeConnection && messages.length === 0 && !readinessBypassed;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -223,13 +237,7 @@ export function ChatPanel() {
         <ReadinessBanner projectId={activeProject.id} />
       )}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {showReadinessGate ? (
-          <ReadinessGate
-            projectId={activeProject.id}
-            connectionId={activeConnection.id}
-            onBypass={() => setReadinessBypassed(true)}
-          />
-        ) : messages.length === 0 ? (
+        {messages.length === 0 ? (
           <div className="text-center text-zinc-500 text-sm mt-20">
             <p className="text-lg font-medium mb-2">
               {activeConnection ? "Ready to query" : "Knowledge Base Mode"}

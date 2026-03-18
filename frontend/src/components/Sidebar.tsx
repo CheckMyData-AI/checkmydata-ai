@@ -13,7 +13,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
 import type { RepoStatus, UpdateCheck } from "@/lib/api";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Icon } from "./ui/Icon";
 import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
@@ -145,6 +145,32 @@ export function Sidebar() {
   const chatCollapse = useSectionCollapse("chat-history");
   const rulesCollapse = useSectionCollapse("rules", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
+
+  const projectsRef = useRef<HTMLDivElement>(null);
+  const repoRef = useRef<HTMLDivElement>(null);
+  const connRef = useRef<HTMLDivElement>(null);
+
+  const focusSection = useAppStore((s) => s.focusSidebarSection);
+  const setFocusSection = useAppStore((s) => s.setFocusSidebarSection);
+
+  useEffect(() => {
+    if (!focusSection) return;
+    const map: Record<string, { forceOpen: () => void; ref: React.RefObject<HTMLDivElement | null> }> = {
+      projects: { forceOpen: projectsCollapse.forceOpen, ref: projectsRef },
+      repository: { forceOpen: repoCollapse.forceOpen, ref: repoRef },
+      connections: { forceOpen: connCollapse.forceOpen, ref: connRef },
+    };
+    const target = map[focusSection];
+    if (target) {
+      if (collapsed) {
+        setCollapsed(false);
+        localStorage.setItem("sidebar_main_collapsed", "false");
+      }
+      target.forceOpen();
+      setTimeout(() => target.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    }
+    setFocusSection(null);
+  }, [focusSection, setFocusSection, collapsed, projectsCollapse.forceOpen, repoCollapse.forceOpen, connCollapse.forceOpen]);
 
   const userInitials = user
     ? (user.display_name || user.email)
@@ -373,16 +399,18 @@ export function Sidebar() {
           <SshKeyManager />
         </SidebarSection>
 
-        <SidebarSection
-          icon="folder-git"
-          title="Projects"
-          open={projectsCollapse.open}
-          onToggle={projectsCollapse.toggle}
-          count={projects.length}
-          collapsed={collapsed}
-        >
-          <ProjectSelector />
-        </SidebarSection>
+        <div ref={projectsRef}>
+          <SidebarSection
+            icon="folder-git"
+            title="Projects"
+            open={projectsCollapse.open}
+            onToggle={projectsCollapse.toggle}
+            count={projects.length}
+            collapsed={collapsed}
+          >
+            <ProjectSelector />
+          </SidebarSection>
+        </div>
 
         {activeProject && (
           <>
@@ -402,28 +430,32 @@ export function Sidebar() {
             )}
 
             {activeProject.repo_url && (
-              <SidebarSection
-                icon="git-branch"
-                title="Repository"
-                open={repoCollapse.open}
-                onToggle={repoCollapse.toggle}
-                collapsed={collapsed}
-              >
-                {repoSection}
-              </SidebarSection>
+              <div ref={repoRef}>
+                <SidebarSection
+                  icon="git-branch"
+                  title="Repository"
+                  open={repoCollapse.open}
+                  onToggle={repoCollapse.toggle}
+                  collapsed={collapsed}
+                >
+                  {repoSection}
+                </SidebarSection>
+              </div>
             )}
 
-            <SidebarSection
-              icon="database"
-              title="Connections"
-              open={connCollapse.open}
-              onToggle={connCollapse.toggle}
-              count={connections.length}
-              collapsed={collapsed}
-            >
-              <ConnectionSelector />
-              <SyncStatusIndicator />
-            </SidebarSection>
+            <div ref={connRef}>
+              <SidebarSection
+                icon="database"
+                title="Connections"
+                open={connCollapse.open}
+                onToggle={connCollapse.toggle}
+                count={connections.length}
+                collapsed={collapsed}
+              >
+                <ConnectionSelector />
+                <SyncStatusIndicator />
+              </SidebarSection>
+            </div>
 
             <SidebarSection
               icon="message-square"

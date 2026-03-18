@@ -59,6 +59,8 @@ interface AppState {
   activeToolCalls: ToolCallEvent[];
   restoringState: boolean;
   rulesVersion: number;
+  focusSidebarSection: string | null;
+  triggerProjectEdit: boolean;
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -79,6 +81,8 @@ interface AppState {
   clearToolCalls: () => void;
   setRestoringState: (v: boolean) => void;
   bumpRulesVersion: () => void;
+  setFocusSidebarSection: (section: string | null) => void;
+  setTriggerProjectEdit: (v: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -97,6 +101,8 @@ export const useAppStore = create<AppState>((set) => ({
   activeToolCalls: [],
   restoringState: false,
   rulesVersion: 0,
+  focusSidebarSection: null,
+  triggerProjectEdit: false,
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
@@ -137,6 +143,8 @@ export const useAppStore = create<AppState>((set) => ({
   clearToolCalls: () => set({ activeToolCalls: [] }),
   setRestoringState: (v) => set({ restoringState: v }),
   bumpRulesVersion: () => set((state) => ({ rulesVersion: state.rulesVersion + 1 })),
+  setFocusSidebarSection: (section) => set({ focusSidebarSection: section }),
+  setTriggerProjectEdit: (v) => set({ triggerProjectEdit: v }),
 }));
 
 export type { ChatMessage, ChatMode, ToolCallEvent };
