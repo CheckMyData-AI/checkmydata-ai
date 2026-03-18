@@ -112,7 +112,7 @@ export function ChatSessionList() {
           New Chat
         </button>
       </div>
-      <div className="space-y-0.5 max-h-48 overflow-y-auto sidebar-scroll">
+      <div className="space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {chatSessions.map((s) => (
           <div
             key={s.id}
@@ -152,7 +152,7 @@ export function ChatSessionList() {
                 )}
               </span>
             </button>
-            <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+            <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
               <ActionButton
                 icon="trash"
                 title="Delete session"

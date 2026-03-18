@@ -887,7 +887,7 @@ export function ConnectionSelector() {
 
       {isFormOpen && formUI}
 
-      <div className="space-y-0.5 max-h-64 overflow-y-auto sidebar-scroll">
+      <div className="space-y-0.5 max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {connections.map((c) => {
           const isActive = activeConnection?.id === c.id;
           const idx = indexStatus[c.id];
@@ -900,18 +900,26 @@ export function ConnectionSelector() {
                 isActive ? "bg-surface-2" : "hover:bg-surface-2/50"
               }`}
             >
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => setActiveConnection(c)}
-                className="w-full text-left px-2.5 py-2"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActiveConnection(c);
+                  }
+                }}
+                className="w-full text-left px-2.5 py-2 cursor-pointer rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <StatusDot
                     status={getConnStatus(c.id)}
                     title={getConnStatusTitle(c.id)}
                     size="md"
                   />
                   <span
-                    className={`text-[13px] font-medium truncate ${
+                    className={`flex-1 text-[13px] font-medium truncate min-w-0 ${
                       isActive
                         ? "text-text-primary"
                         : "text-text-secondary"
@@ -920,7 +928,7 @@ export function ConnectionSelector() {
                     {c.name}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 mt-1 ml-4 flex-wrap">
+                <div className="flex items-center gap-1 mt-1 ml-4 flex-wrap">
                   <span className="text-[10px] text-text-muted font-mono uppercase">
                     {c.db_type}
                   </span>
@@ -1030,8 +1038,8 @@ export function ConnectionSelector() {
                     </Tooltip>
                   ) : null}
                 </div>
-              </button>
-              <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+              </div>
+              <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
                 <ActionButton
                   icon="refresh-cw"
                   title={

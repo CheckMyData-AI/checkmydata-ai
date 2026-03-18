@@ -156,7 +156,12 @@ class DbIndexService:
         connection_id: str,
     ) -> bool:
         summary = await self.get_summary(session, connection_id)
-        return summary is not None
+        if not summary:
+            return False
+        status = getattr(summary, "indexing_status", "idle") or "idle"
+        if status == "running":
+            return False
+        return summary.indexed_at is not None
 
     async def get_index_age(
         self,
@@ -217,8 +222,11 @@ class DbIndexService:
         if not summary:
             return {"is_indexed": False}
         indexing_status = getattr(summary, "indexing_status", "idle") or "idle"
+        actually_indexed = (
+            summary.indexed_at is not None and indexing_status != "running"
+        )
         return {
-            "is_indexed": True,
+            "is_indexed": actually_indexed,
             "indexed_at": summary.indexed_at.isoformat() if summary.indexed_at else None,
             "total_tables": summary.total_tables,
             "active_tables": summary.active_tables,

@@ -137,7 +137,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         </div>
       </div>
 
-      <div className="max-h-80 overflow-y-auto sidebar-scroll">
+      <div className="max-h-80 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {loading ? (
           <div className="p-4 text-center text-text-muted text-xs">Loading...</div>
         ) : learnings.length === 0 ? (

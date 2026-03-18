@@ -203,7 +203,7 @@ class TestGetStatus:
     @pytest.mark.asyncio
     async def test_indexed(self, svc):
         session = AsyncMock()
-        summary = _make_summary()
+        summary = _make_summary(indexing_status="idle")
         result = MagicMock()
         result.scalar_one_or_none.return_value = summary
         session.execute = AsyncMock(return_value=result)
@@ -212,3 +212,64 @@ class TestGetStatus:
         assert status["is_indexed"] is True
         assert status["total_tables"] == 10
         assert status["active_tables"] == 8
+
+    @pytest.mark.asyncio
+    async def test_running_status_not_indexed(self, svc):
+        """Summary exists with running status → is_indexed should be False."""
+        session = AsyncMock()
+        summary = _make_summary(indexing_status="running")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+
+        status = await svc.get_status(session, "conn-1")
+        assert status["is_indexed"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_indexed_at_not_indexed(self, svc):
+        """Summary exists but indexed_at is None → is_indexed should be False."""
+        session = AsyncMock()
+        summary = _make_summary(indexed_at=None, indexing_status="failed")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+
+        status = await svc.get_status(session, "conn-1")
+        assert status["is_indexed"] is False
+
+
+class TestIsIndexed:
+    @pytest.mark.asyncio
+    async def test_no_summary(self, svc):
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result)
+        assert await svc.is_indexed(session, "conn-1") is False
+
+    @pytest.mark.asyncio
+    async def test_completed_index(self, svc):
+        session = AsyncMock()
+        summary = _make_summary(indexing_status="idle")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+        assert await svc.is_indexed(session, "conn-1") is True
+
+    @pytest.mark.asyncio
+    async def test_running_returns_false(self, svc):
+        session = AsyncMock()
+        summary = _make_summary(indexing_status="running")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+        assert await svc.is_indexed(session, "conn-1") is False
+
+    @pytest.mark.asyncio
+    async def test_no_indexed_at_returns_false(self, svc):
+        session = AsyncMock()
+        summary = _make_summary(indexed_at=None, indexing_status="idle")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+        assert await svc.is_indexed(session, "conn-1") is False

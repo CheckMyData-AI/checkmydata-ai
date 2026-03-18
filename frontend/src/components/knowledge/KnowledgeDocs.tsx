@@ -77,7 +77,7 @@ export function KnowledgeDocs() {
           docs.
         </p>
       )}
-      <div className="space-y-0.5 max-h-48 overflow-y-auto sidebar-scroll">
+      <div className="space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {docs.map((d) => {
           const iconName =
             (DOC_TYPE_ICONS[d.doc_type] as import("@/components/ui/Icon").IconName) || "file-text";
@@ -114,7 +114,7 @@ export function KnowledgeDocs() {
       </div>
 
       {viewingDoc && (
-        <div className="mt-2 p-3 bg-surface-1 rounded-lg border border-border-subtle max-h-64 overflow-y-auto sidebar-scroll">
+        <div className="mt-2 p-3 bg-surface-1 rounded-lg border border-border-subtle max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] text-text-muted truncate flex-1 font-mono">
               {viewingDoc.source_path}

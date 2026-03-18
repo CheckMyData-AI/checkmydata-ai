@@ -274,7 +274,7 @@ export function SshKeyManager() {
       )}
 
       {listLoading && <Spinner />}
-      <div className="space-y-0.5 max-h-64 overflow-y-auto sidebar-scroll">
+      <div className="space-y-0.5 max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {sshKeys.map((k) => (
           <div
             key={k.id}
@@ -301,7 +301,7 @@ export function SshKeyManager() {
                 </div>
               </div>
             </div>
-            <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+            <div className="invisible group-hover:visible focus-within:visible flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
               <ActionButton
                 icon="trash"
                 title="Delete key"
