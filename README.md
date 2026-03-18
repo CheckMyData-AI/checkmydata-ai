@@ -1045,10 +1045,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 769 across 31 test files
+- Backend unit tests: 759 across 31 test files
 - Backend integration tests: 100 across 13 test files
 - Frontend tests: 57 across 7 test files
-- **Total: 926 tests**
+- **Total: 916 tests**
 
 ### Test Coverage by Module
 
@@ -1088,7 +1088,8 @@ make test-frontend    # frontend vitest
 | Chunker | 5 (small doc, large doc, headings, empty) | — |
 | Schema Indexer | 4 (markdown, prompt context, relationships) | — |
 | DB Index Pipeline | 36 (ordering column, sample query, sample-to-json, detect-latest-record, is_enum_candidate, build_distinct_query, sqlite quoting) | — |
-| DB Index Validator | 21 (fallback analysis, build prompt, analyze table, batch analysis, generate summary) | — |
+| DB Index Validator | 24 (fallback analysis, build prompt, analyze table, batch analysis, generate summary, code_match_status clamping) | — |
+| Code-DB Sync Analyzer | 14 (analyze table, batch, summary, fallback, column notes dict, confidence clamping, sync_status clamping) | — |
 | DB Index Service | 25 (prompt context, table detail, response format, status check, is_indexed guard, stale status handling) | — |
 | Learning Analyzer | 10 (table extraction, table preference, column correction, format discovery, schema gotcha, performance hint) | — |
 | Agent Learning Service | 4 (compile prompt empty/with learnings, category labels, invalid category) | — |

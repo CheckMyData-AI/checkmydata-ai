@@ -178,7 +178,9 @@ class DbIndexValidator:
                     data_patterns=args.get("data_patterns", ""),
                     column_notes_json=col_notes,
                     query_hints=args.get("query_hints", ""),
-                    code_match_status=_clamp_code_match(args.get("code_match_status", "no_code_info")),
+                    code_match_status=_clamp_code_match(
+                        args.get("code_match_status", "no_code_info"),
+                    ),
                     code_match_details=args.get("code_match_details", ""),
                 )
 
@@ -244,7 +246,9 @@ class DbIndexValidator:
                         data_patterns=args.get("data_patterns", ""),
                         column_notes_json=col_notes,
                         query_hints=args.get("query_hints", ""),
-                        code_match_status=_clamp_code_match(args.get("code_match_status", "no_code_info")),
+                        code_match_status=_clamp_code_match(
+                            args.get("code_match_status", "no_code_info"),
+                        ),
                         code_match_details=args.get("code_match_details", ""),
                     ))
                     tool_idx += 1
