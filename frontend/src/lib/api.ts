@@ -172,6 +172,7 @@ export interface UpdateCheck {
 export interface DbIndexStatus {
   is_indexed: boolean;
   is_indexing?: boolean;
+  indexing_status?: string;
   indexed_at?: string | null;
   total_tables?: number;
   active_tables?: number;
@@ -612,5 +613,12 @@ export const api = {
       if (!res.ok) throw new Error("Export failed");
       return res.blob();
     },
+  },
+
+  tasks: {
+    getActive: () =>
+      request<{ workflow_id: string; pipeline: string; started_at: number; extra: Record<string, unknown> }[]>(
+        "/tasks/active",
+      ),
   },
 };

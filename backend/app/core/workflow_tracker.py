@@ -42,16 +42,29 @@ class WorkflowEvent:
         return json.dumps(asdict(self), default=str)
 
 
+BACKGROUND_PIPELINES = frozenset({"index_repo", "db_index", "code_db_sync"})
+
+
 class WorkflowTracker:
     """In-memory event bus that broadcasts workflow step events to subscribers."""
 
     def __init__(self) -> None:
         self._subscribers: list[asyncio.Queue[WorkflowEvent]] = []
         self._lock = asyncio.Lock()
+        self._active_workflows: dict[str, dict[str, Any]] = {}
 
     async def begin(self, pipeline: str, context: dict[str, Any] | None = None) -> str:
         wf_id = str(uuid.uuid4())
         workflow_id_var.set(wf_id)
+
+        extra = context or {}
+        if pipeline in BACKGROUND_PIPELINES:
+            self._active_workflows[wf_id] = {
+                "workflow_id": wf_id,
+                "pipeline": pipeline,
+                "started_at": time.time(),
+                "extra": extra,
+            }
 
         event = WorkflowEvent(
             workflow_id=wf_id,
@@ -59,7 +72,7 @@ class WorkflowTracker:
             status="started",
             detail=f"Starting {pipeline}",
             pipeline=pipeline,
-            extra=context or {},
+            extra=extra,
         )
         await self._broadcast(event)
         return wf_id
@@ -67,6 +80,8 @@ class WorkflowTracker:
     async def end(
         self, workflow_id: str, pipeline: str, status: str = "completed", detail: str = ""
     ) -> None:
+        self._active_workflows.pop(workflow_id, None)
+
         event = WorkflowEvent(
             workflow_id=workflow_id,
             step="pipeline_end",
@@ -77,13 +92,23 @@ class WorkflowTracker:
         await self._broadcast(event)
         workflow_id_var.set(None)
 
+    def get_active(self) -> list[dict[str, Any]]:
+        """Return a snapshot of currently running background workflows."""
+        return list(self._active_workflows.values())
+
+    def _resolve_pipeline(self, workflow_id: str) -> str:
+        entry = self._active_workflows.get(workflow_id)
+        return entry["pipeline"] if entry else ""
+
     @asynccontextmanager
     async def step(self, workflow_id: str, step_name: str, detail: str = ""):
+        pipeline = self._resolve_pipeline(workflow_id)
         start_event = WorkflowEvent(
             workflow_id=workflow_id,
             step=step_name,
             status="started",
             detail=detail,
+            pipeline=pipeline,
         )
         await self._broadcast(start_event)
         t0 = time.monotonic()
@@ -96,6 +121,7 @@ class WorkflowTracker:
                 status="completed",
                 detail=detail,
                 elapsed_ms=round(elapsed, 1),
+                pipeline=pipeline,
             )
             await self._broadcast(end_event)
         except Exception as exc:
@@ -106,6 +132,7 @@ class WorkflowTracker:
                 status="failed",
                 detail=str(exc),
                 elapsed_ms=round(elapsed, 1),
+                pipeline=pipeline,
             )
             await self._broadcast(fail_event)
             raise
@@ -118,6 +145,7 @@ class WorkflowTracker:
             step=step,
             status=status,
             detail=detail,
+            pipeline=self._resolve_pipeline(workflow_id),
             extra=extra,
         )
         await self._broadcast(event)

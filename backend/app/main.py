@@ -19,6 +19,7 @@ from app.api.routes import (
     repos,
     rules,
     ssh_keys,
+    tasks,
     visualizations,
     workflows,
 )
@@ -109,6 +110,7 @@ app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"]
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 
 
 async def _cleanup_stale_checkpoints() -> None:

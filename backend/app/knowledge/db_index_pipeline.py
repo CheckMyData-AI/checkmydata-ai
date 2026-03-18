@@ -184,7 +184,11 @@ class DbIndexPipeline:
         """Run the full database indexing pipeline. Returns status dict."""
         wf_id = await self._tracker.begin(
             "db_index",
-            {"connection_id": connection_id[:8], "db_type": connection_config.db_type},
+            {
+                "connection_id": connection_id,
+                "project_id": project_id,
+                "db_type": connection_config.db_type,
+            },
         )
 
         connector: BaseConnector | None = None

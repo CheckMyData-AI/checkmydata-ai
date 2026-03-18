@@ -456,3 +456,29 @@ class TestVisualizationRoutes:
             },
         )
         assert resp.status_code == 400
+
+
+class TestActiveTasksEndpoint:
+    def test_active_tasks_empty(self, client):
+        resp = client.get("/api/tasks/active")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_active_tasks_returns_running_workflows(self, client):
+        from app.core.workflow_tracker import tracker
+
+        tracker._active_workflows["wf-1"] = {
+            "workflow_id": "wf-1",
+            "pipeline": "index_repo",
+            "started_at": 1710000000.0,
+            "extra": {"project_id": "p1"},
+        }
+        try:
+            resp = client.get("/api/tasks/active")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data) == 1
+            assert data[0]["workflow_id"] == "wf-1"
+            assert data[0]["pipeline"] == "index_repo"
+        finally:
+            tracker._active_workflows.pop("wf-1", None)

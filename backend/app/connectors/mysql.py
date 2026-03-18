@@ -231,11 +231,13 @@ class MySQLConnector(BaseConnector):
                     indexes = [
                         IndexInfo(name=name, columns=cols, is_unique=unique)
                         for name, (cols, unique) in idx_map.items()
+                        if name != "PRIMARY"
                     ]
 
                     tables.append(
                         TableInfo(
                             name=tname,
+                            schema=db_name,
                             columns=columns,
                             foreign_keys=foreign_keys,
                             indexes=indexes,

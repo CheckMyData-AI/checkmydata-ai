@@ -101,7 +101,7 @@ class ClickHouseConnector(BaseConnector):
                 trow_count = trow[2] if len(trow) > 2 else None
 
                 col_result = self._client.query(
-                    "SELECT name, type, default_kind, comment "
+                    "SELECT name, type, default_kind, default_expression, comment "
                     "FROM system.columns "
                     "WHERE database = %(db)s AND table = %(tbl)s",
                     parameters={"db": db_name, "tbl": tname},
@@ -111,8 +111,8 @@ class ClickHouseConnector(BaseConnector):
                         name=c[0],
                         data_type=c[1],
                         is_nullable="Nullable" in c[1],
-                        default=c[2] if c[2] else None,
-                        comment=c[3] if len(c) > 3 and c[3] else None,
+                        default=c[3] if len(c) > 3 and c[3] else None,
+                        comment=c[4] if len(c) > 4 and c[4] else None,
                     )
                     for c in col_result.result_rows
                 ]

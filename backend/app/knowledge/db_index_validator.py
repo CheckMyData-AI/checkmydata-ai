@@ -16,6 +16,13 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
+_VALID_CODE_MATCH = {"matched", "orphan", "mismatch", "no_code_info"}
+
+
+def _clamp_code_match(raw: str) -> str:
+    return raw if raw in _VALID_CODE_MATCH else "no_code_info"
+
+
 ANALYZE_TABLE_TOOL = Tool(
     name="table_analysis",
     description="Return a structured analysis of the database table",
@@ -171,7 +178,7 @@ class DbIndexValidator:
                     data_patterns=args.get("data_patterns", ""),
                     column_notes_json=col_notes,
                     query_hints=args.get("query_hints", ""),
-                    code_match_status=args.get("code_match_status", "no_code_info"),
+                    code_match_status=_clamp_code_match(args.get("code_match_status", "no_code_info")),
                     code_match_details=args.get("code_match_details", ""),
                 )
 
@@ -237,7 +244,7 @@ class DbIndexValidator:
                         data_patterns=args.get("data_patterns", ""),
                         column_notes_json=col_notes,
                         query_hints=args.get("query_hints", ""),
-                        code_match_status=args.get("code_match_status", "no_code_info"),
+                        code_match_status=_clamp_code_match(args.get("code_match_status", "no_code_info")),
                         code_match_details=args.get("code_match_details", ""),
                     ))
                     tool_idx += 1

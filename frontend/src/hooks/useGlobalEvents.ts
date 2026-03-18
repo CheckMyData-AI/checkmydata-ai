@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import { subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
+import { api } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
+import { useTaskStore } from "@/stores/task-store";
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
@@ -17,6 +19,13 @@ function toLogEntry(ev: WorkflowEvent) {
     detail: ev.detail,
     elapsedMs: ev.elapsed_ms,
   };
+}
+
+function seedActiveTasks() {
+  api.tasks.getActive().then(
+    (tasks) => useTaskStore.getState().seedFromApi(tasks),
+    () => {},
+  );
 }
 
 export function useGlobalEvents(enabled: boolean) {
@@ -45,11 +54,14 @@ export function useGlobalEvents(enabled: boolean) {
     function connect() {
       unsubRef.current?.();
 
+      seedActiveTasks();
+
       const unsub = subscribeToAllEvents(
         (event: WorkflowEvent) => {
           attemptRef.current = 0;
           useLogStore.getState().setConnected(true);
           useLogStore.getState().addEntry(toLogEntry(event));
+          useTaskStore.getState().processEvent(event);
         },
         () => scheduleReconnect(),
         () => scheduleReconnect(),

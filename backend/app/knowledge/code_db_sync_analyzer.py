@@ -17,6 +17,13 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
+_VALID_SYNC_STATUS = {"matched", "code_only", "db_only", "mismatch", "unknown"}
+
+
+def _clamp_sync_status(raw: str) -> str:
+    return raw if raw in _VALID_SYNC_STATUS else "unknown"
+
+
 SYNC_ANALYSIS_TOOL = Tool(
     name="table_sync_analysis",
     description="Return a structured analysis of how code uses this database table",
@@ -176,7 +183,7 @@ class CodeDbSyncAnalyzer:
                     business_logic_notes=args.get("business_logic_notes", ""),
                     conversion_warnings=args.get("conversion_warnings", ""),
                     query_recommendations=args.get("query_recommendations", ""),
-                    sync_status=args.get("sync_status", "unknown"),
+                    sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
                     confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
                 )
 
@@ -241,7 +248,7 @@ class CodeDbSyncAnalyzer:
                         business_logic_notes=args.get("business_logic_notes", ""),
                         conversion_warnings=args.get("conversion_warnings", ""),
                         query_recommendations=args.get("query_recommendations", ""),
-                        sync_status=args.get("sync_status", "unknown"),
+                        sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
                         confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
                     ))
                     tool_idx += 1

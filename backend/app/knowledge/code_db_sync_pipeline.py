@@ -54,7 +54,7 @@ class CodeDbSyncPipeline:
         """Run the full sync pipeline. Returns status dict."""
         wf_id = await self._tracker.begin(
             "code_db_sync",
-            {"connection_id": connection_id[:8], "project_id": project_id[:8]},
+            {"connection_id": connection_id, "project_id": project_id},
         )
 
         try:

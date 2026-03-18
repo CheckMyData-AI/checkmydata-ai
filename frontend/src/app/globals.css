@@ -93,6 +93,16 @@ select:focus-visible {
   animation: slide-in-left 0.2s ease-out;
 }
 
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes taskItemIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 .animate-tooltip-in {
   animation: tooltip-in 0.15s ease-out;
 }

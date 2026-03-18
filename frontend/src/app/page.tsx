@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { LogPanel } from "@/components/log/LogPanel";
+import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
@@ -55,6 +56,7 @@ export default function Home() {
                     </span>
                   )}
                 </div>
+                <ActiveTasksWidget />
               </header>
               <ChatPanel />
             </div>

@@ -415,12 +415,15 @@ export function ConnectionSelector() {
                 `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
                 "success",
               );
+            } else {
+              toast("DB indexing failed — try again or check connection", "error");
             }
           }
         } catch {
           if (indexPollRef.current) clearInterval(indexPollRef.current);
           indexPollRef.current = null;
           setIndexing(null);
+          toast("Lost connection while checking index status", "error");
         }
       }, 3000);
     } catch (err) {
@@ -478,12 +481,15 @@ export function ConnectionSelector() {
                 `Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`,
                 "success",
               );
+            } else {
+              toast("Code-DB sync failed — ensure DB is indexed first", "error");
             }
           }
         } catch {
           if (syncPollRef.current) clearInterval(syncPollRef.current);
           syncPollRef.current = null;
           setSyncing(null);
+          toast("Lost connection while checking sync status", "error");
         }
       }, 3000);
     } catch (err) {

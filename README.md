@@ -324,7 +324,26 @@ After indexing, the **Knowledge Docs** section in the sidebar shows all indexed 
 
 **Multi-pass pipeline**: The indexing runs 5 passes to understand the project holistically, not just per-file.
 
-### 10. Activity Log (Bottom Panel)
+### 10. Active Tasks Widget (Header)
+
+A real-time **Active Tasks** indicator appears in the top-right corner of the header whenever background operations are running:
+
+1. The widget **automatically appears** when any background task starts (repository indexing, database indexing, or code-DB sync) and **disappears** when all tasks finish
+2. **Collapsed state** — a small pill showing a spinner and task count (e.g. "2 tasks"). Click to expand.
+3. **Expanded dropdown** — shows each task with:
+   - Pipeline type icon and label (Repository Indexing, Database Indexing, Code-DB Sync)
+   - Target name (project or connection)
+   - Current step in progress (e.g. "Analyzing files...", "LLM Analysis")
+   - Live elapsed time
+   - Status indicator: blue spinner (running), green check (completed), red X (failed)
+4. **Completed** tasks show briefly with a green check and auto-dismiss after 5 seconds
+5. **Failed** tasks show the error message, stay visible for 30 seconds (or click dismiss to clear immediately)
+6. If any task has failed, the pill turns red to draw attention
+7. On page refresh, the widget queries `GET /api/tasks/active` to rediscover any tasks that were already running
+
+The widget uses the same SSE event stream as the Activity Log (`GET /api/workflows/events`) for real-time updates.
+
+### 11. Activity Log (Bottom Panel)
 
 A real-time **Activity Log** panel is available at the bottom of the screen:
 
@@ -339,7 +358,7 @@ A real-time **Activity Log** panel is available at the bottom of the screen:
 
 The log connects via SSE to `GET /api/workflows/events` (global mode, no workflow filter).
 
-### 11. Chat — Ask Questions
+### 12. Chat — Ask Questions
 
 With a project selected (and optionally a connection):
 
@@ -408,7 +427,7 @@ Your question
    
    The agent uses the `manage_custom_rules` tool to create, update, or delete project rules. After a rule is created/modified, the sidebar Rules section refreshes automatically. Only project **owners** can manage rules via chat (consistent with the sidebar RBAC). The `rules_changed` flag in the chat response triggers the frontend refresh.
 
-### 12. Custom Rules
+### 13. Custom Rules
 
 Rules inject additional context into the LLM prompt, guiding how queries are built:
 
@@ -435,14 +454,14 @@ Example custom rules:
 
 Rules can be **global** or **project-scoped**.
 
-### 13. Editing & Managing
+### 14. Editing & Managing
 
 - **Edit project**: Hover over a project and click the ✎ icon — change name, repo, LLM config
 - **Edit connection**: Hover over a connection and click the ✎ icon — update host, credentials
 - **Delete**: Click the × icon (projects, connections, SSH keys, rules, chat sessions)
 - **SSH key protection**: Deleting a key that is used by a project or connection returns a 409 error
 
-### 14. Sharing a Project (Email Invite System)
+### 15. Sharing a Project (Email Invite System)
 
 Project owners can invite other users to collaborate on a project via email:
 
@@ -790,9 +809,10 @@ src/
 │   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
 │   ├── auth-store.ts      ← Zustand: user, token, login/register/logout
 │   ├── log-store.ts       ← Zustand: activity log entries, panel state, SSE connection status
-│   └── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
+│   ├── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
+│   └── task-store.ts      ← Zustand: active background tasks (index, sync) with auto-dismiss
 ├── hooks/
-│   ├── useGlobalEvents.ts ← Global SSE subscription hook (all workflow events → log store)
+│   ├── useGlobalEvents.ts ← Global SSE subscription hook (all workflow events → log store + task store); re-seeds active tasks on reconnect
 │   └── useRestoreState.ts ← Restore active project/connection/session from localStorage on mount
 ├── lib/
 │   ├── api.ts             ← REST client (fetch wrapper + auth headers + 422 error parsing)
@@ -827,6 +847,7 @@ src/
     ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with key icon cards
     ├── rules/RulesManager.tsx ← CRUD with icon buttons + default/global badges
     ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs with doc-type icons
+    ├── tasks/ActiveTasksWidget.tsx ← Header widget: running background tasks with live progress
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
     ├── log/LogPanel.tsx ← Bottom panel: real-time activity log with color-coded pipeline events
@@ -895,6 +916,7 @@ src/
 | `POST` | `/api/visualizations/render` | Render visualization |
 | `POST` | `/api/visualizations/export` | Export data (CSV/JSON/XLSX) |
 | `GET` | `/api/workflows/events` | SSE workflow progress |
+| `GET` | `/api/tasks/active` | List currently running background tasks |
 | `GET` | `/api/health` | Basic health check |
 | `GET` | `/api/health/modules` | Per-module health status |
 
@@ -1023,10 +1045,10 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 759 across 31 test files
+- Backend unit tests: 769 across 31 test files
 - Backend integration tests: 100 across 13 test files
-- Frontend tests: 44 across 6 test files
-- **Total: 903 tests**
+- Frontend tests: 57 across 7 test files
+- **Total: 926 tests**
 
 ### Test Coverage by Module
 
@@ -1053,7 +1075,7 @@ make test-frontend    # frontend vitest
 | Exec Templates | 12 (structure, format, defaults, substitution, special chars) | — |
 | SSH Exec Connections | — | 6 (CRUD with exec mode, test-ssh, ssh_user in response) |
 | Viz/Export | 19 (table, chart, text, CSV, JSON, _build_raw_result) | — |
-| Workflow Tracker | 11 (events, subscribe, step, queue) | — |
+| Workflow Tracker | 18 (events, subscribe, step, queue, active workflows tracking, background pipeline filter, pipeline propagation in step/emit) | — |
 | Workflow Routes | 4 (SSE format, filtering, pipeline) | — |
 | Repo Analyzer | 18 (SQL files, ORM models, migrations, binary file filter, null-byte content guard, extra dirs, list_remote_refs: branches, default selection, access denied, timeout, empty) | 7 (check-access: success, denied, bad key, validation, auth, empty, many branches) |
 | Project Profiler | 10 (Django, FastAPI, Express, Prisma, language, dirs, skip) | — |
@@ -1076,7 +1098,7 @@ make test-frontend    # frontend vitest
 | ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
-| API Routes | 19 (projects, connections, viz routes, stale index/sync status reset, pipeline failure propagation, startup stale reset) | — |
+| API Routes | 21 (projects, connections, viz routes, active tasks, stale index/sync status reset, pipeline failure propagation, startup stale reset) | — |
 | Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
 | Membership Service | 12 (add, get_role, require_role, remove, list, accessible) | — |
 | Invite Service | 11 (create, duplicate, reject, revoke, accept, pending, auto-accept) | — |
@@ -1091,6 +1113,7 @@ make test-frontend    # frontend vitest
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
 | Frontend (app-store) | 10 (setActiveProject, addMessage, localStorage persistence, updateMessageId, userRating, rawResult) | — |
+| Frontend (task-store) | 13 (processEvent lifecycle, pipeline filtering, step updates with/without pipeline field, completed/failed, auto-dismiss timers, seedFromApi merge, manual dismiss, untracked pipeline_end ignored) | — |
 
 ---
 
