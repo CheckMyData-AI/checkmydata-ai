@@ -87,3 +87,53 @@ class TestBuildAgentSystemPrompt:
             has_knowledge_base=True,
         )
         assert "RE-VISUALIZATION:" not in prompt
+
+    def test_table_map_injected(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            has_db_index=True,
+            db_type="postgres",
+            table_map="orders(~125K, customer orders), users(~50K, user accounts)",
+        )
+        assert "DATABASE TABLES:" in prompt
+        assert "orders(~125K" in prompt
+        assert "users(~50K" in prompt
+
+    def test_empty_table_map_not_injected(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            has_db_index=True,
+            db_type="postgres",
+            table_map="",
+        )
+        assert "DATABASE TABLES:" not in prompt
+
+    def test_query_context_tool_mentioned_with_db_index(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            has_db_index=True,
+            db_type="postgres",
+        )
+        assert "get_query_context" in prompt
+
+    def test_manage_rules_capability_with_connection(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "manage_custom_rules" in prompt
+        assert "Rules Management" in prompt
+
+    def test_manage_rules_guideline_with_connection(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "remember, save, or create" in prompt
+
+    def test_manage_rules_absent_without_connection(self):
+        prompt = build_agent_system_prompt(
+            has_connection=False,
+            has_knowledge_base=True,
+        )
+        assert "manage_custom_rules" not in prompt

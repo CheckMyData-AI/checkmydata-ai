@@ -286,6 +286,79 @@ class TestAskEndpointAuth:
         assert resp.status_code in (403, 404)
 
 
+class TestRulesChangedFlag:
+    """Tests for rules_changed flag in ChatResponse."""
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_rules_changed_true_when_manage_rules_called(
+        self, mock_agent, auth_client, project_id,
+    ):
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(
+                answer="Rule created!",
+                response_type="text",
+                tool_call_log=[
+                    {"tool": "manage_custom_rules", "arguments": {"action": "create"}},
+                ],
+            )
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={"project_id": project_id, "message": "Remember: amount is cents"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rules_changed"] is True
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_rules_changed_false_for_normal_chat(
+        self, mock_agent, auth_client, project_id,
+    ):
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(
+                answer="Hello!",
+                response_type="text",
+                tool_call_log=[],
+            )
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={"project_id": project_id, "message": "Hi"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rules_changed"] is False
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_user_id_passed_to_agent(
+        self, mock_agent, auth_client, project_id,
+    ):
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(answer="ok", response_type="text")
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={"project_id": project_id, "message": "test"},
+        )
+        assert resp.status_code == 200
+
+        call_kwargs = mock_agent.run.call_args.kwargs
+        assert "user_id" in call_kwargs
+        assert call_kwargs["user_id"] is not None
+
+
 class TestStreamEndpointAgent:
     """Smoke test for POST /api/chat/ask/stream."""
 

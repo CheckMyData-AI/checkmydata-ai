@@ -75,9 +75,11 @@ class ToolExecutor:
         model: str | None = None,
         sql_provider: str | None = None,
         sql_model: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         self._project_id = project_id
         self._connection_config = connection_config
+        self._user_id = user_id
         self._llm = llm_router
         self._vector_store = vector_store
         self._schema_indexer = schema_indexer
@@ -113,6 +115,10 @@ class ToolExecutor:
             "get_entity_info": self._get_entity_info,
             "get_db_index": self._get_db_index,
             "get_sync_context": self._get_sync_context,
+            "get_query_context": self._get_query_context,
+            "manage_custom_rules": self._manage_custom_rules,
+            "get_agent_learnings": self._get_agent_learnings,
+            "record_learning": self._record_learning,
         }.get(tool_call.name)
 
         if handler is None:
@@ -140,7 +146,19 @@ class ToolExecutor:
         val_config = self._build_validation_config()
 
         db_idx_ctx = await self._load_db_index_hints()
-        enricher = ContextEnricher(schema, self._vector_store, db_index_context=db_idx_ctx)
+        sync_ctx = await self._load_sync_warnings()
+        rules_ctx = await self._load_rules_for_repair()
+        dv = await self._load_distinct_values()
+        learn_ctx = await self._load_learnings_for_repair()
+        enricher = ContextEnricher(
+            schema,
+            self._vector_store,
+            db_index_context=db_idx_ctx,
+            sync_context=sync_ctx,
+            rules_context=rules_ctx,
+            distinct_values=dv,
+            learnings_context=learn_ctx,
+        )
         repairer = QueryRepairer(self._llm)
 
         validation_loop = ValidationLoop(
@@ -166,6 +184,12 @@ class ToolExecutor:
             model=self._sql_model,
         )
 
+        await self._extract_learnings(
+            loop_result.attempts,
+            loop_result.success,
+            self._user_question or query,
+        )
+
         if not loop_result.success:
             err = loop_result.final_error
             msg = err.message if err else "Query validation failed"
@@ -182,6 +206,8 @@ class ToolExecutor:
         self._query_cache.put(conn_key, loop_result.query, results)
 
         return self._format_query_results(results)
+
+    RAG_RELEVANCE_THRESHOLD = 0.7
 
     async def _search_knowledge(self, args: dict, wf_id: str) -> str:
         query: str = args.get("query", "")
@@ -200,8 +226,16 @@ class ToolExecutor:
         if not results:
             return "No relevant documents found in the knowledge base."
 
+        filtered = [
+            r for r in results
+            if r.get("distance") is None or r["distance"] <= self.RAG_RELEVANCE_THRESHOLD
+        ]
+
+        if not filtered:
+            return "No sufficiently relevant documents found in the knowledge base."
+
         parts: list[str] = []
-        for r in results:
+        for r in filtered:
             meta = r.get("metadata", {})
             source = meta.get("source_path", "unknown")
             doc = r.get("document", "")
@@ -217,7 +251,7 @@ class ToolExecutor:
                 )
             )
 
-        return f"Found {len(results)} relevant document(s):\n\n" + "\n\n".join(parts)
+        return f"Found {len(filtered)} relevant document(s):\n\n" + "\n\n".join(parts)
 
     async def _get_schema_info(self, args: dict, wf_id: str) -> str:
         scope: str = args.get("scope", "overview")
@@ -250,6 +284,85 @@ class ToolExecutor:
 
         context = self._rules_engine.rules_to_context(file_rules + db_rules)
         return context or "No custom rules defined for this project."
+
+    async def _manage_custom_rules(self, args: dict, wf_id: str) -> str:
+        action: str = args.get("action", "")
+        name: str = args.get("name", "").strip()
+        content: str = args.get("content", "").strip()
+        rule_id: str = args.get("rule_id", "").strip()
+
+        if action not in ("create", "update", "delete"):
+            return f"Error: invalid action '{action}'. Use 'create', 'update', or 'delete'."
+
+        if action == "create" and not name:
+            return "Error: 'name' is required when action is 'create'."
+        if action == "create" and not content:
+            return "Error: 'content' is required when action is 'create'."
+        if action == "update" and not rule_id:
+            return "Error: 'rule_id' is required when action is 'update'."
+        if action == "update" and not content and not name:
+            return "Error: at least 'name' or 'content' must be provided for update."
+        if action == "delete" and not rule_id:
+            return "Error: 'rule_id' is required when action is 'delete'."
+
+        from app.models.base import async_session_factory
+        from app.services.membership_service import MembershipService
+        from app.services.rule_service import RuleService
+
+        membership_svc = MembershipService()
+        rule_svc = RuleService()
+
+        async with self._tracker.step(
+            wf_id, "manage_rules", f"Managing custom rule ({action})"
+        ):
+            async with async_session_factory() as session:
+                if self._user_id:
+                    role = await membership_svc.get_role(
+                        session, self._project_id, self._user_id
+                    )
+                    if role != "owner":
+                        return (
+                            "Permission denied: only project owners can manage rules. "
+                            "Ask the project owner to create this rule, or use the sidebar."
+                        )
+                else:
+                    return "Error: user identity not available for permission check."
+
+                if action == "create":
+                    rule = await rule_svc.create(
+                        session,
+                        project_id=self._project_id,
+                        name=name,
+                        content=content,
+                        format="markdown",
+                    )
+                    return (
+                        f"Rule created successfully.\n"
+                        f"- **Name:** {rule.name}\n"
+                        f"- **ID:** {rule.id}\n"
+                        f"- **Content:** {rule.content[:200]}"
+                    )
+
+                if action == "update":
+                    update_kwargs: dict = {}
+                    if name:
+                        update_kwargs["name"] = name
+                    if content:
+                        update_kwargs["content"] = content
+                    rule = await rule_svc.update(session, rule_id, **update_kwargs)
+                    if not rule:
+                        return f"Error: rule with id '{rule_id}' not found."
+                    return (
+                        f"Rule updated successfully.\n"
+                        f"- **Name:** {rule.name}\n"
+                        f"- **ID:** {rule.id}\n"
+                        f"- **Content:** {rule.content[:200]}"
+                    )
+
+                deleted = await rule_svc.delete(session, rule_id)
+                if not deleted:
+                    return f"Error: rule with id '{rule_id}' not found."
+                return f"Rule deleted successfully (id: {rule_id})."
 
     async def _get_entity_info(self, args: dict, wf_id: str) -> str:
         scope: str = args.get("scope", "list")
@@ -357,6 +470,396 @@ class ToolExecutor:
 
                 return sync_svc.sync_to_prompt_context(entries, summary)
 
+    async def _get_query_context(self, args: dict, wf_id: str) -> str:
+        question: str = args.get("question", "")
+        table_names_raw: str | None = args.get("table_names")
+
+        if not self._connection_config:
+            return "Error: no database connection configured for this project."
+
+        connection_id = self._connection_config.connection_id
+        if not connection_id:
+            return "Query context not available. Run 'Index DB' first."
+
+        async with self._tracker.step(
+            wf_id, "get_query_context", "Building unified query context"
+        ):
+            return await self._build_query_context(
+                question, table_names_raw, connection_id
+            )
+
+    async def _get_agent_learnings(self, args: dict, wf_id: str) -> str:
+        scope: str = args.get("scope", "all")
+        table_name: str | None = args.get("table_name")
+
+        if not self._connection_config:
+            return "Error: no database connection configured for this project."
+
+        connection_id = self._connection_config.connection_id
+        if not connection_id:
+            return "No learnings available — connection ID not resolved."
+
+        from app.models.base import async_session_factory
+        from app.services.agent_learning_service import AgentLearningService
+
+        svc = AgentLearningService()
+
+        async with self._tracker.step(
+            wf_id, "get_agent_learnings", f"Loading agent learnings ({scope})"
+        ):
+            async with async_session_factory() as session:
+                if scope == "table" and table_name:
+                    learnings = await svc.get_learnings_for_table(
+                        session, connection_id, table_name
+                    )
+                else:
+                    learnings = await svc.get_learnings(session, connection_id)
+
+        if not learnings:
+            return "No learnings recorded yet for this database."
+
+        from app.services.agent_learning_service import CATEGORY_LABELS
+
+        by_cat: dict[str, list] = {}
+        for lrn in learnings:
+            by_cat.setdefault(lrn.category, []).append(lrn)
+
+        parts: list[str] = [f"Agent learnings ({len(learnings)} total):\n"]
+        for cat, items in by_cat.items():
+            label = CATEGORY_LABELS.get(cat, cat)
+            parts.append(f"### {label}")
+            for lrn in items:
+                conf = int(lrn.confidence * 100)
+                parts.append(f"- {lrn.lesson} [{conf}% confidence]")
+            parts.append("")
+
+        return "\n".join(parts)
+
+    async def _record_learning(self, args: dict, wf_id: str) -> str:
+        category: str = args.get("category", "")
+        subject: str = args.get("subject", "").strip()
+        lesson: str = args.get("lesson", "").strip()
+
+        if not category or not subject or not lesson:
+            return "Error: category, subject, and lesson are all required."
+
+        if not self._connection_config:
+            return "Error: no database connection configured for this project."
+
+        connection_id = self._connection_config.connection_id
+        if not connection_id:
+            return "Error: connection ID not resolved."
+
+        from app.models.base import async_session_factory
+        from app.services.agent_learning_service import AgentLearningService
+
+        svc = AgentLearningService()
+
+        async with self._tracker.step(
+            wf_id, "record_learning", f"Recording learning: {lesson[:60]}"
+        ):
+            async with async_session_factory() as session:
+                entry = await svc.create_learning(
+                    session,
+                    connection_id=connection_id,
+                    category=category,
+                    subject=subject,
+                    lesson=lesson,
+                    confidence=0.8,
+                    source_query=self.ctx.last_query,
+                )
+                await session.commit()
+
+        return (
+            f"Learning recorded successfully.\n"
+            f"- **Category:** {category}\n"
+            f"- **Subject:** {subject}\n"
+            f"- **Lesson:** {lesson}\n"
+            f"- **Confidence:** {int(entry.confidence * 100)}%"
+        )
+
+    async def _build_query_context(
+        self,
+        question: str,
+        table_names_raw: str | None,
+        connection_id: str,
+    ) -> str:
+        from app.models.base import async_session_factory
+        from app.services.agent_learning_service import AgentLearningService
+        from app.services.code_db_sync_service import CodeDbSyncService
+        from app.services.db_index_service import DbIndexService
+
+        db_index_svc = DbIndexService()
+        sync_svc = CodeDbSyncService()
+        learning_svc = AgentLearningService()
+
+        async with async_session_factory() as session:
+            all_entries = await db_index_svc.get_index(session, connection_id)
+            sync_entries_list = await sync_svc.get_sync(session, connection_id)
+            sync_summary = await sync_svc.get_summary(session, connection_id)
+            learnings = await learning_svc.get_learnings(session, connection_id)
+
+        if not all_entries:
+            return "Database index not available. Run 'Index DB' first."
+
+        sync_map = {e.table_name.lower(): e for e in sync_entries_list}
+
+        if table_names_raw:
+            requested = {t.strip().lower() for t in table_names_raw.split(",")}
+            relevant = [e for e in all_entries if e.table_name.lower() in requested]
+            if not relevant:
+                relevant = all_entries[:10]
+        else:
+            relevant = self._auto_detect_tables(question, all_entries)
+
+        schema = await self._get_cached_schema(self._connection_config)
+        schema_map = {t.name.lower(): t for t in schema.tables}
+
+        knowledge = await self._load_knowledge()
+
+        file_rules = self._rules_engine.load_rules(
+            project_rules_dir=f"./rules/{self._project_id}",
+        )
+        db_rules = await self._rules_engine.load_db_rules(
+            project_id=self._project_id,
+        )
+        all_rules = file_rules + db_rules
+        rules_text = self._filter_rules(all_rules, question, relevant)
+
+        parts: list[str] = ["## Query Context\n"]
+
+        if sync_summary and sync_summary.data_conventions:
+            parts.append(f"**Data conventions:** {sync_summary.data_conventions}\n")
+
+        relevant_table_names = {e.table_name.lower() for e in relevant}
+        relevant_learnings = [
+            lrn for lrn in learnings
+            if lrn.subject.lower() in relevant_table_names
+            or any(t in lrn.lesson.lower() for t in relevant_table_names)
+        ]
+        if relevant_learnings:
+            parts.append("### Agent Learnings (from past experience)")
+            for lrn in relevant_learnings[:8]:
+                conf = int(lrn.confidence * 100)
+                parts.append(f"- **{lrn.subject}**: {lrn.lesson} [{conf}%]")
+            parts.append("")
+
+        for entry in relevant:
+            tbl = schema_map.get(entry.table_name.lower())
+            sync_entry = sync_map.get(entry.table_name.lower())
+            parts.append(self._format_table_context(entry, tbl, sync_entry, knowledge))
+
+        if sync_summary and sync_summary.query_guidelines:
+            parts.append(f"### Query Guidelines\n{sync_summary.query_guidelines}\n")
+
+        if rules_text:
+            parts.append(f"### Applicable Rules\n{rules_text}\n")
+
+        return "\n".join(parts)
+
+    def _auto_detect_tables(
+        self, question: str, entries: list,
+    ) -> list:
+        q_lower = question.lower()
+        scored: list[tuple[int, object]] = []
+
+        for entry in entries:
+            if not entry.is_active and entry.relevance_score <= 1:
+                continue
+            score = 0
+            tbl_lower = entry.table_name.lower()
+            if tbl_lower in q_lower:
+                score += 10
+            desc = (entry.business_description or "").lower()
+            for word in q_lower.split():
+                if len(word) > 3 and word in desc:
+                    score += 2
+                if len(word) > 3 and word in tbl_lower:
+                    score += 3
+            if entry.relevance_score >= 4:
+                score += 2
+            if score > 0:
+                scored.append((score, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if scored:
+            return [e for _, e in scored[:8]]
+
+        return [e for e in entries if e.is_active and e.relevance_score >= 3][:8]
+
+    @staticmethod
+    def _format_table_context(
+        db_entry, schema_table, sync_entry, knowledge,
+    ) -> str:
+        import json as _json
+
+        parts: list[str] = [f"### {db_entry.table_name}"]
+
+        if db_entry.business_description:
+            parts.append(f"{db_entry.business_description}")
+        if db_entry.row_count is not None:
+            parts.append(f"Rows: ~{db_entry.row_count:,}")
+
+        if schema_table:
+            cols_lines: list[str] = []
+            for col in schema_table.columns:
+                pk = " PK" if col.is_primary_key else ""
+                null = " NULL" if col.is_nullable else ""
+                cols_lines.append(f"  {col.name}: {col.data_type}{pk}{null}")
+            parts.append("Columns:\n" + "\n".join(cols_lines))
+
+            if schema_table.foreign_keys:
+                fk_lines = [
+                    f"  {fk.column} -> {fk.references_table}.{fk.references_column}"
+                    for fk in schema_table.foreign_keys
+                ]
+                parts.append("FKs:\n" + "\n".join(fk_lines))
+
+        dv_json = getattr(db_entry, "column_distinct_values_json", "{}")
+        try:
+            distinct = _json.loads(dv_json) if dv_json else {}
+        except (_json.JSONDecodeError, TypeError):
+            distinct = {}
+        if distinct:
+            dv_lines = []
+            for col, vals in distinct.items():
+                vals_str = " | ".join(str(v) for v in vals[:20])
+                dv_lines.append(f"  {col}: [{vals_str}]")
+            parts.append("Distinct values:\n" + "\n".join(dv_lines))
+
+        if sync_entry and sync_entry.conversion_warnings:
+            parts.append(f"WARNINGS: {sync_entry.conversion_warnings}")
+
+        col_notes_merged: dict[str, str] = {}
+        try:
+            db_notes = _json.loads(db_entry.column_notes_json) if db_entry.column_notes_json else {}
+        except (_json.JSONDecodeError, TypeError):
+            db_notes = {}
+        if db_notes and isinstance(db_notes, dict):
+            col_notes_merged.update(db_notes)
+
+        if sync_entry:
+            try:
+                sync_notes = (
+                    _json.loads(sync_entry.column_sync_notes_json)
+                    if sync_entry.column_sync_notes_json
+                    else {}
+                )
+            except (_json.JSONDecodeError, TypeError):
+                sync_notes = {}
+            if sync_notes and isinstance(sync_notes, dict):
+                for col, note in sync_notes.items():
+                    existing = col_notes_merged.get(col, "")
+                    if existing and note not in existing:
+                        col_notes_merged[col] = f"{existing}; {note}"
+                    else:
+                        col_notes_merged[col] = note
+
+        if col_notes_merged:
+            notes_lines = [f"  {c}: {n}" for c, n in col_notes_merged.items()]
+            parts.append("Column notes:\n" + "\n".join(notes_lines))
+
+        if sync_entry and sync_entry.query_recommendations:
+            parts.append(f"Query tips: {sync_entry.query_recommendations}")
+
+        if db_entry.query_hints:
+            parts.append(f"Query hints: {db_entry.query_hints}")
+
+        if knowledge:
+            tbl_lower = db_entry.table_name.lower()
+            for _name, entity in knowledge.entities.items():
+                if entity.table_name and entity.table_name.lower() == tbl_lower:
+                    if entity.read_queries or entity.write_queries:
+                        parts.append(
+                            f"Code usage: {entity.read_queries} reads, "
+                            f"{entity.write_queries} writes"
+                        )
+                    break
+
+        parts.append("")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _filter_rules(all_rules, question: str, relevant_entries: list) -> str:
+        if not all_rules:
+            return ""
+        q_lower = question.lower()
+        table_names = {e.table_name.lower() for e in relevant_entries}
+
+        matched: list[str] = []
+        for rule in all_rules:
+            content_lower = rule.content.lower()
+            relevant = False
+            for tbl in table_names:
+                if tbl in content_lower:
+                    relevant = True
+                    break
+            if not relevant:
+                for word in q_lower.split():
+                    if len(word) > 4 and word in content_lower:
+                        relevant = True
+                        break
+            if relevant:
+                matched.append(f"**{rule.name}:** {rule.content[:500]}")
+
+        if not matched and all_rules:
+            for rule in all_rules[:2]:
+                matched.append(f"**{rule.name}:** {rule.content[:300]}")
+
+        return "\n".join(matched)
+
+    async def _extract_learnings(
+        self,
+        attempts: list,
+        success: bool,
+        question: str,
+    ) -> None:
+        """Fire-and-forget learning extraction after validation loop."""
+        if not self._connection_config or not self._connection_config.connection_id:
+            return
+        if not attempts or len(attempts) < 2:
+            return
+
+        try:
+            from app.knowledge.learning_analyzer import LearningAnalyzer
+            from app.models.base import async_session_factory
+
+            analyzer = LearningAnalyzer()
+            async with async_session_factory() as session:
+                await analyzer.analyze(
+                    session=session,
+                    connection_id=self._connection_config.connection_id,
+                    question=question,
+                    attempts=attempts,
+                    success=success,
+                )
+        except Exception:
+            logger.debug("Learning extraction failed (non-critical)", exc_info=True)
+
+    async def _load_learnings_for_repair(self) -> str:
+        """Load compact learnings for query repair context."""
+        if not self._connection_config or not self._connection_config.connection_id:
+            return ""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.agent_learning_service import AgentLearningService
+
+            svc = AgentLearningService()
+            async with async_session_factory() as session:
+                learnings = await svc.get_learnings(
+                    session, self._connection_config.connection_id,
+                    min_confidence=0.5, active_only=True,
+                )
+            if not learnings:
+                return ""
+            lines = []
+            for lrn in learnings[:15]:
+                lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}")
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("Failed to load learnings for repair context", exc_info=True)
+            return ""
+
     async def _load_db_index_hints(self) -> str:
         """Load compact DB index hints for query repair context."""
         if not self._connection_config or not self._connection_config.connection_id:
@@ -375,6 +878,70 @@ class ToolExecutor:
         except Exception:
             logger.debug("Failed to load DB index hints for repair context", exc_info=True)
             return ""
+
+    async def _load_sync_warnings(self) -> str:
+        """Load compact sync conversion warnings for query repair context."""
+        if not self._connection_config or not self._connection_config.connection_id:
+            return ""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                entries = await svc.get_sync(session, self._connection_config.connection_id)
+            if not entries:
+                return ""
+            warnings = []
+            for e in entries:
+                if e.conversion_warnings:
+                    warnings.append(f"- {e.table_name}: {e.conversion_warnings}")
+            return "\n".join(warnings)
+        except Exception:
+            logger.debug("Failed to load sync warnings for repair context", exc_info=True)
+            return ""
+
+    async def _load_rules_for_repair(self) -> str:
+        """Load custom rules text for repair context."""
+        try:
+            file_rules = self._rules_engine.load_rules(
+                project_rules_dir=f"./rules/{self._project_id}",
+            )
+            db_rules = await self._rules_engine.load_db_rules(
+                project_id=self._project_id,
+            )
+            return self._rules_engine.rules_to_context(file_rules + db_rules)
+        except Exception:
+            logger.debug("Failed to load rules for repair context", exc_info=True)
+            return ""
+
+    async def _load_distinct_values(self) -> dict[str, dict[str, list[str]]]:
+        """Load column distinct values from DB index for repair context."""
+        if not self._connection_config or not self._connection_config.connection_id:
+            return {}
+        try:
+            import json as _json
+
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            svc = DbIndexService()
+            async with async_session_factory() as session:
+                entries = await svc.get_index(session, self._connection_config.connection_id)
+            result: dict[str, dict[str, list[str]]] = {}
+            for e in entries:
+                dv_json = getattr(e, "column_distinct_values_json", None) or "{}"
+                if dv_json and dv_json != "{}":
+                    try:
+                        parsed = _json.loads(dv_json)
+                        if parsed:
+                            result[e.table_name] = parsed
+                    except (_json.JSONDecodeError, TypeError):
+                        pass
+            return result
+        except Exception:
+            logger.debug("Failed to load distinct values for repair context", exc_info=True)
+            return {}
 
     async def _load_knowledge(self) -> ProjectKnowledge | None:
         if self._knowledge_cache is not None:

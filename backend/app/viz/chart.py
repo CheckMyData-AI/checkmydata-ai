@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.connectors.base import QueryResult
+from app.viz.utils import serialize_value
 
 _EMPTY_CHART: dict[str, Any] = {
     "data": {"labels": [], "datasets": []},
@@ -25,7 +26,7 @@ def generate_bar_chart(result: QueryResult, config: dict) -> dict[str, Any]:
             datasets.append(
                 {
                     "label": col,
-                    "data": [row[col_idx] for row in result.rows],
+                    "data": [serialize_value(row[col_idx]) for row in result.rows],
                 }
             )
 
@@ -53,7 +54,7 @@ def generate_line_chart(result: QueryResult, config: dict) -> dict[str, Any]:
             datasets.append(
                 {
                     "label": col,
-                    "data": [row[col_idx] for row in result.rows],
+                    "data": [serialize_value(row[col_idx]) for row in result.rows],
                     "fill": False,
                 }
             )
@@ -76,7 +77,7 @@ def generate_pie_chart(result: QueryResult, config: dict) -> dict[str, Any]:
     data_idx = result.columns.index(data_col) if data_col in result.columns else 1
 
     labels = [str(row[labels_idx]) for row in result.rows]
-    data = [row[data_idx] for row in result.rows]
+    data = [serialize_value(row[data_idx]) for row in result.rows]
 
     return {
         "type": "pie",
@@ -98,7 +99,10 @@ def generate_scatter(result: QueryResult, config: dict) -> dict[str, Any]:
     x_idx = result.columns.index(x_col) if x_col in result.columns else 0
     y_idx = result.columns.index(y_col) if y_col in result.columns else 1
 
-    points = [{"x": row[x_idx], "y": row[y_idx]} for row in result.rows]
+    points = [
+        {"x": serialize_value(row[x_idx]), "y": serialize_value(row[y_idx])}
+        for row in result.rows
+    ]
 
     return {
         "type": "scatter",

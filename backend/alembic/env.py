@@ -3,6 +3,7 @@ from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.models.agent_learning  # noqa: F401
 import app.models.chat_session  # noqa: F401
 import app.models.commit_index  # noqa: F401
 import app.models.connection  # noqa: F401

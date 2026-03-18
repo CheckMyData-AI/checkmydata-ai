@@ -7,6 +7,8 @@ import { InviteManager } from "./InviteManager";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
+import { Icon } from "@/components/ui/Icon";
+import { ActionButton } from "@/components/ui/ActionButton";
 import {
   LlmModelSelector,
   formatProvider,
@@ -16,7 +18,7 @@ import {
 } from "@/components/ui/LlmModelSelector";
 
 const inputCls =
-  "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 
 function isSshUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -100,21 +102,30 @@ function LlmBadges({ project }: { project: Project }) {
   }
   if (lines.length === 0) {
     return (
-      <span className="block text-[10px] text-zinc-600 italic">
+      <span className="block text-[10px] text-text-muted italic">
         System defaults
       </span>
     );
   }
   return (
-    <span className="block space-y-0">
+    <span className="block overflow-hidden">
       {lines.map((l) => (
-        <span key={l.label} className="block text-[10px] text-zinc-500 leading-tight">
-          <span className="text-zinc-600">{l.label}:</span> {l.text}
+        <span
+          key={l.label}
+          className="block text-[10px] text-text-tertiary leading-tight truncate"
+        >
+          <span className="text-text-muted">{l.label}:</span> {l.text}
         </span>
       ))}
     </span>
   );
 }
+
+const ROLE_STYLES: Record<string, string> = {
+  owner: "bg-warning-muted text-warning",
+  editor: "bg-accent-muted text-accent",
+  viewer: "bg-surface-2 text-text-tertiary",
+};
 
 export function ProjectSelector() {
   const {
@@ -135,14 +146,23 @@ export function ProjectSelector() {
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
   const [checking, setChecking] = useState(false);
-  const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(null);
+  const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(
+    null,
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [listLoading, setListLoading] = useState(true);
 
   useEffect(() => {
-    api.projects.list().then(setProjects).catch((err) => {
-      toast(err instanceof Error ? err.message : "Failed to load projects", "error");
-    }).finally(() => setListLoading(false));
+    api.projects
+      .list()
+      .then(setProjects)
+      .catch((err) => {
+        toast(
+          err instanceof Error ? err.message : "Failed to load projects",
+          "error",
+        );
+      })
+      .finally(() => setListLoading(false));
   }, [setProjects]);
 
   const runAccessCheck = useCallback(
@@ -236,8 +256,12 @@ export function ProjectSelector() {
       setActiveProject(project);
       resetForm();
       setShowCreate(false);
+      toast("Project created", "success");
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to create project", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to create project",
+        "error",
+      );
     }
   };
 
@@ -272,13 +296,21 @@ export function ProjectSelector() {
         sql_llm_model: sql.model || null,
       });
       useAppStore.setState((state) => ({
-        projects: state.projects.map((p) => (p.id === updated.id ? updated : p)),
-        ...(state.activeProject?.id === updated.id ? { activeProject: updated } : {}),
+        projects: state.projects.map((p) =>
+          p.id === updated.id ? updated : p,
+        ),
+        ...(state.activeProject?.id === updated.id
+          ? { activeProject: updated }
+          : {}),
       }));
       setEditingId(null);
       resetForm();
+      toast("Project updated", "success");
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to update project", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to update project",
+        "error",
+      );
     }
   };
 
@@ -324,56 +356,86 @@ export function ProjectSelector() {
           : {}),
       }));
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to delete project", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to delete project",
+        "error",
+      );
     }
   };
 
   const isFormOpen = showCreate || editingId !== null;
 
   const formUI = (
-    <div className="space-y-2 p-2 bg-zinc-800/50 rounded-lg">
+    <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle">
       <div>
         <input
           value={form.name}
-          onChange={(e) => { setForm({ ...form, name: e.target.value }); setNameError(""); }}
+          onChange={(e) => {
+            setForm({ ...form, name: e.target.value });
+            setNameError("");
+          }}
           placeholder="Project name"
-          className={`${inputCls} ${nameError ? "border-red-500" : ""}`}
+          aria-label="Project name"
+          className={`${inputCls} ${nameError ? "border-error ring-1 ring-error" : ""}`}
         />
-        {nameError && <p className="text-[10px] text-red-400 mt-0.5 px-1">{nameError}</p>}
+        {nameError && (
+          <p className="text-[10px] text-error mt-1 px-1">{nameError}</p>
+        )}
       </div>
       <div className="space-y-1">
         <input
           value={form.repoUrl}
           onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
           placeholder="Git repo URL (optional)"
+          aria-label="Git repo URL"
           className={inputCls}
         />
         {form.repoUrl.trim() && (
           <div className="flex items-center gap-1.5 px-1 min-h-[18px]">
             {checking && (
-              <span className="text-[10px] text-zinc-500 animate-pulse">Checking access...</span>
+              <span className="text-[10px] text-text-muted animate-pulse">
+                Checking access...
+              </span>
             )}
             {!checking && accessResult?.accessible && (
-              <span className="text-[10px] text-emerald-400">
-                ✓ Access verified
+              <span className="text-[10px] text-success flex items-center gap-1">
+                <Icon name="check" size={10} />
+                Access verified
                 {accessResult.branches.length > 0 && (
-                  <span className="text-zinc-500 ml-1">
-                    ({accessResult.branches.length} branch{accessResult.branches.length !== 1 ? "es" : ""})
+                  <span className="text-text-muted ml-1">
+                    ({accessResult.branches.length} branch
+                    {accessResult.branches.length !== 1 ? "es" : ""})
                   </span>
                 )}
               </span>
             )}
             {!checking && accessResult && !accessResult.accessible && (
-              <span className="text-[10px] text-red-400" title={accessResult.error || undefined}>
-                ✕ {accessResult.error || "Access denied"}
+              <span
+                className="text-[10px] text-error flex items-center gap-1"
+                title={accessResult.error || undefined}
+              >
+                <Icon name="x" size={10} />
+                {accessResult.error || "Access denied"}
               </span>
             )}
-            {!checking && !accessResult && isSshUrl(form.repoUrl) && !form.sshKeyId && sshKeys.length === 0 && (
-              <span className="text-[10px] text-amber-400">SSH URL detected — add an SSH key first</span>
-            )}
-            {!checking && !accessResult && isSshUrl(form.repoUrl) && !form.sshKeyId && sshKeys.length > 1 && (
-              <span className="text-[10px] text-amber-400">Select an SSH key to verify access</span>
-            )}
+            {!checking &&
+              !accessResult &&
+              isSshUrl(form.repoUrl) &&
+              !form.sshKeyId &&
+              sshKeys.length === 0 && (
+                <span className="text-[10px] text-warning">
+                  SSH URL detected — add an SSH key first
+                </span>
+              )}
+            {!checking &&
+              !accessResult &&
+              isSshUrl(form.repoUrl) &&
+              !form.sshKeyId &&
+              sshKeys.length > 1 && (
+                <span className="text-[10px] text-warning">
+                  Select an SSH key to verify access
+                </span>
+              )}
           </div>
         )}
       </div>
@@ -383,6 +445,7 @@ export function ProjectSelector() {
             value={form.sshKeyId}
             onChange={(e) => setForm({ ...form, sshKeyId: e.target.value })}
             className={inputCls}
+            aria-label="SSH key"
           >
             <option value="">SSH Key (none)</option>
             {sshKeys.map((k) => (
@@ -396,9 +459,12 @@ export function ProjectSelector() {
               value={form.branch}
               onChange={(e) => setForm({ ...form, branch: e.target.value })}
               className={inputCls}
+              aria-label="Branch"
             >
               {accessResult.branches.map((b) => (
-                <option key={b} value={b}>{b}</option>
+                <option key={b} value={b}>
+                  {b}
+                </option>
               ))}
             </select>
           ) : (
@@ -406,20 +472,19 @@ export function ProjectSelector() {
               value={form.branch}
               onChange={(e) => setForm({ ...form, branch: e.target.value })}
               placeholder="Branch (default: main)"
+              aria-label="Branch"
               className={inputCls}
             />
           )}
         </>
       )}
       <details open={!!editingId} className="group/llm">
-        <summary className="flex items-center gap-1.5 cursor-pointer select-none py-1 text-[11px] font-medium text-zinc-300 hover:text-zinc-100 transition-colors">
-          <svg
-            className="w-3 h-3 text-zinc-500 transition-transform group-open/llm:rotate-90"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-          >
-            <path d="M6 3l5 5-5 5V3z" />
-          </svg>
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary transition-colors">
+          <Icon
+            name="chevron-right"
+            size={12}
+            className="text-text-muted transition-transform group-open/llm:rotate-90"
+          />
           LLM Models
         </summary>
         <div className="space-y-3 pt-1.5 pl-0.5">
@@ -461,26 +526,29 @@ export function ProjectSelector() {
                     sql: checked ? { ...form.agent } : form.sql,
                   });
                 }}
-                className="w-3 h-3 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-1 focus:ring-blue-500 focus:ring-offset-0"
+                className="w-3 h-3 rounded border-border-default bg-surface-1 text-accent focus:ring-1 focus:ring-accent focus:ring-offset-0"
               />
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-[10px] text-text-muted">
                 Use Agent model
               </span>
             </label>
           </div>
         </div>
       </details>
-      <div className="flex gap-2">
+      <div className="flex gap-2 pt-1">
         <button
           onClick={editingId ? handleUpdate : handleCreate}
-          className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-500"
+          className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover transition-colors"
         >
           {editingId ? "Save Changes" : "Create"}
         </button>
         {editingId && (
           <button
-            onClick={() => { setEditingId(null); resetForm(); }}
-            className="px-3 py-1.5 text-zinc-400 hover:text-zinc-200 text-xs"
+            onClick={() => {
+              setEditingId(null);
+              resetForm();
+            }}
+            className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
           >
             Cancel
           </button>
@@ -490,8 +558,8 @@ export function ProjectSelector() {
   );
 
   return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
+    <div className="space-y-1.5 px-1">
+      <div className="flex justify-end px-1">
         <button
           onClick={() => {
             if (showCreate) {
@@ -503,70 +571,88 @@ export function ProjectSelector() {
               setShowCreate(true);
             }
           }}
-          className="text-xs text-blue-400 hover:text-blue-300"
+          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
         >
-          {showCreate ? "Cancel" : "+ New"}
+          {showCreate ? (
+            "Cancel"
+          ) : (
+            <>
+              <Icon name="plus" size={12} />
+              New
+            </>
+          )}
         </button>
       </div>
 
       {isFormOpen && formUI}
 
       {listLoading && <Spinner />}
-      <div className="space-y-1">
+      <div className="space-y-0.5 max-h-64 overflow-y-auto sidebar-scroll">
         {projects.map((p) => (
-          <div key={p.id} className="flex items-center group">
+          <div
+            key={p.id}
+            className={`group rounded-lg transition-colors ${
+              activeProject?.id === p.id
+                ? "bg-surface-2"
+                : "hover:bg-surface-2/50"
+            }`}
+          >
             <button
               onClick={() => handleSelect(p)}
-              className={`flex-1 text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                activeProject?.id === p.id
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
-              }`}
+              className="w-full text-left px-2.5 py-2"
             >
-              <span className="flex items-center gap-1.5">
+              <span
+                className={`text-[13px] font-medium block truncate ${
+                  activeProject?.id === p.id
+                    ? "text-text-primary"
+                    : "text-text-secondary"
+                }`}
+              >
                 {p.name}
-                {p.user_role && (
-                  <span className={`px-1 py-0.5 rounded text-[9px] font-medium leading-none ${
-                    p.user_role === "owner"
-                      ? "bg-amber-500/20 text-amber-300"
-                      : p.user_role === "editor"
-                        ? "bg-blue-500/20 text-blue-300"
-                        : "bg-zinc-500/20 text-zinc-400"
-                  }`}>
-                    {p.user_role}
-                  </span>
-                )}
               </span>
+              {p.user_role && (
+                <span
+                  className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium leading-none ${
+                    ROLE_STYLES[p.user_role] || ROLE_STYLES.viewer
+                  }`}
+                >
+                  {p.user_role}
+                </span>
+              )}
               {activeProject?.id === p.id && (
-                <LlmBadges project={p} />
+                <div className="mt-1">
+                  <LlmBadges project={p} />
+                </div>
               )}
             </button>
             {p.user_role === "owner" && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setManagingAccessId(managingAccessId === p.id ? null : p.id); }}
-                className="text-[10px] text-zinc-600 hover:text-green-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Manage access"
-              >
-                👥
-              </button>
-            )}
-            {p.user_role === "owner" && (
-              <button
-                onClick={() => handleEdit(p)}
-                className="text-[10px] text-zinc-600 hover:text-blue-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Edit project"
-              >
-                ✎
-              </button>
-            )}
-            {p.user_role === "owner" && (
-              <button
-                onClick={(e) => handleDelete(e, p)}
-                className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Delete project"
-              >
-                ×
-              </button>
+              <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+                <ActionButton
+                  icon="users"
+                  title="Manage access"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManagingAccessId(
+                      managingAccessId === p.id ? null : p.id,
+                    );
+                  }}
+                  variant="accent"
+                  size="sm"
+                />
+                <ActionButton
+                  icon="pencil"
+                  title="Edit project"
+                  onClick={() => handleEdit(p)}
+                  size="sm"
+                />
+                <ActionButton
+                  icon="trash"
+                  title="Delete project"
+                  onClick={(e) => handleDelete(e, p)}
+                  variant="danger"
+                  size="sm"
+                />
+              </div>
             )}
           </div>
         ))}

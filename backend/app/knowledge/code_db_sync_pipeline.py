@@ -280,7 +280,7 @@ class CodeDbSyncPipeline:
             )
 
             has_code = bool(entity or (usage and usage.is_active))
-            has_db = db_entry is not None
+            _has_db = db_entry is not None
 
             mt = _MatchedTable(
                 table_name=table_name,

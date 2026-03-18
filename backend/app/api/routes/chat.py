@@ -51,6 +51,7 @@ class ChatResponse(BaseModel):
     response_type: str = "text"
     assistant_message_id: str | None = None
     user_message_id: str | None = None
+    rules_changed: bool = False
 
 
 class SessionCreate(BaseModel):
@@ -205,6 +206,33 @@ async def submit_feedback(
 
     msg.user_rating = max(-1, min(1, body.rating))
     await db.commit()
+
+    if body.rating == -1 and msg.metadata_json:
+        try:
+            import json as _json
+
+            from app.knowledge.learning_analyzer import LearningAnalyzer
+            from app.models.base import async_session_factory
+
+            meta = _json.loads(msg.metadata_json)
+            query = meta.get("query")
+            question = meta.get("question", "")
+            session_row = msg.session
+            connection_id = getattr(session_row, "connection_id", None) if session_row else None
+
+            if connection_id and query:
+                analyzer = LearningAnalyzer()
+                async with async_session_factory() as learn_session:
+                    await analyzer.analyze_negative_feedback(
+                        session=learn_session,
+                        connection_id=connection_id,
+                        query=query,
+                        question=question,
+                        error_detail="User rated this result as incorrect (thumbs down)",
+                    )
+        except Exception:
+            logger.debug("Feedback-triggered learning extraction failed", exc_info=True)
+
     return {"ok": True, "message_id": body.message_id, "rating": msg.user_rating}
 
 
@@ -275,6 +303,13 @@ async def get_session_messages(
 
 
 _RAW_RESULT_ROW_CAP = 500
+
+
+def _has_rules_changed(tool_call_log: list[dict] | None) -> bool:
+    """Return True if any tool call in the log is ``manage_custom_rules``."""
+    if not tool_call_log:
+        return False
+    return any(tc.get("tool") == "manage_custom_rules" for tc in tool_call_log)
 
 
 def _build_raw_result(results) -> dict | None:
@@ -349,6 +384,7 @@ async def ask(
         sql_provider=sql_provider,
         sql_model=sql_model,
         project_name=project.name if project else None,
+        user_id=user["user_id"],
     )
 
     viz_data = None
@@ -372,7 +408,7 @@ async def ask(
     ]
 
     tool_calls_str = (
-        json.dumps(result.tool_call_log) if result.tool_call_log else None
+        json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
     )
 
     assistant_msg = await _chat_svc.add_message(
@@ -438,6 +474,7 @@ async def ask(
         response_type=result.response_type,
         assistant_message_id=assistant_msg.id,
         user_message_id=user_msg.id,
+        rules_changed=_has_rules_changed(result.tool_call_log),
     )
 
 
@@ -501,6 +538,7 @@ async def ask_stream(
                 sql_provider=sql_provider,
                 sql_model=sql_model,
                 project_name=project_name,
+                user_id=user["user_id"],
             )
             result_holder.append(res)
 
@@ -526,9 +564,9 @@ async def ask_stream(
             }
 
             if event.step.startswith("tool:"):
-                yield f"event: tool_call\ndata: {json.dumps(event_data)}\n\n"
+                yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
             else:
-                yield f"event: step\ndata: {json.dumps(event_data)}\n\n"
+                yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
 
             if event.step == "pipeline_end":
                 break
@@ -537,12 +575,12 @@ async def ask_stream(
             await task
         except Exception as exc:
             tracker.unsubscribe(queue)
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)}, default=str)}\n\n"
             return
         tracker.unsubscribe(queue)
         result = result_holder[0] if result_holder else None
         if not result:
-            yield f"event: error\ndata: {json.dumps({'error': 'No result'})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': 'No result'}, default=str)}\n\n"
             return
 
         viz_data = None
@@ -566,7 +604,7 @@ async def ask_stream(
         ]
 
         tool_calls_str = (
-            json.dumps(result.tool_call_log) if result.tool_call_log else None
+            json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
         )
 
         assistant_msg = await _chat_svc.add_message(
@@ -625,8 +663,9 @@ async def ask_stream(
             "response_type": result.response_type,
             "assistant_message_id": assistant_msg.id,
             "user_message_id": user_message_id,
+            "rules_changed": _has_rules_changed(result.tool_call_log),
         }
-        yield f"event: result\ndata: {json.dumps(final)}\n\n"
+        yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
 
     return StreamingResponse(
         _generate(),
@@ -761,6 +800,7 @@ async def chat_websocket(
                     sql_provider=ws_sql_provider,
                     sql_model=ws_sql_model,
                     project_name=ws_project.name if ws_project else None,
+                    user_id=user_id,
                 )
 
                 viz_data = None
@@ -784,7 +824,7 @@ async def chat_websocket(
                 ]
 
                 ws_tool_calls_str = (
-                    json.dumps(result.tool_call_log)
+                    json.dumps(result.tool_call_log, default=str)
                     if result.tool_call_log
                     else None
                 )
@@ -835,6 +875,7 @@ async def chat_websocket(
                         "rag_sources": rag_dicts,
                         "staleness_warning": result.staleness_warning,
                         "assistant_message_id": ws_assistant_msg.id,
+                        "rules_changed": _has_rules_changed(result.tool_call_log),
                     }
                 )
             finally:

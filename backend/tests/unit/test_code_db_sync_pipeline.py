@@ -1,18 +1,13 @@
 """Unit tests for CodeDbSyncPipeline — table matching logic."""
 
-from dataclasses import dataclass, field
 from unittest.mock import MagicMock
-
-import pytest
 
 from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
 from app.knowledge.entity_extractor import (
     ColumnInfo,
     EntityInfo,
-    EnumInfo,
     ProjectKnowledge,
     TableUsage,
-    ValidationRule,
 )
 from app.models.db_index import DbIndex
 
@@ -57,7 +52,6 @@ def _make_knowledge(
         enums=enums or [],
         service_functions=service_functions or [],
         validation_rules=validation_rules or [],
-        dead_tables=[],
     )
 
 
@@ -116,10 +110,10 @@ class TestMatchTables:
 
     def test_table_usage_without_entity(self):
         usage = TableUsage(
+            table_name="orders",
             readers=["reports.py"],
             writers=["api.py"],
             orm_refs=[],
-            is_active=True,
         )
         knowledge = _make_knowledge(table_usage={"orders": usage})
         db_entries = [_make_db_entry("orders")]
@@ -207,10 +201,10 @@ class TestBuildCodeContext:
 
     def test_usage_info(self):
         usage = TableUsage(
+            table_name="orders",
             readers=["report.py", "api.py"],
             writers=["service.py"],
             orm_refs=[],
-            is_active=True,
         )
         knowledge = _make_knowledge()
         result = self.pipeline._build_code_context(None, usage, knowledge, "orders")

@@ -200,6 +200,104 @@ class TestOrchestratorProcessQuestion:
         assert result.error is not None
 
 
+class TestEnricherReceivesSyncAndRules:
+    """Orchestrator passes sync/rules/distinct_values to ContextEnricher."""
+
+    @pytest.mark.asyncio
+    async def test_enricher_receives_sync_and_rules(self, orchestrator, mock_llm_router, config):
+        from unittest.mock import patch as _patch
+
+        mock_llm_router.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="1",
+                            name="execute_query",
+                            arguments={"query": "SELECT 1", "explanation": "test"},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="2",
+                            name="recommend_visualization",
+                            arguments={
+                                "viz_type": "table",
+                                "config": "{}",
+                                "summary": "Result is 1",
+                            },
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        mock_connector = AsyncMock()
+        mock_connector.connect = AsyncMock()
+        mock_connector.execute_query = AsyncMock(
+            return_value=QueryResult(
+                columns=["?column?"],
+                rows=[[1]],
+                row_count=1,
+                execution_time_ms=1.0,
+            )
+        )
+        mock_connector.introspect_schema = AsyncMock(return_value=SchemaInfo(db_type="postgres"))
+
+        captured_enricher_kwargs = {}
+
+        original_init = None
+
+        def capture_enricher_init(self_enricher, *args, **kwargs):
+            captured_enricher_kwargs.update(kwargs)
+            original_init(self_enricher, *args, **kwargs)
+
+        from app.core.context_enricher import ContextEnricher
+
+        original_init = ContextEnricher.__init__
+
+        mock_sync_entry = MagicMock()
+        mock_sync_entry.table_name = "orders"
+        mock_sync_entry.conversion_warnings = "amount in cents"
+
+        mock_db_entry = MagicMock()
+        mock_db_entry.table_name = "orders"
+        mock_db_entry.column_distinct_values_json = '{"status": ["active"]}'
+
+        with (
+            _patch("app.core.orchestrator.get_connector", return_value=mock_connector),
+            _patch.object(
+                orchestrator, "_get_sync_warnings",
+                new_callable=AsyncMock, return_value="- orders: amount in cents",
+            ),
+            _patch.object(
+                orchestrator, "_get_repair_rules_context",
+                new_callable=AsyncMock, return_value="Use amount/100",
+            ),
+            _patch.object(
+                orchestrator, "_get_distinct_values",
+                new_callable=AsyncMock, return_value={"orders": {"status": ["active"]}},
+            ),
+            _patch.object(ContextEnricher, "__init__", side_effect=capture_enricher_init),
+        ):
+            _result = await orchestrator.process_question(
+                question="What is 1?",
+                project_id="test-project",
+                connection_config=config,
+            )
+
+        assert "sync_context" in captured_enricher_kwargs
+        assert captured_enricher_kwargs["sync_context"] == "- orders: amount in cents"
+        assert "rules_context" in captured_enricher_kwargs
+        assert captured_enricher_kwargs["rules_context"] == "Use amount/100"
+        assert "distinct_values" in captured_enricher_kwargs
+        assert "orders" in captured_enricher_kwargs["distinct_values"]
+
+
 class TestOrchestratorDisconnect:
     @pytest.mark.asyncio
     async def test_disconnect_all(self, orchestrator):

@@ -85,13 +85,21 @@ class CustomRulesEngine:
             return []
 
     def rules_to_context(self, rules: list[CustomRule]) -> str:
-        """Format rules as context for the LLM prompt."""
+        """Format rules as context for the LLM prompt.
+
+        DB-sourced rules include their ID so the agent can reference them
+        for update/delete via the ``manage_custom_rules`` tool.
+        """
         if not rules:
             return ""
 
         parts = ["## Custom Rules & Business Logic\n"]
         for rule in rules:
-            parts.append(f"### {rule.name}")
+            if rule.file_path.startswith("db:"):
+                rule_id = rule.file_path[3:]
+                parts.append(f"### {rule.name}  (id: {rule_id})")
+            else:
+                parts.append(f"### {rule.name}")
             parts.append(rule.content)
             parts.append("")
 

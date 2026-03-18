@@ -54,6 +54,25 @@ class TestCustomRules:
         context = engine.rules_to_context([])
         assert context == ""
 
+    def test_rules_to_context_includes_db_rule_ids(self):
+        from app.knowledge.custom_rules import CustomRule
+
+        engine = CustomRulesEngine(rules_dir="/nonexistent")
+        rules = [
+            CustomRule(
+                name="File rule", content="From file",
+                file_path="/rules/a.md", format="markdown",
+            ),
+            CustomRule(
+                name="DB rule", content="From database",
+                file_path="db:abc-123", format="markdown",
+            ),
+        ]
+        context = engine.rules_to_context(rules)
+        assert "### File rule" in context
+        assert "(id: abc-123)" in context
+        assert "### DB rule  (id: abc-123)" in context
+
     def test_project_rules_dir(self):
         with (
             tempfile.TemporaryDirectory() as global_dir,

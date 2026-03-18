@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.services.agent_learning_service import AgentLearningService
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -28,6 +29,7 @@ _sync_svc = CodeDbSyncService()
 
 _db_index_tasks: dict[str, asyncio.Task] = {}
 _sync_tasks: dict[str, asyncio.Task] = {}
+_learning_svc = AgentLearningService()
 
 
 class ConnectionCreate(BaseModel):
@@ -332,6 +334,18 @@ async def index_db_status(
     existing = _db_index_tasks.get(connection_id)
     in_memory_running = existing is not None and not existing.done()
     db_running = status.get("indexing_status") == "running"
+
+    if db_running and not in_memory_running:
+        logger.warning(
+            "Stale indexing_status='running' with no in-memory task: "
+            "connection=%s — resetting to 'failed'",
+            connection_id[:8],
+        )
+        await _db_index_svc.set_indexing_status(db, connection_id, "failed")
+        await db.commit()
+        status["indexing_status"] = "failed"
+        db_running = False
+
     status["is_indexing"] = in_memory_running or db_running
 
     return status
@@ -395,8 +409,15 @@ async def _run_db_index_background(
             connection_config=connection_config,
             project_id=project_id,
         )
-        logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
-        final_status = "idle"
+        if isinstance(result, dict) and result.get("status") == "failed":
+            logger.error(
+                "DB index pipeline returned failure: connection=%s error=%s",
+                connection_id[:8], result.get("error", "unknown"),
+            )
+            final_status = "failed"
+        else:
+            logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
+            final_status = "idle"
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
     finally:
@@ -484,6 +505,18 @@ async def sync_status(
     existing = _sync_tasks.get(connection_id)
     in_memory_running = existing is not None and not existing.done()
     db_running = status.get("sync_status") == "running"
+
+    if db_running and not in_memory_running:
+        logger.warning(
+            "Stale sync_status='running' with no in-memory task: "
+            "connection=%s — resetting to 'failed'",
+            connection_id[:8],
+        )
+        await _sync_svc.set_sync_status(db, connection_id, "failed")
+        await db.commit()
+        status["sync_status"] = "failed"
+        db_running = False
+
     status["is_syncing"] = in_memory_running or db_running
 
     return status
@@ -557,3 +590,163 @@ async def _run_sync_background(
             logger.debug("Failed to update sync_status", exc_info=True)
     finally:
         _sync_tasks.pop(connection_id, None)
+
+
+# ------------------------------------------------------------------
+# Agent Learnings endpoints
+# ------------------------------------------------------------------
+
+
+@router.get("/{connection_id}/learnings")
+async def list_learnings(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List all active agent learnings for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    learnings = await _learning_svc.get_learnings(db, connection_id)
+    return [
+        {
+            "id": lrn.id,
+            "category": lrn.category,
+            "subject": lrn.subject,
+            "lesson": lrn.lesson,
+            "confidence": round(lrn.confidence, 2),
+            "times_confirmed": lrn.times_confirmed,
+            "times_applied": lrn.times_applied,
+            "is_active": lrn.is_active,
+            "source_query": lrn.source_query,
+            "source_error": lrn.source_error,
+            "created_at": lrn.created_at.isoformat() if lrn.created_at else None,
+            "updated_at": lrn.updated_at.isoformat() if lrn.updated_at else None,
+        }
+        for lrn in learnings
+    ]
+
+
+@router.get("/{connection_id}/learnings/status")
+async def learnings_status(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get learning status (count, last compiled time)."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    return await _learning_svc.get_status(db, connection_id)
+
+
+@router.get("/{connection_id}/learnings/summary")
+async def learnings_summary(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get compiled learning summary prompt."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+
+    prompt = await _learning_svc.get_or_compile_summary(db, connection_id)
+    return {"compiled_prompt": prompt}
+
+
+class LearningUpdate(BaseModel):
+    lesson: str | None = None
+    is_active: bool | None = None
+    confidence: float | None = None
+
+
+@router.patch("/{connection_id}/learnings/{learning_id}")
+async def update_learning(
+    connection_id: str,
+    learning_id: str,
+    body: LearningUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Edit a learning (user override)."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    kwargs: dict = {}
+    if body.lesson is not None:
+        kwargs["lesson"] = body.lesson
+    if body.is_active is not None:
+        kwargs["is_active"] = body.is_active
+    if body.confidence is not None:
+        kwargs["confidence"] = max(0.0, min(1.0, body.confidence))
+
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    entry = await _learning_svc.update_learning(db, learning_id, **kwargs)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Learning not found")
+    await db.commit()
+    return {"ok": True, "id": entry.id}
+
+
+@router.delete("/{connection_id}/learnings/{learning_id}")
+async def delete_learning(
+    connection_id: str,
+    learning_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Remove a specific learning."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    deleted = await _learning_svc.delete_learning(db, learning_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Learning not found")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{connection_id}/learnings")
+async def clear_learnings(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Clear all learnings for a connection."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
+
+    count = await _learning_svc.delete_all(db, connection_id)
+    await db.commit()
+    return {"ok": True, "deleted": count}
+
+
+@router.post("/{connection_id}/learnings/recompile")
+async def recompile_learnings(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Force recompile the learnings prompt."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    prompt = await _learning_svc.compile_prompt(db, connection_id)
+    await db.commit()
+    return {"ok": True, "compiled_prompt": prompt}

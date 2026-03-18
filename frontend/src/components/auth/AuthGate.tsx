@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/auth-store";
+import { Icon } from "@/components/ui/Icon";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
@@ -11,7 +12,10 @@ declare global {
       accounts: {
         id: {
           initialize: (config: Record<string, unknown>) => void;
-          renderButton: (el: HTMLElement, config: Record<string, unknown>) => void;
+          renderButton: (
+            el: HTMLElement,
+            config: Record<string, unknown>,
+          ) => void;
         };
       };
     };
@@ -19,7 +23,8 @@ declare global {
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, restore, login, register, googleLogin, isLoading, error } = useAuthStore();
+  const { user, restore, login, register, googleLogin, isLoading, error } =
+    useAuthStore();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -89,16 +94,29 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const inputCls =
+    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface-0 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-zinc-100">DB Agent</h1>
-          <p className="text-sm text-zinc-500 mt-1">AI Database Query Assistant</p>
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center mx-auto mb-4">
+            <Icon name="zap" size={28} className="text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">
+            DB Agent
+          </h1>
+          <p className="text-sm text-text-tertiary mt-1">
+            AI Database Query Assistant
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-zinc-900 rounded-xl p-6 space-y-4 border border-zinc-800">
-          <h2 className="text-lg font-medium text-zinc-200">
+        <form
+          onSubmit={handleSubmit}
+          className="bg-surface-1 rounded-xl p-6 space-y-4 border border-border-subtle"
+        >
+          <h2 className="text-lg font-semibold text-text-primary">
             {mode === "login" ? "Sign In" : "Create Account"}
           </h2>
 
@@ -108,7 +126,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               placeholder="Display Name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
+              className={inputCls}
             />
           )}
 
@@ -118,7 +136,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
+            className={inputCls}
           />
 
           <div>
@@ -129,49 +147,75 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-lg text-sm border border-zinc-700 focus:border-zinc-500 focus:outline-none"
+              className={inputCls}
             />
             {mode === "register" && (
-              <p className="text-[10px] text-zinc-500 mt-1 px-1">Min. 6 characters</p>
+              <p className="text-[10px] text-text-muted mt-1 px-1">
+                Min. 6 characters
+              </p>
             )}
           </div>
 
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && (
+            <p className="text-error text-xs flex items-center gap-1">
+              <Icon name="x" size={12} />
+              {error}
+            </p>
+          )}
 
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2 bg-zinc-200 text-zinc-900 rounded-lg text-sm font-medium hover:bg-zinc-300 disabled:opacity-50 transition-colors"
+            className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
           >
-            {isLoading ? "..." : mode === "login" ? "Sign In" : "Create Account"}
+            {isLoading
+              ? "..."
+              : mode === "login"
+                ? "Sign In"
+                : "Create Account"}
           </button>
 
           {GOOGLE_CLIENT_ID && (
             <>
               <div className="flex items-center gap-3">
-                <div className="flex-1 border-t border-zinc-700" />
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">or</span>
-                <div className="flex-1 border-t border-zinc-700" />
+                <div className="flex-1 border-t border-border-subtle" />
+                <span className="text-[10px] text-text-muted uppercase tracking-wider">
+                  or
+                </span>
+                <div className="flex-1 border-t border-border-subtle" />
               </div>
-              <div ref={googleBtnRef} className={`flex justify-center ${googleLoading ? "opacity-50 pointer-events-none" : ""}`} />
+              <div
+                ref={googleBtnRef}
+                className={`flex justify-center ${googleLoading ? "opacity-50 pointer-events-none" : ""}`}
+              />
               {googleLoading && (
-                <p className="text-xs text-zinc-500 text-center animate-pulse">Signing in with Google...</p>
+                <p className="text-xs text-text-muted text-center animate-pulse">
+                  Signing in with Google...
+                </p>
               )}
             </>
           )}
 
-          <p className="text-xs text-center text-zinc-500">
+          <p className="text-xs text-center text-text-tertiary">
             {mode === "login" ? (
               <>
                 No account?{" "}
-                <button type="button" onClick={() => setMode("register")} className="text-zinc-300 hover:underline">
+                <button
+                  type="button"
+                  onClick={() => setMode("register")}
+                  className="text-accent hover:text-accent-hover transition-colors"
+                >
                   Register
                 </button>
               </>
             ) : (
               <>
                 Already have an account?{" "}
-                <button type="button" onClick={() => setMode("login")} className="text-zinc-300 hover:underline">
+                <button
+                  type="button"
+                  onClick={() => setMode("login")}
+                  className="text-accent hover:text-accent-hover transition-colors"
+                >
                   Sign In
                 </button>
               </>

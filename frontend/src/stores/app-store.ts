@@ -58,6 +58,7 @@ interface AppState {
   chatMode: ChatMode;
   activeToolCalls: ToolCallEvent[];
   restoringState: boolean;
+  rulesVersion: number;
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -77,6 +78,7 @@ interface AppState {
   addToolCall: (event: ToolCallEvent) => void;
   clearToolCalls: () => void;
   setRestoringState: (v: boolean) => void;
+  bumpRulesVersion: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -94,6 +96,7 @@ export const useAppStore = create<AppState>((set) => ({
   chatMode: "full",
   activeToolCalls: [],
   restoringState: false,
+  rulesVersion: 0,
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
@@ -133,6 +136,7 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({ activeToolCalls: [...state.activeToolCalls, event] })),
   clearToolCalls: () => set({ activeToolCalls: [] }),
   setRestoringState: (v) => set({ restoringState: v }),
+  bumpRulesVersion: () => set((state) => ({ rulesVersion: state.rulesVersion + 1 })),
 }));
 
 export type { ChatMessage, ChatMode, ToolCallEvent };

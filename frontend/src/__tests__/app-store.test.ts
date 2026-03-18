@@ -163,4 +163,12 @@ describe("app store", () => {
     });
     expect(useAppStore.getState().messages[0].rawResult).toBeUndefined();
   });
+
+  it("bumpRulesVersion increments counter", () => {
+    expect(useAppStore.getState().rulesVersion).toBe(0);
+    useAppStore.getState().bumpRulesVersion();
+    expect(useAppStore.getState().rulesVersion).toBe(1);
+    useAppStore.getState().bumpRulesVersion();
+    expect(useAppStore.getState().rulesVersion).toBe(2);
+  });
 });

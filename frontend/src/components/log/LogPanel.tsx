@@ -2,19 +2,20 @@
 
 import { memo, useEffect, useRef } from "react";
 import { useLogStore, type LogEntry } from "@/stores/log-store";
+import { Icon } from "@/components/ui/Icon";
 
 const PIPELINE_COLORS: Record<string, string> = {
   index_repo: "text-purple-400",
   query: "text-cyan-400",
   agent: "text-amber-400",
-  system: "text-zinc-500",
+  system: "text-text-muted",
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  started: "text-blue-400",
-  completed: "text-emerald-400",
-  failed: "text-red-400",
-  skipped: "text-zinc-500",
+  started: "text-info",
+  completed: "text-success",
+  failed: "text-error",
+  skipped: "text-text-muted",
 };
 
 const PIPELINE_LABELS: Record<string, string> = {
@@ -41,24 +42,32 @@ function formatElapsed(ms: number | null): string {
 }
 
 const LogLine = memo(function LogLine({ entry }: { entry: LogEntry }) {
-  const pipelineColor = PIPELINE_COLORS[entry.pipeline] || PIPELINE_COLORS.system;
-  const statusColor = STATUS_COLORS[entry.status] || "text-zinc-400";
-  const label = PIPELINE_LABELS[entry.pipeline] || entry.pipeline.toUpperCase();
+  const pipelineColor =
+    PIPELINE_COLORS[entry.pipeline] || PIPELINE_COLORS.system;
+  const statusColor = STATUS_COLORS[entry.status] || "text-text-tertiary";
+  const label =
+    PIPELINE_LABELS[entry.pipeline] || entry.pipeline.toUpperCase();
   const elapsed = formatElapsed(entry.elapsedMs);
 
   return (
-    <div className="flex gap-1.5 leading-5 hover:bg-zinc-800/50 px-2">
-      <span className="text-zinc-600 shrink-0">{formatTime(entry.timestamp)}</span>
-      <span className={`shrink-0 font-semibold w-12 text-right ${pipelineColor}`}>
+    <div className="flex gap-1.5 leading-5 hover:bg-surface-2/50 px-2">
+      <span className="text-text-muted shrink-0">
+        {formatTime(entry.timestamp)}
+      </span>
+      <span
+        className={`shrink-0 font-semibold w-12 text-right ${pipelineColor}`}
+      >
         {label}
       </span>
-      <span className="text-zinc-500 shrink-0">{entry.step}:</span>
+      <span className="text-text-muted shrink-0">{entry.step}:</span>
       <span className={`shrink-0 ${statusColor}`}>{entry.status}</span>
       {entry.detail && (
-        <span className="text-zinc-500 truncate">{entry.detail}</span>
+        <span className="text-text-muted truncate">{entry.detail}</span>
       )}
       {elapsed && (
-        <span className="text-zinc-600 ml-auto shrink-0 tabular-nums">{elapsed}</span>
+        <span className="text-text-muted ml-auto shrink-0 tabular-nums">
+          {elapsed}
+        </span>
       )}
     </div>
   );
@@ -72,12 +81,15 @@ export function LogToggleButton() {
   return (
     <button
       onClick={toggle}
-      className="flex items-center gap-2 px-3 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors whitespace-nowrap"
+      className="flex items-center gap-2 px-3 py-3 bg-surface-2 border border-border-subtle rounded-lg text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors whitespace-nowrap"
     >
-      <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-400" : "bg-zinc-600"}`} />
+      <span
+        className={`w-2 h-2 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+      />
+      <Icon name="activity" size={12} />
       Activity Log
       {unreadCount > 0 && (
-        <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+        <span className="bg-accent text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       )}
@@ -86,7 +98,8 @@ export function LogToggleButton() {
 }
 
 export function LogPanel() {
-  const { entries, isOpen, isConnected, toggle, clear, resetUnread } = useLogStore();
+  const { entries, isOpen, isConnected, toggle, clear, resetUnread } =
+    useLogStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
 
@@ -106,32 +119,39 @@ export function LogPanel() {
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    wasAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+    wasAtBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 32;
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-950 flex flex-col" style={{ height: 200 }}>
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/50 shrink-0">
-        <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-400" : "bg-zinc-600"}`} />
-        <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">
+    <div
+      className="border-t border-border-subtle bg-surface-0 flex flex-col"
+      style={{ height: 200 }}
+    >
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-subtle bg-surface-1/50 shrink-0">
+        <span
+          className={`w-2 h-2 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+        />
+        <Icon name="activity" size={12} className="text-text-tertiary" />
+        <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider">
           Activity Log
         </span>
-        <span className="text-[10px] text-zinc-600 tabular-nums">
+        <span className="text-[10px] text-text-muted tabular-nums">
           {entries.length} entries
         </span>
         <div className="ml-auto flex items-center gap-1">
           <button
             onClick={clear}
-            className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors px-1.5 py-0.5"
+            className="text-[10px] text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
             title="Clear log"
           >
             Clear
           </button>
           <button
             onClick={toggle}
-            className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors px-1.5 py-0.5"
+            className="text-[10px] text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
             title="Close log panel"
           >
             Close
@@ -145,7 +165,7 @@ export function LogPanel() {
         className="flex-1 overflow-y-auto overflow-x-hidden font-mono text-[11px] py-1"
       >
         {entries.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-zinc-600 text-xs">
+          <div className="flex items-center justify-center h-full text-text-muted text-xs">
             Waiting for events...
           </div>
         ) : (

@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     run_migrations()
     await init_db()
     await _cleanup_stale_checkpoints()
+    await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
     yield
     logger.info("Shutting down: disconnecting connectors and tunnels")
@@ -120,6 +121,38 @@ async def _cleanup_stale_checkpoints() -> None:
                 logger.info("Startup: cleaned %d stale checkpoints", cleaned)
     except Exception:
         logger.warning("Failed to clean stale checkpoints at startup", exc_info=True)
+
+
+async def _reset_stale_indexing_statuses() -> None:
+    """Reset any 'running' indexing/sync statuses left over from a previous process."""
+    try:
+        from sqlalchemy import update
+
+        from app.models.code_db_sync import CodeDbSyncSummary
+        from app.models.db_index import DbIndexSummary
+
+        async with async_session_factory() as session:
+            idx_result = await session.execute(
+                update(DbIndexSummary)
+                .where(DbIndexSummary.indexing_status == "running")
+                .values(indexing_status="failed")
+            )
+            sync_result = await session.execute(
+                update(CodeDbSyncSummary)
+                .where(CodeDbSyncSummary.sync_status == "running")
+                .values(sync_status="failed")
+            )
+            total = (idx_result.rowcount or 0) + (sync_result.rowcount or 0)
+            if total:
+                await session.commit()
+                logger.info(
+                    "Startup: reset stale 'running' statuses — "
+                    "%d indexing, %d sync",
+                    idx_result.rowcount or 0,
+                    sync_result.rowcount or 0,
+                )
+    except Exception:
+        logger.warning("Failed to reset stale indexing statuses at startup", exc_info=True)
 
 
 async def _backfill_default_rules() -> None:

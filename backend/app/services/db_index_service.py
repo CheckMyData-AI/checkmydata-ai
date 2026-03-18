@@ -229,6 +229,28 @@ class DbIndexService:
         }
 
     # ------------------------------------------------------------------
+    # Compact table map for system prompt
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_table_map(entries: list[DbIndex]) -> str:
+        """One-liner-per-table map for injection into the system prompt.
+
+        Only includes active tables with relevance >= 2 to keep it compact.
+        Format: ``table_name(~rows, short description)``
+        """
+        items: list[str] = []
+        for e in entries:
+            if not e.is_active or e.relevance_score < 2:
+                continue
+            rows = f"~{e.row_count:,}" if e.row_count else "?"
+            desc = (e.business_description or "")[:50].rstrip(".")
+            items.append(f"{e.table_name}({rows}, {desc})")
+        if not items:
+            return ""
+        return ", ".join(items)
+
+    # ------------------------------------------------------------------
     # Formatting for LLM / query agent
     # ------------------------------------------------------------------
 
@@ -251,6 +273,7 @@ class DbIndexService:
 
         high_rel = [e for e in entries if e.is_active and e.relevance_score >= 4]
         med_rel = [e for e in entries if e.is_active and 2 <= e.relevance_score < 4]
+        low_active = [e for e in entries if e.is_active and e.relevance_score < 2]
         inactive = [e for e in entries if not e.is_active]
 
         if high_rel:
@@ -274,10 +297,9 @@ class DbIndexService:
                 parts.append(f"| {e.table_name} | {rows} | {desc} |")
             parts.append("")
 
-        if inactive:
-            parts.append("### Inactive/Empty Tables\n")
-            names = ", ".join(f"`{e.table_name}`" for e in inactive[:20])
-            parts.append(f"{names}\n")
+        omitted_count = len(inactive) + len(low_active)
+        if omitted_count:
+            parts.append(f"*({omitted_count} low-relevance/inactive tables omitted)*\n")
 
         if summary and summary.recommendations:
             parts.append("### Recommendations\n")

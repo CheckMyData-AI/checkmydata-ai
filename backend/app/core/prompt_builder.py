@@ -45,6 +45,9 @@ def build_agent_system_prompt(
     has_db_index: bool = False,
     db_index_stale: bool = False,
     has_code_db_sync: bool = False,
+    has_learnings: bool = False,
+    table_map: str = "",
+    learnings_prompt: str = "",
 ) -> str:
     """Assemble a role-aware, capability-aware system prompt."""
 
@@ -82,6 +85,12 @@ def build_agent_system_prompt(
             "- Rules: Use `get_custom_rules` to load project-specific guidelines "
             "before building queries."
         )
+        sections.append(
+            "- Rules Management: Use `manage_custom_rules` to create, update, or "
+            "delete project rules when the user asks to remember a guideline, "
+            "save a convention, or modify an existing rule. Call `get_custom_rules` "
+            "first to see existing rules (with their IDs) before updating or deleting."
+        )
         if has_db_index:
             stale_note = ""
             if db_index_stale:
@@ -107,6 +116,16 @@ def build_agent_system_prompt(
             "common data-interpretation errors."
         )
 
+    if has_connection and has_learnings:
+        sections.append(
+            "- Agent Learnings: You have accumulated lessons from previous "
+            "interactions with this database. Use `get_agent_learnings` to "
+            "review them before writing queries. Use `record_learning` when "
+            "you discover something new about the data that should be "
+            "remembered (e.g., which table has correct data, column format "
+            "quirks, required filter conditions)."
+        )
+
     if has_knowledge_base:
         sections.append(
             "- Knowledge Base: Project documentation is indexed.  "
@@ -122,27 +141,32 @@ def build_agent_system_prompt(
         sections.append("- No database or knowledge base is connected.")
         sections.append("  You can only have a general conversation.")
 
+    if table_map:
+        sections.append("")
+        sections.append(f"DATABASE TABLES: {table_map}")
+
+    if learnings_prompt:
+        sections.append("")
+        sections.append(learnings_prompt)
+
     sections.append("")
     sections.append("GUIDELINES:")
 
     guideline_num = 1
     if has_connection:
-        sync_hint = ""
-        if has_code_db_sync:
-            sync_hint = (
-                "FIRST check `get_sync_context` for data format warnings "
-                "(money, dates, enums), then "
-            )
-        db_index_hint = ""
         if has_db_index:
-            db_index_hint = (
-                "check the database index with `get_db_index` for table relevance and query hints, "
+            sections.append(
+                f"{guideline_num}. For data questions: call `get_query_context` with "
+                "the user's question — it returns table schemas, column types, "
+                "distinct enum values, conversion warnings, and rules in one "
+                "compact bundle. Then write and run the query with `execute_query`."
             )
-        sections.append(
-            f"{guideline_num}. For data questions: {sync_hint}{db_index_hint}"
-            "check the schema with `get_schema_info`, load rules with "
-            "`get_custom_rules`, then build and run a query with `execute_query`."
-        )
+        else:
+            sections.append(
+                f"{guideline_num}. For data questions: "
+                "check the schema with `get_schema_info`, load rules with "
+                "`get_custom_rules`, then build and run a query with `execute_query`."
+            )
         guideline_num += 1
     if has_knowledge_base:
         sections.append(
@@ -174,6 +198,20 @@ def build_agent_system_prompt(
         guideline_num += 1
         sections.append(
             f"{guideline_num}. Include LIMIT (default 100) for potentially large result sets."
+        )
+        guideline_num += 1
+        sections.append(
+            f"{guideline_num}. When the user asks to remember, save, or create a "
+            "rule/guideline about data handling, column conventions, or query "
+            "patterns: use `manage_custom_rules` with action='create'. For "
+            "updates/deletions, first call `get_custom_rules` to find the rule ID."
+        )
+        guideline_num += 1
+        sections.append(
+            f"{guideline_num}. When you discover something new about the database "
+            "(e.g., a table has incorrect data, a column stores values in a "
+            "non-obvious format, or a required filter like `deleted_at IS NULL`), "
+            "use `record_learning` to save it for future sessions."
         )
 
     if has_connection:

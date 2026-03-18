@@ -27,6 +27,7 @@ export function ChatPanel() {
     setLoading,
     addToolCall,
     clearToolCalls,
+    bumpRulesVersion,
   } = useAppStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -133,6 +134,10 @@ export function ChatPanel() {
             rawResult: rawResult ?? undefined,
             timestamp: Date.now(),
           });
+
+          if (result.rules_changed) {
+            bumpRulesVersion();
+          }
 
           setThinking(false);
           setLoading(false);

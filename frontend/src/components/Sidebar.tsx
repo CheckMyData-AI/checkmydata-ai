@@ -10,49 +10,13 @@ import { KnowledgeDocs } from "./knowledge/KnowledgeDocs";
 import { WorkflowProgress } from "./workflow/WorkflowProgress";
 import { PendingInvites } from "./invites/PendingInvites";
 import { useAppStore } from "@/stores/app-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
 import type { RepoStatus, UpdateCheck } from "@/lib/api";
 import { useState, useEffect, useCallback } from "react";
-
-function getCollapsed(): Record<string, boolean> {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem("sidebar_collapsed") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function useSectionCollapse(id: string, defaultOpen = true) {
-  const [open, setOpen] = useState(() => {
-    const saved = getCollapsed();
-    return saved[id] !== undefined ? !saved[id] : defaultOpen;
-  });
-
-  const toggle = () => {
-    setOpen((prev) => {
-      const next = !prev;
-      const saved = getCollapsed();
-      saved[id] = !next;
-      localStorage.setItem("sidebar_collapsed", JSON.stringify(saved));
-      return next;
-    });
-  };
-
-  return { open, toggle };
-}
-
-function SectionToggle({ open, toggle }: { open: boolean; toggle: () => void }) {
-  return (
-    <button
-      onClick={toggle}
-      className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors px-1"
-      title={open ? "Collapse" : "Expand"}
-    >
-      {open ? "▾" : "▸"}
-    </button>
-  );
-}
+import { Icon } from "./ui/Icon";
+import { Tooltip } from "./ui/Tooltip";
+import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -65,8 +29,21 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+function getStoredCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem("sidebar_main_collapsed") === "true";
+  } catch {
+    return false;
+  }
+}
+
 export function Sidebar() {
-  const { activeProject } = useAppStore();
+  const { activeProject, sshKeys, setSshKeys, projects, connections } =
+    useAppStore();
+  const { user, logout } = useAuthStore();
+  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
+
   const [indexing, setIndexing] = useState(false);
   const [indexResult, setIndexResult] = useState<string | null>(null);
   const [indexWorkflowId, setIndexWorkflowId] = useState<string | null>(null);
@@ -104,7 +81,9 @@ export function Sidebar() {
       const result = await api.repos.index(activeProject.id);
       setIndexWorkflowId(result.workflow_id);
     } catch (err) {
-      setIndexResult(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+      setIndexResult(
+        `Error: ${err instanceof Error ? err.message : "Unknown"}`,
+      );
       setIndexing(false);
     }
   };
@@ -130,17 +109,30 @@ export function Sidebar() {
       const uc = await api.repos.checkUpdates(activeProject.id);
       setUpdateCheck(uc);
     } catch {
-      setUpdateCheck({ has_updates: false, commits_behind: 0, message: "Check failed" });
+      setUpdateCheck({
+        has_updates: false,
+        commits_behind: 0,
+        message: "Check failed",
+      });
     } finally {
       setChecking(false);
     }
   };
 
-  const { sshKeys, setSshKeys, projects, connections } = useAppStore();
-
   useEffect(() => {
-    api.sshKeys.list().then(setSshKeys).catch(() => {});
+    api.sshKeys
+      .list()
+      .then(setSshKeys)
+      .catch(() => {});
   }, [setSshKeys]);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebar_main_collapsed", String(next));
+      return next;
+    });
+  };
 
   const showOnboarding = projects.length === 0;
 
@@ -152,58 +144,76 @@ export function Sidebar() {
   const rulesCollapse = useSectionCollapse("rules", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
 
+  const userInitials = user
+    ? (user.display_name || user.email)
+        .split(/[\s@]/)
+        .slice(0, 2)
+        .map((s) => s[0]?.toUpperCase() || "")
+        .join("")
+    : "";
+
   const repoSection = activeProject?.repo_url ? (
-    <div className="space-y-2">
+    <div className="space-y-2 px-1">
       {repoStatus && (
-        <div className="text-xs text-zinc-400 space-y-1 bg-zinc-900 rounded-md p-2">
+        <div className="text-xs text-text-secondary space-y-1.5 bg-surface-1 rounded-lg p-2.5 border border-border-subtle">
           {repoStatus.last_indexed_commit ? (
             <>
-              <div className="flex justify-between">
-                <span>Last indexed:</span>
-                <span className="text-zinc-300 font-mono">
+              <div className="flex justify-between items-center">
+                <span className="text-text-tertiary">Commit</span>
+                <span className="text-text-primary font-mono text-[11px]">
                   {repoStatus.last_indexed_commit.slice(0, 7)}
                 </span>
               </div>
               {repoStatus.last_indexed_at && (
-                <div className="flex justify-between">
-                  <span>When:</span>
-                  <span className="text-zinc-300">
+                <div className="flex justify-between items-center">
+                  <span className="text-text-tertiary">Indexed</span>
+                  <span className="text-text-secondary">
                     {timeAgo(repoStatus.last_indexed_at)}
                   </span>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span>Branch:</span>
-                <span className="text-zinc-300">{repoStatus.branch}</span>
+              <div className="flex justify-between items-center">
+                <span className="text-text-tertiary">Branch</span>
+                <span className="text-text-secondary font-mono text-[11px]">
+                  {repoStatus.branch}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <span>Documents:</span>
-                <span className="text-zinc-300">{repoStatus.total_documents}</span>
+              <div className="flex justify-between items-center">
+                <span className="text-text-tertiary">Docs</span>
+                <span className="text-text-secondary">
+                  {repoStatus.total_documents}
+                </span>
               </div>
             </>
           ) : (
-            <p className="text-zinc-500 italic">Not yet indexed</p>
+            <p className="text-text-muted italic text-[11px]">
+              Not yet indexed
+            </p>
           )}
           {repoStatus.is_indexing && (
-            <p className="text-amber-400 text-xs mt-1">Indexing in progress...</p>
+            <p className="text-warning text-[11px] flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse-dot" />
+              Indexing in progress...
+            </p>
           )}
         </div>
       )}
 
-      <div className="flex gap-1">
+      <div className="flex gap-1.5">
         <button
           onClick={handleIndex}
           disabled={indexing}
-          className="flex-1 px-3 py-2 text-xs bg-zinc-800 text-zinc-300 rounded-md hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-surface-2 text-text-secondary rounded-lg hover:bg-surface-3 hover:text-text-primary disabled:opacity-50 transition-colors"
         >
-          {indexing ? "Indexing..." : "Index Repository"}
+          <Icon name="refresh-cw" size={12} className={indexing ? "animate-spin" : ""} />
+          {indexing ? "Indexing..." : "Index Repo"}
         </button>
         {repoStatus?.last_indexed_commit && (
           <button
             onClick={handleCheckUpdates}
             disabled={checking || indexing}
             title="Check for new commits"
-            className="px-2 py-2 text-xs bg-zinc-800 text-zinc-400 rounded-md hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+            className="px-3 py-2 text-xs bg-surface-2 text-text-tertiary rounded-lg hover:bg-surface-3 hover:text-text-secondary disabled:opacity-50 transition-colors"
           >
             {checking ? "..." : "Check"}
           </button>
@@ -211,13 +221,17 @@ export function Sidebar() {
       </div>
 
       {updateCheck && (
-        <p className={`text-xs ${updateCheck.has_updates ? "text-amber-400" : "text-green-400"}`}>
+        <p
+          className={`text-[11px] px-1 ${
+            updateCheck.has_updates ? "text-warning" : "text-success"
+          }`}
+        >
           {updateCheck.message}
           {updateCheck.has_updates && updateCheck.commits_behind > 0 && (
             <button
               onClick={handleIndex}
               disabled={indexing}
-              className="ml-1 underline hover:text-amber-300"
+              className="ml-1.5 underline hover:text-warning/80"
             >
               Re-index now
             </button>
@@ -226,10 +240,17 @@ export function Sidebar() {
       )}
 
       {indexWorkflowId && (
-        <WorkflowProgress workflowId={indexWorkflowId} onComplete={handleIndexComplete} />
+        <WorkflowProgress
+          workflowId={indexWorkflowId}
+          onComplete={handleIndexComplete}
+        />
       )}
       {indexResult && (
-        <p className={`text-xs ${indexResult.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+        <p
+          className={`text-[11px] px-1 ${
+            indexResult.startsWith("Error") ? "text-error" : "text-success"
+          }`}
+        >
           {indexResult}
         </p>
       )}
@@ -237,114 +258,244 @@ export function Sidebar() {
   ) : null;
 
   return (
-    <aside className="w-72 border-r border-zinc-800 flex flex-col h-full">
-      <div className="p-4 border-b border-zinc-800">
-        <h1 className="text-lg font-semibold text-zinc-100">DB Agent</h1>
-        <p className="text-xs text-zinc-500 mt-0.5">AI Database Query Assistant</p>
+    <aside
+      className={`shrink-0 border-r border-border-subtle bg-surface-0 flex flex-col h-full overflow-hidden transition-all duration-200 ease-out ${
+        collapsed ? "w-16" : "w-64"
+      }`}
+    >
+      {/* Header */}
+      <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center shrink-0">
+          <Icon name="zap" size={16} className="text-white" />
+        </div>
+        {!collapsed && (
+          <div className="flex-1 min-w-0 animate-fade-in">
+            <h1 className="text-sm font-semibold text-text-primary leading-tight">
+              DB Agent
+            </h1>
+            <p className="text-[10px] text-text-muted leading-tight">
+              AI Query Assistant
+            </p>
+          </div>
+        )}
+        <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"} position="bottom">
+          <button
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <Icon
+              name="sidebar-left"
+              size={16}
+            />
+          </button>
+        </Tooltip>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-2 space-y-1">
         <PendingInvites />
 
-        {showOnboarding && (
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-2">
-            <p className="text-xs font-medium text-blue-300">Getting Started</p>
-            <div className="space-y-1.5 text-[11px] text-zinc-400">
-              <div className="flex items-center gap-2">
-                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${sshKeys.length > 0 ? "bg-emerald-900/50 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>
-                  {sshKeys.length > 0 ? "✓" : "1"}
-                </span>
-                <span className={sshKeys.length > 0 ? "text-zinc-500 line-through" : ""}>
-                  Add an SSH key
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${projects.length > 0 ? "bg-emerald-900/50 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>
-                  {projects.length > 0 ? "✓" : "2"}
-                </span>
-                <span className={projects.length > 0 ? "text-zinc-500 line-through" : ""}>
-                  Create your first project
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${connections.length > 0 ? "bg-emerald-900/50 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>
-                  {connections.length > 0 ? "✓" : "3"}
-                </span>
-                <span className={connections.length > 0 ? "text-zinc-500 line-through" : ""}>
-                  Add a database connection
-                </span>
-              </div>
+        {/* Onboarding guide */}
+        {showOnboarding && !collapsed && (
+          <div className="mx-3 p-3 bg-accent-muted border border-accent/20 rounded-lg space-y-2.5 animate-slide-in-left">
+            <p className="text-[11px] font-semibold text-accent">
+              Getting Started
+            </p>
+            <div className="space-y-2 text-[11px]">
+              {[
+                {
+                  done: sshKeys.length > 0,
+                  step: 1,
+                  label: "Add an SSH key",
+                },
+                {
+                  done: projects.length > 0,
+                  step: 2,
+                  label: "Create your first project",
+                },
+                {
+                  done: connections.length > 0,
+                  step: 3,
+                  label: "Add a database connection",
+                },
+              ].map((item) => (
+                <div key={item.step} className="flex items-center gap-2.5">
+                  <span
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+                      item.done
+                        ? "bg-success-muted text-success"
+                        : "bg-surface-2 text-text-muted"
+                    }`}
+                  >
+                    {item.done ? (
+                      <Icon name="check" size={10} />
+                    ) : (
+                      item.step
+                    )}
+                  </span>
+                  <span
+                    className={
+                      item.done
+                        ? "text-text-muted line-through"
+                        : "text-text-secondary"
+                    }
+                  >
+                    {item.label}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <SectionToggle {...sshCollapse} />
-            <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={sshCollapse.toggle}>SSH Keys</h3>
+        {/* SETUP group */}
+        {!collapsed && (
+          <div className="px-2 pt-2 pb-1">
+            <span className="text-[9px] font-semibold text-text-muted uppercase tracking-[0.1em] px-2">
+              Setup
+            </span>
           </div>
-          {sshCollapse.open && <SshKeyManager />}
-        </div>
+        )}
 
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <SectionToggle {...projectsCollapse} />
-            <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={projectsCollapse.toggle}>Projects</h3>
-          </div>
-          {projectsCollapse.open && <ProjectSelector />}
-        </div>
+        <SidebarSection
+          icon="key"
+          title="SSH Keys"
+          open={sshCollapse.open}
+          onToggle={sshCollapse.toggle}
+          count={sshKeys.length}
+          collapsed={collapsed}
+        >
+          <SshKeyManager />
+        </SidebarSection>
+
+        <SidebarSection
+          icon="folder-git"
+          title="Projects"
+          open={projectsCollapse.open}
+          onToggle={projectsCollapse.toggle}
+          count={projects.length}
+          collapsed={collapsed}
+        >
+          <ProjectSelector />
+        </SidebarSection>
 
         {activeProject && (
           <>
-            {activeProject.repo_url && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <SectionToggle {...repoCollapse} />
-                  <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={repoCollapse.toggle}>Repository</h3>
-                </div>
-                {repoCollapse.open && repoSection}
+            {/* WORKSPACE group */}
+            {!collapsed && (
+              <div className="px-2 pt-3 pb-1">
+                <div className="border-t border-border-subtle mb-3" />
+                <span className="text-[9px] font-semibold text-text-muted uppercase tracking-[0.1em] px-2">
+                  Workspace
+                </span>
+              </div>
+            )}
+            {collapsed && (
+              <div className="px-4 py-1">
+                <div className="border-t border-border-subtle" />
               </div>
             )}
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <SectionToggle {...connCollapse} />
-                <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={connCollapse.toggle}>Connections</h3>
-              </div>
-              {connCollapse.open && (
-                <>
-                  <ConnectionSelector />
-                  <SyncStatusIndicator />
-                </>
-              )}
-            </div>
+            {activeProject.repo_url && (
+              <SidebarSection
+                icon="git-branch"
+                title="Repository"
+                open={repoCollapse.open}
+                onToggle={repoCollapse.toggle}
+                collapsed={collapsed}
+              >
+                {repoSection}
+              </SidebarSection>
+            )}
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <SectionToggle {...chatCollapse} />
-                <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={chatCollapse.toggle}>Chat History</h3>
-              </div>
-              {chatCollapse.open && <ChatSessionList />}
-            </div>
+            <SidebarSection
+              icon="database"
+              title="Connections"
+              open={connCollapse.open}
+              onToggle={connCollapse.toggle}
+              count={connections.length}
+              collapsed={collapsed}
+            >
+              <ConnectionSelector />
+              <SyncStatusIndicator />
+            </SidebarSection>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <SectionToggle {...rulesCollapse} />
-                <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={rulesCollapse.toggle}>Custom Rules</h3>
-              </div>
-              {rulesCollapse.open && <RulesManager />}
-            </div>
+            <SidebarSection
+              icon="message-square"
+              title="Chat History"
+              open={chatCollapse.open}
+              onToggle={chatCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <ChatSessionList />
+            </SidebarSection>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <SectionToggle {...knowledgeCollapse} />
-                <h3 className="flex-1 text-xs font-medium text-zinc-500 uppercase tracking-wider cursor-pointer" onClick={knowledgeCollapse.toggle}>Knowledge</h3>
-              </div>
-              {knowledgeCollapse.open && <KnowledgeDocs />}
-            </div>
+            <SidebarSection
+              icon="file-text"
+              title="Custom Rules"
+              open={rulesCollapse.open}
+              onToggle={rulesCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <RulesManager />
+            </SidebarSection>
+
+            <SidebarSection
+              icon="book-open"
+              title="Knowledge"
+              open={knowledgeCollapse.open}
+              onToggle={knowledgeCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <KnowledgeDocs />
+            </SidebarSection>
           </>
         )}
       </div>
+
+      {/* Account footer */}
+      {user && !collapsed && (
+        <div className="shrink-0 px-3 py-2.5 border-t border-border-subtle animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
+              <span className="text-[10px] font-semibold text-text-secondary">
+                {userInitials}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-text-primary truncate leading-tight">
+                {user.display_name || user.email.split("@")[0]}
+              </p>
+              <p className="text-[10px] text-text-muted truncate leading-tight">
+                {user.email}
+              </p>
+            </div>
+            <button
+              onClick={logout}
+              className="p-1 rounded text-text-muted hover:text-error transition-colors shrink-0"
+              title="Sign out"
+            >
+              <Icon name="log-out" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+      {user && collapsed && (
+        <div className="shrink-0 px-2 py-2.5 border-t border-border-subtle flex justify-center">
+          <Tooltip label={`${user.email} — Sign out`} position="top">
+            <button
+              onClick={logout}
+              aria-label="Sign out"
+              className="w-8 h-8 rounded-full bg-surface-2 border border-border-default flex items-center justify-center hover:border-accent/50 hover:bg-surface-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <span className="text-[10px] font-semibold text-text-secondary">
+                {userInitials}
+              </span>
+            </button>
+          </Tooltip>
+        </div>
+      )}
     </aside>
   );
 }

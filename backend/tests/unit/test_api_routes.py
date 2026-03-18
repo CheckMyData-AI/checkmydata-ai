@@ -130,6 +130,260 @@ class TestConnectionRoutes:
             assert resp.status_code == 404
 
 
+class TestIndexDbStatusStaleReset:
+    """Tests for auto-resetting stale 'running' indexing status."""
+
+    def test_stale_running_status_resets_to_failed(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._db_index_svc") as mock_idx_svc,
+            patch("app.api.routes.connections._db_index_tasks", {}),
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_idx_svc.get_status = AsyncMock(return_value={
+                "is_indexed": True,
+                "indexing_status": "running",
+                "total_tables": 10,
+                "active_tables": 5,
+            })
+            mock_idx_svc.set_indexing_status = AsyncMock()
+
+            resp = client.get("/api/connections/conn-1/index-db/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_indexing"] is False
+            assert data["indexing_status"] == "failed"
+            mock_idx_svc.set_indexing_status.assert_called_once()
+
+    def test_active_task_keeps_running_status(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        running_task = MagicMock()
+        running_task.done.return_value = False
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._db_index_svc") as mock_idx_svc,
+            patch(
+                "app.api.routes.connections._db_index_tasks",
+                {"conn-1": running_task},
+            ),
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_idx_svc.get_status = AsyncMock(return_value={
+                "is_indexed": True,
+                "indexing_status": "running",
+                "total_tables": 10,
+                "active_tables": 5,
+            })
+
+            resp = client.get("/api/connections/conn-1/index-db/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_indexing"] is True
+            assert data["indexing_status"] == "running"
+
+    def test_idle_status_returns_not_indexing(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._db_index_svc") as mock_idx_svc,
+            patch("app.api.routes.connections._db_index_tasks", {}),
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_idx_svc.get_status = AsyncMock(return_value={
+                "is_indexed": True,
+                "indexing_status": "idle",
+                "total_tables": 10,
+                "active_tables": 5,
+            })
+
+            resp = client.get("/api/connections/conn-1/index-db/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_indexing"] is False
+            assert data["indexing_status"] == "idle"
+
+
+class TestSyncStatusStaleReset:
+    """Tests for auto-resetting stale 'running' sync status."""
+
+    def test_stale_sync_running_resets_to_failed(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._sync_svc") as mock_sync_svc,
+            patch("app.api.routes.connections._sync_tasks", {}),
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_sync_svc.get_status = AsyncMock(return_value={
+                "is_synced": False,
+                "sync_status": "running",
+                "total_tables": 10,
+                "synced_tables": 0,
+            })
+            mock_sync_svc.set_sync_status = AsyncMock()
+
+            resp = client.get("/api/connections/conn-1/sync/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_syncing"] is False
+            assert data["sync_status"] == "failed"
+            mock_sync_svc.set_sync_status.assert_called_once()
+
+    def test_active_sync_task_keeps_running(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        running_task = MagicMock()
+        running_task.done.return_value = False
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._sync_svc") as mock_sync_svc,
+            patch(
+                "app.api.routes.connections._sync_tasks",
+                {"conn-1": running_task},
+            ),
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_sync_svc.get_status = AsyncMock(return_value={
+                "is_synced": False,
+                "sync_status": "running",
+            })
+
+            resp = client.get("/api/connections/conn-1/sync/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_syncing"] is True
+
+
+class TestDbIndexBackgroundPipelineFailure:
+    """Tests that pipeline.run() returning failure sets correct final status."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_sets_failed_status(self):
+        from app.api.routes.connections import _run_db_index_background
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.run = AsyncMock(return_value={
+            "status": "failed",
+            "error": "LLM timeout",
+        })
+
+        with (
+            patch("app.models.base.async_session_factory", return_value=mock_session),
+            patch("app.api.routes.connections._db_index_svc") as mock_idx_svc,
+            patch("app.config.settings") as mock_settings,
+            patch("app.knowledge.db_index_pipeline.DbIndexPipeline", return_value=mock_pipeline),
+        ):
+            mock_settings.db_index_batch_size = 5
+            mock_idx_svc.set_indexing_status = AsyncMock()
+
+            config = MagicMock()
+            await _run_db_index_background("conn-1", config, "proj-1")
+
+            mock_idx_svc.set_indexing_status.assert_called_once_with(
+                mock_session, "conn-1", "failed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_success_sets_idle_status(self):
+        from app.api.routes.connections import _run_db_index_background
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.run = AsyncMock(return_value={
+            "status": "completed",
+            "tables_indexed": 10,
+        })
+
+        with (
+            patch("app.models.base.async_session_factory", return_value=mock_session),
+            patch("app.api.routes.connections._db_index_svc") as mock_idx_svc,
+            patch("app.config.settings") as mock_settings,
+            patch("app.knowledge.db_index_pipeline.DbIndexPipeline", return_value=mock_pipeline),
+        ):
+            mock_settings.db_index_batch_size = 5
+            mock_idx_svc.set_indexing_status = AsyncMock()
+
+            config = MagicMock()
+            await _run_db_index_background("conn-1", config, "proj-1")
+
+            mock_idx_svc.set_indexing_status.assert_called_once_with(
+                mock_session, "conn-1", "idle"
+            )
+
+
+class TestStartupStaleReset:
+    """Tests for _reset_stale_indexing_statuses startup hook."""
+
+    @pytest.mark.asyncio
+    async def test_resets_stale_running_statuses(self):
+        from app.main import _reset_stale_indexing_statuses
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        idx_result = MagicMock(rowcount=2)
+        sync_result = MagicMock(rowcount=1)
+        mock_session.execute = AsyncMock(side_effect=[idx_result, sync_result])
+
+        with patch("app.main.async_session_factory", return_value=mock_session):
+            await _reset_stale_indexing_statuses()
+
+        assert mock_session.execute.call_count == 2
+        mock_session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_commit_when_no_stale(self):
+        from app.main import _reset_stale_indexing_statuses
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        idx_result = MagicMock(rowcount=0)
+        sync_result = MagicMock(rowcount=0)
+        mock_session.execute = AsyncMock(side_effect=[idx_result, sync_result])
+
+        with patch("app.main.async_session_factory", return_value=mock_session):
+            await _reset_stale_indexing_statuses()
+
+        mock_session.commit.assert_not_called()
+
+
 class TestChatSessionRoutes:
     def test_list_sessions(self, client):
         with (

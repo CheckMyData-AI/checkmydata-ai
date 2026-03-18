@@ -37,6 +37,7 @@ class DbIndex(Base):
     business_description: Mapped[str] = mapped_column(Text, default="")
     data_patterns: Mapped[str] = mapped_column(Text, default="")
     column_notes_json: Mapped[str] = mapped_column(Text, default="{}")
+    column_distinct_values_json: Mapped[str] = mapped_column(Text, default="{}")
     query_hints: Mapped[str] = mapped_column(Text, default="")
 
     code_match_status: Mapped[str] = mapped_column(String(50), default="unknown")

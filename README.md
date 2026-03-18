@@ -215,7 +215,80 @@ After creating and testing a database connection, you can run a **database index
 - `DB_INDEX_BATCH_SIZE` — how many small/empty tables to batch per LLM call (default: 5); passed to the pipeline constructor
 - `AUTO_INDEX_DB_ON_TEST` — auto-trigger indexing after a successful connection test (default: false); implemented in the test endpoint
 
-### 7. Index the Repository (Knowledge Base)
+### 7. Code-DB Sync (Code-Database Synchronization)
+
+After both the **repository** is indexed and the **database** is indexed, you can run **Code-DB Sync** to deeply cross-reference your codebase with the database. This produces enriched per-table notes that help the query agent understand data formats and avoid interpretation errors.
+
+1. Select a connection that has been indexed (green "IDX" badge)
+2. Click the **SYNC** button that appears next to "IDX"
+3. The backend runs a 6-step pipeline in the background:
+   - **Load Code Knowledge** — loads entities, table usage, enums, service functions from the project knowledge cache
+   - **Load DB Index** — loads pre-analyzed database schema, sample data, and column types
+   - **Match Tables** — cross-references code entities and table usage with DB tables to classify each as `matched`, `code_only`, `db_only`, or `mismatch`
+   - **LLM Analysis** — for each table, sends combined code + DB context to the LLM to discover data format details, conversion rules, and business logic
+   - **Store Results** — persists per-table sync entries with column-level notes
+   - **Generate Summary** — LLM produces project-wide data conventions and query guidelines
+
+4. The SYNC button shows status:
+   - **Gray "SYNC"** — not yet synced (or DB not indexed)
+   - **Amber pulsing "SYNC..."** — sync in progress
+   - **Green "SYNC"** — synced (hover to see table counts and sync age)
+   - **Amber outline "SYNC"** — sync data is stale (code or DB was re-indexed since last sync)
+
+5. Once synced, the query agent gains:
+   - A `get_query_context` tool that merges table schemas, distinct enum values, conversion warnings, business rules, and code query patterns into a single compact bundle — replacing the need to call 4-6 separate tools
+   - A `get_sync_context` tool to look up data format warnings, conversion rules, and query tips
+   - Proactive warnings about money/currency (cents vs dollars), date formats (UTC vs local), enum values, soft-delete patterns, and boolean storage
+   - A compact table map injected into the system prompt so the agent immediately knows which tables exist and their purpose
+   - Enriched query repair context (sync warnings, distinct values, business rules) that helps auto-fix failed queries
+
+6. **Staleness**: When either the repository or the database is re-indexed, sync data is automatically marked as stale. The UI shows the SYNC button with an amber outline, prompting a re-sync.
+
+7. **Chat Readiness Gate**: When you open the chat for the first time, a readiness checklist shows which setup steps are complete and which are missing. If sync is not done, you can still chat (with reduced accuracy) or run sync inline from the checklist.
+
+**What the sync discovers (examples):**
+- `orders.amount` — "Stored in cents (integer). Divide by 100 for dollar values."
+- `users.created_at` — "UTC timestamp, ISO 8601 format."
+- `subscriptions.status` — "Enum: active | paused | cancelled | expired."
+- `payments.deleted_at` — "Soft-delete pattern. Filter `WHERE deleted_at IS NULL` for active records."
+
+### 8. Agent Learning Memory (ALM)
+
+The agent automatically **learns from query outcomes** and accumulates per-connection knowledge that improves future queries. No manual setup required — learning happens transparently.
+
+**How it works:**
+- After every query that requires a retry (validation loop fires), the system analyzes what went wrong and what fixed it
+- Lessons are extracted using zero-cost heuristic extractors (no LLM calls)
+- Each lesson is stored per-connection with a confidence score that grows with confirmations
+- On the next query, accumulated learnings are injected into the system prompt and query context
+
+**What it learns automatically:**
+| Category | Example | Trigger |
+|---|---|---|
+| Table Preference | "Use `orders_v2` not `orders_legacy` for revenue" | Agent tries table A (fails), succeeds with table B |
+| Column Usage | "`amount_total` doesn't exist; use `total_amount`" | `column_not_found` error repaired |
+| Data Format | "`amount` stored in cents, divide by 100" | Repair added `/ 100` division |
+| Query Pattern | "Always JOIN `currencies` when querying revenue" | Repeated repair pattern |
+| Schema Gotcha | "`deleted_at IS NULL` required for active records" | Soft-delete filter added in repair |
+| Performance Hint | "`events` table: always filter by date range" | Timeout resolved by adding filter |
+
+**Confidence system:**
+- New heuristic lessons start at 60% confidence
+- Agent-recorded lessons start at 80%
+- Each confirmation adds +10% (capped at 100%)
+- Contradictions reduce by −30%
+- Only lessons with ≥50% confidence appear in the system prompt
+
+**Managing learnings:**
+- A blue **LEARN** badge with count appears on connections that have accumulated learnings
+- Click the badge to open the **LearningsPanel** — view, edit, deactivate, or delete individual lessons
+- Use **Clear all** to reset the learning memory for a connection
+- The agent also has `get_agent_learnings` and `record_learning` tools — it can manually record discoveries during conversations
+
+**User feedback integration:**
+- When you give a **thumbs down** on an assistant message, the system triggers a learning analysis on the failed interaction
+
+### 9. Index the Repository (Knowledge Base)
 
 If your project has a Git repo URL configured:
 
@@ -251,7 +324,7 @@ After indexing, the **Knowledge Docs** section in the sidebar shows all indexed 
 
 **Multi-pass pipeline**: The indexing runs 5 passes to understand the project holistically, not just per-file.
 
-### Activity Log (Bottom Panel)
+### 10. Activity Log (Bottom Panel)
 
 A real-time **Activity Log** panel is available at the bottom of the screen:
 
@@ -266,7 +339,7 @@ A real-time **Activity Log** panel is available at the bottom of the screen:
 
 The log connects via SSE to `GET /api/workflows/events` (global mode, no workflow filter).
 
-### 8. Chat — Ask Questions
+### 11. Chat — Ask Questions
 
 With a project selected (and optionally a connection):
 
@@ -305,11 +378,15 @@ Your question
 │   ↓
 │   Returns answer with source citations
 │
+├── Rule management → calls manage_custom_rules
+│   ↓
+│   Creates/updates/deletes a project rule, sidebar refreshes
+│
 └── Conversation → responds directly (no tool calls)
 ```
 
 4. Each assistant message shows:
-   - The **answer** in natural language
+   - The **answer** rendered as **Markdown** (headings, lists, bold, code blocks, links, tables) via `react-markdown`
    - The **SQL query** that was executed
    - **Metadata badges**: execution time, row count, visualization type, token usage
    - **Thumbs up/down feedback** buttons to rate answer quality
@@ -324,8 +401,14 @@ Your question
 6. **Identical queries** are served from a short-lived cache (2-minute TTL) to avoid re-executing the same SQL
 7. **Chat persistence** — your active project, connection, and session survive page refreshes. Visualization data (charts, tables), raw tabular data, and all message metadata are stored in the database so you can return to any past chat session and see it exactly as it was, including rendered charts and data tables. Thumbs up/down ratings, tool call history, and query explanations are all preserved.
 8. **Re-visualization** — when you ask the agent to "show that as a pie chart" or "make it a bar chart," the agent sees the prior SQL query, columns, and visualization type from the enriched chat history and can re-execute the query with the requested chart type. The `[Context]` block appended to assistant messages in history gives the agent full awareness of prior data.
+9. **Chat-based rule creation** — you can ask the agent to remember conventions, create rules, or save guidelines directly from the chat. For example:
+   - _"Remember that orders.amount is stored in cents — always divide by 100"_
+   - _"Create a rule: always filter by deleted_at IS NULL for active records"_
+   - _"Update the cents rule to say divide by 1000 instead"_
+   
+   The agent uses the `manage_custom_rules` tool to create, update, or delete project rules. After a rule is created/modified, the sidebar Rules section refreshes automatically. Only project **owners** can manage rules via chat (consistent with the sidebar RBAC). The `rules_changed` flag in the chat response triggers the frontend refresh.
 
-### 9. Custom Rules
+### 12. Custom Rules
 
 Rules inject additional context into the LLM prompt, guiding how queries are built:
 
@@ -352,14 +435,14 @@ Example custom rules:
 
 Rules can be **global** or **project-scoped**.
 
-### 10. Editing & Managing
+### 13. Editing & Managing
 
 - **Edit project**: Hover over a project and click the ✎ icon — change name, repo, LLM config
 - **Edit connection**: Hover over a connection and click the ✎ icon — update host, credentials
 - **Delete**: Click the × icon (projects, connections, SSH keys, rules, chat sessions)
 - **SSH key protection**: Deleting a key that is used by a project or connection returns a 409 error
 
-### 11. Sharing a Project (Email Invite System)
+### 14. Sharing a Project (Email Invite System)
 
 Project owners can invite other users to collaborate on a project via email:
 
@@ -392,7 +475,7 @@ app/
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
 ├── core/               ← Business logic
 │   ├── agent.py        ← ConversationalAgent: multi-tool loop (replaces rigid orchestrator for chat)
-│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_db_index, get_entity_info)
+│   ├── tools.py        ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, manage_custom_rules, get_db_index, get_entity_info, get_agent_learnings, record_learning)
 │   ├── tool_executor.py← Executes tool calls, wraps ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
 │   ├── prompt_builder.py← Dynamic system prompt builder (role-aware, capability-aware)
 │   ├── orchestrator.py ← Original SQL pipeline (preserved, used by tool_executor)
@@ -442,7 +525,8 @@ app/
 │   ├── custom_rules.py ← File + DB rule loading
 │   ├── doc_store.py    ← Doc storage keyed by (project_id, source_path)
 │   ├── db_index_pipeline.py  ← 6-step DB indexing pipeline (introspect → sample → validate → store)
-│   └── db_index_validator.py ← LLM-powered per-table analysis with structured output
+│   ├── db_index_validator.py ← LLM-powered per-table analysis with structured output
+│   └── learning_analyzer.py  ← Heuristic lesson extractors (table switch, column fix, format, performance)
 ├── llm/                ← LLM provider abstraction
 │   ├── base.py         ← Message, LLMResponse, ToolCall types
 │   ├── router.py       ← Provider chain with fallback + retry
@@ -457,6 +541,7 @@ app/
 │   ├── project_invite.py ← Email-based project invitations
 │   ├── knowledge_doc.py, commit_index.py (branch-aware)
 │   ├── project_cache.py ← Cached ProjectKnowledge + ProjectProfile per project
+│   ├── agent_learning.py ← AgentLearning + AgentLearningSummary: per-connection experience-based lessons
 │   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
 │   └── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
 ├── services/           ← Business logic layer
@@ -468,6 +553,7 @@ app/
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
+│   ├── agent_learning_service.py ← CRUD, dedup, confidence management, prompt compilation for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
@@ -500,6 +586,9 @@ Build system prompt (role-aware, capability-aware)
 │    • execute_query  (if DB connected)                  │
 │    • get_schema_info (if DB connected)                 │
 │    • get_custom_rules (if DB connected)                │
+│    • manage_custom_rules (if DB connected)             │
+│    • record_learning (if DB connected)                 │
+│    • get_agent_learnings (if DB connected + learnings) │
 │    • get_db_index   (if DB connected + indexed)        │
 │    • search_knowledge (if knowledge base indexed)      │
 │    • get_entity_info (if knowledge base indexed)       │
@@ -523,7 +612,7 @@ Return AgentResponse (text | sql_result | knowledge | error)
 ```
 backend/app/core/
 ├── agent.py           ← ConversationalAgent: main loop, tool iteration, response building
-├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info)
+├── tools.py           ← Tool definitions (execute_query, search_knowledge, get_schema_info, get_custom_rules, manage_custom_rules, get_entity_info, get_agent_learnings, record_learning)
 ├── tool_executor.py   ← Executes tool calls, wraps existing ValidationLoop / VectorStore / SchemaIndexer / ProjectKnowledge
 ├── prompt_builder.py  ← Dynamic system prompt (capability-aware, dialect-aware)
 ├── orchestrator.py    ← Original pipeline (preserved, used by tool_executor for SQL)
@@ -690,13 +779,13 @@ DocStore — one row per (project_id, source_path), updated in-place
 ### Frontend Architecture
 
 ```
-Next.js 15 / React 19 / TypeScript / Tailwind CSS
+Next.js 15 / React 19 / TypeScript / Tailwind CSS 4 / DM Sans + JetBrains Mono
 
 src/
 ├── app/
 │   ├── page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel + LogPanel
-│   ├── layout.tsx         ← Root layout: wraps app in ClientShell (ErrorBoundary + Toast + ConfirmModal)
-│   └── globals.css        ← Global styles + animation keyframes
+│   ├── layout.tsx         ← Root layout: DM Sans + JetBrains Mono fonts, wraps in ClientShell
+│   └── globals.css        ← Design tokens (CSS variables), animations, scrollbar styles
 ├── stores/
 │   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
 │   ├── auth-store.ts      ← Zustand: user, token, login/register/logout
@@ -711,27 +800,33 @@ src/
 │   └── viz-utils.ts       ← Viz type definitions + rerenderViz() utility for client-side viz switching
 └── components/
     ├── ui/
+    │   ├── Icon.tsx           ← Centralized SVG icon system (~30 Lucide-style icons, no npm dep)
+    │   ├── SidebarSection.tsx ← Reusable collapsible section with icon, title, count badge, action
+    │   ├── StatusDot.tsx      ← Animated status indicator (success/warning/error/idle/loading, ARIA)
+    │   ├── ActionButton.tsx   ← Consistent icon button (ghost/danger/accent, tooltip, focus ring, a11y)
+    │   ├── Tooltip.tsx        ← Accessible tooltip (hover + focus, role=tooltip, aria-describedby)
     │   ├── ClientShell.tsx    ← Client wrapper: ErrorBoundary + ToastContainer + ConfirmModal
     │   ├── ErrorBoundary.tsx  ← Global React error boundary (prevents white-screen crashes)
     │   ├── ToastContainer.tsx ← Toast notification renderer (bottom-right corner)
     │   ├── ConfirmModal.tsx   ← Reusable confirmation modal (replaces native confirm())
-    │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout, capitalized names)
+    │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout)
     │   └── Spinner.tsx        ← Reusable loading spinner
-    ├── auth/AuthGate.tsx   ← Login/register form with password hint, Google loading state
-    ├── Sidebar.tsx         ← Collapsible sections, onboarding guide, section toggles with localStorage persistence
+    ├── auth/AuthGate.tsx   ← Login/register with branded header, Google OAuth
+    ├── Sidebar.tsx         ← Collapsible sidebar (w-64 ↔ w-16), grouped Setup/Workspace sections,
+    │                          sticky header with logo, user avatar + sign-out, section toggles
     ├── chat/
     │   ├── ChatPanel.tsx   ← Message list + knowledge-only mode toggle + error retry
     │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering + retry button
-    │   ├── ChatSessionList.tsx ← Session switcher with loading states
+    │   ├── ChatSessionList.tsx ← Session switcher with icons, loading states
     │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
-    │   ├── ProjectSelector.tsx  ← CRUD + inline name validation + error toasts
+    │   ├── ProjectSelector.tsx  ← CRUD + role badges + ActionButton icons + card-style items
     │   └── InviteManager.tsx    ← Invite users, manage members, error toasts
     ├── invites/PendingInvites.tsx ← Accept/decline incoming invites with error toasts
-    ├── connections/ConnectionSelector.tsx ← CRUD + unified status dot + check button + SSH tunnel guidance
-    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with loading state
-    ├── rules/RulesManager.tsx ← CRUD with try-catch + error toasts
-    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs + empty state message
+    ├── connections/ConnectionSelector.tsx ← CRUD + StatusDot + two-line items + IDX/SYNC badges
+    ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with key icon cards
+    ├── rules/RulesManager.tsx ← CRUD with icon buttons + default/global badges
+    ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs with doc-type icons
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
     ├── log/LogPanel.tsx ← Bottom panel: real-time activity log with color-coded pipeline events
@@ -763,6 +858,13 @@ src/
 | `GET` | `/api/connections/{id}/index-db/status` | DB index status (is_indexed, table counts, is_indexing) |
 | `GET` | `/api/connections/{id}/index-db` | Get full database index (all tables + summary) |
 | `DELETE` | `/api/connections/{id}/index-db` | Clear database index (force re-index) |
+| `GET` | `/api/connections/{id}/learnings` | List all agent learnings for a connection |
+| `GET` | `/api/connections/{id}/learnings/status` | Learning status (count, last compiled) |
+| `GET` | `/api/connections/{id}/learnings/summary` | Get compiled learning summary prompt |
+| `PATCH` | `/api/connections/{id}/learnings/{lid}` | Edit a learning (lesson, confidence, active) |
+| `DELETE` | `/api/connections/{id}/learnings/{lid}` | Delete a specific learning |
+| `DELETE` | `/api/connections/{id}/learnings` | Clear all learnings for a connection |
+| `POST` | `/api/connections/{id}/learnings/recompile` | Force recompile the learnings prompt |
 | `POST/GET/DELETE` | `/api/ssh-keys` | SSH key management |
 | `POST` | `/api/chat/sessions` | Create chat session |
 | `GET` | `/api/chat/sessions/{project_id}` | List sessions |
@@ -832,9 +934,11 @@ rag_feedback     — id, project_id, chunk_id, source_path, doc_type, distance, 
 project_cache    — id, project_id, knowledge_json, profile_json, created_at, updated_at
 db_index         — id, connection_id (FK→connections CASCADE), table_name, table_schema, column_count, row_count, sample_data_json, ordering_column, latest_record_at, is_active, relevance_score, business_description, data_patterns, column_notes_json, query_hints, code_match_status, code_match_details, indexed_at  [UNIQUE(connection_id, table_name)]
 db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total_tables, active_tables, empty_tables, orphan_tables, phantom_tables, summary_text, recommendations, indexed_at
+agent_learnings  — id, connection_id (FK→connections CASCADE), category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active  [UNIQUE(connection_id, category, subject, lesson_hash)]
+agent_learning_summaries — id, connection_id (FK→connections CASCADE, UNIQUE), total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
 ```
 
-Managed via **Alembic migrations** (17 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables).
+Managed via **Alembic migrations** (20 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables).
 
 All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints).
 
@@ -919,16 +1023,16 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 549 across 29 test files
-- Backend integration tests: 91 across 13 test files
-- Frontend tests: 38 across 5 test files
-- **Total: 678 tests**
+- Backend unit tests: 740 across 31 test files
+- Backend integration tests: 100 across 13 test files
+- Frontend tests: 44 across 6 test files
+- **Total: 884 tests**
 
 ### Test Coverage by Module
 
 | Module | Unit Tests | Integration Tests |
 |---|---|---|
-| Orchestrator | 7 (process_question, connector key, disconnect) | — |
+| Orchestrator | 8 (process_question, connector key, disconnect, enricher receives sync/rules/distinct_values) | — |
 | Query Builder | 6 (dialect-aware prompts) | — |
 | Validation Loop | 8 (first-try, retry, max attempts, safety, schema) | 6 (E2E retry flows) |
 | Error Classifier | 18 (PG, MySQL, CH, Mongo, fallback) | — |
@@ -938,7 +1042,7 @@ make test-frontend    # frontend vitest
 | SQL Parser | 16 (tables, columns, subqueries, CTEs, aggregations) | — |
 | Schema Hints | 11 (fuzzy col/table, related tables, detail) | — |
 | Retry Strategy | 16 (should_retry × 8, repair_hints × 8) | — |
-| Context Enricher | 5 (column/table error, RAG, history) | — |
+| Context Enricher | 13 (column/table error, RAG, RAG filtering, sync context, rules context, distinct values, schema-qualified tables, column substring safety, history) | — |
 | Query Repairer | 3 (success, no tool call, LLM exception) | — |
 | Query Validation | 9 (data models, serialization) | — |
 | Safety Guard | 17 (read-only, DML, DDL, MongoDB) | — |
@@ -961,16 +1065,18 @@ make test-frontend    # frontend vitest
 | Doc Generator | 13 (LLM output, fallback, truncation, binary fallback placeholder, oversized fallback truncation, null-byte sanitization, binary detection, content sanitization) | — |
 | Chunker | 5 (small doc, large doc, headings, empty) | — |
 | Schema Indexer | 4 (markdown, prompt context, relationships) | — |
-| DB Index Pipeline | 19 (ordering column, sample query, sample-to-json, detect-latest-record) | — |
+| DB Index Pipeline | 36 (ordering column, sample query, sample-to-json, detect-latest-record, is_enum_candidate, build_distinct_query, sqlite quoting) | — |
 | DB Index Validator | 21 (fallback analysis, build prompt, analyze table, batch analysis, generate summary) | — |
 | DB Index Service | 16 (prompt context, table detail, response format, status check) | — |
-| Custom Rules | 15 (file loading, YAML, context generation, default template) | 9 (CRUD, access control, default rule auto-creation) |
+| Learning Analyzer | 10 (table extraction, table preference, column correction, format discovery, schema gotcha, performance hint) | — |
+| Agent Learning Service | 4 (compile prompt empty/with learnings, category labels, invalid category) | — |
+| Custom Rules | 16 (file loading, YAML, context generation, default template, DB rule IDs in context) | 9 (CRUD, access control, default rule auto-creation) |
 | Retry | 5 (success, retry, max attempts, callback) | — |
-| ConversationalAgent | 10 (text reply, SQL tool call, knowledge search, multi-tool, no-connection, error handling) | 10 (full chat: text/SQL/knowledge flow, optional connection, stream events) |
-| ToolExecutor | 8 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool) | — |
-| Prompt Builder | 10 (all combinations of connection/knowledge flags, re-visualization prompt) | — |
+| ConversationalAgent | 12 (text reply, SQL tool call, knowledge search, multi-tool, no-connection, error handling, table_map, user_id passthrough, manage_rules tool call log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
+| ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
+| Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
-| API Routes | 9 (projects, connections, viz routes) | — |
+| API Routes | 19 (projects, connections, viz routes, stale index/sync status reset, pipeline failure propagation, startup stale reset) | — |
 | Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
 | Membership Service | 12 (add, get_role, require_role, remove, list, accessible) | — |
 | Invite Service | 11 (create, duplicate, reject, revoke, accept, pending, auto-accept) | — |

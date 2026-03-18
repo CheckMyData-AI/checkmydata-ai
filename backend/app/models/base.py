@@ -50,6 +50,7 @@ def _fallback_create_all() -> None:
     import asyncio
 
     from app.models import (  # noqa: F401
+        agent_learning,
         chat_session,
         code_db_sync,
         commit_index,
@@ -77,6 +78,7 @@ def _fallback_create_all() -> None:
 async def init_db():
     """Called at app startup. Imports all models so relationships are registered."""
     from app.models import (  # noqa: F401
+        agent_learning,
         chat_session,
         code_db_sync,
         commit_index,

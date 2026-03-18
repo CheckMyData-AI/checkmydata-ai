@@ -89,8 +89,7 @@ class TestIndexToPromptContext:
     def test_inactive_tables(self, svc):
         entries = [_make_entry(is_active=False, relevance_score=1)]
         result = svc.index_to_prompt_context(entries, None)
-        assert "Inactive" in result
-        assert "`users`" in result
+        assert "low-relevance/inactive tables omitted" in result
 
     def test_recommendations_included(self, svc):
         entries = [_make_entry()]
@@ -107,7 +106,7 @@ class TestIndexToPromptContext:
         result = svc.index_to_prompt_context(entries, None)
         assert "orders" in result
         assert "logs" in result
-        assert "`temp`" in result
+        assert "1 low-relevance/inactive tables omitted" in result
 
 
 class TestTableIndexToDetail:
@@ -160,6 +159,34 @@ class TestIndexToResponse:
     def test_empty_entries(self, svc):
         result = svc.index_to_response([], None)
         assert result["tables"] == []
+
+
+class TestBuildTableMap:
+    def test_empty_entries(self, svc):
+        result = svc.build_table_map([])
+        assert result == ""
+
+    def test_basic_map(self, svc):
+        entries = [
+            _make_entry(table_name="orders", row_count=125000, relevance_score=5,
+                        business_description="Customer orders and transactions"),
+            _make_entry(table_name="users", row_count=50000, relevance_score=4,
+                        business_description="User accounts"),
+        ]
+        result = svc.build_table_map(entries)
+        assert "orders(~125,000" in result
+        assert "users(~50,000" in result
+
+    def test_excludes_inactive_and_low_relevance(self, svc):
+        entries = [
+            _make_entry(table_name="orders", relevance_score=5, is_active=True),
+            _make_entry(table_name="temp", relevance_score=1, is_active=False),
+            _make_entry(table_name="logs", relevance_score=1, is_active=True),
+        ]
+        result = svc.build_table_map(entries)
+        assert "orders" in result
+        assert "temp" not in result
+        assert "logs" not in result
 
 
 class TestGetStatus:

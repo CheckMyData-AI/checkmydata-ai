@@ -6,6 +6,8 @@ import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
+import { Icon } from "@/components/ui/Icon";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 interface Rule {
   id: string;
@@ -17,7 +19,7 @@ interface Rule {
 }
 
 const inputCls =
-  "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 
 function sortRules(rules: Rule[]): Rule[] {
   return [...rules].sort((a, b) => {
@@ -28,7 +30,7 @@ function sortRules(rules: Rule[]): Rule[] {
 }
 
 export function RulesManager() {
-  const { activeProject } = useAppStore();
+  const { activeProject, rulesVersion } = useAppStore();
   const [rules, setRules] = useState<Rule[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -36,7 +38,9 @@ export function RulesManager() {
   const [content, setContent] = useState("");
   const [listLoading, setListLoading] = useState(true);
 
-  const editingRule = editingId ? rules.find((r) => r.id === editingId) : null;
+  const editingRule = editingId
+    ? rules.find((r) => r.id === editingId)
+    : null;
 
   useEffect(() => {
     setListLoading(true);
@@ -45,7 +49,7 @@ export function RulesManager() {
       .then((data) => setRules(sortRules(data)))
       .catch(() => {})
       .finally(() => setListLoading(false));
-  }, [activeProject?.id]);
+  }, [activeProject?.id, rulesVersion]);
 
   const handleCreate = async () => {
     if (!name.trim() || !content.trim()) return;
@@ -59,8 +63,12 @@ export function RulesManager() {
       setName("");
       setContent("");
       setShowCreate(false);
+      toast("Rule created", "success");
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to create rule", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to create rule",
+        "error",
+      );
     }
   };
 
@@ -78,12 +86,18 @@ export function RulesManager() {
         name: name.trim(),
         content: content.trim(),
       });
-      setRules((prev) => sortRules(prev.map((r) => (r.id === updated.id ? updated : r))));
+      setRules((prev) =>
+        sortRules(prev.map((r) => (r.id === updated.id ? updated : r))),
+      );
       setEditingId(null);
       setName("");
       setContent("");
+      toast("Rule updated", "success");
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to update rule", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to update rule",
+        "error",
+      );
     }
   };
 
@@ -96,15 +110,18 @@ export function RulesManager() {
       await api.rules.delete(rule.id);
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to delete rule", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to delete rule",
+        "error",
+      );
     }
   };
 
   const isFormOpen = showCreate || editingId !== null;
 
   return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
+    <div className="space-y-1.5 px-1">
+      <div className="flex justify-end px-1">
         <button
           onClick={() => {
             if (showCreate) {
@@ -116,16 +133,24 @@ export function RulesManager() {
               setShowCreate(true);
             }
           }}
-          className="text-xs text-blue-400 hover:text-blue-300"
+          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
         >
-          {showCreate ? "Cancel" : "+ New"}
+          {showCreate ? (
+            "Cancel"
+          ) : (
+            <>
+              <Icon name="plus" size={12} />
+              New
+            </>
+          )}
         </button>
       </div>
 
       {isFormOpen && (
-        <div className="space-y-2 p-2 bg-zinc-800/50 rounded-lg">
+        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle">
           {editingRule?.is_default && (
-            <p className="text-[10px] text-amber-400/70 px-1">
+            <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
+              <Icon name="zap" size={10} />
               This is the default metrics guide. Edit it to match your project.
             </p>
           )}
@@ -133,19 +158,21 @@ export function RulesManager() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Rule name"
+            aria-label="Rule name"
             className={inputCls}
           />
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Rule content (markdown)"
+            aria-label="Rule content"
             rows={4}
             className={inputCls + " resize-y min-h-[60px]"}
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 pt-1">
             <button
               onClick={editingId ? handleUpdate : handleCreate}
-              className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-500"
+              className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover transition-colors"
             >
               {editingId ? "Save" : "Create"}
             </button>
@@ -156,7 +183,7 @@ export function RulesManager() {
                   setName("");
                   setContent("");
                 }}
-                className="px-3 py-1.5 text-zinc-400 hover:text-zinc-200 text-xs"
+                className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
               >
                 Cancel
               </button>
@@ -166,38 +193,57 @@ export function RulesManager() {
       )}
 
       {listLoading && <Spinner />}
-      <div className="space-y-1 max-h-48 overflow-y-auto">
+      <div className="space-y-0.5 max-h-48 overflow-y-auto sidebar-scroll">
         {rules.map((rule) => (
-          <div key={rule.id} className="flex items-center gap-1 group">
-            <div className="flex-1 px-3 py-1.5 text-xs text-zinc-400 truncate">
-              <span className="text-zinc-300">{rule.name}</span>
-              {rule.is_default && (
-                <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400/80">
-                  default
+          <div
+            key={rule.id}
+            className="group rounded-lg hover:bg-surface-2/50 transition-colors"
+          >
+            <div className="flex items-center gap-1.5 px-2.5 py-2">
+              <Icon
+                name="file-text"
+                size={12}
+                className="text-text-muted shrink-0"
+              />
+              <div className="flex-1 min-w-0 text-xs">
+                <span className="text-text-secondary truncate block">
+                  {rule.name}
                 </span>
-              )}
-              {!rule.project_id && (
-                <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-500">
-                  global
-                </span>
-              )}
+                <div className="flex items-center gap-1 mt-0.5">
+                  {rule.is_default && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning-muted text-warning">
+                      default
+                    </span>
+                  )}
+                  {!rule.project_id && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-muted">
+                      global
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => handleEdit(rule)}
-              className="text-[10px] text-zinc-600 hover:text-blue-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              ✎
-            </button>
-            <button
-              onClick={() => handleDelete(rule)}
-              className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              ×
-            </button>
+            <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+              <ActionButton
+                icon="pencil"
+                title="Edit rule"
+                onClick={() => handleEdit(rule)}
+                size="sm"
+              />
+              <ActionButton
+                icon="trash"
+                title="Delete rule"
+                onClick={() => handleDelete(rule)}
+                variant="danger"
+                size="sm"
+              />
+            </div>
           </div>
         ))}
         {rules.length === 0 && (
-          <p className="text-[10px] text-zinc-600 px-3">No custom rules yet</p>
+          <p className="text-[10px] text-text-muted px-3 py-1">
+            No custom rules yet
+          </p>
         )}
       </div>
     </div>

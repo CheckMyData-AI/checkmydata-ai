@@ -1,12 +1,53 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
 import { VizToolbar } from "@/components/viz/VizToolbar";
 import { rerenderViz, type VizTypeKey } from "@/lib/viz-utils";
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
+
+const mdComponents: Components = {
+  p: ({ children }) => <p className="text-sm mb-2 last:mb-0">{children}</p>,
+  h1: ({ children }) => <h1 className="text-lg font-semibold mb-2 mt-3 first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-base font-semibold mb-2 mt-3 first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-sm font-medium mb-1 mt-2 first:mt-0">{children}</h4>,
+  ul: ({ children }) => <ul className="list-disc pl-4 mb-2 last:mb-0 space-y-0.5 text-sm">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 last:mb-0 space-y-0.5 text-sm">{children}</ol>,
+  li: ({ children }) => <li className="text-sm">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300">
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-zinc-600 pl-3 my-2 text-zinc-400 italic">{children}</blockquote>
+  ),
+  code: ({ className, children }) => {
+    const isBlock = className?.includes("language-");
+    if (isBlock) {
+      return <code className="text-xs font-mono">{children}</code>;
+    }
+    return <code className="bg-zinc-900 text-zinc-300 px-1 py-0.5 rounded text-xs font-mono">{children}</code>;
+  },
+  pre: ({ children }) => (
+    <pre className="bg-zinc-900 p-3 rounded-lg overflow-x-auto mb-2 last:mb-0">{children}</pre>
+  ),
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-2 last:mb-0">
+      <table className="text-xs border-collapse w-full">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="border-b border-zinc-700">{children}</thead>,
+  th: ({ children }) => <th className="text-left px-2 py-1 text-zinc-400 font-medium">{children}</th>,
+  td: ({ children }) => <td className="px-2 py-1 border-t border-zinc-800">{children}</td>,
+  hr: () => <hr className="border-zinc-700 my-3" />,
+};
 
 interface AttemptInfo {
   attempt: number;
@@ -158,7 +199,13 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
           </div>
         )}
 
-        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+        {isUser ? (
+          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+        ) : (
+          <div className="chat-markdown">
+            <ReactMarkdown components={mdComponents}>{message.content}</ReactMarkdown>
+          </div>
+        )}
 
         {/* SQL Query — only for sql_result responses */}
         {message.query && isSqlResult && (

@@ -34,12 +34,12 @@ export function SyncStatusIndicator() {
   if (!is_synced && sync_status !== "stale" && sync_status !== "running") return null;
 
   const dotColor = sync_status === "running"
-    ? "bg-amber-400 animate-pulse"
+    ? "bg-warning animate-pulse-dot"
     : sync_status === "stale"
-      ? "bg-amber-500"
+      ? "bg-warning"
       : is_synced
-        ? "bg-green-400"
-        : "bg-zinc-600";
+        ? "bg-success"
+        : "bg-surface-3";
 
   const label = sync_status === "running"
     ? "Syncing..."
@@ -50,14 +50,14 @@ export function SyncStatusIndicator() {
   const ageStr = synced_at ? timeAgo(synced_at) : null;
 
   return (
-    <div className="mt-1 px-2 flex items-center gap-1.5 text-[10px] text-zinc-500">
+    <div className="mt-1 px-2 flex items-center gap-1.5 text-[10px] text-text-muted">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
       <span>SYNC</span>
-      <span className="text-zinc-600">·</span>
+      <span className="text-text-tertiary">&middot;</span>
       <span className="truncate">{label}</span>
       {ageStr && (
         <>
-          <span className="text-zinc-600">·</span>
+          <span className="text-text-tertiary">&middot;</span>
           <span>{ageStr}</span>
         </>
       )}

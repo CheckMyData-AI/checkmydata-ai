@@ -410,6 +410,49 @@ class TestSqlConfigForwarding:
             assert init_kwargs.kwargs["sql_model"] == "claude-3-opus"
 
 
+class TestBuildTableMap:
+    """Agent builds and passes table_map to prompt builder."""
+
+    @pytest.mark.asyncio
+    async def test_table_map_passed_to_prompt(self, agent, mock_llm, config):
+        from unittest.mock import patch as _patch
+
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="I see the tables.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        config.connection_id = "conn-1"
+
+        prompt_kwargs_captured = {}
+
+        def capture_build(*args, **kwargs):
+            prompt_kwargs_captured.update(kwargs)
+            return "system prompt"
+
+        with (
+            _patch.object(agent, "_has_db_index", new_callable=AsyncMock, return_value=True),
+            _patch.object(agent, "_is_db_index_stale", new_callable=AsyncMock, return_value=False),
+            _patch.object(agent, "_has_code_db_sync", new_callable=AsyncMock, return_value=False),
+            _patch.object(
+                agent, "_build_table_map",
+                new_callable=AsyncMock, return_value="orders(5) - Order records",
+            ),
+            _patch("app.core.agent.build_agent_system_prompt", side_effect=capture_build),
+        ):
+            _resp = await agent.run(
+                question="Show orders",
+                project_id="proj-1",
+                connection_config=config,
+            )
+
+        assert "table_map" in prompt_kwargs_captured
+        assert "orders" in prompt_kwargs_captured["table_map"]
+
+
 class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_sums_across_iterations(self, agent, mock_llm):
@@ -434,3 +477,74 @@ class TestTokenUsageAccumulation:
 
         resp = await agent.run(question="rules?", project_id="proj-1")
         assert resp.token_usage["total_tokens"] == 300
+
+
+class TestUserIdPassthrough:
+    @pytest.mark.asyncio
+    async def test_agent_passes_user_id_to_executor(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="Hello!",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        from unittest.mock import patch as _patch
+
+        captured_kwargs = {}
+        _original_init = None
+
+        class CapturingExecutor:
+            def __init__(self, *args, **kwargs):
+                captured_kwargs.update(kwargs)
+                self.ctx = MagicMock()
+
+        with _patch("app.core.agent.ToolExecutor", CapturingExecutor):
+            await agent.run(
+                question="Hello",
+                project_id="proj-1",
+                user_id="user-123",
+            )
+
+        assert captured_kwargs.get("user_id") == "user-123"
+
+    @pytest.mark.asyncio
+    async def test_manage_rules_in_tool_call_log(self, agent, mock_llm):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-1",
+                            name="manage_custom_rules",
+                            arguments={
+                                "action": "create",
+                                "name": "Test",
+                                "content": "Test content",
+                            },
+                        )
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Rule created!",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        resp = await agent.run(
+            question="Remember: amount is in cents",
+            project_id="proj-1",
+            user_id="user-owner",
+        )
+
+        assert len(resp.tool_call_log) == 1
+        assert resp.tool_call_log[0]["tool"] == "manage_custom_rules"

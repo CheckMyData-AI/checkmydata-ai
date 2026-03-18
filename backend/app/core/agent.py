@@ -80,6 +80,7 @@ class ConversationalAgent:
         sql_provider: str | None = None,
         sql_model: str | None = None,
         project_name: str | None = None,
+        user_id: str | None = None,
     ) -> AgentResponse:
         wf_id = await self._tracker.begin(
             "agent",
@@ -107,6 +108,17 @@ class ConversationalAgent:
             has_sync = await self._has_code_db_sync(connection_config) if has_db_idx else False
             db_type = connection_config.db_type if connection_config else None
 
+            table_map = ""
+            if has_db_idx and connection_config and connection_config.connection_id:
+                table_map = await self._build_table_map(connection_config.connection_id)
+
+            has_learnings = await self._has_learnings(connection_config)
+            learnings_prompt = ""
+            if has_learnings and connection_config and connection_config.connection_id:
+                learnings_prompt = await self._load_learnings_prompt(
+                    connection_config.connection_id
+                )
+
             system_prompt = build_agent_system_prompt(
                 project_name=project_name,
                 db_type=db_type,
@@ -115,6 +127,9 @@ class ConversationalAgent:
                 has_db_index=has_db_idx,
                 db_index_stale=db_idx_stale,
                 has_code_db_sync=has_sync,
+                has_learnings=has_learnings,
+                table_map=table_map,
+                learnings_prompt=learnings_prompt,
             )
 
             tools = get_available_tools(
@@ -122,6 +137,7 @@ class ConversationalAgent:
                 has_knowledge_base=has_kb,
                 has_db_index=has_db_idx,
                 has_code_db_sync=has_sync,
+                has_learnings=has_learnings,
             )
 
             executor = ToolExecutor(
@@ -138,6 +154,7 @@ class ConversationalAgent:
                 model=model,
                 sql_provider=sql_provider,
                 sql_model=sql_model,
+                user_id=user_id,
             )
 
             messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -263,6 +280,20 @@ class ConversationalAgent:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    async def _build_table_map(self, connection_id: str) -> str:
+        """Build a compact table relevance map from the DB index."""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            svc = DbIndexService()
+            async with async_session_factory() as session:
+                entries = await svc.get_index(session, connection_id)
+            return svc.build_table_map(entries)
+        except Exception:
+            logger.debug("Failed to build table map", exc_info=True)
+            return ""
+
     async def _resolve_connection_id(
         self,
         project_id: str,
@@ -350,6 +381,37 @@ class ConversationalAgent:
         except Exception:
             logger.debug("Code-DB sync check failed", exc_info=True)
             return False
+
+    async def _has_learnings(
+        self,
+        connection_config: ConnectionConfig | None,
+    ) -> bool:
+        """Check whether any agent learnings exist for the active connection."""
+        if not connection_config or not connection_config.connection_id:
+            return False
+        try:
+            from app.models.base import async_session_factory
+            from app.services.agent_learning_service import AgentLearningService
+
+            svc = AgentLearningService()
+            async with async_session_factory() as session:
+                return await svc.has_learnings(session, connection_config.connection_id)
+        except Exception:
+            logger.debug("Learnings check failed", exc_info=True)
+            return False
+
+    async def _load_learnings_prompt(self, connection_id: str) -> str:
+        """Load the compiled learnings prompt for injection into the system prompt."""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.agent_learning_service import AgentLearningService
+
+            svc = AgentLearningService()
+            async with async_session_factory() as session:
+                return await svc.get_or_compile_summary(session, connection_id)
+        except Exception:
+            logger.debug("Failed to load learnings prompt", exc_info=True)
+            return ""
 
     def _has_knowledge_base(self, project_id: str) -> bool:
         """Check whether the project's ChromaDB collection has documents."""

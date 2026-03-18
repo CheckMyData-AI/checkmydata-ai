@@ -36,6 +36,7 @@ export function PendingInvites() {
       setInvites((prev) => prev.filter((i) => i.id !== inviteId));
       const projects = await api.projects.list();
       setProjects(projects);
+      toast("Invite accepted", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to accept invite", "error");
     } finally {
@@ -47,24 +48,24 @@ export function PendingInvites() {
   if (invites.length === 0) return null;
 
   return (
-    <div className="space-y-1 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-      <p className="text-[10px] text-blue-300 uppercase tracking-wider font-medium">
+    <div className="space-y-1 p-2 bg-accent-muted border border-accent/20 rounded-lg">
+      <p className="text-[10px] text-accent uppercase tracking-wider font-medium">
         Pending Invitations ({invites.length})
       </p>
       {invites.map((inv) => (
         <div
           key={inv.id}
-          className="flex items-center justify-between py-1.5 px-2 bg-zinc-900/50 rounded text-xs"
+          className="flex items-center justify-between py-1.5 px-2 bg-surface-1 rounded text-xs"
         >
           <div className="flex-1 min-w-0">
-            <span className="text-zinc-200 truncate block">
+            <span className="text-text-primary truncate block">
               Project invite ({inv.role})
             </span>
           </div>
           <button
             onClick={() => handleAccept(inv.id)}
             disabled={accepting === inv.id}
-            className="ml-2 px-2 py-1 bg-blue-600 text-white text-[10px] rounded hover:bg-blue-500 disabled:opacity-50"
+            className="ml-2 px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
           >
             {accepting === inv.id ? "..." : "Accept"}
           </button>

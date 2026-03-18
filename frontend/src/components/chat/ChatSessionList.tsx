@@ -5,6 +5,9 @@ import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
+import { confirmAction } from "@/components/ui/ConfirmModal";
+import { Icon } from "@/components/ui/Icon";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 export function ChatSessionList() {
   const {
@@ -39,7 +42,11 @@ export function ChatSessionList() {
       const mapped: ChatMessage[] = msgs.map((m) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let meta: any = {};
-        try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
+        try {
+          meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
+        } catch {
+          /* malformed metadata */
+        }
         return {
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
@@ -59,7 +66,12 @@ export function ChatSessionList() {
       });
       setMessages(mapped);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to load session messages", "error");
+      toast(
+        err instanceof Error
+          ? err.message
+          : "Failed to load session messages",
+        "error",
+      );
     } finally {
       setLoadingSession(null);
     }
@@ -67,6 +79,7 @@ export function ChatSessionList() {
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
+    if (!(await confirmAction("Delete this chat session?"))) return;
     try {
       await api.chat.deleteSession(sessionId);
       useAppStore.setState((state) => ({
@@ -76,7 +89,10 @@ export function ChatSessionList() {
           : {}),
       }));
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to delete session", "error");
+      toast(
+        err instanceof Error ? err.message : "Failed to delete session",
+        "error",
+      );
     }
   };
 
@@ -86,40 +102,65 @@ export function ChatSessionList() {
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
+    <div className="space-y-1.5 px-1">
+      <div className="flex justify-end px-1">
         <button
           onClick={handleNewChat}
-          className="text-xs text-blue-400 hover:text-blue-300"
+          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
         >
-          + New Chat
+          <Icon name="plus" size={12} />
+          New Chat
         </button>
       </div>
-      <div className="space-y-1 max-h-48 overflow-y-auto">
+      <div className="space-y-0.5 max-h-48 overflow-y-auto sidebar-scroll">
         {chatSessions.map((s) => (
-          <div key={s.id} className="flex items-center group">
+          <div
+            key={s.id}
+            className={`group rounded-lg transition-colors ${
+              activeSession?.id === s.id
+                ? "bg-surface-2"
+                : "hover:bg-surface-2/50"
+            }`}
+          >
             <button
               onClick={() => handleSelect(s.id)}
               disabled={loadingSession === s.id}
-              className={`flex-1 text-left px-3 py-1.5 rounded-md text-xs transition-colors truncate ${
-                activeSession?.id === s.id
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
-              }`}
+              className="w-full flex items-center gap-2 text-left px-2.5 py-2"
             >
-              {loadingSession === s.id ? (
-                <span className="animate-pulse">Loading...</span>
-              ) : (
-                s.title
-              )}
+              <Icon
+                name="message-square"
+                size={12}
+                className={`shrink-0 ${
+                  activeSession?.id === s.id
+                    ? "text-accent"
+                    : "text-text-muted"
+                }`}
+              />
+              <span
+                className={`text-xs truncate ${
+                  activeSession?.id === s.id
+                    ? "text-text-primary font-medium"
+                    : "text-text-secondary"
+                }`}
+              >
+                {loadingSession === s.id ? (
+                  <span className="animate-pulse text-text-muted">
+                    Loading...
+                  </span>
+                ) : (
+                  s.title
+                )}
+              </span>
             </button>
-            <button
-              onClick={(e) => handleDelete(e, s.id)}
-              className="text-xs text-zinc-600 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Delete session"
-            >
-              ×
-            </button>
+            <div className="hidden group-hover:flex focus-within:flex items-center gap-1 px-2.5 pb-1.5 pt-0.5">
+              <ActionButton
+                icon="trash"
+                title="Delete session"
+                onClick={(e) => handleDelete(e, s.id)}
+                variant="danger"
+                size="sm"
+              />
+            </div>
           </div>
         ))}
       </div>

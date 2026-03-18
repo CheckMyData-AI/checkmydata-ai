@@ -291,11 +291,15 @@ class CodeDbSyncService:
                 parts.append(f"| {e.table_name} | {fmt} | {tips} |")
             parts.append("")
 
-        db_only = [e for e in entries if e.sync_status == "db_only"]
-        if db_only:
-            parts.append("### DB-only Tables (not in code)\n")
-            names = ", ".join(f"`{e.table_name}`" for e in db_only[:20])
-            parts.append(f"{names}\n")
+        code_only_count = sum(1 for e in entries if e.sync_status == "code_only")
+        db_only_count = sum(1 for e in entries if e.sync_status == "db_only")
+        if code_only_count or db_only_count:
+            omitted: list[str] = []
+            if code_only_count:
+                omitted.append(f"{code_only_count} code-only")
+            if db_only_count:
+                omitted.append(f"{db_only_count} DB-only")
+            parts.append(f"*({', '.join(omitted)} tables omitted)*\n")
 
         if summary and summary.query_guidelines:
             parts.append("### Query Guidelines\n")

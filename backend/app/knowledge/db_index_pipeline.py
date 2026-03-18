@@ -90,6 +90,56 @@ def _sample_to_json(result: QueryResult) -> str:
     return json.dumps(rows, default=str)
 
 
+CANDIDATE_ENUM_PATTERNS = {
+    "status", "state", "type", "kind", "category", "role", "level",
+    "priority", "severity", "gender", "country", "currency", "lang",
+    "language", "plan", "tier", "phase", "mode", "source", "channel",
+    "platform", "provider", "method", "payment_method", "billing_type",
+}
+
+MAX_DISTINCT_VALUES = 30
+MAX_DISTINCT_CARDINALITY = 50
+
+
+def _is_enum_candidate(col_name: str, data_type: str, row_count: int | None) -> bool:
+    """Heuristic: column likely holds a small set of categorical values."""
+    name_lower = col_name.lower()
+    type_lower = data_type.lower()
+
+    if any(p in name_lower for p in CANDIDATE_ENUM_PATTERNS):
+        return True
+    if name_lower.endswith(("_flag", "_bool", "_yn")):
+        return True
+    if "bool" in type_lower:
+        return True
+    if "enum" in type_lower:
+        return True
+
+    return False
+
+
+def _build_distinct_query(
+    table: TableInfo, col_name: str, db_type: str,
+) -> str:
+    tbl_q = table.name
+    col_q = col_name
+    if db_type == "mysql":
+        tbl_q = f"`{table.name}`"
+        col_q = f"`{col_name}`"
+    elif db_type in ("postgres", "postgresql"):
+        tbl_q = f'"{table.name}"'
+        col_q = f'"{col_name}"'
+        if table.schema and table.schema != "public":
+            tbl_q = f'"{table.schema}"."{table.name}"'
+
+    return (
+        f"SELECT DISTINCT {col_q} FROM {tbl_q} "
+        f"WHERE {col_q} IS NOT NULL "
+        f"ORDER BY {col_q} "
+        f"LIMIT {MAX_DISTINCT_CARDINALITY}"
+    )
+
+
 def _detect_latest_record(result: QueryResult, ordering_col: str | None) -> str | None:
     """Try to extract the timestamp of the newest row."""
     if not result.rows or not ordering_col:
@@ -155,8 +205,9 @@ class DbIndexPipeline:
                 await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
                 return {"status": "completed", "tables": 0}
 
-            # Step 2: Fetch sample data per table
+            # Step 2: Fetch sample data and distinct values per table
             samples: dict[str, tuple[QueryResult, str | None]] = {}
+            distinct_values: dict[str, dict[str, list[str]]] = {}
             total_tables = len(schema.tables)
 
             async with self._tracker.step(
@@ -178,6 +229,27 @@ class DbIndexPipeline:
                             QueryResult(columns=[], rows=[], row_count=0),
                             None,
                         )
+
+                    tbl_distinct: dict[str, list[str]] = {}
+                    for col in table.columns:
+                        if not _is_enum_candidate(col.name, col.data_type, table.row_count):
+                            continue
+                        try:
+                            dq = _build_distinct_query(
+                                table, col.name, connection_config.db_type
+                            )
+                            dr = await connector.execute_query(dq)
+                            if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
+                                vals = [str(r[0]) for r in dr.rows if r[0] is not None]
+                                if vals:
+                                    tbl_distinct[col.name] = vals[:MAX_DISTINCT_VALUES]
+                        except Exception:
+                            logger.debug(
+                                "Distinct query failed for %s.%s",
+                                table.name, col.name, exc_info=True,
+                            )
+                    if tbl_distinct:
+                        distinct_values[table.name] = tbl_distinct
 
             # Step 3: Load project knowledge and rules
             code_context = ""
@@ -271,6 +343,7 @@ class DbIndexPipeline:
                             (t for t in schema.tables if t.name == analysis.table_name),
                             None,
                         )
+                        tbl_distinct = distinct_values.get(analysis.table_name, {})
 
                         table_data = {
                             "table_name": analysis.table_name,
@@ -278,6 +351,7 @@ class DbIndexPipeline:
                             "column_count": len(table_info.columns) if table_info else 0,
                             "row_count": table_info.row_count if table_info else None,
                             "sample_data_json": _sample_to_json(sample_result),
+                            "column_distinct_values_json": json.dumps(tbl_distinct, default=str),
                             "ordering_column": ordering_col,
                             "latest_record_at": _detect_latest_record(
                                 sample_result, ordering_col

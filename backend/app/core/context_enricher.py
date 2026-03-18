@@ -25,10 +25,18 @@ class ContextEnricher:
         schema: SchemaInfo,
         vector_store: VectorStore | None = None,
         db_index_context: str = "",
+        sync_context: str = "",
+        rules_context: str = "",
+        distinct_values: dict[str, dict[str, list[str]]] | None = None,
+        learnings_context: str = "",
     ):
         self._schema = schema
         self._vector_store = vector_store
         self._db_index_context = db_index_context
+        self._sync_context = sync_context
+        self._rules_context = rules_context
+        self._distinct_values = distinct_values or {}
+        self._learnings_context = learnings_context
         self._retry_strategy = RetryStrategy()
 
     async def build_repair_context(
@@ -60,8 +68,23 @@ class ContextEnricher:
             sections.append(f"## Schema Excerpt\n{error.schema_hint}")
 
         schema_detail = self._get_error_schema_detail(error)
+        if not schema_detail:
+            schema_detail = self._get_query_tables_schema(failed_query)
         if schema_detail:
             sections.append(f"## Relevant Schema\n{schema_detail}")
+
+        if self._sync_context:
+            sections.append(f"## Data Format Warnings\n{self._sync_context[:1500]}")
+
+        dv_section = self._get_distinct_values_for_query(failed_query)
+        if dv_section:
+            sections.append(f"## Column Distinct Values\n{dv_section}")
+
+        if self._rules_context:
+            sections.append(f"## Business Rules\n{self._rules_context[:1000]}")
+
+        if self._learnings_context:
+            sections.append(f"## Agent Learnings (past experience)\n{self._learnings_context}")
 
         if self._db_index_context:
             sections.append(f"## Database Index Hints\n{self._db_index_context}")
@@ -81,6 +104,60 @@ class ContextEnricher:
             sections.append("\n".join(history_lines))
 
         return "\n\n".join(sections)
+
+    def _get_query_tables_schema(self, query: str) -> str | None:
+        """Extract full schema for all tables referenced in the SQL query."""
+        import re
+
+        table_names_in_schema = {t.name.lower(): t.name for t in self._schema.tables}
+
+        mentioned: list[str] = []
+        for pattern in [
+            r'\bFROM\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+            r'\bJOIN\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+            r'\bINTO\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+            r'\bUPDATE\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+        ]:
+            for match in re.finditer(pattern, query, re.IGNORECASE):
+                name = match.group(1).lower()
+                if name in table_names_in_schema and name not in mentioned:
+                    mentioned.append(name)
+
+        if not mentioned:
+            return None
+
+        details: list[str] = []
+        for tbl_lower in mentioned[:5]:
+            details.append(get_table_detail(table_names_in_schema[tbl_lower], self._schema))
+
+        return "\n\n".join(details) if details else None
+
+    def _get_distinct_values_for_query(self, query: str) -> str | None:
+        """Format distinct values for columns likely relevant to the failed query."""
+        if not self._distinct_values:
+            return None
+
+        import re
+
+        query_lower = query.lower()
+        table_refs = set()
+        for pattern in [
+            r'\bFROM\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+            r'\bJOIN\s+["`]?(?:\w+["`]?\s*\.\s*)?["`]?(\w+)["`]?',
+        ]:
+            for match in re.finditer(pattern, query, re.IGNORECASE):
+                table_refs.add(match.group(1).lower())
+
+        lines: list[str] = []
+        for tbl_name, col_vals in self._distinct_values.items():
+            if tbl_name.lower() not in table_refs:
+                continue
+            for col, vals in col_vals.items():
+                if re.search(r'\b' + re.escape(col.lower()) + r'\b', query_lower):
+                    vals_str = " | ".join(str(v) for v in vals[:20])
+                    lines.append(f"- {tbl_name}.{col}: [{vals_str}]")
+
+        return "\n".join(lines) if lines else None
 
     def _get_error_schema_detail(self, error: QueryError) -> str | None:
         et = error.error_type
@@ -103,6 +180,8 @@ class ContextEnricher:
             return "\n\n".join(table_hints) if table_hints else None
 
         return None
+
+    RAG_RELEVANCE_THRESHOLD = 0.7
 
     async def _lookup_docs(
         self,
@@ -130,6 +209,9 @@ class ContextEnricher:
                     n_results=2,
                 )
                 for r in results:
+                    distance = r.get("distance")
+                    if distance is not None and distance > self.RAG_RELEVANCE_THRESHOLD:
+                        continue
                     doc = r.get("document", "")
                     if doc and doc not in all_docs:
                         all_docs.append(doc)

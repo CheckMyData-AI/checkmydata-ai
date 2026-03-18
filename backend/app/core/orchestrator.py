@@ -235,7 +235,17 @@ class Orchestrator:
             connector = await self.get_or_create_connector(connection_config)
             val_config = self._build_validation_config()
             db_idx_ctx = await self._get_db_index_context(project_id, connection_config)
-            enricher = ContextEnricher(schema, self._vector_store, db_index_context=db_idx_ctx)
+            sync_ctx = await self._get_sync_warnings(connection_config)
+            rules_ctx = await self._get_repair_rules_context(project_id)
+            dv = await self._get_distinct_values(connection_config)
+            enricher = ContextEnricher(
+                schema,
+                self._vector_store,
+                db_index_context=db_idx_ctx,
+                sync_context=sync_ctx,
+                rules_context=rules_ctx,
+                distinct_values=dv,
+            )
             repairer = QueryRepairer(self._llm_router)
 
             validation_loop = ValidationLoop(
@@ -488,6 +498,83 @@ class Orchestrator:
             return db_index_svc.index_to_prompt_context(entries, summary)
         except Exception:
             logger.debug("DB index context load failed", exc_info=True)
+            return ""
+
+    async def _get_sync_warnings(
+        self,
+        connection_config: ConnectionConfig,
+    ) -> str:
+        """Load compact sync conversion warnings for query repair context."""
+        try:
+            connection_id = connection_config.connection_id
+            if not connection_id:
+                return ""
+
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                entries = await svc.get_sync(session, connection_id)
+            if not entries:
+                return ""
+            warnings = []
+            for e in entries:
+                if e.conversion_warnings:
+                    warnings.append(f"- {e.table_name}: {e.conversion_warnings}")
+            return "\n".join(warnings)
+        except Exception:
+            logger.debug("Sync warnings load failed", exc_info=True)
+            return ""
+
+    async def _get_distinct_values(
+        self,
+        connection_config: ConnectionConfig,
+    ) -> dict[str, dict[str, list[str]]]:
+        """Load column distinct values from DB index for repair context."""
+        try:
+            import json as _json
+
+            connection_id = connection_config.connection_id
+            if not connection_id:
+                return {}
+
+            from app.models.base import async_session_factory
+            from app.services.db_index_service import DbIndexService
+
+            svc = DbIndexService()
+            async with async_session_factory() as session:
+                entries = await svc.get_index(session, connection_id)
+
+            result: dict[str, dict[str, list[str]]] = {}
+            for e in entries:
+                dv_json = getattr(e, "column_distinct_values_json", None) or "{}"
+                if dv_json and dv_json != "{}":
+                    try:
+                        parsed = _json.loads(dv_json)
+                        if parsed:
+                            result[e.table_name] = parsed
+                    except (_json.JSONDecodeError, TypeError):
+                        pass
+            return result
+        except Exception:
+            logger.debug("Distinct values load failed", exc_info=True)
+            return {}
+
+    async def _get_repair_rules_context(
+        self,
+        project_id: str,
+    ) -> str:
+        """Load rules text for the repair context (no question filtering)."""
+        try:
+            return self._custom_rules.rules_to_context(
+                self._custom_rules.load_rules(
+                    project_rules_dir=f"./rules/{project_id}",
+                )
+                + await self._custom_rules.load_db_rules(project_id=project_id)
+            )
+        except Exception:
+            logger.debug("Rules context load failed for repair", exc_info=True)
             return ""
 
     async def _get_rules_context(

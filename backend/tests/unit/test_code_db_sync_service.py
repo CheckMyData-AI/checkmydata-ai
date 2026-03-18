@@ -1,6 +1,5 @@
 """Unit tests for CodeDbSyncService."""
 
-import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -28,7 +27,9 @@ def _make_entry(**overrides) -> CodeDbSync:
         "write_count": 2,
         "data_format_notes": "Amount stored in cents (integer), divide by 100 for dollars",
         "column_sync_notes_json": '{"amount": "cents, divide by 100"}',
-        "business_logic_notes": "Orders are created via API, status transitions: pending -> paid -> shipped",
+        "business_logic_notes": (
+            "Orders are created via API, status transitions: pending -> paid -> shipped"
+        ),
         "conversion_warnings": "amount is in cents not dollars",
         "query_recommendations": "Always filter by status != 'cancelled'",
         "sync_status": "matched",

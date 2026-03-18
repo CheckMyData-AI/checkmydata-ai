@@ -4,8 +4,10 @@ import json
 
 from app.connectors.base import ColumnInfo, QueryResult, TableInfo
 from app.knowledge.db_index_pipeline import (
+    _build_distinct_query,
     _detect_latest_record,
     _find_ordering_column,
+    _is_enum_candidate,
     _sample_query,
     _sample_to_json,
 )
@@ -199,3 +201,92 @@ class TestDetectLatestRecord:
             row_count=1,
         )
         assert _detect_latest_record(result, "created_at") is None
+
+
+class TestIsEnumCandidate:
+    def test_status_column(self):
+        assert _is_enum_candidate("status", "varchar", 1000) is True
+
+    def test_type_column(self):
+        assert _is_enum_candidate("user_type", "varchar", 500) is True
+
+    def test_bool_type(self):
+        assert _is_enum_candidate("is_active", "boolean", 100) is True
+
+    def test_enum_type(self):
+        assert _is_enum_candidate("role", "enum('admin','user')", 200) is True
+
+    def test_flag_suffix(self):
+        assert _is_enum_candidate("verified_flag", "int", 100) is True
+
+    def test_regular_column(self):
+        assert _is_enum_candidate("email", "varchar", 1000) is False
+
+    def test_id_column(self):
+        assert _is_enum_candidate("user_id", "int", 1000) is False
+
+    def test_category_column(self):
+        assert _is_enum_candidate("category", "varchar", 100) is True
+
+    def test_payment_method(self):
+        assert _is_enum_candidate("payment_method", "varchar", 100) is True
+
+
+class TestIsEnumCandidateExtended:
+    def test_country_column(self):
+        assert _is_enum_candidate("country", "varchar", 1000) is True
+
+    def test_name_column_excluded(self):
+        assert _is_enum_candidate("name", "varchar", 1000) is False
+
+    def test_currency_column(self):
+        assert _is_enum_candidate("currency", "varchar", 500) is True
+
+    def test_description_column_excluded(self):
+        assert _is_enum_candidate("description", "text", 500) is False
+
+
+class TestBuildDistinctQuerySqlite:
+    def test_sqlite_no_quoting(self):
+        table = TableInfo(
+            name="events",
+            columns=[ColumnInfo(name="type", data_type="text")],
+        )
+        q = _build_distinct_query(table, "type", "sqlite")
+        assert "events" in q
+        assert "type" in q
+        assert "DISTINCT" in q
+        assert '`' not in q
+        assert '"' not in q
+
+
+class TestBuildDistinctQuery:
+    def test_postgres(self):
+        table = TableInfo(
+            name="orders",
+            schema="public",
+            columns=[ColumnInfo(name="status", data_type="varchar")],
+        )
+        q = _build_distinct_query(table, "status", "postgres")
+        assert '"orders"' in q
+        assert '"status"' in q
+        assert "DISTINCT" in q
+        assert "IS NOT NULL" in q
+
+    def test_mysql(self):
+        table = TableInfo(
+            name="orders",
+            columns=[ColumnInfo(name="status", data_type="varchar")],
+        )
+        q = _build_distinct_query(table, "status", "mysql")
+        assert "`orders`" in q
+        assert "`status`" in q
+
+    def test_non_public_schema_postgres(self):
+        table = TableInfo(
+            name="events",
+            schema="analytics",
+            columns=[ColumnInfo(name="type", data_type="varchar")],
+        )
+        q = _build_distinct_query(table, "type", "postgres")
+        assert '"analytics"."events"' in q

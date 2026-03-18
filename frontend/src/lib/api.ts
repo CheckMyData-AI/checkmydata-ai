@@ -142,6 +142,7 @@ export interface ChatResponse {
   raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
   rag_sources?: Array<{ source_path: string; distance?: number; doc_type?: string }> | null;
   token_usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+  rules_changed?: boolean;
 }
 
 export interface RepoCheckResult {
@@ -240,6 +241,27 @@ export interface SyncResponse {
     query_guidelines: string;
     synced_at: string | null;
   } | null;
+}
+
+export interface LearningsStatus {
+  has_learnings: boolean;
+  total_active: number;
+  last_compiled_at: string | null;
+}
+
+export interface AgentLearningDTO {
+  id: string;
+  category: string;
+  subject: string;
+  lesson: string;
+  confidence: number;
+  times_confirmed: number;
+  times_applied: number;
+  is_active: boolean;
+  source_query: string | null;
+  source_error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface ProjectReadiness {
@@ -349,6 +371,24 @@ export const api = {
       request<SyncResponse>(`/connections/${id}/sync`),
     deleteSync: (id: string) =>
       request<{ ok: boolean }>(`/connections/${id}/sync`, { method: "DELETE" }),
+
+    learningsStatus: (id: string) =>
+      request<LearningsStatus>(`/connections/${id}/learnings/status`),
+    listLearnings: (id: string) =>
+      request<AgentLearningDTO[]>(`/connections/${id}/learnings`),
+    learningsSummary: (id: string) =>
+      request<{ compiled_prompt: string }>(`/connections/${id}/learnings/summary`),
+    updateLearning: (connId: string, learningId: string, data: { lesson?: string; is_active?: boolean; confidence?: number }) =>
+      request<{ ok: boolean; id: string }>(`/connections/${connId}/learnings/${learningId}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    deleteLearning: (connId: string, learningId: string) =>
+      request<{ ok: boolean }>(`/connections/${connId}/learnings/${learningId}`, { method: "DELETE" }),
+    clearLearnings: (connId: string) =>
+      request<{ ok: boolean; deleted: number }>(`/connections/${connId}/learnings`, { method: "DELETE" }),
+    recompileLearnings: (connId: string) =>
+      request<{ ok: boolean; compiled_prompt: string }>(`/connections/${connId}/learnings/recompile`, { method: "POST" }),
   },
 
   chat: {
