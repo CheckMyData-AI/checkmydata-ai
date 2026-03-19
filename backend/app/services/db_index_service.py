@@ -169,7 +169,10 @@ class DbIndexService:
         summary = await self.get_summary(session, connection_id)
         if not summary:
             return None
-        return datetime.now(UTC) - summary.indexed_at.replace(tzinfo=UTC)
+        indexed_at = summary.indexed_at
+        if indexed_at.tzinfo is None:
+            indexed_at = indexed_at.replace(tzinfo=UTC)
+        return datetime.now(UTC) - indexed_at
 
     async def is_stale(
         self,

@@ -37,7 +37,7 @@ class ProjectMember(Base):
         default="viewer",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         server_default=func.now(),
     )
 

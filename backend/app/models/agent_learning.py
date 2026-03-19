@@ -52,9 +52,9 @@ class AgentLearning(Base):
     times_applied: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -70,4 +70,4 @@ class AgentLearningSummary(Base):
     total_lessons: Mapped[int] = mapped_column(Integer, default=0)
     lessons_by_category_json: Mapped[str] = mapped_column(Text, default="{}")
     compiled_prompt: Mapped[str] = mapped_column(Text, default="")
-    last_compiled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_compiled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

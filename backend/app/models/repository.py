@@ -35,9 +35,9 @@ class ProjectRepository(Base):
     indexing_status: Mapped[str] = mapped_column(String(20), default="idle")
     last_indexed_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     project: Mapped[Project] = relationship(back_populates="repositories")  # noqa: F821

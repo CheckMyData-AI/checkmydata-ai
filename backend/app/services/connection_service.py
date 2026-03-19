@@ -207,7 +207,8 @@ class ConnectionService:
             "port": conn.ssh_port,
             "username": (conn.ssh_user or "").strip(),
             "known_hosts": None,
-            "login_timeout": 15,
+            "login_timeout": 30,
+            "connect_timeout": 30,
         }
         if ssh_key_content:
             key = asyncssh.import_private_key(ssh_key_content.strip(), ssh_key_passphrase)

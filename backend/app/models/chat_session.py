@@ -34,7 +34,7 @@ class ChatSession(Base):
         index=True,
     )
     title: Mapped[str] = mapped_column(String(255), default="New Chat")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     project: Mapped[Project] = relationship(back_populates="chat_sessions")  # noqa: F821
     user: Mapped[User | None] = relationship()  # noqa: F821
@@ -59,6 +59,6 @@ class ChatMessage(Base):
     user_rating: Mapped[int | None] = mapped_column(
         nullable=True
     )  # 1 (thumbs up) / -1 (thumbs down)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")

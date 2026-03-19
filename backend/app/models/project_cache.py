@@ -25,11 +25,11 @@ class ProjectCache(Base):
     knowledge_json: Mapped[str] = mapped_column(Text, default="{}")
     profile_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
     )

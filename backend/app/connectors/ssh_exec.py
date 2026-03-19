@@ -102,6 +102,7 @@ class SSHExecConnector(BaseConnector):
             "username": (config.ssh_user or "").strip(),
             "known_hosts": None,
             "login_timeout": SSH_CONNECT_TIMEOUT,
+            "connect_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": 15,
         }
         if config.ssh_key_content:
@@ -111,7 +112,10 @@ class SSHExecConnector(BaseConnector):
             )
             connect_kwargs["client_keys"] = [key]
 
-        self._conn = await asyncssh.connect(**connect_kwargs)
+        self._conn = await asyncio.wait_for(
+            asyncssh.connect(**connect_kwargs),
+            timeout=SSH_CONNECT_TIMEOUT + 10,
+        )
         logger.info(
             "SSH exec connection established to %s:%d as %s",
             config.ssh_host,

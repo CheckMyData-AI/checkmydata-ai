@@ -7,8 +7,10 @@ from app.connectors.base import ConnectionConfig
 
 logger = logging.getLogger(__name__)
 
-SSH_CONNECT_TIMEOUT = 30
+SSH_CONNECT_TIMEOUT = 45
 SSH_KEEPALIVE_INTERVAL = 15
+SSH_MAX_RETRIES = 2
+SSH_RETRY_DELAY = 3
 
 
 class SSHTunnel:
@@ -38,6 +40,7 @@ class SSHTunnel:
             "username": (config.ssh_user or "").strip(),
             "known_hosts": None,
             "login_timeout": SSH_CONNECT_TIMEOUT,
+            "connect_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": SSH_KEEPALIVE_INTERVAL,
         }
         if config.ssh_key_content:
@@ -48,7 +51,28 @@ class SSHTunnel:
 
             connect_kwargs["client_keys"] = [key]
 
-        self._conn = await asyncssh.connect(**connect_kwargs)
+        last_exc: Exception | None = None
+        for attempt in range(1, SSH_MAX_RETRIES + 1):
+            try:
+                self._conn = await asyncio.wait_for(
+                    asyncssh.connect(**connect_kwargs),
+                    timeout=SSH_CONNECT_TIMEOUT + 10,
+                )
+                break
+            except (asyncssh.Error, OSError, TimeoutError) as exc:
+                last_exc = exc
+                logger.warning(
+                    "SSH connect attempt %d/%d failed: %s",
+                    attempt,
+                    SSH_MAX_RETRIES,
+                    exc,
+                )
+                if attempt < SSH_MAX_RETRIES:
+                    await asyncio.sleep(SSH_RETRY_DELAY)
+        else:
+            raise ConnectionError(
+                f"SSH tunnel connection failed after {SSH_MAX_RETRIES} attempts: {last_exc}"
+            ) from last_exc
 
         self._listener = await self._conn.forward_local_port(
             self._local_host,

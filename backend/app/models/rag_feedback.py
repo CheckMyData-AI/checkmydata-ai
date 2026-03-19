@@ -30,6 +30,6 @@ class RAGFeedback(Base):
     question_snippet: Mapped[str] = mapped_column(Text, default="")
     commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         server_default=func.now(),
     )
