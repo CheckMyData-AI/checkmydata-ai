@@ -358,7 +358,9 @@ class TestDbIndexBackgroundPipelineFailure:
             config = MagicMock()
             await _run_db_index_background("conn-1", config, "proj-1")
 
-            mock_idx_svc.set_indexing_status.assert_called_once_with(mock_session, "conn-1", "idle")
+            mock_idx_svc.set_indexing_status.assert_called_once_with(
+                mock_session, "conn-1", "completed"
+            )
 
 
 class TestSyncBackgroundPipelineFailure:

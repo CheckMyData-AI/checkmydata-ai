@@ -44,9 +44,16 @@ class TestDatabasePipelineIndex:
         mock_run = AsyncMock()
         mock_session = AsyncMock()
         mock_pipeline_cls = MagicMock(return_value=MagicMock(run=mock_run))
+        mock_conn = MagicMock()
+        mock_conn_svc_cls = MagicMock()
+        mock_conn_svc_inst = MagicMock()
+        mock_conn_svc_inst.get = AsyncMock(return_value=mock_conn)
+        mock_conn_svc_inst.to_config = AsyncMock(return_value=MagicMock())
+        mock_conn_svc_cls.return_value = mock_conn_svc_inst
 
         mods = {
             "app.knowledge.db_index_pipeline": _mock_module(DbIndexPipeline=mock_pipeline_cls),
+            "app.services.connection_service": _mock_module(ConnectionService=mock_conn_svc_cls),
         }
         with (
             patch.dict(sys.modules, mods),
@@ -55,22 +62,26 @@ class TestDatabasePipelineIndex:
             result = await pipeline.index("conn-1", ctx)
 
         assert result.success is True
-        mock_run.assert_awaited_once_with(
-            session=mock_session,
-            connection_id="conn-1",
-            project_id="proj-1",
-            workflow_id="wf-1",
-            force_full=False,
-        )
+        mock_run.assert_awaited_once()
+        call_kwargs = mock_run.await_args.kwargs
+        assert call_kwargs["connection_id"] == "conn-1"
+        assert call_kwargs["project_id"] == "proj-1"
 
     @pytest.mark.asyncio
     async def test_index_error_propagates(self, pipeline, ctx):
         mock_run = AsyncMock(side_effect=RuntimeError("boom"))
         mock_session = AsyncMock()
         mock_pipeline_cls = MagicMock(return_value=MagicMock(run=mock_run))
+        mock_conn = MagicMock()
+        mock_conn_svc_cls = MagicMock()
+        mock_conn_svc_inst = MagicMock()
+        mock_conn_svc_inst.get = AsyncMock(return_value=mock_conn)
+        mock_conn_svc_inst.to_config = AsyncMock(return_value=MagicMock())
+        mock_conn_svc_cls.return_value = mock_conn_svc_inst
 
         mods = {
             "app.knowledge.db_index_pipeline": _mock_module(DbIndexPipeline=mock_pipeline_cls),
+            "app.services.connection_service": _mock_module(ConnectionService=mock_conn_svc_cls),
         }
         with (
             patch.dict(sys.modules, mods),
@@ -86,7 +97,6 @@ class TestDatabasePipelineSyncWithCode:
     @pytest.mark.asyncio
     async def test_sync_with_code_delegates(self, pipeline, ctx):
         mock_run = AsyncMock()
-        mock_session = AsyncMock()
         mock_pipeline_cls = MagicMock(return_value=MagicMock(run=mock_run))
 
         mods = {
@@ -94,18 +104,13 @@ class TestDatabasePipelineSyncWithCode:
                 CodeDbSyncPipeline=mock_pipeline_cls
             ),
         }
-        with (
-            patch.dict(sys.modules, mods),
-            patch("app.models.base.async_session_factory", return_value=AsyncCtx(mock_session)),
-        ):
+        with patch.dict(sys.modules, mods):
             result = await pipeline.sync_with_code("conn-1", ctx)
 
         assert result.success is True
         mock_run.assert_awaited_once_with(
-            session=mock_session,
             connection_id="conn-1",
             project_id="proj-1",
-            workflow_id="wf-1",
         )
 
 

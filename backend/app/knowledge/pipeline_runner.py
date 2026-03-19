@@ -521,9 +521,7 @@ class IndexingPipelineRunner:
                         skipped += 1
                         pending_paths.append(edoc.file_path)
                         if len(pending_paths) >= batch_flush_size:
-                            await self._cp_svc.mark_docs_batch_processed(
-                                db, cp_id, pending_paths
-                            )
+                            await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
                             pending_paths = []
                         continue
 
@@ -633,9 +631,7 @@ class IndexingPipelineRunner:
         git_path = file_path.split("#")[0]
         try:
             repo = await asyncio.to_thread(Repo, str(repo_dir))
-            blob = await asyncio.to_thread(
-                lambda: repo.git.show(f"{sha}:{git_path}")
-            )
+            blob = await asyncio.to_thread(lambda: repo.git.show(f"{sha}:{git_path}"))
             return blob if isinstance(blob, str) else None
         except Exception:
             return None

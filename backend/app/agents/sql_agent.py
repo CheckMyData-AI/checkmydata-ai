@@ -64,9 +64,7 @@ def _extract_warning_tag(warnings_text: str) -> str:
     return "!warn"
 
 
-def _build_enriched_table_map(
-    entries: list, sync_warnings_map: dict[str, str]
-) -> str:
+def _build_enriched_table_map(entries: list, sync_warnings_map: dict[str, str]) -> str:
     """One-liner-per-table map, annotated with sync warning tags."""
     items: list[str] = []
     for e in entries:
@@ -749,9 +747,7 @@ class SQLAgent(BaseAgent):
         except Exception:
             return False
 
-    async def _build_table_map(
-        self, connection_id: str, has_sync: bool = False
-    ) -> str:
+    async def _build_table_map(self, connection_id: str, has_sync: bool = False) -> str:
         try:
             from app.models.base import async_session_factory
             from app.services.db_index_service import DbIndexService
@@ -791,9 +787,7 @@ class SQLAgent(BaseAgent):
         except Exception:
             return ""
 
-    async def _load_sync_for_prompt(
-        self, connection_id: str
-    ) -> tuple[str, str]:
+    async def _load_sync_for_prompt(self, connection_id: str) -> tuple[str, str]:
         """Return (data_conventions, critical_warnings) for the system prompt."""
         try:
             from app.models.base import async_session_factory
@@ -849,9 +843,7 @@ class SQLAgent(BaseAgent):
         except Exception:
             return ""
 
-    async def _load_sync_for_repair(
-        self, cfg: ConnectionConfig
-    ) -> tuple[str, str]:
+    async def _load_sync_for_repair(self, cfg: ConnectionConfig) -> tuple[str, str]:
         """Return (warnings_text, query_tips_text) from sync entries."""
         if not cfg.connection_id:
             return "", ""

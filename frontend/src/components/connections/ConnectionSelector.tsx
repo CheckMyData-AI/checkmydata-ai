@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Connection } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
@@ -12,6 +12,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"];
+const POLL_TIMEOUT_MS = 30 * 60 * 1000;
 
 function formatAge(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -165,12 +166,14 @@ export function ConnectionSelector() {
 
   useEffect(() => {
     mountedRef.current = true;
+    const indexPolls = indexPollRef.current;
+    const syncPolls = syncPollRef.current;
     return () => {
       mountedRef.current = false;
-      for (const t of indexPollRef.current.values()) clearInterval(t);
-      indexPollRef.current.clear();
-      for (const t of syncPollRef.current.values()) clearInterval(t);
-      syncPollRef.current.clear();
+      for (const t of indexPolls.values()) clearInterval(t);
+      indexPolls.clear();
+      for (const t of syncPolls.values()) clearInterval(t);
+      syncPolls.clear();
     };
   }, []);
 
@@ -182,6 +185,101 @@ export function ConnectionSelector() {
     setSyncStatus({});
     resetForm();
   }, [activeProject?.id]);
+
+  const startIndexPoll = useCallback((id: string) => {
+    const prevTimer = indexPollRef.current.get(id);
+    if (prevTimer) clearInterval(prevTimer);
+    const pollStart = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        clearInterval(timer);
+        indexPollRef.current.delete(id);
+        setIndexing((prev) => (prev === id ? null : prev));
+        toast("DB indexing timed out — check connection settings", "error");
+        return;
+      }
+      try {
+        const s = await api.connections.indexDbStatus(id);
+        setIndexStatus((prev) => ({
+          ...prev,
+          [id]: {
+            is_indexed: s.is_indexed,
+            active_tables: s.active_tables,
+            total_tables: s.total_tables,
+            is_indexing: s.is_indexing,
+            indexed_at: s.indexed_at ?? undefined,
+          },
+        }));
+        if (!s.is_indexing) {
+          clearInterval(timer);
+          indexPollRef.current.delete(id);
+          setIndexing((prev) => (prev === id ? null : prev));
+          if (s.is_indexed) {
+            toast(
+              `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
+              "success",
+            );
+          } else {
+            toast("DB indexing failed — try again or check connection", "error");
+          }
+        }
+      } catch {
+        clearInterval(timer);
+        indexPollRef.current.delete(id);
+        setIndexing((prev) => (prev === id ? null : prev));
+        toast("Lost connection while checking index status", "error");
+      }
+    }, 3000);
+    indexPollRef.current.set(id, timer);
+  }, []);
+
+  const startSyncPoll = useCallback((id: string) => {
+    const prevTimer = syncPollRef.current.get(id);
+    if (prevTimer) clearInterval(prevTimer);
+    const pollStart = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        clearInterval(timer);
+        syncPollRef.current.delete(id);
+        setSyncing((prev) => (prev === id ? null : prev));
+        toast("Code-DB sync timed out — check connection settings", "error");
+        return;
+      }
+      try {
+        const s = await api.connections.syncStatus(id);
+        setSyncStatus((prev) => ({
+          ...prev,
+          [id]: {
+            is_synced: s.is_synced,
+            is_syncing: s.is_syncing,
+            synced_tables: s.synced_tables,
+            total_tables: s.total_tables,
+            synced_at: s.synced_at ?? undefined,
+            sync_status: s.sync_status,
+          },
+        }));
+        if (!s.is_syncing) {
+          clearInterval(timer);
+          syncPollRef.current.delete(id);
+          setSyncing((prev) => (prev === id ? null : prev));
+          if (s.is_synced) {
+            toast(
+              `Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`,
+              "success",
+            );
+          } else {
+            toast("Code-DB sync failed — ensure DB is indexed first", "error");
+          }
+        }
+      } catch {
+        clearInterval(timer);
+        syncPollRef.current.delete(id);
+        setSyncing((prev) => (prev === id ? null : prev));
+        toast("Lost connection while checking sync status", "error");
+      }
+    }, 3000);
+    syncPollRef.current.set(id, timer);
+  }, []);
 
   useEffect(() => {
     connections.forEach((c) => {
@@ -238,7 +336,7 @@ export function ConnectionSelector() {
         })
         .catch(() => {});
     });
-  }, [connections]);
+  }, [connections, startIndexPoll, startSyncPoll]);
 
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
@@ -460,103 +558,6 @@ export function ConnectionSelector() {
     } finally {
       setRefreshing(null);
     }
-  };
-
-  const POLL_TIMEOUT_MS = 30 * 60 * 1000;
-
-  const startIndexPoll = (id: string) => {
-    const prevTimer = indexPollRef.current.get(id);
-    if (prevTimer) clearInterval(prevTimer);
-    const pollStart = Date.now();
-    const timer = setInterval(async () => {
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        clearInterval(timer);
-        indexPollRef.current.delete(id);
-        setIndexing((prev) => (prev === id ? null : prev));
-        toast("DB indexing timed out — check connection settings", "error");
-        return;
-      }
-      try {
-        const s = await api.connections.indexDbStatus(id);
-        setIndexStatus((prev) => ({
-          ...prev,
-          [id]: {
-            is_indexed: s.is_indexed,
-            active_tables: s.active_tables,
-            total_tables: s.total_tables,
-            is_indexing: s.is_indexing,
-            indexed_at: s.indexed_at ?? undefined,
-          },
-        }));
-        if (!s.is_indexing) {
-          clearInterval(timer);
-          indexPollRef.current.delete(id);
-          setIndexing((prev) => (prev === id ? null : prev));
-          if (s.is_indexed) {
-            toast(
-              `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
-              "success",
-            );
-          } else {
-            toast("DB indexing failed — try again or check connection", "error");
-          }
-        }
-      } catch {
-        clearInterval(timer);
-        indexPollRef.current.delete(id);
-        setIndexing((prev) => (prev === id ? null : prev));
-        toast("Lost connection while checking index status", "error");
-      }
-    }, 3000);
-    indexPollRef.current.set(id, timer);
-  };
-
-  const startSyncPoll = (id: string) => {
-    const prevTimer = syncPollRef.current.get(id);
-    if (prevTimer) clearInterval(prevTimer);
-    const pollStart = Date.now();
-    const timer = setInterval(async () => {
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        clearInterval(timer);
-        syncPollRef.current.delete(id);
-        setSyncing((prev) => (prev === id ? null : prev));
-        toast("Code-DB sync timed out — check connection settings", "error");
-        return;
-      }
-      try {
-        const s = await api.connections.syncStatus(id);
-        setSyncStatus((prev) => ({
-          ...prev,
-          [id]: {
-            is_synced: s.is_synced,
-            is_syncing: s.is_syncing,
-            synced_tables: s.synced_tables,
-            total_tables: s.total_tables,
-            synced_at: s.synced_at ?? undefined,
-            sync_status: s.sync_status,
-          },
-        }));
-        if (!s.is_syncing) {
-          clearInterval(timer);
-          syncPollRef.current.delete(id);
-          setSyncing((prev) => (prev === id ? null : prev));
-          if (s.is_synced) {
-            toast(
-              `Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`,
-              "success",
-            );
-          } else {
-            toast("Code-DB sync failed — ensure DB is indexed first", "error");
-          }
-        }
-      } catch {
-        clearInterval(timer);
-        syncPollRef.current.delete(id);
-        setSyncing((prev) => (prev === id ? null : prev));
-        toast("Lost connection while checking sync status", "error");
-      }
-    }, 3000);
-    syncPollRef.current.set(id, timer);
   };
 
   const handleIndexDb = async (id: string) => {

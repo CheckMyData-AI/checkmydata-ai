@@ -207,9 +207,7 @@ class TestEarlyExitNoChanges:
             with (
                 patch(
                     "app.knowledge.pipeline_runner.run_pass1_profile",
-                    return_value=MagicMock(
-                        summary="php", orms=[], marker_files=set()
-                    ),
+                    return_value=MagicMock(summary="php", orms=[], marker_files=set()),
                 ),
                 patch(
                     "app.knowledge.pipeline_runner.run_pass2_3_knowledge",

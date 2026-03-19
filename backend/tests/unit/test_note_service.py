@@ -137,12 +137,18 @@ class TestNoteListByProject:
         proj = await _make_project(db)
         user = await _make_user(db)
         n1 = await svc.create(
-            db, project_id=proj.id, user_id=user.id,
-            title="First", sql_query="SELECT 1",
+            db,
+            project_id=proj.id,
+            user_id=user.id,
+            title="First",
+            sql_query="SELECT 1",
         )
         await svc.create(
-            db, project_id=proj.id, user_id=user.id,
-            title="Second", sql_query="SELECT 2",
+            db,
+            project_id=proj.id,
+            user_id=user.id,
+            title="Second",
+            sql_query="SELECT 2",
         )
         await svc.update(db, n1.id, title="First Updated")
 

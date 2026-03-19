@@ -634,8 +634,10 @@ class TestSQLAgent:
             patch.object(agent, "_build_validation_config", return_value=MagicMock()),
             patch.object(agent, "_load_db_index_hints", new_callable=AsyncMock, return_value=""),
             patch.object(
-                agent, "_load_sync_for_repair",
-                new_callable=AsyncMock, return_value=("", ""),
+                agent,
+                "_load_sync_for_repair",
+                new_callable=AsyncMock,
+                return_value=("", ""),
             ),
             patch.object(agent, "_load_rules_for_repair", new_callable=AsyncMock, return_value=""),
             patch.object(agent, "_load_distinct_values", new_callable=AsyncMock, return_value={}),

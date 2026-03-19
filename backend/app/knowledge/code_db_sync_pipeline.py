@@ -333,9 +333,7 @@ class CodeDbSyncPipeline:
 
     async def _load_rules_context(self, project_id: str) -> str:
         try:
-            file_rules = self._rules_engine.load_rules(
-                project_rules_dir=f"./rules/{project_id}"
-            )
+            file_rules = self._rules_engine.load_rules(project_rules_dir=f"./rules/{project_id}")
             db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
             return self._rules_engine.rules_to_context(file_rules + db_rules)
         except Exception:
@@ -519,9 +517,7 @@ class CodeDbSyncPipeline:
 
         if rules_context:
             table_rules = [
-                line
-                for line in rules_context.split("\n")
-                if table_lower in line.lower()
+                line for line in rules_context.split("\n") if table_lower in line.lower()
             ]
             if table_rules:
                 parts.append("Custom project rules:")
@@ -543,9 +539,7 @@ class CodeDbSyncPipeline:
             for col in entity.columns:
                 if col.is_fk and col.fk_target:
                     src_table = entity.table_name or _name
-                    fk_lines.append(
-                        f"  {src_table}.{col.name} -> {col.fk_target}"
-                    )
+                    fk_lines.append(f"  {src_table}.{col.name} -> {col.fk_target}")
         usage_overlap: dict[str, set[str]] = {}
         for tbl_name, usage in knowledge.table_usage.items():
             files = set(usage.readers + usage.writers)

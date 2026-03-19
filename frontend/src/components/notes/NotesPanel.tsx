@@ -9,14 +9,15 @@ import { Icon } from "@/components/ui/Icon";
 export function NotesPanel() {
   const { notes, isOpen, isLoading, setOpen, loadNotes } = useNotesStore();
   const activeProject = useAppStore((s) => s.activeProject);
+  const projectId = activeProject?.id;
 
   useEffect(() => {
-    if (activeProject) {
-      loadNotes(activeProject.id);
+    if (projectId) {
+      loadNotes(projectId);
     } else {
       useNotesStore.getState().clear();
     }
-  }, [activeProject?.id, loadNotes]);
+  }, [projectId, loadNotes]);
 
   if (!activeProject || !isOpen) return null;
 

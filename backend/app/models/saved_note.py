@@ -37,7 +37,8 @@ class SavedNote(Base):
     sql_query: Mapped[str] = mapped_column(Text, nullable=False)
     last_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_executed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

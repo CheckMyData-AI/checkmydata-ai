@@ -218,8 +218,7 @@ async def execute_note(
         raw = {
             "columns": list(cols),
             "rows": [
-                [serialize_value(v) for v in row]
-                for row in (rows or [])[:_RAW_RESULT_ROW_CAP]
+                [serialize_value(v) for v in row] for row in (rows or [])[:_RAW_RESULT_ROW_CAP]
             ],
             "total_rows": getattr(result, "row_count", len(rows or [])),
         }

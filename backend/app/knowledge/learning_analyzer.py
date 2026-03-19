@@ -62,9 +62,7 @@ async def _load_sync_warnings_for_dedup(
         return {}
 
 
-def _is_covered_by_sync(
-    lesson: ExtractedLesson, sync_warnings: dict[str, str]
-) -> bool:
+def _is_covered_by_sync(lesson: ExtractedLesson, sync_warnings: dict[str, str]) -> bool:
     """Return True if a sync conversion_warning already covers this lesson."""
     if lesson.category not in ("data_format", "schema_gotcha"):
         return False
@@ -129,9 +127,7 @@ class LearningAnalyzer:
         stored: list[ExtractedLesson] = []
         for lesson in lessons:
             if _is_covered_by_sync(lesson, sync_warnings):
-                logger.debug(
-                    "Skipping learning (covered by sync): %s", lesson.lesson
-                )
+                logger.debug("Skipping learning (covered by sync): %s", lesson.lesson)
                 continue
             try:
                 await svc.create_learning(
