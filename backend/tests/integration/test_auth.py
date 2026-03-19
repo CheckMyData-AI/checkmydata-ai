@@ -14,7 +14,7 @@ def _email() -> str:
 
 FAKE_GOOGLE_PAYLOAD = {
     "sub": "google-uid-123456",
-    "email": "googleuser@gmail.com",
+    "email": "testuser@example.com",
     "name": "Google User",
     "email_verified": True,
 }

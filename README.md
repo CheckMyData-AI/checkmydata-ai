@@ -158,17 +158,17 @@ To add a connection:
 
 **Example — MySQL via SSH tunnel (port forwarding):**
 ```
-SSH Host: 64.188.10.62      SSH User: deploy       SSH Key: "prod-key"
-DB Host: 127.0.0.1          DB Port: 3306          DB Name: analytics
-DB User: readonly_agent     DB Password: ****
+SSH Host: 203.0.113.50      SSH User: ssh-user     SSH Key: "my-ssh-key"
+DB Host: 127.0.0.1          DB Port: 3306          DB Name: my_database
+DB User: db_readonly_user   DB Password: ****
 ```
-The agent will SSH into `64.188.10.62`, then connect to MySQL at `127.0.0.1:3306` through the tunnel.
+The agent will SSH into `203.0.113.50`, then connect to MySQL at `127.0.0.1:3306` through the tunnel.
 
 **Example — MySQL via SSH exec mode (CLI on server):**
 ```
-SSH Host: 64.188.10.62      SSH User: ssheleg-ai-agent    SSH Key: "server-key"
-DB Host: 127.0.0.1          DB Port: 3306                 DB Name: esim_analytics
-DB User: ssheleg_ai_agent_read    DB Password: ****
+SSH Host: 203.0.113.50      SSH User: my-agent           SSH Key: "server-ssh-key"
+DB Host: 127.0.0.1          DB Port: 3306                DB Name: my_database
+DB User: db_readonly_user         DB Password: ****
 SSH Exec Mode: ON
 Template: MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch --raw
 ```
@@ -1884,17 +1884,17 @@ make test-frontend    # frontend vitest
 
 The production environment runs on **Heroku** as two Docker container apps with Heroku Postgres.
 
-**Live URLs:**
+**Live URLs (replace with your own after deployment):**
 
 | Service | URL |
 |---|---|
-| Backend API | https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api |
-| Frontend | https://esim-db-agent-web-e3dda1811661.herokuapp.com |
-| Health check | https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/health |
+| Backend API | `https://your-backend-app.herokuapp.com/api` |
+| Frontend | `https://your-frontend-app.herokuapp.com` |
+| Health check | `https://your-backend-app.herokuapp.com/api/health` |
 
 **Architecture on Heroku:**
-- `esim-db-agent-api` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
-- `esim-db-agent-web` — container stack, `Dockerfile.frontend`, connects to the API app
+- `your-backend-app` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
+- `your-frontend-app` — container stack, `Dockerfile.frontend`, connects to the API app
 
 **Auto-deploy (CI/CD):**
 
@@ -1916,28 +1916,28 @@ Required GitHub secret: `HEROKU_API_KEY` (already configured).
 heroku container:login
 
 # Build for linux/amd64 (required on Apple Silicon)
-docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-api/web -f Dockerfile.backend .
-docker build --platform linux/amd64 -t registry.heroku.com/esim-db-agent-web/web \
-  --build-arg NEXT_PUBLIC_API_URL=https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api \
-  --build-arg NEXT_PUBLIC_WS_URL=wss://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/chat/ws \
+docker build --platform linux/amd64 -t registry.heroku.com/your-backend-app/web -f Dockerfile.backend .
+docker build --platform linux/amd64 -t registry.heroku.com/your-frontend-app/web \
+  --build-arg NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
+  --build-arg NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
   -f Dockerfile.frontend .
 
 # Push and release
-docker push registry.heroku.com/esim-db-agent-api/web
-docker push registry.heroku.com/esim-db-agent-web/web
-heroku container:release web --app esim-db-agent-api
-heroku container:release web --app esim-db-agent-web
+docker push registry.heroku.com/your-backend-app/web
+docker push registry.heroku.com/your-frontend-app/web
+heroku container:release web --app your-backend-app
+heroku container:release web --app your-frontend-app
 ```
 
 **Setting up a new Heroku deployment from scratch:**
 
 ```bash
 # 1. Create apps with container stack
-heroku create esim-db-agent-api --stack container
-heroku create esim-db-agent-web --stack container
+heroku create your-backend-app --stack container
+heroku create your-frontend-app --stack container
 
 # 2. Add Postgres to backend (replaces SQLite)
-heroku addons:create heroku-postgresql:essential-0 --app esim-db-agent-api
+heroku addons:create heroku-postgresql:essential-0 --app your-backend-app
 
 # 3. Set backend env vars
 heroku config:set \
@@ -1946,13 +1946,13 @@ heroku config:set \
   DEFAULT_LLM_PROVIDER=openai \
   OPENAI_API_KEY=sk-... \
   CORS_ORIGINS='["https://your-frontend-app.herokuapp.com"]' \
-  --app esim-db-agent-api
+  --app your-backend-app
 
 # 4. Set frontend env vars
 heroku config:set \
   NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
   NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
-  --app esim-db-agent-web
+  --app your-frontend-app
 
 # 5. Build, push, and release (see "Redeploying" above)
 ```
