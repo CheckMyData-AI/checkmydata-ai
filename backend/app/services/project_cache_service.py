@@ -58,7 +58,11 @@ class ProjectCacheService:
         knowledge: ProjectKnowledge | None = None,
         profile: ProjectProfile | None = None,
     ) -> None:
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        dialect_name = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect_name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
 
         values: dict = {"project_id": project_id}
         if knowledge is not None:
@@ -66,7 +70,7 @@ class ProjectCacheService:
         if profile is not None:
             values["profile_json"] = profile.to_json()
 
-        stmt = sqlite_insert(ProjectCache).values(**values)
+        stmt = dialect_insert(ProjectCache).values(**values)
         update_cols = {k: v for k, v in values.items() if k != "project_id"}
         if update_cols:
             stmt = stmt.on_conflict_do_update(
