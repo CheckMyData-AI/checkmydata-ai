@@ -1,14 +1,11 @@
 import { toast } from "@/stores/toast-store";
+import { useAuthStore } from "@/stores/auth-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export function handleSessionExpired(): void {
   if (typeof window === "undefined") return;
-  localStorage.removeItem("auth_token");
-  localStorage.removeItem("auth_user");
-  localStorage.removeItem("active_project_id");
-  localStorage.removeItem("active_connection_id");
-  localStorage.removeItem("active_session_id");
+  useAuthStore.getState().logout();
   toast("Session expired, please log in again", "error");
   window.location.href = "/";
 }
@@ -372,6 +369,15 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ credential }),
       }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request<{ ok: boolean }>("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    refresh: () =>
+      request<AuthResponse>("/auth/refresh", { method: "POST" }),
+    deleteAccount: () =>
+      request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
   },
 
   projects: {

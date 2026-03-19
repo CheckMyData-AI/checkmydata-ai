@@ -40,10 +40,18 @@ async def resolve_user_from_api_key(api_key: str) -> dict:
 
 
 async def resolve_user_from_jwt(token: str) -> dict:
-    """Validate a JWT token using the existing auth service."""
+    """Validate a JWT token and verify the user exists and is active."""
+    from app.models.base import async_session_factory
+
     payload = _auth_svc.decode_token(token)
     if not payload:
         raise MCPAuthError("Invalid or expired JWT token")
+
+    async with async_session_factory() as session:
+        user = await _auth_svc.get_by_id(session, payload["sub"])
+        if not user or not user.is_active:
+            raise MCPAuthError("User not found or inactive")
+
     return {"user_id": payload["sub"], "email": payload.get("email", "")}
 
 

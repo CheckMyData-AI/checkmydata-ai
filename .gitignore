@@ -18,6 +18,9 @@ backend/.env
 *.db
 *.sqlite3
 
+# Root local env (build scripts)
+.env.local
+
 # Node
 node_modules/
 frontend/.next/

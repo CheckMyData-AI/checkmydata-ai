@@ -719,8 +719,12 @@ async def chat_websocket(
 ):
     import asyncio
 
+    from sqlalchemy import or_, select
+
     from app.core.workflow_tracker import tracker
     from app.models.base import async_session_factory
+    from app.models.project import Project
+    from app.models.project_member import ProjectMember
     from app.services.auth_service import AuthService
 
     auth_svc = AuthService()
@@ -735,6 +739,24 @@ async def chat_websocket(
     if not user_id:
         await websocket.close(code=4001, reason="Authentication required")
         return
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Project.id).where(
+                Project.id == project_id,
+                or_(
+                    Project.owner_id == user_id,
+                    Project.id.in_(
+                        select(ProjectMember.project_id).where(
+                            ProjectMember.user_id == user_id
+                        )
+                    ),
+                ),
+            )
+        )
+        if not result.scalar_one_or_none():
+            await websocket.close(code=4003, reason="Access denied")
+            return
 
     await websocket.accept()
 

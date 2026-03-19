@@ -68,18 +68,19 @@ class TestAuth:
 
     async def test_login_wrong_password(self, client):
         email = _email()
-        await client.post(
+        resp_reg = await client.post(
             "/api/auth/register",
             json={
                 "email": email,
-                "password": "correct",
+                "password": "correct1",
             },
         )
+        assert resp_reg.status_code == 200
         resp = await client.post(
             "/api/auth/login",
             json={
                 "email": email,
-                "password": "incorrect",
+                "password": "wrongone1",
             },
         )
         assert resp.status_code == 401
@@ -170,4 +171,88 @@ class TestGoogleAuth:
                 "password": "anything",
             },
         )
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestChangePassword:
+    async def test_change_password_success(self, client):
+        email = _email()
+        reg = await register_user(client, email)
+        headers = auth_headers(reg["token"])
+        resp = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "testpass123", "new_password": "newpass1234"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        login_resp = await client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "newpass1234"},
+        )
+        assert login_resp.status_code == 200
+
+    async def test_change_password_wrong_current(self, client):
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+        resp = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "wrongpassword", "new_password": "newpass1234"},
+            headers=headers,
+        )
+        assert resp.status_code == 401
+
+    async def test_change_password_too_short(self, client):
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+        resp = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "testpass123", "new_password": "short"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_change_password_requires_auth(self, client):
+        resp = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "old", "new_password": "newpass1234"},
+        )
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestRefreshToken:
+    async def test_refresh_returns_new_token(self, client):
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+        resp = await client.post("/api/auth/refresh", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["token"]
+        assert data["user"]["email"] == reg["email"]
+
+    async def test_refresh_requires_auth(self, client):
+        resp = await client.post("/api/auth/refresh")
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestDeleteAccount:
+    async def test_delete_account_success(self, client):
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+        resp = await client.delete("/api/auth/account", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        login_resp = await client.post(
+            "/api/auth/login",
+            json={"email": reg["email"], "password": "testpass123"},
+        )
+        assert login_resp.status_code == 401
+
+    async def test_delete_account_requires_auth(self, client):
+        resp = await client.delete("/api/auth/account")
         assert resp.status_code == 401

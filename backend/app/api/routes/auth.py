@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.core.rate_limit import limiter
 from app.services.auth_service import AuthService
 from app.services.invite_service import InviteService
@@ -29,6 +29,11 @@ class LoginRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     credential: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class AuthResponse(BaseModel):
@@ -94,3 +99,67 @@ async def google_login(
         token=token,
         user={"id": user.id, "email": user.email, "display_name": user.display_name},
     )
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await _auth.get_by_id(db, current_user["user_id"])
+    if not user or not user.password_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Password login is not enabled for this account",
+        )
+    if not _auth._verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    user.password_hash = _auth._hash_password(body.new_password)
+    await db.commit()
+    logger.info("Password changed for user %s", user.email)
+    return {"ok": True}
+
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Issue a fresh JWT for an already-authenticated user."""
+    user = await _auth.get_by_id(db, current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    token = _auth.create_token(user.id, user.email)
+    return AuthResponse(
+        token=token,
+        user={"id": user.id, "email": user.email, "display_name": user.display_name},
+    )
+
+
+@router.delete("/account")
+async def delete_account(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete the current user and all associated data."""
+    from sqlalchemy import delete, select
+
+    from app.models.project import Project
+    from app.models.project_member import ProjectMember
+    from app.models.user import User
+
+    user_id = current_user["user_id"]
+
+    owned_project_ids_q = select(Project.id).where(Project.owner_id == user_id)
+    owned_ids = (await db.execute(owned_project_ids_q)).scalars().all()
+    if owned_ids:
+        await db.execute(delete(Project).where(Project.id.in_(owned_ids)))
+
+    await db.execute(delete(ProjectMember).where(ProjectMember.user_id == user_id))
+
+    await db.execute(delete(User).where(User.id == user_id))
+    await db.commit()
+
+    logger.info("Account deleted: user_id=%s", user_id)
+    return {"ok": True}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { SshKeyManager } from "./ssh/SshKeyManager";
 import { ProjectSelector } from "./projects/ProjectSelector";
 import { ConnectionSelector } from "./connections/ConnectionSelector";
@@ -18,6 +19,7 @@ import { Icon } from "./ui/Icon";
 import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 import { useLogStore } from "@/stores/log-store";
+import { AccountMenu } from "./auth/AccountMenu";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -518,7 +520,7 @@ export function Sidebar() {
 
       {/* Account footer */}
       {user && !collapsed && (
-        <div className="shrink-0 px-3 py-2.5 border-t border-border-subtle animate-fade-in">
+        <div className="relative shrink-0 px-3 py-2.5 border-t border-border-subtle animate-fade-in space-y-2">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
               <span className="text-[10px] font-semibold text-text-secondary">
@@ -533,14 +535,16 @@ export function Sidebar() {
                 {user.email}
               </p>
             </div>
-            <button
-              onClick={logout}
-              className="p-1 rounded text-text-muted hover:text-error transition-colors shrink-0"
-              title="Sign out"
-              aria-label="Sign out"
-            >
-              <Icon name="log-out" size={14} />
-            </button>
+            <AccountMenu />
+          </div>
+          <div className="flex items-center gap-2 px-0.5">
+            <Link href="/terms" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">
+              Terms
+            </Link>
+            <span className="text-text-muted/40 text-[10px]">&middot;</span>
+            <Link href="/privacy" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">
+              Privacy
+            </Link>
           </div>
         </div>
       )}

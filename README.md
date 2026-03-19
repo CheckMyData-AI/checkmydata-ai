@@ -82,7 +82,8 @@ When you first open the app, you see the **AuthGate** — a login/registration f
 - Enter email + password + display name to **create an account**
 - Or click **"Sign in with Google"** to authenticate via your Google account (no password needed)
 - JWT token is stored in `localStorage`, so you stay logged in across page refreshes
-- Your email appears in the top-right header; click **Sign Out** to log out
+- Tokens are automatically refreshed before expiry (30 minutes before), so your session persists seamlessly
+- Your email appears in the sidebar footer; click the **settings icon** to access account options (change password, sign out, delete account)
 
 **Google OAuth**: If you register with email/password first and later sign in with Google using the same email, your accounts are automatically linked.
 
@@ -1522,7 +1523,7 @@ src/
 │   └── globals.css        ← Design tokens (CSS variables), animations, scrollbar styles
 ├── stores/
 │   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
-│   ├── auth-store.ts      ← Zustand: user, token, login/register/logout
+│   ├── auth-store.ts      ← Zustand: user, token, login/register/logout, auto-refresh
 │   ├── log-store.ts       ← Zustand: activity log entries, panel state, SSE connection status
 │   ├── toast-store.ts     ← Zustand: toast notifications (success/error/info, 4s auto-dismiss)
 │   └── task-store.ts      ← Zustand: active background tasks (index, sync) with auto-dismiss
@@ -1547,6 +1548,7 @@ src/
     │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout)
     │   └── Spinner.tsx        ← Reusable loading spinner
     ├── auth/AuthGate.tsx   ← Login/register with branded header, Google OAuth
+    ├── auth/AccountMenu.tsx ← Account settings: change password, sign out, delete account
     ├── Sidebar.tsx         ← Collapsible sidebar (w-64 ↔ w-16), Notion/Linear-style navigation with
     │                          single scroll area, grouped Setup/Workspace sections, subtle dividers
     ├── chat/
@@ -1587,6 +1589,9 @@ src/
 | `POST` | `/api/auth/register` | Create account (email, password) |
 | `POST` | `/api/auth/login` | Login, returns JWT |
 | `POST` | `/api/auth/google` | Google OAuth login (sends GIS ID token) |
+| `POST` | `/api/auth/change-password` | Change password (requires current password) |
+| `POST` | `/api/auth/refresh` | Refresh JWT token (returns new token) |
+| `DELETE` | `/api/auth/account` | Permanently delete account and all data |
 | `POST/GET/PATCH/DELETE` | `/api/projects` | Project CRUD |
 | `POST/GET/PATCH/DELETE` | `/api/connections` | Connection CRUD |
 | `GET` | `/api/connections/project/{id}` | List connections for project |
@@ -1648,7 +1653,7 @@ src/
 
 | Concern | Implementation |
 |---|---|
-| **Authentication** | JWT tokens (HS256), 24h expiry, bcrypt password hashing. Google OAuth via GIS ID token verification. All routes require auth (except `/auth/*` and `/health`). |
+| **Authentication** | JWT tokens (HS256), 24h expiry with automatic proactive refresh, bcrypt password hashing. Google OAuth via GIS ID token verification. Password change and account deletion endpoints. All routes require auth (except `/auth/*` and `/health`). |
 | **Authorization** | Role-based access control per project: owner, editor, viewer. Membership checked via `MembershipService.require_role()`. |
 | **Project sharing** | Email-based invite system. Invites auto-accept on registration. Session isolation per user. |
 | **Encryption at rest** | Fernet (AES-128-CBC + HMAC-SHA256) for SSH keys, passwords, connection strings |
@@ -1658,7 +1663,7 @@ src/
 | **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). `get_decrypted()` enforces ownership when `user_id` is provided. |
 | **Shell injection prevention** | SSH exec template variables (`db_name`, `db_user`, `db_host`, `db_password`) are shell-escaped via single-quoting before substitution. Queries are piped via stdin. |
 | **Invite scoping** | `revoke_invite()` enforces `project_id` to prevent cross-project invite revocation by guessing IDs. |
-| **WebSocket auth** | JWT token passed as query parameter, validated before connection acceptance |
+| **WebSocket auth** | JWT token passed as query parameter, validated before connection acceptance. Project membership verified before granting access. |
 
 ### Database Schema (Internal)
 
@@ -1691,6 +1696,28 @@ All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a
 
 ---
 
+## Legal Pages
+
+The site includes publicly accessible Terms of Service and Privacy Policy pages:
+
+| Route | File | Description |
+|---|---|---|
+| `/terms` | `frontend/src/app/(legal)/terms/page.tsx` | Terms of Service — covers acceptable use, data handling, open-source license, third-party services, liability |
+| `/privacy` | `frontend/src/app/(legal)/privacy/page.tsx` | Privacy Policy — details what data is collected, what is NOT collected, LLM provider data sharing, retention, user rights |
+
+Both pages share a layout (`frontend/src/app/(legal)/layout.tsx`) with navigation back to the app, cross-links between pages, and the contact email `contact@checkmydata.ai`.
+
+Key points emphasized in both pages:
+- CheckMyData.ai is **open source** — all data handling is auditable in the source code
+- **No access to user database content** — query results are transient and not persisted
+- **No analytics/tracking** — no third-party cookies, pixels, or behavioral profiling
+- Credentials (database passwords, SSH keys) are **encrypted at rest**
+- Users can **self-host** for full data sovereignty
+
+Links to these pages appear on the login screen (AuthGate) and in the sidebar footer.
+
+---
+
 ## Configuration
 
 Copy `backend/.env.example` to `backend/.env` and set:
@@ -1706,7 +1733,7 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `OPENROUTER_API_KEY` | One of three | OpenRouter API key (multi-model proxy) |
 | `DATABASE_URL` | No | Default: `sqlite+aiosqlite:///./data/agent.db`. For production: `postgresql+asyncpg://...` |
 | `JWT_EXPIRE_MINUTES` | No | Token expiry (default: 1440 = 24h) |
-| `CORS_ORIGINS` | No | JSON array of allowed origins (default: `["http://localhost:3100"]`) |
+| `CORS_ORIGINS` | No | JSON array of allowed origins (default: `["http://localhost:3000", "http://localhost:3100", "https://checkmydata.ai"]`) |
 | `CHROMA_SERVER_URL` | No | Remote ChromaDB server URL. If empty (default), uses embedded PersistentClient |
 | `CHROMA_EMBEDDING_MODEL` | No | Custom sentence-transformer model for ChromaDB embeddings (e.g. `nomic-ai/nomic-embed-text-v1`). If empty, uses ChromaDB's default `all-MiniLM-L6-v2` |
 | `MAX_HISTORY_TOKENS` | No | Token budget for chat history before summarization kicks in (default: 4000) |
@@ -1884,17 +1911,17 @@ make test-frontend    # frontend vitest
 
 The production environment runs on **Heroku** as two Docker container apps with Heroku Postgres.
 
-**Live URLs (replace with your own after deployment):**
+**Live URLs:**
 
 | Service | URL |
 |---|---|
-| Backend API | `https://your-backend-app.herokuapp.com/api` |
-| Frontend | `https://your-frontend-app.herokuapp.com` |
-| Health check | `https://your-backend-app.herokuapp.com/api/health` |
+| Backend API | `https://api.checkmydata.ai/api` |
+| Frontend | `https://checkmydata.ai` |
+| Health check | `https://api.checkmydata.ai/api/health` |
 
 **Architecture on Heroku:**
-- `your-backend-app` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
-- `your-frontend-app` — container stack, `Dockerfile.frontend`, connects to the API app
+- `checkmydata-api` — container stack, `Dockerfile.backend`, Heroku Postgres (Essential-0)
+- `checkmydata-web` — container stack, `Dockerfile.frontend`, connects to the API app
 
 **Auto-deploy (CI/CD):**
 
@@ -1916,28 +1943,28 @@ Required GitHub secret: `HEROKU_API_KEY` (already configured).
 heroku container:login
 
 # Build for linux/amd64 (required on Apple Silicon)
-docker build --platform linux/amd64 -t registry.heroku.com/your-backend-app/web -f Dockerfile.backend .
-docker build --platform linux/amd64 -t registry.heroku.com/your-frontend-app/web \
-  --build-arg NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
-  --build-arg NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
+docker build --platform linux/amd64 -t registry.heroku.com/checkmydata-api/web -f Dockerfile.backend .
+docker build --platform linux/amd64 -t registry.heroku.com/checkmydata-web/web \
+  --build-arg NEXT_PUBLIC_API_URL=https://api.checkmydata.ai/api \
+  --build-arg NEXT_PUBLIC_WS_URL=wss://api.checkmydata.ai/api/chat/ws \
   -f Dockerfile.frontend .
 
 # Push and release
-docker push registry.heroku.com/your-backend-app/web
-docker push registry.heroku.com/your-frontend-app/web
-heroku container:release web --app your-backend-app
-heroku container:release web --app your-frontend-app
+docker push registry.heroku.com/checkmydata-api/web
+docker push registry.heroku.com/checkmydata-web/web
+heroku container:release web --app checkmydata-api
+heroku container:release web --app checkmydata-web
 ```
 
 **Setting up a new Heroku deployment from scratch:**
 
 ```bash
 # 1. Create apps with container stack
-heroku create your-backend-app --stack container
-heroku create your-frontend-app --stack container
+heroku create checkmydata-api --stack container
+heroku create checkmydata-web --stack container
 
 # 2. Add Postgres to backend (replaces SQLite)
-heroku addons:create heroku-postgresql:essential-0 --app your-backend-app
+heroku addons:create heroku-postgresql:essential-0 --app checkmydata-api
 
 # 3. Set backend env vars
 heroku config:set \
@@ -1945,14 +1972,14 @@ heroku config:set \
   JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
   DEFAULT_LLM_PROVIDER=openai \
   OPENAI_API_KEY=sk-... \
-  CORS_ORIGINS='["https://your-frontend-app.herokuapp.com"]' \
-  --app your-backend-app
+  CORS_ORIGINS='["https://checkmydata.ai"]' \
+  --app checkmydata-api
 
 # 4. Set frontend env vars
 heroku config:set \
-  NEXT_PUBLIC_API_URL=https://your-backend-app.herokuapp.com/api \
-  NEXT_PUBLIC_WS_URL=wss://your-backend-app.herokuapp.com/api/chat/ws \
-  --app your-frontend-app
+  NEXT_PUBLIC_API_URL=https://api.checkmydata.ai/api \
+  NEXT_PUBLIC_WS_URL=wss://api.checkmydata.ai/api/chat/ws \
+  --app checkmydata-web
 
 # 5. Build, push, and release (see "Redeploying" above)
 ```
@@ -2095,6 +2122,16 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-19 — Terms of Service & Privacy Policy Pages
+
+**New legal pages:**
+
+- **`(legal)/layout.tsx`:** Shared layout for legal pages with header (logo + back-to-app link), centered content area (`max-w-3xl`), and footer with links to Terms, Privacy, and `contact@checkmydata.ai`.
+- **`(legal)/terms/page.tsx`:** Comprehensive Terms of Service (16 sections) covering acceptance, service description, user accounts, open-source license, user data & database connections, SSH keys, acceptable use, intellectual property, third-party services, warranties disclaimer, liability limitation, indemnification, modifications, governing law, severability, and contact.
+- **`(legal)/privacy/page.tsx`:** Comprehensive Privacy Policy (14 sections) covering collected information, information NOT collected, data usage, storage & security, third-party services (with LLM data-sharing table), open-source transparency, data retention & deletion, cookies, children's privacy, international transfers, user rights (GDPR), changes, and contact.
+- **AuthGate.tsx:** Added Terms/Privacy/Contact links below the login form.
+- **Sidebar.tsx:** Added Terms/Privacy links in the account footer.
 
 ### 2026-03-19 — Sync/Index Polling Never Detects Completion (frontend)
 

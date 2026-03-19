@@ -69,22 +69,22 @@ export function useRestoreState(isAuthenticated: boolean) {
             try {
               const msgs = await api.chat.getMessages(sessionId);
               const mapped: ChatMessage[] = msgs.map((m) => {
-                let meta: any = {};
+                let meta: Record<string, unknown> = {};
                 try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
                 return {
                   id: m.id,
                   role: m.role as "user" | "assistant" | "system",
                   content: m.content,
-                  query: meta.query || undefined,
-                  queryExplanation: meta.query_explanation || undefined,
-                  visualization: meta.visualization ?? undefined,
-                  error: meta.error || undefined,
+                  query: (meta.query as string) || undefined,
+                  queryExplanation: (meta.query_explanation as string) || undefined,
+                  visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
+                  error: (meta.error as string) || undefined,
                   metadataJson: m.metadata_json || undefined,
-                  stalenessWarning: meta.staleness_warning || undefined,
-                  responseType: meta.response_type || undefined,
+                  stalenessWarning: (meta.staleness_warning as string) || undefined,
+                  responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
                   userRating: m.user_rating ?? undefined,
                   toolCallsJson: m.tool_calls_json || undefined,
-                  rawResult: meta.raw_result ?? undefined,
+                  rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
                   timestamp: new Date(m.created_at).getTime(),
                 };
               });

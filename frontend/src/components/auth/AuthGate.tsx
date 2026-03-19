@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useAuthStore } from "@/stores/auth-store";
 import { Icon } from "@/components/ui/Icon";
 
@@ -83,6 +84,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     script.defer = true;
     script.onload = initGoogle;
     document.head.appendChild(script);
+
+    return () => {
+      script.remove();
+    };
   }, [user, handleGoogleResponse]);
 
   if (restoring) {
@@ -170,14 +175,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
               className={inputCls}
               aria-label="Password"
               aria-required="true"
             />
             {mode === "register" && (
               <p className="text-[10px] text-text-muted mt-1 px-1">
-                Min. 6 characters
+                Min. 8 characters
               </p>
             )}
           </div>
@@ -248,6 +253,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             )}
           </p>
         </form>
+
+        <p className="text-center text-[11px] text-text-muted mt-4">
+          <Link href="/terms" className="hover:text-text-tertiary transition-colors">
+            Terms of Service
+          </Link>
+          <span className="mx-1.5">&middot;</span>
+          <Link href="/privacy" className="hover:text-text-tertiary transition-colors">
+            Privacy Policy
+          </Link>
+          <span className="mx-1.5">&middot;</span>
+          <a href="mailto:contact@checkmydata.ai" className="hover:text-text-tertiary transition-colors">
+            Contact
+          </a>
+        </p>
       </div>
     </div>
   );

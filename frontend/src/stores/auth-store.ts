@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { api, type AuthUser } from "@/lib/api";
+import { toast } from "@/stores/toast-store";
+
+const REFRESH_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
 interface AuthState {
   user: AuthUser | null;
@@ -20,6 +23,43 @@ function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; u
   set({ user: res.user, token: res.token, isLoading: false });
 }
 
+function getTokenExpMs(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const token = localStorage.getItem("auth_token");
+  if (!token) return;
+
+  const expMs = getTokenExpMs(token);
+  if (!expMs) return;
+
+  const remaining = expMs - Date.now();
+  if (remaining <= 0) return;
+
+  const refreshAt = Math.max(remaining - REFRESH_THRESHOLD_MS, 0);
+
+  refreshTimer = setTimeout(async () => {
+    try {
+      const res = await api.auth.refresh();
+      storeAuth(set, res);
+      scheduleRefresh(set);
+    } catch {
+      toast("Your session expires soon. Please save your work.", "info");
+    }
+  }, refreshAt);
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: null,
@@ -30,6 +70,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       storeAuth(set, await api.auth.login(email, password));
+      scheduleRefresh(set);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Login failed", isLoading: false });
     }
@@ -39,6 +80,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       storeAuth(set, await api.auth.register(email, password, displayName));
+      scheduleRefresh(set);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Registration failed", isLoading: false });
     }
@@ -48,12 +90,17 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       storeAuth(set, await api.auth.googleLogin(credential));
+      scheduleRefresh(set);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Google sign-in failed", isLoading: false });
     }
   },
 
   logout: () => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
     localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_user");
     localStorage.removeItem("active_project_id");
@@ -68,16 +115,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     const userStr = localStorage.getItem("auth_user");
     if (token && userStr) {
       try {
-        const parts = token.split(".");
-        if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1]));
-          if (payload.exp && payload.exp * 1000 < Date.now()) {
-            localStorage.removeItem("auth_token");
-            localStorage.removeItem("auth_user");
-            return;
-          }
+        const expMs = getTokenExpMs(token);
+        if (expMs && expMs < Date.now()) {
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("auth_user");
+          return;
         }
         set({ user: JSON.parse(userStr), token });
+        scheduleRefresh(set);
       } catch {
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");

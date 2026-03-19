@@ -142,8 +142,8 @@ describe("Sidebar", () => {
     });
   });
 
-  it("has sign out button", async () => {
+  it("has account settings button", async () => {
     await renderSidebar();
-    expect(screen.getByTitle("Sign out")).toBeInTheDocument();
+    expect(screen.getByTitle("Account settings")).toBeInTheDocument();
   });
 });
