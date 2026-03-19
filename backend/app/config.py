@@ -72,7 +72,11 @@ class Settings(BaseSettings):
     db_index_batch_size: int = 5
     auto_index_db_on_test: bool = False
 
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3100", "https://checkmydata.ai"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3100",
+        "https://checkmydata.ai",
+    ]
 
     # Agent settings
     max_orchestrator_iterations: int = 5

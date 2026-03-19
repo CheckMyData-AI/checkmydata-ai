@@ -59,7 +59,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             'PGPASSWORD="{db_password}" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
-            " -c \"SELECT t.tablename, c.reltuples::bigint AS approx_rows"
+            ' -c "SELECT t.tablename, c.reltuples::bigint AS approx_rows'
             " FROM pg_tables t"
             " JOIN pg_class c ON c.relname = t.tablename"
             " JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.schemaname"

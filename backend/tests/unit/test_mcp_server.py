@@ -44,8 +44,18 @@ class TestMCPAuth:
     async def test_jwt_valid(self):
         from app.mcp_server.auth import resolve_user_from_jwt
 
-        with patch("app.mcp_server.auth._auth_svc") as mock_auth:
+        mock_user = MagicMock()
+        mock_user.is_active = True
+
+        with (
+            patch("app.mcp_server.auth._auth_svc") as mock_auth,
+            patch("app.models.base.async_session_factory") as mock_sf,
+        ):
             mock_auth.decode_token.return_value = {"sub": "user-1", "email": "a@b.com"}
+            mock_auth.get_by_id = AsyncMock(return_value=mock_user)
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
             user = await resolve_user_from_jwt("valid-token")
         assert user["user_id"] == "user-1"
         assert user["email"] == "a@b.com"

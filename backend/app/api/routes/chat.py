@@ -741,20 +741,18 @@ async def chat_websocket(
         return
 
     async with async_session_factory() as db:
-        result = await db.execute(
+        access_check = await db.execute(
             select(Project.id).where(
                 Project.id == project_id,
                 or_(
                     Project.owner_id == user_id,
                     Project.id.in_(
-                        select(ProjectMember.project_id).where(
-                            ProjectMember.user_id == user_id
-                        )
+                        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
                     ),
                 ),
             )
         )
-        if not result.scalar_one_or_none():
+        if not access_check.scalar_one_or_none():
             await websocket.close(code=4003, reason="Access denied")
             return
 

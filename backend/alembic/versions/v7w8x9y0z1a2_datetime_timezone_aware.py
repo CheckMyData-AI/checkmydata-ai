@@ -1,7 +1,7 @@
 """make all datetime columns timezone-aware
 
 Revision ID: v7w8x9y0z1a2
-Revises: r3s4t5u6v7w8, j5k6l7m8n9o0
+Revises: u6v7w8x9y0z1
 Create Date: 2026-03-19
 
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "v7w8x9y0z1a2"
-down_revision = ("r3s4t5u6v7w8", "j5k6l7m8n9o0")
+down_revision = "u6v7w8x9y0z1"
 branch_labels = None
 depends_on = None
 

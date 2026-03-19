@@ -267,9 +267,7 @@ class DbIndexPipeline:
                         if not _is_enum_candidate(col.name, col.data_type, table.row_count):
                             continue
                         try:
-                            dq = _build_distinct_query(
-                                table, col.name, connection_config.db_type
-                            )
+                            dq = _build_distinct_query(table, col.name, connection_config.db_type)
                             dr = await connector.execute_query(dq)
                             if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
                                 vals = [str(r[0]) for r in dr.rows if r[0] is not None]
@@ -289,9 +287,7 @@ class DbIndexPipeline:
                 "fetch_samples",
                 f"Fetching sample data from {total_tables} tables",
             ):
-                results = await asyncio.gather(
-                    *[_fetch_table_samples(t) for t in schema.tables]
-                )
+                results = await asyncio.gather(*[_fetch_table_samples(t) for t in schema.tables])
                 for tname, result, ordering_col, tbl_distinct in results:
                     samples[tname] = (result, ordering_col)
                     if tbl_distinct:
