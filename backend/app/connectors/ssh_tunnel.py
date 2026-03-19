@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 import asyncssh
 
@@ -13,12 +14,16 @@ SSH_MAX_RETRIES = 2
 SSH_RETRY_DELAY = 3
 
 
+_LIVENESS_CACHE_TTL = 30  # seconds
+
+
 class SSHTunnel:
     def __init__(self):
         self._conn: asyncssh.SSHClientConnection | None = None
         self._listener: asyncssh.SSHListener | None = None
         self._local_host: str = "127.0.0.1"
         self._local_port: int | None = None
+        self._last_alive_check: float = 0.0
 
     @property
     def local_host(self) -> str:
@@ -102,12 +107,15 @@ class SSHTunnel:
             await asyncio.sleep(0.1)
             self._conn = None
         self._local_port = None
+        self._last_alive_check = 0.0
 
     _ALIVE_MARKER = "__SSH_TUNNEL_ALIVE__"
 
     async def is_alive(self) -> bool:
         if self._conn is None or self._listener is None:
             return False
+        if self._last_alive_check and (time.monotonic() - self._last_alive_check) < _LIVENESS_CACHE_TTL:
+            return True
         try:
             transport = self._conn.get_extra_info("socket")
             if transport is None:
@@ -124,6 +132,7 @@ class SSHTunnel:
                 timeout=5,
             )
             if self._ALIVE_MARKER in (result.stdout or ""):
+                self._last_alive_check = time.monotonic()
                 return True
 
             # Shell command failed (e.g. nologin/restricted shell) but the SSH
@@ -137,6 +146,7 @@ class SSHTunnel:
                     (result.stdout or "")[:120],
                     listener_port,
                 )
+                self._last_alive_check = time.monotonic()
                 return True
 
             logger.warning(

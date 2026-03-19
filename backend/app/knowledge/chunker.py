@@ -10,6 +10,7 @@ from dataclasses import dataclass
 TARGET_CHUNK_TOKENS = 800
 MAX_CHUNK_TOKENS = 1500
 APPROX_CHARS_PER_TOKEN = 4
+OVERLAP_CHARS = 150
 
 CLASS_BOUNDARY = re.compile(r"^(?:class |## |### |model |\bCREATE TABLE\b)", re.MULTILINE)
 
@@ -48,18 +49,25 @@ def chunk_document(
 
     sections = _split_at_boundaries(content)
     merged = _merge_small_sections(sections, target_chars)
-    chunks = []
-    for i, section in enumerate(merged):
+    raw_chunks: list[str] = []
+    for section in merged:
         if len(section) > max_chars:
-            sub_parts = _split_large_section(section, max_chars)
-            for j, part in enumerate(sub_parts):
-                meta = {**base_meta, "chunk_index": f"{i}.{j}"}
-                chunks.append(Chunk(content=part.strip(), metadata=meta))
+            raw_chunks.extend(_split_large_section(section, max_chars))
         else:
-            meta = {**base_meta, "chunk_index": str(i)}
-            chunks.append(Chunk(content=section.strip(), metadata=meta))
+            raw_chunks.append(section)
 
-    return [c for c in chunks if c.content]
+    chunks = []
+    for i, text in enumerate(raw_chunks):
+        overlap_prefix = ""
+        if i > 0 and OVERLAP_CHARS > 0:
+            prev = raw_chunks[i - 1]
+            overlap_prefix = prev[-OVERLAP_CHARS:] if len(prev) > OVERLAP_CHARS else prev
+        chunk_text = (overlap_prefix + text).strip() if overlap_prefix else text.strip()
+        if chunk_text:
+            meta = {**base_meta, "chunk_index": str(i)}
+            chunks.append(Chunk(content=chunk_text, metadata=meta))
+
+    return chunks
 
 
 def _split_at_boundaries(content: str) -> list[str]:

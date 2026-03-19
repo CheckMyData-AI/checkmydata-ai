@@ -59,7 +59,12 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             'PGPASSWORD="{db_password}" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
-            " -c \"SELECT tablename FROM pg_tables WHERE schemaname = 'public'\""
+            " -c \"SELECT t.tablename, c.reltuples::bigint AS approx_rows"
+            " FROM pg_tables t"
+            " JOIN pg_class c ON c.relname = t.tablename"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.schemaname"
+            " WHERE t.schemaname = 'public'"
+            ' ORDER BY t.tablename"'
         ),
         "introspect_columns": (
             'PGPASSWORD="{db_password}" psql'
@@ -70,6 +75,45 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             " FROM information_schema.columns"
             " WHERE table_schema = 'public'"
             ' ORDER BY table_name, ordinal_position"'
+        ),
+        "introspect_fks": (
+            'PGPASSWORD="{db_password}" psql'
+            " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
+            " -t -A -F $'\\t' --pset footer=off"
+            ' -c "SELECT cl_child.relname AS table_name,'
+            " a_child.attname AS column_name,"
+            " cl_parent.relname AS references_table,"
+            " a_parent.attname AS references_column"
+            " FROM pg_constraint con"
+            " JOIN pg_class cl_child ON cl_child.oid = con.conrelid"
+            " JOIN pg_namespace ns ON ns.oid = cl_child.relnamespace"
+            " JOIN pg_class cl_parent ON cl_parent.oid = con.confrelid"
+            " CROSS JOIN LATERAL unnest(con.conkey, con.confkey)"
+            "   WITH ORDINALITY AS u(child_attnum, parent_attnum, ord)"
+            " JOIN pg_attribute a_child ON a_child.attrelid = con.conrelid"
+            "   AND a_child.attnum = u.child_attnum"
+            " JOIN pg_attribute a_parent ON a_parent.attrelid = con.confrelid"
+            "   AND a_parent.attnum = u.parent_attnum"
+            " WHERE con.contype = 'f'"
+            "   AND ns.nspname = 'public'"
+            ' ORDER BY cl_child.relname"'
+        ),
+        "introspect_indexes": (
+            'PGPASSWORD="{db_password}" psql'
+            " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
+            " -t -A -F $'\\t' --pset footer=off"
+            ' -c "SELECT tc.relname AS table_name,'
+            " ic.relname AS index_name,"
+            " i.indisunique::text,"
+            " array_to_string(array_agg(a.attname ORDER BY k.n), ',')"
+            " FROM pg_index i"
+            " JOIN pg_class ic ON ic.oid = i.indexrelid"
+            " JOIN pg_class tc ON tc.oid = i.indrelid"
+            " JOIN pg_namespace ns ON ns.oid = tc.relnamespace"
+            " CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, n)"
+            " JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum"
+            " WHERE NOT i.indisprimary AND ns.nspname = 'public'"
+            ' GROUP BY tc.relname, ic.relname, i.indisunique"'
         ),
         "test": (
             'PGPASSWORD="{db_password}" psql'

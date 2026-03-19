@@ -58,6 +58,7 @@ Preserve sections that are unchanged. Update/add/remove sections as needed."""
 DIFF_THRESHOLD_RATIO = 0.3
 
 MAX_CONTENT_LENGTH = 12_000
+MAX_ENRICHMENT_LENGTH = 3_000
 MAX_FALLBACK_LENGTH = 50_000
 _PRINTABLE = set(string.printable)
 
@@ -127,6 +128,8 @@ class DocGenerator:
 
         enrichment_section = ""
         if enrichment_context:
+            if len(enrichment_context) > MAX_ENRICHMENT_LENGTH:
+                enrichment_context = enrichment_context[:MAX_ENRICHMENT_LENGTH] + "…"
             enrichment_section = (
                 f"\nADDITIONAL CONTEXT (from cross-file analysis):\n{enrichment_context}\n"
             )

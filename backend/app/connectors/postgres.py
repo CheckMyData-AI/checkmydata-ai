@@ -115,8 +115,10 @@ class PostgresConnector(BaseConnector):
         if not self._pool:
             return SchemaInfo(db_type=self.db_type)
 
+        _excluded = ("pg_catalog", "information_schema")
         tables: list[TableInfo] = []
         async with self._pool.acquire() as conn:
+            # 1) All tables (already bulk)
             table_rows = await conn.fetch(
                 """
                 SELECT t.table_schema, t.table_name,
@@ -130,39 +132,113 @@ class PostgresConnector(BaseConnector):
                 ORDER BY t.table_schema, t.table_name
                 """
             )
+
+            # 2) All columns in one bulk query
+            all_col_rows = await conn.fetch(
+                """
+                SELECT c.table_schema, c.table_name,
+                       c.column_name, c.data_type, c.is_nullable, c.column_default,
+                       pgd.description AS column_comment
+                FROM information_schema.columns c
+                LEFT JOIN pg_catalog.pg_statio_all_tables st
+                    ON st.schemaname = c.table_schema AND st.relname = c.table_name
+                LEFT JOIN pg_catalog.pg_description pgd
+                    ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
+                WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
+                ORDER BY c.table_schema, c.table_name, c.ordinal_position
+                """
+            )
+            col_map: dict[tuple[str, str], list[dict]] = {}
+            for c in all_col_rows:
+                key = (c["table_schema"], c["table_name"])
+                col_map.setdefault(key, []).append(c)
+
+            # 3) All PKs in one bulk query
+            all_pk_rows = await conn.fetch(
+                """
+                SELECT n.nspname AS table_schema, c.relname AS table_name,
+                       a.attname
+                FROM pg_index i
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                JOIN pg_class c ON c.oid = i.indrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE i.indisprimary AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                """
+            )
+            pk_map: dict[tuple[str, str], set[str]] = {}
+            for r in all_pk_rows:
+                key = (r["table_schema"], r["table_name"])
+                pk_map.setdefault(key, set()).add(r["attname"])
+
+            # 4) All FKs in one bulk query
+            all_fk_rows = await conn.fetch(
+                """
+                SELECT
+                    ns.nspname AS table_schema,
+                    cl_child.relname AS table_name,
+                    a_child.attname AS column_name,
+                    cl_parent.relname AS references_table,
+                    a_parent.attname AS references_column
+                FROM pg_constraint con
+                JOIN pg_class cl_child ON cl_child.oid = con.conrelid
+                JOIN pg_namespace ns ON ns.oid = cl_child.relnamespace
+                JOIN pg_class cl_parent ON cl_parent.oid = con.confrelid
+                CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                    WITH ORDINALITY AS u(child_attnum, parent_attnum, ord)
+                JOIN pg_attribute a_child ON a_child.attrelid = con.conrelid
+                    AND a_child.attnum = u.child_attnum
+                JOIN pg_attribute a_parent ON a_parent.attrelid = con.confrelid
+                    AND a_parent.attnum = u.parent_attnum
+                WHERE con.contype = 'f'
+                  AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+                """
+            )
+            fk_map: dict[tuple[str, str], list[ForeignKeyInfo]] = {}
+            for fk in all_fk_rows:
+                key = (fk["table_schema"], fk["table_name"])
+                fk_map.setdefault(key, []).append(
+                    ForeignKeyInfo(
+                        column=fk["column_name"],
+                        references_table=fk["references_table"],
+                        references_column=fk["references_column"],
+                    )
+                )
+
+            # 5) All indexes in one bulk query
+            all_idx_rows = await conn.fetch(
+                """
+                SELECT ns.nspname AS table_schema, tc.relname AS table_name,
+                       ic.relname AS index_name, i.indisunique,
+                       array_agg(a.attname ORDER BY k.n) AS columns
+                FROM pg_index i
+                JOIN pg_class ic ON ic.oid = i.indexrelid
+                JOIN pg_class tc ON tc.oid = i.indrelid
+                JOIN pg_namespace ns ON ns.oid = tc.relnamespace
+                CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, n)
+                JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
+                WHERE NOT i.indisprimary
+                  AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+                GROUP BY ns.nspname, tc.relname, ic.relname, i.indisunique
+                """
+            )
+            idx_map: dict[tuple[str, str], list[IndexInfo]] = {}
+            for ir in all_idx_rows:
+                key = (ir["table_schema"], ir["table_name"])
+                idx_map.setdefault(key, []).append(
+                    IndexInfo(
+                        name=ir["index_name"],
+                        columns=list(ir["columns"]),
+                        is_unique=ir["indisunique"],
+                    )
+                )
+
+            # Assemble TableInfo objects
             for tr in table_rows:
                 schema_name = tr["table_schema"]
                 table_name = tr["table_name"]
+                key = (schema_name, table_name)
 
-                col_rows = await conn.fetch(
-                    """
-                    SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
-                           pgd.description AS column_comment
-                    FROM information_schema.columns c
-                    LEFT JOIN pg_catalog.pg_statio_all_tables st
-                        ON st.schemaname = c.table_schema AND st.relname = c.table_name
-                    LEFT JOIN pg_catalog.pg_description pgd
-                        ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
-                    WHERE c.table_schema = $1 AND c.table_name = $2
-                    ORDER BY c.ordinal_position
-                    """,
-                    schema_name,
-                    table_name,
-                )
-                pk_rows = await conn.fetch(
-                    """
-                    SELECT a.attname
-                    FROM pg_index i
-                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    JOIN pg_class c ON c.oid = i.indrelid
-                    JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE i.indisprimary AND n.nspname = $1 AND c.relname = $2
-                    """,
-                    schema_name,
-                    table_name,
-                )
-                pk_names = {r["attname"] for r in pk_rows}
-
+                pk_names = pk_map.get(key, set())
                 columns = [
                     ColumnInfo(
                         name=c["column_name"],
@@ -172,62 +248,7 @@ class PostgresConnector(BaseConnector):
                         default=c["column_default"],
                         comment=c["column_comment"],
                     )
-                    for c in col_rows
-                ]
-
-                fk_rows = await conn.fetch(
-                    """
-                    SELECT
-                        a_child.attname AS column_name,
-                        cl_parent.relname AS references_table,
-                        a_parent.attname AS references_column
-                    FROM pg_constraint con
-                    JOIN pg_class cl_child ON cl_child.oid = con.conrelid
-                    JOIN pg_namespace ns ON ns.oid = cl_child.relnamespace
-                    JOIN pg_class cl_parent ON cl_parent.oid = con.confrelid
-                    CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
-                        WITH ORDINALITY AS u(child_attnum, parent_attnum, ord)
-                    JOIN pg_attribute a_child ON a_child.attrelid = con.conrelid
-                        AND a_child.attnum = u.child_attnum
-                    JOIN pg_attribute a_parent ON a_parent.attrelid = con.confrelid
-                        AND a_parent.attnum = u.parent_attnum
-                    WHERE con.contype = 'f' AND ns.nspname = $1 AND cl_child.relname = $2
-                    """,
-                    schema_name,
-                    table_name,
-                )
-                foreign_keys = [
-                    ForeignKeyInfo(
-                        column=fk["column_name"],
-                        references_table=fk["references_table"],
-                        references_column=fk["references_column"],
-                    )
-                    for fk in fk_rows
-                ]
-
-                idx_rows = await conn.fetch(
-                    """
-                    SELECT ic.relname AS index_name, i.indisunique,
-                           array_agg(a.attname ORDER BY k.n) AS columns
-                    FROM pg_index i
-                    JOIN pg_class ic ON ic.oid = i.indexrelid
-                    JOIN pg_class tc ON tc.oid = i.indrelid
-                    JOIN pg_namespace ns ON ns.oid = tc.relnamespace
-                    CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, n)
-                    JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
-                    WHERE NOT i.indisprimary AND ns.nspname = $1 AND tc.relname = $2
-                    GROUP BY ic.relname, i.indisunique
-                    """,
-                    schema_name,
-                    table_name,
-                )
-                indexes = [
-                    IndexInfo(
-                        name=ir["index_name"],
-                        columns=list(ir["columns"]),
-                        is_unique=ir["indisunique"],
-                    )
-                    for ir in idx_rows
+                    for c in col_map.get(key, [])
                 ]
 
                 approx_rows = tr["approx_rows"]
@@ -236,8 +257,8 @@ class PostgresConnector(BaseConnector):
                         name=table_name,
                         schema=schema_name,
                         columns=columns,
-                        foreign_keys=foreign_keys,
-                        indexes=indexes,
+                        foreign_keys=fk_map.get(key, []),
+                        indexes=idx_map.get(key, []),
                         row_count=max(0, approx_rows) if approx_rows is not None else None,
                         comment=tr["table_comment"],
                     )

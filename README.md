@@ -2133,6 +2133,43 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 - **AuthGate.tsx:** Added Terms/Privacy/Contact links below the login form.
 - **Sidebar.tsx:** Added Terms/Privacy links in the account footer.
 
+### 2026-03-19 — Indexing Pipeline Parallelization & Optimization
+
+**Repo indexing speed (backend):**
+
+- **pipeline_runner.py:** LLM doc generation (Step 9) now runs in parallel batches of 5 with `asyncio.Semaphore(3)` concurrency. Expected 3-5x speedup on the slowest pipeline step.
+- **pipeline_runner.py:** Pre-fetches all existing docs in a single query before the doc generation loop instead of N individual lookups.
+- **pipeline_runner.py:** Caches the `git.Repo` instance for `_git_show` calls instead of re-creating it per file.
+
+**DB indexing speed (backend):**
+
+- **postgres.py:** Consolidated schema introspection from 4N+1 per-table queries to 5 bulk queries (columns, PKs, FKs, indexes all fetched in single queries). For 100 tables: 401 queries → 5.
+- **mysql.py:** Same bulk query consolidation as Postgres.
+- **db_index_pipeline.py:** Sample data and distinct value fetching now runs in parallel across tables with `asyncio.Semaphore(5)`.
+- **db_index_pipeline.py:** Large-table LLM analysis calls now run in parallel with `asyncio.Semaphore(3)` instead of sequentially.
+
+**SSH exec mode parity (backend):**
+
+- **exec_templates.py:** Added `introspect_fks` and `introspect_indexes` templates for Postgres SSH exec mode.
+- **ssh_exec.py:** Postgres exec introspection now fetches foreign keys, indexes, and row counts — matching native connector feature parity.
+
+**Quality & cost (backend):**
+
+- **doc_generator.py:** Capped `enrichment_context` to 3,000 chars to prevent token overflow and improve LLM output quality.
+- **chunker.py:** Added 150-char overlap between adjacent chunks so RAG queries spanning boundaries get proper context.
+
+**Caching & overhead reduction (backend):**
+
+- **vector_store.py:** ChromaDB collection objects are now cached per `project_id`, eliminating 100+ redundant `get_or_create_collection` calls per indexing run.
+- **ssh_tunnel.py:** Added 30-second time-based caching to `SSHTunnel.is_alive()`, eliminating repeated SSH echo checks during intensive operations.
+
+**Cleanup & unification:**
+
+- **code_db_sync_pipeline.py:** Replaced hardcoded `BATCH_SIZE=5` with `settings.db_index_batch_size` from config.
+- **polling.ts (frontend):** Created shared `POLL_INTERVAL_MS` (3s) and `MAX_POLL_MS` (15min) constants used by both `ConnectionSelector` and `ReadinessGate`.
+- **sql_agent.py:** Removed unused `SchemaIndexer` import and instance.
+- **tool_executor.py:** Made `schema_indexer` parameter optional (unused internally but kept for backward compat).
+
 ### 2026-03-19 — Sync/Index Polling Never Detects Completion (frontend)
 
 **Status polling not resumed on page reload:**

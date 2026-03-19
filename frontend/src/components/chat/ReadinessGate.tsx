@@ -5,6 +5,7 @@ import { api, type ProjectReadiness } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
+import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 
 interface ReadinessGateProps {
   projectId: string;
@@ -24,9 +25,6 @@ const NAVIGABLE_STEPS: Record<string, { section: string; editProject?: boolean }
   connect_repo: { section: "projects", editProject: true },
   connect_db: { section: "connections" },
 };
-
-const POLL_INTERVAL_MS = 4000;
-const MAX_POLL_MS = 10 * 60 * 1000;
 
 export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGateProps) {
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);

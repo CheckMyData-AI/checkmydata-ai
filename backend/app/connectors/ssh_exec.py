@@ -17,6 +17,7 @@ from app.connectors.base import (
     ColumnInfo,
     ConnectionConfig,
     ForeignKeyInfo,
+    IndexInfo,
     QueryResult,
     SchemaInfo,
     TableInfo,
@@ -312,23 +313,36 @@ class SSHExecConnector(BaseConnector):
     async def _introspect_postgres(self, db_name: str) -> SchemaInfo:
         variables = self._config_vars()
 
+        # Tables (now includes approx row counts)
         tables_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_tables"), variables)
         )
         stdout, stderr, exit_code = await self._run_command(tables_cmd)
         self._check_introspection_result("postgres:tables", stdout, stderr, exit_code)
-        table_names = [line.strip() for line in stdout.strip().splitlines() if line.strip()]
+        table_info_raw: list[tuple[str, int | None]] = []
+        for line in stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            tname = parts[0]
+            row_count = None
+            if len(parts) > 1 and parts[1]:
+                try:
+                    row_count = max(0, int(parts[1]))
+                except ValueError:
+                    pass
+            table_info_raw.append((tname, row_count))
 
+        # Columns
         cols_cmd = self._prepend_pre_commands(
             format_template(self._get_template("introspect_columns"), variables)
         )
         stdout, stderr, exit_code = await self._run_command(cols_cmd)
         self._check_introspection_result("postgres:columns", stdout, stderr, exit_code)
-        lines = [ln.strip() for ln in stdout.strip().splitlines() if ln.strip()]
-
         col_map: dict[str, list[ColumnInfo]] = {}
-        for line in lines:
-            parts = line.split("\t")
+        for line in stdout.strip().splitlines():
+            parts = line.strip().split("\t")
             if len(parts) >= 4:
                 tname = parts[0]
                 col_map.setdefault(tname, []).append(
@@ -340,7 +354,58 @@ class SSHExecConnector(BaseConnector):
                     )
                 )
 
-        tables = [TableInfo(name=t, columns=col_map.get(t, [])) for t in table_names]
+        # Foreign keys
+        fk_map: dict[str, list[ForeignKeyInfo]] = {}
+        try:
+            fks_cmd = self._prepend_pre_commands(
+                format_template(self._get_template("introspect_fks"), variables)
+            )
+            stdout, stderr, exit_code = await self._run_command(fks_cmd)
+            self._check_introspection_result("postgres:fks", stdout, stderr, exit_code)
+            for line in stdout.strip().splitlines():
+                parts = line.strip().split("\t")
+                if len(parts) >= 4:
+                    fk_map.setdefault(parts[0], []).append(
+                        ForeignKeyInfo(
+                            column=parts[1],
+                            references_table=parts[2],
+                            references_column=parts[3],
+                        )
+                    )
+        except Exception:
+            logger.debug("Postgres exec FK introspection failed", exc_info=True)
+
+        # Indexes
+        idx_map: dict[str, list[IndexInfo]] = {}
+        try:
+            idx_cmd = self._prepend_pre_commands(
+                format_template(self._get_template("introspect_indexes"), variables)
+            )
+            stdout, stderr, exit_code = await self._run_command(idx_cmd)
+            self._check_introspection_result("postgres:indexes", stdout, stderr, exit_code)
+            for line in stdout.strip().splitlines():
+                parts = line.strip().split("\t")
+                if len(parts) >= 4:
+                    idx_map.setdefault(parts[0], []).append(
+                        IndexInfo(
+                            name=parts[1],
+                            is_unique=parts[2].lower() in ("t", "true"),
+                            columns=parts[3].split(","),
+                        )
+                    )
+        except Exception:
+            logger.debug("Postgres exec index introspection failed", exc_info=True)
+
+        tables = [
+            TableInfo(
+                name=t,
+                columns=col_map.get(t, []),
+                foreign_keys=fk_map.get(t, []),
+                indexes=idx_map.get(t, []),
+                row_count=rc,
+            )
+            for t, rc in table_info_raw
+        ]
         return SchemaInfo(tables=tables, db_type="postgres", db_name=db_name)
 
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:

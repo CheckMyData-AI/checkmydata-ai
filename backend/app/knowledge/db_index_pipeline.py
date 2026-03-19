@@ -6,6 +6,7 @@ validates against project knowledge via LLM, and persists a rich index.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -243,34 +244,32 @@ class DbIndexPipeline:
                 await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
                 return {"status": "completed", "tables": 0}
 
-            # Step 2: Fetch sample data and distinct values per table
+            # Step 2: Fetch sample data and distinct values per table (parallel)
             samples: dict[str, tuple[QueryResult, str | None]] = {}
             distinct_values: dict[str, dict[str, list[str]]] = {}
             total_tables = len(schema.tables)
+            _sample_sem = asyncio.Semaphore(5)
 
-            async with self._tracker.step(
-                wf_id,
-                "fetch_samples",
-                f"Fetching sample data from {total_tables} tables",
-            ):
-                for table in schema.tables:
+            async def _fetch_table_samples(
+                table: TableInfo,
+            ) -> tuple[str, QueryResult, str | None, dict[str, list[str]]]:
+                async with _sample_sem:
                     try:
                         query, ordering_col = _sample_query(table, connection_config.db_type)
                         result = await connector.execute_query(query)
-                        samples[table.name] = (result, ordering_col)
                     except Exception:
                         logger.debug("Sample fetch failed for %s", table.name, exc_info=True)
-                        samples[table.name] = (
-                            QueryResult(columns=[], rows=[], row_count=0),
-                            None,
-                        )
+                        result = QueryResult(columns=[], rows=[], row_count=0)
+                        ordering_col = None
 
                     tbl_distinct: dict[str, list[str]] = {}
                     for col in table.columns:
                         if not _is_enum_candidate(col.name, col.data_type, table.row_count):
                             continue
                         try:
-                            dq = _build_distinct_query(table, col.name, connection_config.db_type)
+                            dq = _build_distinct_query(
+                                table, col.name, connection_config.db_type
+                            )
                             dr = await connector.execute_query(dq)
                             if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
                                 vals = [str(r[0]) for r in dr.rows if r[0] is not None]
@@ -283,8 +282,20 @@ class DbIndexPipeline:
                                 col.name,
                                 exc_info=True,
                             )
+                    return table.name, result, ordering_col, tbl_distinct
+
+            async with self._tracker.step(
+                wf_id,
+                "fetch_samples",
+                f"Fetching sample data from {total_tables} tables",
+            ):
+                results = await asyncio.gather(
+                    *[_fetch_table_samples(t) for t in schema.tables]
+                )
+                for tname, result, ordering_col, tbl_distinct in results:
+                    samples[tname] = (result, ordering_col)
                     if tbl_distinct:
-                        distinct_values[table.name] = tbl_distinct
+                        distinct_values[tname] = tbl_distinct
 
             # Step 3: Load project knowledge and rules
             code_context = ""
@@ -320,18 +331,25 @@ class DbIndexPipeline:
                     else:
                         small_tables.append(table)
 
-                for table in large_tables:
-                    sample_result, _ = samples.get(table.name, (QueryResult(), None))
-                    table_code_ctx = self._filter_code_context(code_context, table.name)
-                    analysis = await self._validator.analyze_table(
-                        table=table,
-                        sample_data=sample_result,
-                        code_context=table_code_ctx,
-                        rules_context=rules_context,
-                        preferred_provider=preferred_provider,
-                        model=model,
-                    )
-                    analyses.append(analysis)
+                _llm_sem = asyncio.Semaphore(3)
+
+                async def _analyze_large_table(table: TableInfo) -> TableAnalysis:
+                    async with _llm_sem:
+                        sample_result, _ = samples.get(table.name, (QueryResult(), None))
+                        table_code_ctx = self._filter_code_context(code_context, table.name)
+                        return await self._validator.analyze_table(
+                            table=table,
+                            sample_data=sample_result,
+                            code_context=table_code_ctx,
+                            rules_context=rules_context,
+                            preferred_provider=preferred_provider,
+                            model=model,
+                        )
+
+                large_results = await asyncio.gather(
+                    *[_analyze_large_table(t) for t in large_tables]
+                )
+                analyses.extend(large_results)
 
                 for batch_start in range(0, len(small_tables), self._batch_size):
                     batch = small_tables[batch_start : batch_start + self._batch_size]

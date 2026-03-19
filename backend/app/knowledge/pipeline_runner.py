@@ -459,6 +459,47 @@ class IndexingPipelineRunner:
 
         await self._cp_svc.complete_step(db, cp_id, "enrich_docs", total_docs=total)
 
+        # Pre-fetch all existing docs in one query to avoid N individual lookups
+        existing_docs_map: dict[str, str] = {}
+        if is_incremental:
+            all_existing = await self._doc_store.get_docs_for_project(db, project_id)
+            existing_docs_map = {d.source_path: d.content for d in all_existing}
+
+        # Build table_model_map once instead of per-doc
+        table_model_map: dict[str, str] = {}
+        if state.knowledge:
+            for ent_name, ent_info in state.knowledge.entities.items():
+                if ent_info.table_name:
+                    table_model_map[ent_info.table_name.lower()] = ent_name
+
+        # Cache the git Repo instance for _git_show calls
+        git_repo: Repo | None = None
+        if state.repo_dir:
+            try:
+                git_repo = await asyncio.to_thread(Repo, str(state.repo_dir))
+            except Exception:
+                logger.debug("Could not open Repo at %s for git_show caching", state.repo_dir)
+
+        _llm_sem = asyncio.Semaphore(3)
+
+        async def _generate_one_doc(
+            edoc: EnrichedDoc,
+            existing_doc_content: str | None,
+            prev_content: str | None,
+        ) -> str:
+            """Run the LLM call under a concurrency limiter."""
+            async with _llm_sem:
+                return await self._doc_generator.generate(
+                    file_path=edoc.file_path,
+                    content=edoc.content,
+                    doc_type=edoc.doc_type,
+                    preferred_provider=project.indexing_llm_provider,
+                    model=project.indexing_llm_model,
+                    enrichment_context=edoc.enrichment_context,
+                    previous_content=prev_content,
+                    existing_doc=existing_doc_content,
+                )
+
         async with tracker.step(
             wf_id,
             "generate_docs",
@@ -467,17 +508,13 @@ class IndexingPipelineRunner:
         ):
             pending_paths: list[str] = []
 
+            # Phase 1: filter out skip-able docs and prepare LLM tasks
+            llm_tasks: list[tuple[int, EnrichedDoc, str | None, str | None]] = []
+
             for i, edoc in enumerate(state.enriched_docs):
                 if edoc.file_path in processed_paths:
                     skipped += 1
                     continue
-
-                await tracker.emit(
-                    wf_id,
-                    "generate_docs",
-                    "started",
-                    f"Processing {edoc.file_path} ({i + 1}/{total})",
-                )
 
                 if _is_binary_content(edoc.content):
                     logger.warning(
@@ -501,18 +538,9 @@ class IndexingPipelineRunner:
                             pending_paths = []
                         continue
 
-                # Skip unchanged files during incremental runs if we already
-                # have a generated doc — avoids unnecessary LLM calls.
-                existing_doc_content = None
-                if is_incremental:
-                    existing_kd = await self._doc_store.get_doc_by_path(
-                        db,
-                        project_id,
-                        edoc.file_path,
-                    )
-                    if existing_kd:
-                        existing_doc_content = existing_kd.content
+                existing_doc_content = existing_docs_map.get(edoc.file_path)
 
+                if is_incremental:
                     if (
                         edoc.file_path not in changed_set
                         and edoc.file_path != "__project_summary__"
@@ -525,81 +553,87 @@ class IndexingPipelineRunner:
                             pending_paths = []
                         continue
 
-                # For changed files with existing docs, load the previous raw
-                # content from git so the doc generator can use diff-based updates.
                 prev_content = None
-                if is_incremental and existing_doc_content and state.repo_dir:
-                    prev_content = await self._git_show(
-                        state.repo_dir, state.last_sha, edoc.file_path
+                if is_incremental and existing_doc_content and git_repo and state.last_sha:
+                    prev_content = await self._git_show_cached(
+                        git_repo, state.last_sha, edoc.file_path
                     )
 
-                generated_content = await self._doc_generator.generate(
-                    file_path=edoc.file_path,
-                    content=edoc.content,
-                    doc_type=edoc.doc_type,
-                    preferred_provider=project.indexing_llm_provider,
-                    model=project.indexing_llm_model,
-                    enrichment_context=edoc.enrichment_context,
-                    previous_content=prev_content,
-                    existing_doc=existing_doc_content,
+                llm_tasks.append((i, edoc, existing_doc_content, prev_content))
+
+            # Phase 2: run LLM calls in parallel batches, then persist sequentially
+            llm_batch_size = 5
+            for batch_start in range(0, len(llm_tasks), llm_batch_size):
+                batch = llm_tasks[batch_start : batch_start + llm_batch_size]
+
+                await tracker.emit(
+                    wf_id,
+                    "generate_docs",
+                    "started",
+                    f"Processing batch {batch_start // llm_batch_size + 1} "
+                    f"({len(batch)} docs, {batch_start + len(batch)}/{len(llm_tasks)} total)",
                 )
 
-                doc = await self._doc_store.upsert(
-                    session=db,
-                    project_id=project_id,
-                    doc_type=edoc.doc_type,
-                    source_path=edoc.file_path,
-                    content=generated_content,
-                    commit_sha=state.head_sha,
+                generated_results = await asyncio.gather(
+                    *[
+                        _generate_one_doc(edoc, existing_doc_content, prev_content)
+                        for _, edoc, existing_doc_content, prev_content in batch
+                    ]
                 )
 
-                await asyncio.to_thread(
-                    self._vector_store.delete_by_source_path,
-                    project_id,
-                    edoc.file_path,
-                )
-
-                table_model_map: dict[str, str] = {}
-                if state.knowledge:
-                    for ent_name, ent_info in state.knowledge.entities.items():
-                        if ent_info.table_name:
-                            table_model_map[ent_info.table_name.lower()] = ent_name
-
-                extra_meta: dict[str, str] = {
-                    "commit_sha": state.head_sha,
-                    "models": ",".join(edoc.models),
-                    "tables": ",".join(edoc.tables),
-                }
-                for idx_t, tbl in enumerate(edoc.tables[:10]):
-                    tbl_lower = tbl.lower()
-                    extra_meta[f"table_{idx_t}"] = tbl_lower
-                    if tbl_lower in table_model_map:
-                        extra_meta[f"table_{idx_t}_model"] = table_model_map[tbl_lower]
-                for idx_m, mdl in enumerate(edoc.models[:10]):
-                    extra_meta[f"model_{idx_m}"] = mdl
-
-                chunks = chunk_document(
-                    content=generated_content,
-                    file_path=edoc.file_path,
-                    doc_type=edoc.doc_type,
-                    extra_metadata=extra_meta,
-                )
-                if chunks:
-                    chunk_ids = [f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks]
-                    chunk_docs = [c.content for c in chunks]
-                    chunk_metas = [c.metadata for c in chunks]
-                    await asyncio.to_thread(
-                        self._vector_store.add_documents,
+                for (_, edoc, _, _), generated_content in zip(batch, generated_results):
+                    doc = await self._doc_store.upsert(
+                        session=db,
                         project_id=project_id,
-                        doc_ids=chunk_ids,
-                        documents=chunk_docs,
-                        metadatas=chunk_metas,
+                        doc_type=edoc.doc_type,
+                        source_path=edoc.file_path,
+                        content=generated_content,
+                        commit_sha=state.head_sha,
                     )
 
-                pending_paths.append(edoc.file_path)
-                if len(pending_paths) >= batch_flush_size:
-                    await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
-                    pending_paths = []
+                    await asyncio.to_thread(
+                        self._vector_store.delete_by_source_path,
+                        project_id,
+                        edoc.file_path,
+                    )
+
+                    extra_meta: dict[str, str] = {
+                        "commit_sha": state.head_sha,
+                        "models": ",".join(edoc.models),
+                        "tables": ",".join(edoc.tables),
+                    }
+                    for idx_t, tbl in enumerate(edoc.tables[:10]):
+                        tbl_lower = tbl.lower()
+                        extra_meta[f"table_{idx_t}"] = tbl_lower
+                        if tbl_lower in table_model_map:
+                            extra_meta[f"table_{idx_t}_model"] = table_model_map[tbl_lower]
+                    for idx_m, mdl in enumerate(edoc.models[:10]):
+                        extra_meta[f"model_{idx_m}"] = mdl
+
+                    chunks = chunk_document(
+                        content=generated_content,
+                        file_path=edoc.file_path,
+                        doc_type=edoc.doc_type,
+                        extra_metadata=extra_meta,
+                    )
+                    if chunks:
+                        chunk_ids = [
+                            f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks
+                        ]
+                        chunk_docs = [c.content for c in chunks]
+                        chunk_metas = [c.metadata for c in chunks]
+                        await asyncio.to_thread(
+                            self._vector_store.add_documents,
+                            project_id=project_id,
+                            doc_ids=chunk_ids,
+                            documents=chunk_docs,
+                            metadatas=chunk_metas,
+                        )
+
+                    pending_paths.append(edoc.file_path)
+                    if len(pending_paths) >= batch_flush_size:
+                        await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
+                        pending_paths = []
 
             if pending_paths:
                 await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
@@ -627,10 +661,19 @@ class IndexingPipelineRunner:
         """
         if not sha:
             return None
-        # file_path may contain a chunk suffix like "file.py#file.py#part0"
         git_path = file_path.split("#")[0]
         try:
             repo = await asyncio.to_thread(Repo, str(repo_dir))
+            blob = await asyncio.to_thread(lambda: repo.git.show(f"{sha}:{git_path}"))
+            return blob if isinstance(blob, str) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _git_show_cached(repo: Repo, sha: str, file_path: str) -> str | None:
+        """Like _git_show but reuses an existing Repo instance."""
+        git_path = file_path.split("#")[0]
+        try:
             blob = await asyncio.to_thread(lambda: repo.git.show(f"{sha}:{git_path}"))
             return blob if isinstance(blob, str) else None
         except Exception:

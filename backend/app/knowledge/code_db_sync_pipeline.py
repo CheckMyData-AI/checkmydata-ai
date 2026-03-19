@@ -24,9 +24,11 @@ from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.db_index_service import DbIndexService
 from app.services.project_cache_service import ProjectCacheService
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 5
+BATCH_SIZE = settings.db_index_batch_size
 
 
 class CodeDbSyncPipeline:

@@ -39,7 +39,6 @@ from app.core.types import RAGSource
 from app.core.validation_loop import ValidationLoop
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.entity_extractor import ProjectKnowledge
-from app.knowledge.schema_indexer import SchemaIndexer
 from app.knowledge.vector_store import VectorStore
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.router import LLMRouter
@@ -102,7 +101,6 @@ class SQLAgent(BaseAgent):
         self._llm = llm_router or LLMRouter()
         self._vector_store = vector_store or VectorStore()
         self._rules_engine = rules_engine or CustomRulesEngine()
-        self._schema_indexer = SchemaIndexer()
         self._cache_svc = ProjectCacheService()
 
         self._connectors: dict[str, BaseConnector] = {}

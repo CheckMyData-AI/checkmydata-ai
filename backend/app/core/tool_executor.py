@@ -71,7 +71,7 @@ class ToolExecutor:
         connection_config: ConnectionConfig | None,
         llm_router: LLMRouter,
         vector_store: VectorStore,
-        schema_indexer: SchemaIndexer,
+        schema_indexer: SchemaIndexer | None,
         rules_engine: CustomRulesEngine,
         tracker: WorkflowTracker,
         *,

@@ -50,19 +50,25 @@ class VectorStore:
             logger.debug("ChromaDB: using local PersistentClient at %s", persist_dir)
 
         self._embedding_fn = _get_embedding_function()
+        self._collections: dict[str, chromadb.Collection] = {}
 
     def _collection_name(self, project_id: str) -> str:
         safe = project_id.replace("-", "_")[:50]
         return f"project_{safe}"
 
     def get_or_create_collection(self, project_id: str) -> chromadb.Collection:
+        cached = self._collections.get(project_id)
+        if cached is not None:
+            return cached
         kwargs: dict = {
             "name": self._collection_name(project_id),
             "metadata": {"hnsw:space": "cosine"},
         }
         if self._embedding_fn is not None:
             kwargs["embedding_function"] = self._embedding_fn
-        return self._client.get_or_create_collection(**kwargs)
+        coll = self._client.get_or_create_collection(**kwargs)
+        self._collections[project_id] = coll
+        return coll
 
     def add_documents(
         self,
@@ -145,6 +151,7 @@ class VectorStore:
             return 0
 
     def delete_collection(self, project_id: str) -> None:
+        self._collections.pop(project_id, None)
         try:
             self._client.delete_collection(self._collection_name(project_id))
         except Exception:

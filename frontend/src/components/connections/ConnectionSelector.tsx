@@ -10,9 +10,9 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
+import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"];
-const POLL_TIMEOUT_MS = 30 * 60 * 1000;
 
 function formatAge(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -191,7 +191,7 @@ export function ConnectionSelector() {
     if (prevTimer) clearInterval(prevTimer);
     const pollStart = Date.now();
     const timer = setInterval(async () => {
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+      if (Date.now() - pollStart > MAX_POLL_MS) {
         clearInterval(timer);
         indexPollRef.current.delete(id);
         setIndexing((prev) => (prev === id ? null : prev));
@@ -229,7 +229,7 @@ export function ConnectionSelector() {
         setIndexing((prev) => (prev === id ? null : prev));
         toast("Lost connection while checking index status", "error");
       }
-    }, 3000);
+    }, POLL_INTERVAL_MS);
     indexPollRef.current.set(id, timer);
   }, []);
 
@@ -238,7 +238,7 @@ export function ConnectionSelector() {
     if (prevTimer) clearInterval(prevTimer);
     const pollStart = Date.now();
     const timer = setInterval(async () => {
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+      if (Date.now() - pollStart > MAX_POLL_MS) {
         clearInterval(timer);
         syncPollRef.current.delete(id);
         setSyncing((prev) => (prev === id ? null : prev));
@@ -277,7 +277,7 @@ export function ConnectionSelector() {
         setSyncing((prev) => (prev === id ? null : prev));
         toast("Lost connection while checking sync status", "error");
       }
-    }, 3000);
+    }, POLL_INTERVAL_MS);
     syncPollRef.current.set(id, timer);
   }, []);
 
