@@ -72,13 +72,17 @@ jobs:
 
       - name: Verify backend health
         run: |
-          sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.BACKEND_API_URL }}/health)
-          if [ "$STATUS" != "200" ]; then
-            echo "Backend health check failed with status $STATUS"
-            exit 1
-          fi
-          echo "Backend is healthy (HTTP $STATUS)"
+          for i in 1 2 3 4 5; do
+            sleep 30
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.BACKEND_API_URL }}/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend is healthy (HTTP $STATUS) on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: backend returned $STATUS, retrying..."
+          done
+          echo "Backend health check failed after 5 attempts (last status: $STATUS)"
+          exit 1
 
       - name: Verify frontend health
         run: |
