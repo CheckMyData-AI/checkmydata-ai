@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 
+from app.config import settings
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.code_db_sync_analyzer import CodeDbSyncAnalyzer, TableSyncAnalysis
@@ -23,8 +24,6 @@ from app.models.db_index import DbIndex
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.db_index_service import DbIndexService
 from app.services.project_cache_service import ProjectCacheService
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

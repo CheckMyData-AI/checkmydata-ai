@@ -114,7 +114,8 @@ class SSHTunnel:
     async def is_alive(self) -> bool:
         if self._conn is None or self._listener is None:
             return False
-        if self._last_alive_check and (time.monotonic() - self._last_alive_check) < _LIVENESS_CACHE_TTL:
+        elapsed = time.monotonic() - self._last_alive_check if self._last_alive_check else None
+        if elapsed is not None and elapsed < _LIVENESS_CACHE_TTL:
             return True
         try:
             transport = self._conn.get_extra_info("socket")

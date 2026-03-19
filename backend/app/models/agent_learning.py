@@ -70,4 +70,6 @@ class AgentLearningSummary(Base):
     total_lessons: Mapped[int] = mapped_column(Integer, default=0)
     lessons_by_category_json: Mapped[str] = mapped_column(Text, default="{}")
     compiled_prompt: Mapped[str] = mapped_column(Text, default="")
-    last_compiled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_compiled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
