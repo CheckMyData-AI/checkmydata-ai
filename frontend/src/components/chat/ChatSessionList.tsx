@@ -85,7 +85,8 @@ export function ChatSessionList() {
     try {
       await api.chat.deleteSession(sessionId);
       const wasActive = useAppStore.getState().activeSession?.id === sessionId;
-      setChatSessions(chatSessions.filter((s) => s.id !== sessionId));
+      const current = useAppStore.getState().chatSessions;
+      setChatSessions(current.filter((s) => s.id !== sessionId));
       if (wasActive) {
         setActiveSession(null);
         setMessages([]);

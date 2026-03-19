@@ -55,6 +55,8 @@ def retry(
                             pass
                     await asyncio.sleep(delay)
                     delay *= backoff_multiplier
+            if last_exc is None:  # pragma: no cover
+                raise RuntimeError("retry exhausted without exception")
             raise last_exc  # pragma: no cover
 
         return wrapper

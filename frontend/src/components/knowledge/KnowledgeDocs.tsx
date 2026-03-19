@@ -40,12 +40,14 @@ export function KnowledgeDocs() {
       setListLoading(false);
       return;
     }
+    let cancelled = false;
     setListLoading(true);
     api.repos
       .docs(activeProject.id)
-      .then(setDocs)
+      .then((d) => { if (!cancelled) setDocs(d); })
       .catch(() => {})
-      .finally(() => setListLoading(false));
+      .finally(() => { if (!cancelled) setListLoading(false); });
+    return () => { cancelled = true; };
   }, [activeProject]);
 
   const handleView = async (doc: DocMeta) => {

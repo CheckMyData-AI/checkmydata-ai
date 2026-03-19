@@ -63,7 +63,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
         set({ notes: [] });
       }
     } finally {
-      set({ isLoading: false });
+      if (get().loadedProjectId === projectId) {
+        set({ isLoading: false });
+      }
     }
   },
   clear: () => set({ notes: [], loadedProjectId: null }),

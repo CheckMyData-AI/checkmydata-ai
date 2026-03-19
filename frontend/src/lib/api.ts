@@ -26,8 +26,10 @@ async function request<T>(path: string, options?: RequestInit & { timeoutMs?: nu
 
   const controller = new AbortController();
   const existingSignal = restOptions.signal;
+  let onAbort: (() => void) | undefined;
   if (existingSignal) {
-    existingSignal.addEventListener("abort", () => controller.abort(existingSignal.reason));
+    onAbort = () => controller.abort(existingSignal.reason);
+    existingSignal.addEventListener("abort", onAbort);
   }
   const timeout = setTimeout(() => controller.abort("Request timed out"), timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -48,12 +50,14 @@ async function request<T>(path: string, options?: RequestInit & { timeoutMs?: nu
     });
   } catch (err) {
     clearTimeout(timeout);
+    if (existingSignal && onAbort) existingSignal.removeEventListener("abort", onAbort);
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error("Request timed out. Please try again.");
     }
     throw err;
   }
   clearTimeout(timeout);
+  if (existingSignal && onAbort) existingSignal.removeEventListener("abort", onAbort);
 
   if (!res.ok) {
     const isAuthRoute = path.startsWith("/auth/");

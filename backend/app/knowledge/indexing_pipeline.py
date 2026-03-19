@@ -133,13 +133,13 @@ def run_pass4_enrich(
             related_services = [
                 sf
                 for sf in knowledge.service_functions
-                if any(t in sf["tables"] for t in schema.tables)
+                if any(t in (sf.get("tables") or []) for t in schema.tables)
                 or any(m in sf.get("name", "") for m in schema.models)
             ]
             for sf in related_services[:3]:
                 context_parts.append(
                     f"Service function {sf['name']} ({sf['file_path']}) "
-                    f"operates on tables: {', '.join(sf['tables'])}"
+                    f"operates on tables: {', '.join(sf.get('tables') or [])}"
                 )
 
             enrichment = "\n".join(context_parts) if context_parts else ""

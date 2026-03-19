@@ -325,6 +325,6 @@ class KnowledgeAgent(BaseAgent):
         if knowledge.service_functions:
             lines.append(f"\nAlso found {len(knowledge.service_functions)} service functions:")
             for sf in knowledge.service_functions[:30]:
-                tables = ", ".join(sf["tables"])
+                tables = ", ".join(sf.get("tables") or [])
                 lines.append(f"- `{sf['name']}` in `{sf['file_path']}` -> tables: {tables}")
         return "\n".join(lines)

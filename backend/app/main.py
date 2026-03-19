@@ -314,7 +314,11 @@ async def module_health():
 
     # Active connectors
     try:
-        active = list(chat._agent._orchestrator._sql._connectors.keys())
+        agent = getattr(chat, "_agent", None)
+        orch = getattr(agent, "_orchestrator", None) if agent else None
+        sql = getattr(orch, "_sql", None) if orch else None
+        conns = getattr(sql, "_connectors", {}) if sql else {}
+        active = list(conns.keys())
         results["connectors"] = {"status": "ok", "active": len(active)}
     except Exception:
         results["connectors"] = {"status": "error", "detail": "Service unavailable"}

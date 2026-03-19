@@ -40,21 +40,15 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("confidence");
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const data = await api.connections.listLearnings(connectionId);
-      setLearnings(data);
-    } catch {
-      toast("Failed to load learnings", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    setLoading(true);
+    api.connections
+      .listLearnings(connectionId)
+      .then((data) => { if (!cancelled) setLearnings(data); })
+      .catch(() => { if (!cancelled) toast("Failed to load learnings", "error"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [connectionId]);
 
   useEffect(() => {

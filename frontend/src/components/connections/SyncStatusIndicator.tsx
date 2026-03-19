@@ -30,7 +30,10 @@ export function SyncStatusIndicator() {
       setSyncStatus(null);
       return;
     }
-    api.connections.syncStatus(activeConnection.id).then(setSyncStatus).catch(() => {});
+    let cancelled = false;
+    const connId = activeConnection.id;
+    api.connections.syncStatus(connId).then((s) => { if (!cancelled) setSyncStatus(s); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [activeConnection]);
 
   useEffect(() => {

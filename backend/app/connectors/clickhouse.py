@@ -87,11 +87,12 @@ class ClickHouseConnector(BaseConnector):
             return SchemaInfo(db_type=self.db_type)
 
         db_name = self._config.db_name if self._config else "default"
+        client = self._client
 
         def _introspect():
             tables: list[TableInfo] = []
 
-            tbl_result = self._client.query(
+            tbl_result = client.query(
                 "SELECT name, comment, total_rows FROM system.tables WHERE database = %(db)s",
                 parameters={"db": db_name},
             )
@@ -100,7 +101,7 @@ class ClickHouseConnector(BaseConnector):
                 tcomment = trow[1] if len(trow) > 1 else ""
                 trow_count = trow[2] if len(trow) > 2 else None
 
-                col_result = self._client.query(
+                col_result = client.query(
                     "SELECT name, type, default_kind, default_expression, comment "
                     "FROM system.columns "
                     "WHERE database = %(db)s AND table = %(tbl)s",
@@ -119,7 +120,7 @@ class ClickHouseConnector(BaseConnector):
 
                 indexes: list[IndexInfo] = []
                 try:
-                    idx_result = self._client.query(
+                    idx_result = client.query(
                         "SELECT name, expr, type "
                         "FROM system.data_skipping_indices "
                         "WHERE database = %(db)s AND table = %(tbl)s",

@@ -99,7 +99,7 @@ def build_project_summary(
         shown = min(total_sf, 50)
         sections.append(f"## Key Service Functions ({shown}/{total_sf})\n")
         for sf in knowledge.service_functions[:shown]:
-            tables = ", ".join(sf["tables"])
+            tables = ", ".join(sf.get("tables") or [])
             sections.append(f"- `{sf['name']}` in `{sf['file_path']}` → tables: {tables}")
         if total_sf > shown:
             sections.append(
