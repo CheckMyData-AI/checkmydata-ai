@@ -1,10 +1,8 @@
 FROM python:3.12-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client gcc libpq-dev curl gosu \
+    git openssh-client gcc libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
-
-RUN adduser --disabled-password --gecos "" --home /home/appuser appuser
 
 WORKDIR /app
 
@@ -13,9 +11,8 @@ RUN pip install --no-cache-dir "."
 
 COPY backend/ .
 
-RUN mkdir -p data rules /home/appuser/.cache/chroma \
-    && chown -R appuser:appuser /app /home/appuser/.cache
+RUN mkdir -p data rules
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "chown -R appuser:appuser /app/data /home/appuser/.cache 2>/dev/null; exec gosu appuser sh -c 'PYTHONPATH=/app uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"]
+CMD ["sh", "-c", "PYTHONPATH=/app uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
