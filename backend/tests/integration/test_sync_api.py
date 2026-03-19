@@ -86,6 +86,12 @@ class TestReadinessEndpoint:
         assert data["repo_connected"] is False
         assert isinstance(data["missing_steps"], list)
         assert any(s["step"] == "connect_repo" for s in data["missing_steps"])
+        assert "last_indexed_at" in data
+        assert "commits_behind" in data
+        assert "is_stale" in data
+        assert data["last_indexed_at"] is None
+        assert data["commits_behind"] == 0
+        assert data["is_stale"] is False
 
     @pytest.mark.asyncio
     async def test_readiness_not_found(self, auth_client: AsyncClient):

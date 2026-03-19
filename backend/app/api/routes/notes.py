@@ -29,6 +29,8 @@ class NoteCreate(BaseModel):
     title: str = Field(max_length=500)
     comment: str | None = Field(None, max_length=10000)
     sql_query: str = Field(max_length=50000)
+    answer_text: str | None = None
+    visualization_json: str | None = None
     last_result_json: str | None = None
 
 
@@ -46,6 +48,8 @@ class NoteResponse(BaseModel):
     title: str
     comment: str | None
     sql_query: str
+    answer_text: str | None = None
+    visualization_json: str | None = None
     last_result_json: str | None
     last_executed_at: datetime | None
     created_at: datetime | None
@@ -100,6 +104,8 @@ async def create_note(
         title=body.title,
         comment=body.comment,
         sql_query=body.sql_query,
+        answer_text=body.answer_text,
+        visualization_json=body.visualization_json,
         last_result_json=body.last_result_json,
         last_executed_at=datetime.now(UTC) if body.last_result_json else None,
     )

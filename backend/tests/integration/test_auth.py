@@ -48,6 +48,23 @@ class TestAuth:
         assert resp.status_code == 200
         assert resp.json()["token"]
 
+    async def test_register_normalizes_email(self, client):
+        raw_email = f"  User-{uuid.uuid4().hex[:8]}@Test.COM  "
+        normalized = raw_email.lower().strip()
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": raw_email.strip(), "password": "secret123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user"]["email"] == normalized
+
+        resp2 = await client.post(
+            "/api/auth/login",
+            json={"email": raw_email.strip().upper(), "password": "secret123"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["user"]["email"] == normalized
+
     async def test_duplicate_register(self, client):
         email = _email()
         await client.post(
@@ -63,6 +80,18 @@ class TestAuth:
                 "email": email,
                 "password": "pass1234",
             },
+        )
+        assert resp.status_code == 409
+
+    async def test_duplicate_register_case_insensitive(self, client):
+        email = _email()
+        await client.post(
+            "/api/auth/register",
+            json={"email": email, "password": "pass1234"},
+        )
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": email.upper(), "password": "pass1234"},
         )
         assert resp.status_code == 409
 
@@ -173,6 +202,60 @@ class TestGoogleAuth:
         )
         assert resp.status_code == 401
 
+    async def test_google_nonce_mismatch_returns_401(self, client):
+        email = _email()
+        payload = {
+            **FAKE_GOOGLE_PAYLOAD,
+            "email": email,
+            "sub": f"gid-{uuid.uuid4().hex[:8]}",
+            "nonce": "server-nonce-abc",
+        }
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value=payload,
+        ):
+            resp = await client.post(
+                "/api/auth/google",
+                json={"credential": "fake", "nonce": "wrong-nonce"},
+            )
+        assert resp.status_code == 401
+
+    async def test_google_nonce_match_succeeds(self, client):
+        email = _email()
+        nonce = f"nonce-{uuid.uuid4().hex[:8]}"
+        payload = {
+            **FAKE_GOOGLE_PAYLOAD,
+            "email": email,
+            "sub": f"gid-{uuid.uuid4().hex[:8]}",
+            "nonce": nonce,
+        }
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value=payload,
+        ):
+            resp = await client.post(
+                "/api/auth/google",
+                json={"credential": "fake", "nonce": nonce},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["token"]
+
+    async def test_google_login_normalizes_email(self, client):
+        email_raw = f"  User-{uuid.uuid4().hex[:8]}@EXAMPLE.COM  "
+        email_normalized = email_raw.lower().strip()
+        payload = {
+            **FAKE_GOOGLE_PAYLOAD,
+            "email": email_raw,
+            "sub": f"gid-{uuid.uuid4().hex[:8]}",
+        }
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value=payload,
+        ):
+            resp = await client.post("/api/auth/google", json={"credential": "fake"})
+        assert resp.status_code == 200
+        assert resp.json()["user"]["email"] == email_normalized
+
 
 @pytest.mark.asyncio
 class TestChangePassword:
@@ -235,6 +318,26 @@ class TestRefreshToken:
 
     async def test_refresh_requires_auth(self, client):
         resp = await client.post("/api/auth/refresh")
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestMe:
+    async def test_me_returns_user(self, client):
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+        resp = await client.get("/api/auth/me", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == reg["user_id"]
+        assert data["email"] == reg["email"]
+
+    async def test_me_requires_auth(self, client):
+        resp = await client.get("/api/auth/me")
+        assert resp.status_code == 401
+
+    async def test_me_with_invalid_token(self, client):
+        resp = await client.get("/api/auth/me", headers=auth_headers("invalid-jwt"))
         assert resp.status_code == 401
 
 

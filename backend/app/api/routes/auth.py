@@ -29,6 +29,8 @@ class LoginRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     credential: str
+    g_csrf_token: str | None = None
+    nonce: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -84,11 +86,22 @@ async def google_login(
     body: GoogleLoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    if body.g_csrf_token:
+        cookie_token = request.cookies.get("g_csrf_token")
+        if not cookie_token or cookie_token != body.g_csrf_token:
+            raise HTTPException(status_code=403, detail="CSRF token mismatch")
+
     try:
         payload = _auth.verify_google_token(body.credential)
     except ValueError as exc:
         logger.warning("Google token verification failed: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid Google token") from exc
+
+    if body.nonce:
+        token_nonce = payload.get("nonce")
+        if not token_nonce or token_nonce != body.nonce:
+            logger.warning("Google nonce mismatch: expected=%s got=%s", body.nonce, token_nonce)
+            raise HTTPException(status_code=401, detail="Invalid nonce in Google token")
 
     user = await _auth.find_or_create_google_user(db, payload)
 
@@ -135,6 +148,18 @@ async def refresh_token(
         token=token,
         user={"id": user.id, "email": user.email, "display_name": user.display_name},
     )
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current user profile. Used by the frontend on session restore."""
+    user = await _auth.get_by_id(db, current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return UserResponse(id=user.id, email=user.email, display_name=user.display_name)
 
 
 @router.delete("/account")

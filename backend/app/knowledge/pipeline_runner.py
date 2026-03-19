@@ -250,6 +250,13 @@ class IndexingPipelineRunner:
             filtered = before - len(state.changed_files)
             if filtered:
                 logger.info("Pre-filtered %d binary/missing files from changed_files", filtered)
+                await tracker.emit(
+                    wf_id,
+                    "detect_changes",
+                    "started",
+                    f"Pre-filtered {filtered} binary/missing files, "
+                    f"{len(state.changed_files)} files remaining",
+                )
 
         # --- Early exit: nothing changed since last index ---
         if (
@@ -290,12 +297,20 @@ class IndexingPipelineRunner:
                         project_id,
                         state.deleted_files,
                     )
-                    for dpath in state.deleted_files:
+                    total_deleted = len(state.deleted_files)
+                    for del_idx, dpath in enumerate(state.deleted_files, 1):
                         await asyncio.to_thread(
                             self._vector_store.delete_by_source_path,
                             project_id,
                             dpath,
                         )
+                        if del_idx % 5 == 0 or del_idx == total_deleted:
+                            await tracker.emit(
+                                wf_id,
+                                "cleanup_deleted",
+                                "started",
+                                f"Removed vectors {del_idx}/{total_deleted}: {dpath}",
+                            )
             await self._cp_svc.complete_step(db, cp_id, "cleanup_deleted")
 
         # --- Step 5: project_profile ---
@@ -355,6 +370,12 @@ class IndexingPipelineRunner:
                 state.changed_files,
                 state.profile,
             )
+            await tracker.emit(
+                wf_id,
+                "analyze_files",
+                "started",
+                f"Found {len(raw_schemas)} raw schemas, merging duplicates",
+            )
             merged: dict[str, Any] = {}
             for s in raw_schemas:
                 key = s.file_path
@@ -370,6 +391,12 @@ class IndexingPipelineRunner:
                 else:
                     merged[key] = s
             state.schemas = list(merged.values())
+            await tracker.emit(
+                wf_id,
+                "analyze_files",
+                "started",
+                f"Merged into {len(state.schemas)} unique file schemas",
+            )
 
         # --- Step 7: cross_file_analysis ---
         if "cross_file_analysis" in done and checkpoint.knowledge_json != "{}":
@@ -397,6 +424,15 @@ class IndexingPipelineRunner:
                 if not force_full:
                     cached_knowledge = await self._cache_svc.load_knowledge(db, project_id)
                 is_incremental = cached_knowledge is not None and state.last_sha is not None
+                await tracker.emit(
+                    wf_id,
+                    "cross_file_analysis",
+                    "started",
+                    f"Running {'incremental' if is_incremental else 'full'} analysis "
+                    f"on {len(state.schemas)} schemas"
+                    + (f" (cached: {len(cached_knowledge.entities)} entities)"
+                       if cached_knowledge else ""),
+                )
                 state.knowledge = await asyncio.to_thread(
                     run_pass2_3_knowledge,
                     state.repo_dir,
@@ -510,6 +546,7 @@ class IndexingPipelineRunner:
 
             # Phase 1: filter out skip-able docs and prepare LLM tasks
             llm_tasks: list[tuple[int, EnrichedDoc, str | None, str | None]] = []
+            docs_generated = 0
 
             for i, edoc in enumerate(state.enriched_docs):
                 if edoc.file_path in processed_paths:
@@ -561,7 +598,16 @@ class IndexingPipelineRunner:
 
                 llm_tasks.append((i, edoc, existing_doc_content, prev_content))
 
+            await tracker.emit(
+                wf_id,
+                "generate_docs",
+                "started",
+                f"Prepared {len(llm_tasks)} docs for LLM generation, "
+                f"{skipped} skipped (unchanged/binary)",
+            )
+
             # Phase 2: run LLM calls in parallel batches, then persist sequentially
+            total_llm_tasks = len(llm_tasks)
             llm_batch_size = 5
             for batch_start in range(0, len(llm_tasks), llm_batch_size):
                 batch = llm_tasks[batch_start : batch_start + llm_batch_size]
@@ -630,6 +676,14 @@ class IndexingPipelineRunner:
                             metadatas=chunk_metas,
                         )
 
+                    docs_generated += 1
+                    await tracker.emit(
+                        wf_id,
+                        "generate_docs",
+                        "started",
+                        f"Generated {docs_generated}/{total_llm_tasks}: {edoc.file_path}",
+                    )
+
                     pending_paths.append(edoc.file_path)
                     if len(pending_paths) >= batch_flush_size:
                         await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
@@ -693,6 +747,10 @@ class IndexingPipelineRunner:
     ) -> PipelineResult:
         """Record the index commit, save caches, cleanup checkpoint, and emit completion."""
         async with tracker.step(wf_id, "record_index", "Recording commit index"):
+            await tracker.emit(
+                wf_id, "record_index", "started",
+                f"Recording commit {state.head_sha[:8]}",
+            )
             repo = await asyncio.to_thread(Repo, str(state.repo_dir))
             commit_msg = str(repo.head.commit.message).strip()[:200]
             await self._git_tracker.record_index(
@@ -704,6 +762,11 @@ class IndexingPipelineRunner:
                 branch=project.repo_branch,
             )
             await self._git_tracker.cleanup_old_records(db, project_id, keep=10)
+
+            await tracker.emit(
+                wf_id, "record_index", "started",
+                "Saving knowledge caches",
+            )
             await self._cache_svc.save(
                 db,
                 project_id,
@@ -712,6 +775,10 @@ class IndexingPipelineRunner:
             )
 
             if state.changed_files:
+                await tracker.emit(
+                    wf_id, "record_index", "started",
+                    "Marking DB index and sync as stale",
+                )
                 await self._mark_db_index_code_stale(db, project_id)
                 await self._mark_sync_stale(db, project_id)
 

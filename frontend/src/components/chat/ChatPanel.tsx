@@ -34,6 +34,9 @@ export function ChatPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const cachedReady = useAppStore((s) =>
+    activeProject ? s.readinessCache[activeProject.id]?.ready : false
+  );
   const [readinessBypassed, setReadinessBypassed] = useState(false);
 
   useEffect(() => {
@@ -202,7 +205,7 @@ export function ChatPanel() {
     );
   }
 
-  const showReadinessGate = messages.length === 0 && !readinessBypassed;
+  const showReadinessGate = messages.length === 0 && !readinessBypassed && !cachedReady;
 
   if (showReadinessGate) {
     return (

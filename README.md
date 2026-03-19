@@ -70,7 +70,7 @@ The system has **four main flows**:
 make setup       # creates venv, installs Python & Node deps, generates .env & encryption key, runs DB migrations
 
 # Start both backend and frontend
-make dev         # backend on :8000, frontend on :3000
+make dev         # backend on :8000, frontend on :3100
 ```
 
 Open `http://localhost:3100` in your browser.
@@ -81,11 +81,22 @@ When you first open the app, you see the **AuthGate** — a login/registration f
 
 - Enter email + password + display name to **create an account**
 - Or click **"Sign in with Google"** to authenticate via your Google account (no password needed)
+- Emails are normalized (lowercased, trimmed) on registration and login for case-insensitive matching
 - JWT token is stored in `localStorage`, so you stay logged in across page refreshes
-- Tokens are automatically refreshed before expiry (30 minutes before), so your session persists seamlessly
+- Tokens include `iat` (issued-at) timestamps and are automatically refreshed before expiry (30 minutes before)
+- On page load, the session is validated server-side via `GET /api/auth/me`
 - Your email appears in the sidebar footer; click the **settings icon** to access account options (change password, sign out, delete account)
 
-**Google OAuth**: If you register with email/password first and later sign in with Google using the same email, your accounts are automatically linked.
+**Google OAuth**: If you register with email/password first and later sign in with Google using the same email, your accounts are automatically linked. Google Sign In uses nonce-based replay protection and CSRF double-submit cookies.
+
+**Google OAuth Setup** (required for "Sign in with Google"):
+
+1. Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Create an OAuth 2.0 Client ID (Web application type)
+3. Add `http://localhost:3100` to "Authorized JavaScript origins"
+4. Copy the Client ID and set it in:
+   - `backend/.env` → `GOOGLE_CLIENT_ID=your-client-id`
+   - `frontend/.env.local` → `NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-client-id`
 
 ### 3. Add SSH Keys
 
@@ -243,7 +254,13 @@ After both the **repository** is indexed and the **database** is indexed, you ca
 
 6. **Staleness**: When either the repository or the database is re-indexed, sync data is automatically marked as stale. The UI shows the SYNC button with an amber outline, prompting a re-sync.
 
-7. **Chat Readiness Gate**: When you select a project and open the chat for the first time, a readiness checklist appears immediately — even if no repository or database connection exists yet. It shows which setup steps are complete and which are missing. Clicking "Connect a Git repository" focuses the Projects section and opens the edit form; clicking "Add a database connection" focuses the Connections section. If sync is not done, you can still chat (with reduced accuracy) or run sync inline from the checklist.
+7. **Chat Readiness Gate (Status Dashboard)**: When you select a project and open a new chat, a status dashboard appears showing the actual state of each setup step with live green/grey indicators:
+   - **Green dot + "Done"** for completed steps (Git repository connected, repository indexed, database connection, database indexed, code-DB synced)
+   - **Grey dot** for incomplete steps, with actionable "Run" buttons for indexing/sync and navigation links for connecting repos/DBs
+   - The dashboard is **cached per project** so it doesn't flash "Checking readiness..." every time you open a new chat. If everything is ready, the gate is skipped entirely and you go straight to the chat.
+   - **Staleness detection**: If the repository was indexed more than 7 days ago and there are new commits, an amber warning appears: "Index is outdated (> 7 days, N new commits). Re-indexing recommended." with a one-click "Re-index" button.
+   - Shows "Last indexed X ago" and "N new commits" when applicable.
+   - You can still "Chat anyway" to bypass the gate if setup is incomplete.
 
 **What the sync discovers (examples):**
 - `orders.amount` — "Stored in cents (integer). Divide by 100 for dollar values."
@@ -355,14 +372,18 @@ The widget uses the same SSE event stream as the Activity Log (`GET /api/workflo
 
 A real-time **Activity Log** panel is available at the bottom of the screen:
 
-1. Click the **"Activity Log"** button in the bottom-right corner to open it
+1. Click the **"Log"** button in the bottom-right corner to open it. This button is **always visible** — even when the Readiness Gate is displayed, when there is no chat input, or when no keyboard is present. It appears as a persistent floating button at the bottom-right of the content area.
 2. The panel shows a live stream of ALL backend events across all pipelines:
    - **Indexing** (purple) — SSH key, git clone/pull, file analysis, doc generation, vector storage
+   - **DB Indexing** (emerald) — schema introspection, sample fetching, LLM table analysis, summary
+   - **Code-DB Sync** (teal) — knowledge loading, table matching, per-table LLM analysis, summary
    - **Query** (cyan) — schema introspection, SQL generation, execution, validation, repair
    - **Agent** (amber) — LLM calls, tool execution, knowledge search
 3. Each log line shows: timestamp, pipeline, step name, status, detail, and elapsed time
-4. The panel auto-scrolls to the latest entry. A badge shows unread count when closed.
-5. Use **Clear** to reset the log, **Close** to hide the panel.
+4. All three pipelines (repo indexing, DB indexing, code-DB sync) emit **granular intermediate progress** events within each step, showing per-file/per-table/per-batch progress so you can track exactly where the pipeline is and identify where issues occur
+5. The panel auto-scrolls to the latest entry. A badge shows unread count when closed.
+6. Use **Clear** to reset the log, **Close** to hide the panel.
+7. An additional toggle button also appears inside the chat input area (when visible).
 
 The log connects via SSE to `GET /api/workflows/events` (global mode, no workflow filter).
 
@@ -495,16 +516,27 @@ Project owners can invite other users to collaborate on a project via email:
 
 ### 16. Saved Queries (Notes Panel)
 
-The **Notes** panel lets you save SQL queries from agent responses for quick reference and re-execution.
+The **Notes** panel lets you save SQL queries from agent responses for quick reference and re-execution. Each saved note now stores the **complete context** — SQL query, raw data, agent's answer text, and visualization config.
 
-1. **Save a query**: When the agent returns SQL results, click the **bookmark icon** (🔖) next to the thumbs up/down feedback buttons. The query, its result, and a title (auto-generated from the answer) are saved to your notes.
+1. **Save a query**: When the agent returns SQL results, click the **bookmark icon** (🔖) next to the thumbs up/down feedback buttons. The following are saved:
+   - SQL query
+   - Raw result data (columns, rows, row count)
+   - Agent's textual answer/interpretation
+   - Visualization configuration (chart type, settings)
+   - Title (auto-generated from the first line of the answer)
 
-2. **View notes**: Click the **bookmark button** in the header bar (top-right) to toggle the Notes panel on the right side. The panel shows all saved queries for the active project, sorted by most recently updated.
+2. **View notes**: Click the **bookmark button** in the header bar (top-right) to toggle the Notes panel on the right side. The panel shows all saved queries for the active project, sorted by most recently updated. Each card shows:
+   - Title and time since last execution
+   - Visualization type badge (e.g. "bar_chart", "table") when applicable
+   - Collapsible **Agent Response** section with the full answer text
+   - Collapsible **SQL Query** section with copy button
+   - Collapsible **Result** section with data table
 
-3. **Re-execute**: Each saved note has a **▶ Run Again** button. Clicking it re-runs the SQL query against the original database connection and updates the stored result. This is useful for monitoring queries that you check regularly.
+3. **Refresh data**: Each saved note has a **🔄 Refresh** button (with label). Clicking it re-runs the SQL query against the original database connection and updates the stored result. This is useful for monitoring queries that you check regularly.
 
 4. **Edit & manage**:
    - Click on a note's comment area to **add or edit a comment** — useful for annotating what the query does
+   - Expand **Agent Response** to see the full answer text the agent gave
    - Expand **SQL Query** to view and **copy** the full SQL
    - Expand **Result** to see the data table (last 20 rows shown inline)
    - Click the **trash icon** to delete a saved note (with confirmation)
@@ -514,6 +546,7 @@ The **Notes** panel lets you save SQL queries from agent responses for quick ref
    - The panel state (open/closed) persists in localStorage
    - Saved queries store the connection ID so re-execution uses the correct database
    - Results are capped at 500 rows to keep storage manageable
+   - `answer_text` and `visualization_json` columns store the complete agent context
 
 **API endpoints**: `POST /api/notes`, `GET /api/notes?project_id=X`, `GET /api/notes/{id}`, `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`, `POST /api/notes/{id}/execute`
 
@@ -1588,7 +1621,8 @@ src/
 |---|---|---|
 | `POST` | `/api/auth/register` | Create account (email, password) |
 | `POST` | `/api/auth/login` | Login, returns JWT |
-| `POST` | `/api/auth/google` | Google OAuth login (sends GIS ID token) |
+| `POST` | `/api/auth/google` | Google OAuth login (credential + optional nonce/CSRF) |
+| `GET` | `/api/auth/me` | Get current user profile (validates token server-side) |
 | `POST` | `/api/auth/change-password` | Change password (requires current password) |
 | `POST` | `/api/auth/refresh` | Refresh JWT token (returns new token) |
 | `DELETE` | `/api/auth/account` | Permanently delete account and all data |
@@ -1727,7 +1761,7 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `MASTER_ENCRYPTION_KEY` | **Yes** | Fernet key for encrypting stored credentials. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `JWT_SECRET` | **Yes (prod)** | Secret for signing JWT tokens. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth Client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Enables "Sign in with Google" button. |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | Same value as above, set in `frontend/.env` for the GIS JavaScript SDK. |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | Same value as above, set in `frontend/.env.local` for the GIS JavaScript SDK. |
 | `OPENAI_API_KEY` | One of three | OpenAI API key (for GPT-4o, etc.) |
 | `ANTHROPIC_API_KEY` | One of three | Anthropic API key (for Claude) |
 | `OPENROUTER_API_KEY` | One of three | OpenRouter API key (multi-model proxy) |
@@ -1754,7 +1788,7 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | Command | Description |
 |---|---|
 | `make setup` | Full setup: venv, deps, .env, encryption key, migrations |
-| `make dev` | Start backend (:8000) + frontend (:3000) |
+| `make dev` | Start backend (:8000) + frontend (:3100) |
 | `make stop` | Stop background dev servers |
 | `make logs` | Tail backend + frontend logs |
 | `make test` | Run backend unit tests |
@@ -1899,7 +1933,7 @@ make test-frontend    # frontend vitest
 | Frontend (ChatInput) | 6 (render, typing, submit, empty guard, disabled, placeholder) | — |
 | Frontend (RulesManager) | 8 (new button, empty state, rule items, edit/delete buttons, create form, cancel edit) | — |
 | Frontend (SshKeyManager) | 6 (add button, empty state, key items, delete button, create form, submit) | — |
-| Frontend (ReadinessGate) | 5 (checklist, bypass button, callback, warning, null when ready) | — |
+| Frontend (ReadinessGate) | 8 (status dashboard, bypass button, callback, warning, auto-bypass when ready, green indicators, staleness warning, last indexed time) | — |
 | Frontend (Sidebar) | 5 (render, nav sections, collapse, workspace sections, sign out) | — |
 | Frontend (InviteManager) | 6 (render, email+role inputs, invite button, members list, remove button except owner, pending invites) | — |
 

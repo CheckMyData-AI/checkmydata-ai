@@ -29,6 +29,15 @@ function parseResult(json: string | null): RawResult | null {
   }
 }
 
+function parseViz(json: string | null): Record<string, unknown> | null {
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 interface NoteCardProps {
   note: SavedNote;
 }
@@ -38,6 +47,7 @@ export function NoteCard({ note }: NoteCardProps) {
   const confirm = useConfirmStore((s) => s.show);
 
   const [showSql, setShowSql] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [editingComment, setEditingComment] = useState(false);
@@ -52,6 +62,8 @@ export function NoteCard({ note }: NoteCardProps) {
   }, [editingComment]);
 
   const result = parseResult(note.last_result_json);
+  const viz = parseViz(note.visualization_json);
+  const vizType = viz?.type as string | undefined;
 
   const handleDelete = async () => {
     const ok = await confirm("Delete this saved query?", { destructive: true });
@@ -110,20 +122,28 @@ export function NoteCard({ note }: NoteCardProps) {
           <h4 className="text-xs font-medium text-text-primary truncate" title={note.title}>
             {note.title}
           </h4>
-          {note.last_executed_at && (
-            <span className="text-[10px] text-text-muted">
-              {timeAgo(note.last_executed_at)}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {note.last_executed_at && (
+              <span className="text-[10px] text-text-muted">
+                {timeAgo(note.last_executed_at)}
+              </span>
+            )}
+            {vizType && vizType !== "text" && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-surface-2 text-text-muted">
+                {vizType}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <button
             onClick={handleExecute}
             disabled={executing || !note.connection_id}
-            title={note.connection_id ? "Run again" : "No connection"}
-            className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40"
+            title={note.connection_id ? "Refresh data" : "No connection"}
+            className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
           >
-            <Icon name="play" size={12} className={executing ? "animate-pulse" : ""} />
+            <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
+            <span>Refresh</span>
           </button>
           <button
             onClick={handleDelete}
@@ -171,6 +191,24 @@ export function NoteCard({ note }: NoteCardProps) {
           </button>
         )}
       </div>
+
+      {/* Agent answer toggle */}
+      {note.answer_text && (
+        <div className="border-t border-border-subtle">
+          <button
+            onClick={() => setShowAnswer((v) => !v)}
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+          >
+            <Icon name={showAnswer ? "chevron-down" : "chevron-right"} size={10} />
+            Agent Response
+          </button>
+          {showAnswer && (
+            <div className="px-3 pb-2 text-[11px] text-text-secondary leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {note.answer_text}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* SQL toggle */}
       <div className="border-t border-border-subtle">

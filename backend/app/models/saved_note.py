@@ -35,6 +35,8 @@ class SavedNote(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     sql_query: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    visualization_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_executed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

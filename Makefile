@@ -47,13 +47,13 @@ dev: stop
 	@echo "Starting backend on http://localhost:8000 ..."
 	@cd $(BACKEND_DIR) && $(VENV)/uvicorn app.main:app --reload --port 8000 \
 		> ../$(LOGS_DIR)/backend.log 2>&1 & echo $$! > ../$(PIDS_DIR)/backend.pid
-	@echo "Starting frontend on http://localhost:3000 ..."
-	@cd $(FRONTEND_DIR) && npm run dev \
+	@echo "Starting frontend on http://localhost:3100 ..."
+	@cd $(FRONTEND_DIR) && npm run dev -- --port 3100 \
 		> ../$(LOGS_DIR)/frontend.log 2>&1 & echo $$! > ../$(PIDS_DIR)/frontend.pid
 	@sleep 1
 	@echo "──────────────────────────────────"
 	@echo "  Backend:  http://localhost:8000"
-	@echo "  Frontend: http://localhost:3000"
+	@echo "  Frontend: http://localhost:3100"
 	@echo "──────────────────────────────────"
 	@echo "Run 'make logs' to tail output, 'make stop' to shut down."
 
@@ -66,8 +66,8 @@ dev-backend: stop
 
 dev-frontend: stop
 	@mkdir -p $(LOGS_DIR) $(PIDS_DIR)
-	@echo "Starting frontend on http://localhost:3000 ..."
-	@cd $(FRONTEND_DIR) && npm run dev \
+	@echo "Starting frontend on http://localhost:3100 ..."
+	@cd $(FRONTEND_DIR) && npm run dev -- --port 3100 \
 		> ../$(LOGS_DIR)/frontend.log 2>&1 & echo $$! > ../$(PIDS_DIR)/frontend.pid
 	@echo "Run 'make logs' to tail output, 'make stop' to shut down."
 

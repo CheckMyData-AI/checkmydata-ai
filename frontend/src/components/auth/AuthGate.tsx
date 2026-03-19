@@ -7,6 +7,23 @@ import { Icon } from "@/components/ui/Icon";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
+function generateRandomToken(length = 32): string {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function setCookie(name: string, value: string) {
+  document.cookie = `${name}=${value};path=/;SameSite=Strict;max-age=300`;
+}
+
+function getCookie(name: string): string | undefined {
+  return document.cookie
+    .split("; ")
+    .find((c) => c.startsWith(`${name}=`))
+    ?.split("=")[1];
+}
+
 declare global {
   interface Window {
     google?: {
@@ -34,6 +51,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [restoring, setRestoring] = useState(true);
   const googleLoadingRef = useRef(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
+  const nonceRef = useRef<string>(generateRandomToken());
 
   useEffect(() => {
     restore();
@@ -46,8 +64,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       googleLoadingRef.current = true;
       setGoogleLoading(true);
       try {
-        await googleLogin(response.credential);
+        const csrfToken = getCookie("g_csrf_token");
+        await googleLogin(response.credential, nonceRef.current, csrfToken);
       } finally {
+        nonceRef.current = generateRandomToken();
         googleLoadingRef.current = false;
         setGoogleLoading(false);
       }
@@ -58,11 +78,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID || user) return;
 
+    const csrfToken = generateRandomToken();
+    setCookie("g_csrf_token", csrfToken);
+
     const initGoogle = () => {
       if (!window.google || !googleBtnRef.current) return;
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: handleGoogleResponse,
+        nonce: nonceRef.current,
       });
       window.google.accounts.id.renderButton(googleBtnRef.current, {
         theme: "filled_black",

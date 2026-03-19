@@ -27,10 +27,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-async function renderReadinessGate(
-  readiness: Record<string, unknown> = {},
-) {
-  const base = {
+function makeReadiness(overrides: Record<string, unknown> = {}) {
+  return {
     repo_connected: false,
     repo_indexed: false,
     db_connected: false,
@@ -39,9 +37,17 @@ async function renderReadinessGate(
     ready: false,
     missing_steps: [],
     active_connection_id: null,
-    ...readiness,
+    last_indexed_at: null,
+    commits_behind: 0,
+    is_stale: false,
+    ...overrides,
   };
-  readinessMock.mockResolvedValue(base);
+}
+
+async function renderReadinessGate(
+  readiness: Record<string, unknown> = {},
+) {
+  readinessMock.mockResolvedValue(makeReadiness(readiness));
   const { ReadinessGate } = await import(
     "@/components/chat/ReadinessGate"
   );
@@ -51,15 +57,15 @@ async function renderReadinessGate(
 }
 
 describe("ReadinessGate", () => {
-  it("shows setup checklist items", async () => {
+  it("shows status dashboard items", async () => {
     await renderReadinessGate();
     await waitFor(() => {
-      expect(screen.getByText(/Connect a Git repository/)).toBeInTheDocument();
-      expect(screen.getByText(/Add a database connection/)).toBeInTheDocument();
+      expect(screen.getByText(/Git repository/)).toBeInTheDocument();
+      expect(screen.getByText(/Database connection/)).toBeInTheDocument();
     });
   });
 
-  it("has Chat anyway bypass button", async () => {
+  it("has Chat anyway bypass button when not ready", async () => {
     await renderReadinessGate();
     await waitFor(() => {
       expect(screen.getByText("Chat anyway")).toBeInTheDocument();
@@ -73,7 +79,7 @@ describe("ReadinessGate", () => {
     expect(onBypass).toHaveBeenCalled();
   });
 
-  it("shows warning about less accurate queries", async () => {
+  it("shows warning about less accurate queries when not fully set up", async () => {
     await renderReadinessGate();
     await waitFor(() => {
       expect(
@@ -82,23 +88,68 @@ describe("ReadinessGate", () => {
     });
   });
 
-  it("returns null when all steps are ready", async () => {
-    readinessMock.mockResolvedValue({
+  it("calls onBypass when all steps are ready and not stale", async () => {
+    readinessMock.mockResolvedValue(makeReadiness({
       repo_connected: true,
       repo_indexed: true,
       db_connected: true,
       db_indexed: true,
       code_db_synced: true,
       ready: true,
-      missing_steps: [],
       active_connection_id: "c1",
-    });
+    }));
     const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
-    const { container } = render(
+    render(
       <ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />,
     );
     await waitFor(() => {
-      expect(container.innerHTML).toBe("");
+      expect(onBypass).toHaveBeenCalled();
+    });
+  });
+
+  it("shows green Done indicators for completed steps", async () => {
+    await renderReadinessGate({
+      repo_connected: true,
+      repo_indexed: true,
+      db_connected: false,
+    });
+    await waitFor(() => {
+      const doneLabels = screen.getAllByText("Done");
+      expect(doneLabels.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("shows staleness warning when is_stale is true", async () => {
+    readinessMock.mockResolvedValue(makeReadiness({
+      repo_connected: true,
+      repo_indexed: true,
+      db_connected: true,
+      db_indexed: true,
+      code_db_synced: true,
+      ready: true,
+      active_connection_id: "c1",
+      last_indexed_at: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+      commits_behind: 5,
+      is_stale: true,
+    }));
+    const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+    render(
+      <ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/Re-indexing recommended/)).toBeInTheDocument();
+      expect(screen.getByText("Re-index")).toBeInTheDocument();
+    });
+  });
+
+  it("shows last indexed time when available", async () => {
+    await renderReadinessGate({
+      repo_connected: true,
+      repo_indexed: true,
+      last_indexed_at: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Last indexed/)).toBeInTheDocument();
     });
   });
 });

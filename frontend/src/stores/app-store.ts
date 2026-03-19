@@ -43,6 +43,11 @@ export function getPersistedId(key: string): string | null {
   return localStorage.getItem(key);
 }
 
+interface ReadinessCacheEntry {
+  ready: boolean;
+  checkedAt: number;
+}
+
 interface AppState {
   sshKeys: SshKey[];
   projects: Project[];
@@ -61,6 +66,7 @@ interface AppState {
   rulesVersion: number;
   focusSidebarSection: string | null;
   triggerProjectEdit: boolean;
+  readinessCache: Record<string, ReadinessCacheEntry>;
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -83,6 +89,7 @@ interface AppState {
   bumpRulesVersion: () => void;
   setFocusSidebarSection: (section: string | null) => void;
   setTriggerProjectEdit: (v: boolean) => void;
+  setReadinessCache: (projectId: string, entry: ReadinessCacheEntry) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -103,6 +110,7 @@ export const useAppStore = create<AppState>((set) => ({
   rulesVersion: 0,
   focusSidebarSection: null,
   triggerProjectEdit: false,
+  readinessCache: {},
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
@@ -145,6 +153,10 @@ export const useAppStore = create<AppState>((set) => ({
   bumpRulesVersion: () => set((state) => ({ rulesVersion: state.rulesVersion + 1 })),
   setFocusSidebarSection: (section) => set({ focusSidebarSection: section }),
   setTriggerProjectEdit: (v) => set({ triggerProjectEdit: v }),
+  setReadinessCache: (projectId, entry) =>
+    set((state) => ({
+      readinessCache: { ...state.readinessCache, [projectId]: entry },
+    })),
 }));
 
 export type { ChatMessage, ChatMode, ToolCallEvent };

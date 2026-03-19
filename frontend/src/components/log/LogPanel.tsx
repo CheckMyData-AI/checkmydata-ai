@@ -151,6 +151,33 @@ export function LogToggleButton() {
   );
 }
 
+export function PersistentLogToggle() {
+  const { isOpen, isConnected, unreadCount, toggle } = useLogStore();
+
+  if (isOpen) return null;
+
+  return (
+    <div className="absolute bottom-3 right-3 z-10">
+      <button
+        onClick={toggle}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-md"
+        title="Open Activity Log"
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+        />
+        <Icon name="activity" size={11} />
+        <span>Log</span>
+        {unreadCount > 0 && (
+          <span className="bg-accent text-white text-[9px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
 export function LogPanel() {
   const { entries, isOpen, isConnected, toggle, clear, resetUnread } =
     useLogStore();

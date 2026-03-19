@@ -12,7 +12,7 @@ interface AuthState {
 
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
-  googleLogin: (credential: string) => Promise<void>;
+  googleLogin: (credential: string, nonce?: string, csrfToken?: string) => Promise<void>;
   logout: () => void;
   restore: () => void;
 }
@@ -72,7 +72,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       storeAuth(set, await api.auth.login(email, password));
       scheduleRefresh(set);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Login failed", isLoading: false });
+      const msg = err instanceof Error ? err.message : "Login failed";
+      set({ error: msg, isLoading: false });
+      toast(msg, "error");
     }
   },
 
@@ -82,17 +84,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       storeAuth(set, await api.auth.register(email, password, displayName));
       scheduleRefresh(set);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Registration failed", isLoading: false });
+      const msg = err instanceof Error ? err.message : "Registration failed";
+      set({ error: msg, isLoading: false });
+      toast(msg, "error");
     }
   },
 
-  googleLogin: async (credential) => {
+  googleLogin: async (credential, nonce, csrfToken) => {
     set({ isLoading: true, error: null });
     try {
-      storeAuth(set, await api.auth.googleLogin(credential));
+      storeAuth(set, await api.auth.googleLogin(credential, nonce, csrfToken));
       scheduleRefresh(set);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Google sign-in failed", isLoading: false });
+      const msg = err instanceof Error ? err.message : "Google sign-in failed";
+      set({ error: msg, isLoading: false });
+      toast(msg, "error");
     }
   },
 
@@ -123,6 +129,15 @@ export const useAuthStore = create<AuthState>((set) => ({
         }
         set({ user: JSON.parse(userStr), token });
         scheduleRefresh(set);
+
+        api.auth.me().then((fresh) => {
+          localStorage.setItem("auth_user", JSON.stringify(fresh));
+          set({ user: fresh });
+        }).catch(() => {
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("auth_user");
+          set({ user: null, token: null });
+        });
       } catch {
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");

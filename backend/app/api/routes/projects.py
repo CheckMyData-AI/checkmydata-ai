@@ -224,6 +224,13 @@ async def project_readiness(
     user: dict = Depends(get_current_user),
 ):
     """Check project readiness for chat: repo, DB, index, and sync status."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+    from app.knowledge.git_tracker import GitTracker
+    from app.knowledge.repo_analyzer import RepoAnalyzer
+
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
     project = await _svc.get(db, project_id)
     if not project:
@@ -259,6 +266,36 @@ async def project_readiness(
                 code_db_synced = True
             break
 
+    last_indexed_at = None
+    commits_behind = 0
+    is_stale = False
+
+    if repo_connected and repo_indexed:
+        git_tracker = GitTracker()
+        repo_analyzer = RepoAnalyzer(settings.repo_clone_base_dir)
+        try:
+            record = await git_tracker.get_last_indexed_record(
+                db, project_id, branch=project.repo_branch,
+            )
+            if record and record.created_at:
+                last_indexed_at = record.created_at.isoformat()
+                age = datetime.now(UTC) - record.created_at.replace(tzinfo=UTC)
+                repo_dir = repo_analyzer.get_repo_dir(project_id)
+                if repo_dir.exists() and record.commit_sha:
+                    try:
+                        head_sha = await asyncio.to_thread(
+                            git_tracker.get_head_sha, repo_dir,
+                        )
+                        if head_sha != record.commit_sha:
+                            commits_behind = await git_tracker.count_commits_ahead(
+                                repo_dir, record.commit_sha,
+                            )
+                    except Exception:
+                        pass
+                is_stale = age > timedelta(days=7) and commits_behind > 0
+        except Exception:
+            logger.debug("Staleness check in readiness failed", exc_info=True)
+
     missing_steps = []
     if not repo_connected:
         missing_steps.append({"step": "connect_repo", "label": "Connect a Git repository"})
@@ -282,4 +319,7 @@ async def project_readiness(
         "ready": ready,
         "missing_steps": missing_steps,
         "active_connection_id": active_connection_id,
+        "last_indexed_at": last_indexed_at,
+        "commits_behind": commits_behind,
+        "is_stale": is_stale,
     }

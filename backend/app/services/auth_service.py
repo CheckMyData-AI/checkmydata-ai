@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -20,8 +20,9 @@ class AuthService:
         return bcrypt.checkpw(plain.encode(), hashed.encode())
 
     def create_token(self, user_id: str, email: str) -> str:
-        expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
-        payload = {"sub": user_id, "email": email, "exp": expire}
+        now = datetime.now(UTC)
+        expire = now + timedelta(minutes=settings.jwt_expire_minutes)
+        payload = {"sub": user_id, "email": email, "iat": now, "exp": expire}
         return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
     def decode_token(self, token: str) -> dict | None:
@@ -37,6 +38,7 @@ class AuthService:
         password: str,
         display_name: str = "",
     ) -> User:
+        email = email.lower().strip()
         existing = await session.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none():
             logger.warning("Registration failed for %s: email already registered", email)
@@ -60,6 +62,7 @@ class AuthService:
         email: str,
         password: str,
     ) -> User | None:
+        email = email.lower().strip()
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user or not user.password_hash:
@@ -106,27 +109,33 @@ class AuthService:
 
         If an email-registered user signs in with Google for the first time,
         their account is linked (google_id stored, auth_provider updated).
+        Prioritises google_id match over email match to avoid
+        ``MultipleResultsFound`` when both exist as separate rows.
         """
         google_id = google_payload["sub"]
         email = google_payload["email"].lower().strip()
         name = google_payload.get("name", "") or email.split("@")[0]
 
-        result = await session.execute(
-            select(User).where(
-                or_(User.google_id == google_id, User.email == email),
-            )
+        gid_result = await session.execute(
+            select(User).where(User.google_id == google_id)
         )
-        user = result.scalar_one_or_none()
+        user = gid_result.scalar_one_or_none()
 
         if user:
-            if not user.google_id:
-                user.google_id = google_id
-                user.auth_provider = "google"
-                await session.commit()
-                await session.refresh(user)
-                logger.info("Google account linked for existing user: %s", email)
-            else:
-                logger.info("User logged in: %s (provider=google)", email)
+            logger.info("User logged in: %s (provider=google)", email)
+            return user
+
+        email_result = await session.execute(
+            select(User).where(User.email == email)
+        )
+        user = email_result.scalar_one_or_none()
+
+        if user:
+            user.google_id = google_id
+            user.auth_provider = "google"
+            await session.commit()
+            await session.refresh(user)
+            logger.info("Google account linked for existing user: %s", email)
             return user
 
         user = User(

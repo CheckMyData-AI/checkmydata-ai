@@ -188,11 +188,16 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
     try {
       const title = message.content.split("\n")[0].slice(0, 200) || "Saved query";
       const resultJson = message.rawResult ? JSON.stringify(message.rawResult) : null;
+      const vizJson = message.visualization
+        ? JSON.stringify(message.visualization)
+        : null;
       const note = await api.notes.create({
         project_id: activeProject.id,
         connection_id: activeConnection?.id ?? null,
         title,
         sql_query: message.query,
+        answer_text: message.content || null,
+        visualization_json: vizJson,
         last_result_json: resultJson,
       });
       useNotesStore.getState().addNote(note);

@@ -3,7 +3,7 @@
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
-import { LogPanel } from "@/components/log/LogPanel";
+import { LogPanel, PersistentLogToggle } from "@/components/log/LogPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
 import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
 import { useAppStore } from "@/stores/app-store";
@@ -29,7 +29,7 @@ export default function Home() {
         <div className="flex h-screen flex-col">
           <div className="flex flex-1 min-h-0">
             <Sidebar />
-            <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex-1 flex flex-col min-h-0 relative">
               <header className="border-b border-border-subtle px-6 py-2.5 flex items-center justify-between bg-surface-0">
                 <div className="flex items-center gap-3 min-w-0">
                   {activeProject ? (
@@ -86,6 +86,7 @@ export default function Home() {
                 </div>
               </header>
               <ChatPanel />
+              <PersistentLogToggle />
             </div>
             <NotesPanel />
           </div>

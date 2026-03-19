@@ -312,6 +312,9 @@ export interface ProjectReadiness {
   ready: boolean;
   missing_steps: { step: string; label: string }[];
   active_connection_id: string | null;
+  last_indexed_at: string | null;
+  commits_behind: number;
+  is_stale: boolean;
 }
 
 export interface LLMModel {
@@ -328,6 +331,8 @@ export interface SavedNote {
   title: string;
   comment: string | null;
   sql_query: string;
+  answer_text: string | null;
+  visualization_json: string | null;
   last_result_json: string | null;
   last_executed_at: string | null;
   created_at: string | null;
@@ -364,10 +369,10 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ email, password }),
       }),
-    googleLogin: (credential: string) =>
+    googleLogin: (credential: string, nonce?: string, csrfToken?: string) =>
       request<AuthResponse>("/auth/google", {
         method: "POST",
-        body: JSON.stringify({ credential }),
+        body: JSON.stringify({ credential, nonce, g_csrf_token: csrfToken }),
       }),
     changePassword: (currentPassword: string, newPassword: string) =>
       request<{ ok: boolean }>("/auth/change-password", {
@@ -376,6 +381,8 @@ export const api = {
       }),
     refresh: () =>
       request<AuthResponse>("/auth/refresh", { method: "POST" }),
+    me: () =>
+      request<AuthUser>("/auth/me"),
     deleteAccount: () =>
       request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
   },
@@ -652,6 +659,8 @@ export const api = {
       title: string;
       comment?: string | null;
       sql_query: string;
+      answer_text?: string | null;
+      visualization_json?: string | null;
       last_result_json?: string | null;
     }) =>
       request<SavedNote>("/notes", { method: "POST", body: JSON.stringify(data) }),
