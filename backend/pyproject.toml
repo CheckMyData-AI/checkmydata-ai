@@ -1,5 +1,5 @@
 [project]
-name = "esim-database-agent"
+name = "checkmydata-ai"
 version = "0.1.0"
 description = "AI-powered database agent with Git repo analysis, multi-DB support, and data visualization"
 requires-python = ">=3.12"

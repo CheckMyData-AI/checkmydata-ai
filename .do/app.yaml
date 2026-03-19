@@ -1,9 +1,9 @@
-name: esim-database-agent
+name: checkmydata-ai
 
 services:
   - name: backend
     github:
-      repo: <your-github-org>/esim-database-agent
+      repo: <your-github-org>/checkmydata-ai
       branch: main
       deploy_on_push: true
     source_dir: backend
@@ -32,7 +32,7 @@ services:
 
   - name: frontend
     github:
-      repo: <your-github-org>/esim-database-agent
+      repo: <your-github-org>/checkmydata-ai
       branch: main
       deploy_on_push: true
     source_dir: frontend

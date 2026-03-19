@@ -1,4 +1,4 @@
-# eSIM Database Agent
+# CheckMyData.ai
 
 AI-powered database query agent that analyzes Git repositories, understands database schemas, and lets you query databases through natural language chat with rich data visualization.
 
@@ -105,7 +105,7 @@ The key is encrypted at rest with AES (Fernet). The API never returns the raw pr
 A **Project** groups together a Git repository, an LLM configuration, and a set of database connections.
 
 1. In the sidebar **Projects** section, click **+ New**
-2. Enter a **name** (e.g. "eSIM Analytics")
+2. Enter a **name** (e.g. "My Analytics")
 3. Optionally set a **Git repo URL** — when you paste it, the system automatically:
    - **Detects SSH URLs** (`git@...`) and auto-selects an SSH key if only one is available
    - **Verifies access** by running `git ls-remote` in the background (debounced 800ms)
@@ -786,7 +786,7 @@ The MCP server lets external clients (Claude Desktop, Cursor IDE, Python scripts
 **Architecture:**
 
 ```
-External MCP Clients                        eSIM Database Agent
+External MCP Clients                        CheckMyData.ai
 ┌──────────────┐                           ┌─────────────────────────────────┐
 │ Claude       │──stdio──────────────────▶│ FastMCP Server                  │
 │ Desktop      │                           │ (app/mcp_server/server.py)      │
@@ -824,9 +824,9 @@ Example flow for `query_database`:
 
 | Method | How it works |
 |---|---|
-| **API key** | Set `ESIM_API_KEY` (or `MCP_API_KEY`) env var on the server. Client sends the same key. Returns synthetic user `mcp-api-key-user`. |
+| **API key** | Set `CHECKMYDATA_API_KEY` (or `MCP_API_KEY`) env var on the server. Client sends the same key. Returns synthetic user `mcp-api-key-user`. |
 | **JWT** | Client sends a JWT token issued by the auth system. Validated via `AuthService.decode_token()`. Returns the real user identity. |
-| **No auth** | If no `ESIM_API_KEY` is configured and no credentials are provided, requests proceed as `mcp-anonymous`. |
+| **No auth** | If no `CHECKMYDATA_API_KEY` is configured and no credentials are provided, requests proceed as `mcp-anonymous`. |
 
 **Running the MCP server (`mcp_server/__main__.py`):**
 
@@ -846,12 +846,12 @@ cd backend && python -m app.mcp_server --transport streamable-http --port 8100
 ```json
 {
   "mcpServers": {
-    "esim-agent": {
+    "checkmydata-agent": {
       "command": "python",
       "args": ["-m", "app.mcp_server"],
       "cwd": "/path/to/backend",
       "env": {
-        "ESIM_API_KEY": "your-secret-key"
+        "CHECKMYDATA_API_KEY": "your-secret-key"
       }
     }
   }

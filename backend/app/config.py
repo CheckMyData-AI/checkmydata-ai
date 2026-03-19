@@ -9,7 +9,7 @@ _config_logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "eSIM Database Agent"
+    app_name: str = "CheckMyData.ai"
     environment: str = "development"
     debug: bool = False
     sql_echo: bool = False

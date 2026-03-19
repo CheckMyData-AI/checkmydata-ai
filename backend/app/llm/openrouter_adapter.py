@@ -20,8 +20,8 @@ class OpenRouterAdapter(BaseLLMProvider):
             base_url=OPENROUTER_BASE_URL,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
-                "HTTP-Referer": "https://esim-database-agent.local",
-                "X-Title": "eSIM Database Agent",
+                "HTTP-Referer": "https://checkmydata.ai",
+                "X-Title": "CheckMyData.ai",
             },
             timeout=120.0,
         )

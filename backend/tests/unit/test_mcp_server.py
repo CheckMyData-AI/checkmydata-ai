@@ -18,7 +18,7 @@ class TestMCPAuth:
     async def test_api_key_valid(self):
         from app.mcp_server.auth import resolve_user_from_api_key
 
-        with patch.dict(os.environ, {"ESIM_API_KEY": "secret-key-123"}):
+        with patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "secret-key-123"}):
             user = await resolve_user_from_api_key("secret-key-123")
         assert user["user_id"] == "mcp-api-key-user"
 
@@ -26,7 +26,7 @@ class TestMCPAuth:
     async def test_api_key_invalid(self):
         from app.mcp_server.auth import MCPAuthError, resolve_user_from_api_key
 
-        with patch.dict(os.environ, {"ESIM_API_KEY": "secret-key-123"}):
+        with patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "secret-key-123"}):
             with pytest.raises(MCPAuthError, match="Invalid API key"):
                 await resolve_user_from_api_key("wrong-key")
 
@@ -34,9 +34,10 @@ class TestMCPAuth:
     async def test_api_key_not_configured(self):
         from app.mcp_server.auth import MCPAuthError, resolve_user_from_api_key
 
-        env = {k: v for k, v in os.environ.items() if k not in ("ESIM_API_KEY", "MCP_API_KEY")}
+        excluded = ("CHECKMYDATA_API_KEY", "MCP_API_KEY")
+        env = {k: v for k, v in os.environ.items() if k not in excluded}
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(MCPAuthError, match="No ESIM_API_KEY"):
+            with pytest.raises(MCPAuthError, match="No CHECKMYDATA_API_KEY"):
                 await resolve_user_from_api_key("any")
 
     @pytest.mark.asyncio
@@ -62,7 +63,8 @@ class TestMCPAuth:
     async def test_authenticate_no_credentials_no_key(self):
         from app.mcp_server.auth import authenticate
 
-        env = {k: v for k, v in os.environ.items() if k not in ("ESIM_API_KEY", "MCP_API_KEY")}
+        excluded = ("CHECKMYDATA_API_KEY", "MCP_API_KEY")
+        env = {k: v for k, v in os.environ.items() if k not in excluded}
         with patch.dict(os.environ, env, clear=True):
             user = await authenticate()
         assert user["user_id"] == "mcp-anonymous"
@@ -71,7 +73,7 @@ class TestMCPAuth:
     async def test_authenticate_no_credentials_key_required(self):
         from app.mcp_server.auth import MCPAuthError, authenticate
 
-        with patch.dict(os.environ, {"ESIM_API_KEY": "key"}):
+        with patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "key"}):
             with pytest.raises(MCPAuthError, match="Authentication required"):
                 await authenticate()
 

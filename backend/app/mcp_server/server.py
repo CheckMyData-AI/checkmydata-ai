@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def create_mcp_server() -> FastMCP:
     """Build and return the configured MCP server instance."""
     mcp = FastMCP(
-        "eSIM Database Agent",
+        "CheckMyData.ai",
         instructions=(
             "AI-powered database agent that can query databases, "
             "search codebases, and provide data analytics."

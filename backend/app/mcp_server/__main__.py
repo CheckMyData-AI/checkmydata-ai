@@ -19,7 +19,7 @@ import logging
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="eSIM Database Agent MCP Server")
+    parser = argparse.ArgumentParser(description="CheckMyData.ai MCP Server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "sse", "streamable-http"],

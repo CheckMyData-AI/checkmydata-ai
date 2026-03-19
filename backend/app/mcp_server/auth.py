@@ -1,7 +1,7 @@
 """Authentication and project resolution for MCP server tool calls.
 
 Supports two modes:
-- API key: validated against env var ``ESIM_API_KEY``
+- API key: validated against env var ``CHECKMYDATA_API_KEY``
 - JWT token: validated via the existing AuthService
 """
 
@@ -22,7 +22,7 @@ class MCPAuthError(Exception):
 
 
 def _get_api_key() -> str | None:
-    return os.environ.get("ESIM_API_KEY") or os.environ.get("MCP_API_KEY")
+    return os.environ.get("CHECKMYDATA_API_KEY") or os.environ.get("MCP_API_KEY")
 
 
 async def resolve_user_from_api_key(api_key: str) -> dict:
@@ -33,7 +33,7 @@ async def resolve_user_from_api_key(api_key: str) -> dict:
     """
     expected = _get_api_key()
     if not expected:
-        raise MCPAuthError("No ESIM_API_KEY configured on the server")
+        raise MCPAuthError("No CHECKMYDATA_API_KEY configured on the server")
     if api_key != expected:
         raise MCPAuthError("Invalid API key")
     return {"user_id": "mcp-api-key-user", "email": "mcp@local"}

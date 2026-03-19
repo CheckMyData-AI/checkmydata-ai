@@ -1,4 +1,4 @@
-"""Multi-agent framework for the eSIM Database Agent.
+"""Multi-agent framework for CheckMyData.ai.
 
 Provides specialised agents (SQL, Visualization, Knowledge) coordinated
 by an OrchestratorAgent that routes user requests to the right specialist.
