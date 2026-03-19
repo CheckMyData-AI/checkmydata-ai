@@ -209,11 +209,11 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
                     {STEP_LABELS[step] || step}
                   </span>
                 )}
-                {canAct && prevStepDone && (
+                {canAct && (
                   <button
                     onClick={() => handleAction(step)}
-                    disabled={isRunning}
-                    className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+                    disabled={isRunning || !prevStepDone}
+                    className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isRunning ? "Running..." : "Run"}
                   </button>

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.models.agent_learning import AgentLearning, AgentLearningSummary, _lesson_hash
 
@@ -274,12 +274,12 @@ class AgentLearningService:
         connection_id: str,
     ) -> int:
         result = await session.execute(
-            select(AgentLearning).where(
+            select(func.count(AgentLearning.id)).where(
                 AgentLearning.connection_id == connection_id,
                 AgentLearning.is_active.is_(True),
             )
         )
-        return len(result.scalars().all())
+        return result.scalar_one()
 
     # ------------------------------------------------------------------
     # Update / Delete
@@ -440,15 +440,73 @@ class AgentLearningService:
     ) -> dict:
         count = await self.count_learnings(session, connection_id)
         summary = await self.get_summary(session, connection_id)
+
+        cat_counts: dict[str, int] = {}
+        if count > 0:
+            result = await session.execute(
+                select(AgentLearning.category, func.count(AgentLearning.id))
+                .where(
+                    AgentLearning.connection_id == connection_id,
+                    AgentLearning.is_active.is_(True),
+                )
+                .group_by(AgentLearning.category)
+            )
+            for cat, cnt in result.all():
+                cat_counts[cat] = cnt
+
         return {
             "has_learnings": count > 0,
             "total_active": count,
+            "categories": cat_counts,
             "last_compiled_at": (
                 summary.last_compiled_at.isoformat()
                 if summary and summary.last_compiled_at
                 else None
             ),
         }
+
+    # ------------------------------------------------------------------
+    # Confidence Decay
+    # ------------------------------------------------------------------
+
+    async def decay_stale_learnings(self, session: AsyncSession) -> int:
+        """Reduce confidence of stale learnings and deactivate very low ones.
+
+        Called periodically (e.g. daily).  Learnings not updated in >30 days
+        lose 0.02 confidence.  Those below 0.2 for >30 days are deactivated.
+        Returns the number of affected rows.
+        """
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=30)
+
+        stale_result = await session.execute(
+            select(AgentLearning).where(
+                AgentLearning.is_active.is_(True),
+                AgentLearning.updated_at < cutoff,
+            )
+        )
+        stale = stale_result.scalars().all()
+        if not stale:
+            return 0
+
+        affected_connections: set[str] = set()
+        affected = 0
+
+        for lrn in stale:
+            lrn.confidence = max(0.0, round(lrn.confidence - 0.02, 4))
+            affected += 1
+            affected_connections.add(lrn.connection_id)
+
+            if lrn.confidence < 0.2:
+                lrn.is_active = False
+
+        await session.flush()
+
+        for conn_id in affected_connections:
+            await self._invalidate_summary(session, conn_id)
+
+        return affected
 
     # ------------------------------------------------------------------
     # Internals

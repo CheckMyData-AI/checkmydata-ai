@@ -14,13 +14,18 @@ def build_orchestrator_system_prompt(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     table_map: str = "",
+    current_datetime: str | None = None,
 ) -> str:
     project_label = f' for the project "{project_name}"' if project_name else ""
     sections: list[str] = [
         f"You are an AI data assistant{project_label}.",
-        "",
-        "You coordinate specialised sub-agents to answer user questions.",
     ]
+
+    if current_datetime:
+        sections.append(f"Current date/time: {current_datetime}")
+
+    sections.append("")
+    sections.append("You coordinate specialised sub-agents to answer user questions.")
 
     sections.append("")
     sections.append("AVAILABLE CAPABILITIES:")

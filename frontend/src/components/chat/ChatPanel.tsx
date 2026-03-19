@@ -20,6 +20,7 @@ export function ChatPanel() {
     isThinking,
     chatMode,
     activeToolCalls,
+    restoringState,
     setActiveSession,
     addMessage,
     updateMessageId,
@@ -168,7 +169,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, chatMode, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall],
+    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion],
   );
 
   useEffect(() => {
@@ -176,6 +177,19 @@ export function ChatPanel() {
       abortRef.current?.abort();
     };
   }, []);
+
+  if (restoringState) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3">
+        <div className="flex gap-1">
+          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
+          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
+          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+        </div>
+        <p className="text-zinc-500 text-sm">Restoring your session…</p>
+      </div>
+    );
+  }
 
   if (!activeProject) {
     return (

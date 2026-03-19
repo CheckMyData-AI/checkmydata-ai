@@ -393,6 +393,7 @@ class DbIndexPipeline:
                             "business_description": analysis.business_description,
                             "data_patterns": analysis.data_patterns,
                             "column_notes_json": analysis.column_notes_json,
+                            "numeric_format_notes": analysis.numeric_format_notes,
                             "query_hints": analysis.query_hints,
                             "code_match_status": analysis.code_match_status,
                             "code_match_details": analysis.code_match_details,

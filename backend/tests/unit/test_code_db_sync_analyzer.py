@@ -257,6 +257,15 @@ class TestGenerateSummary:
         assert "0 tables" in result.global_notes
 
 
+class TestSystemPromptContent:
+    def test_mentions_currency_and_numeric_guidance(self):
+        prompt = CodeDbSyncAnalyzer._system_prompt()
+        assert "currency" in prompt.lower()
+        assert "cents" in prompt.lower()
+        assert "percentage" in prompt.lower() or "Percentages" in prompt
+        assert "units of measurement" in prompt.lower()
+
+
 class TestSyncStatusClamping:
     def test_valid_statuses_pass_through(self):
         from app.knowledge.code_db_sync_analyzer import _clamp_sync_status

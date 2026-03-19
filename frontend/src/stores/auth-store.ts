@@ -68,6 +68,15 @@ export const useAuthStore = create<AuthState>((set) => ({
     const userStr = localStorage.getItem("auth_user");
     if (token && userStr) {
       try {
+        const parts = token.split(".");
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            localStorage.removeItem("auth_token");
+            localStorage.removeItem("auth_user");
+            return;
+          }
+        }
         set({ user: JSON.parse(userStr), token });
       } catch {
         localStorage.removeItem("auth_token");

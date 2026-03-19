@@ -468,7 +468,7 @@ async def _run_db_index_background(
             final_status = "failed"
         else:
             logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
-            final_status = "idle"
+            final_status = "completed"
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
     finally:
@@ -638,7 +638,7 @@ async def _run_sync_background(
                 connection_id[:8],
                 result,
             )
-            final_status = "idle"
+            final_status = "completed"
     except Exception:
         logger.exception("Code-DB sync background task failed: connection=%s", connection_id[:8])
     finally:
@@ -773,6 +773,7 @@ async def delete_learning(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
     from app.models.agent_learning import AgentLearning
+
     check = await db.get(AgentLearning, learning_id)
     if not check or check.connection_id != connection_id:
         raise HTTPException(status_code=404, detail="Learning not found")

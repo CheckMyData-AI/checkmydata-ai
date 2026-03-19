@@ -120,7 +120,8 @@ class LLMRouter:
                     raise
                 logger.warning(
                     "Provider %s streaming failed before tokens: %s",
-                    provider_name, e,
+                    provider_name,
+                    e,
                 )
                 last_error = e
                 continue

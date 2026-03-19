@@ -28,6 +28,7 @@ from app.models import (  # noqa: F401
     project_invite,
     project_member,
     rag_feedback,
+    saved_note,
     ssh_key,
     user,
 )

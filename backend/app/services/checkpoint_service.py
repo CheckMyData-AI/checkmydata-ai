@@ -13,7 +13,7 @@ from app.models.indexing_checkpoint import IndexingCheckpoint
 
 logger = logging.getLogger(__name__)
 
-_SENTINEL = object()
+_SENTINEL: object = object()
 
 
 def _safe_json_loads_list(raw: str) -> list:
@@ -73,7 +73,7 @@ class CheckpointService:
         step_name: str,
         *,
         head_sha: str | None = None,
-        last_sha: str | None = _SENTINEL,
+        last_sha: object = _SENTINEL,
         changed_files: list[str] | None = None,
         deleted_files: list[str] | None = None,
         profile_json: str | None = None,
@@ -92,7 +92,7 @@ class CheckpointService:
         if head_sha is not None:
             cp.head_sha = head_sha
         if last_sha is not _SENTINEL:
-            cp.last_sha = last_sha
+            cp.last_sha = last_sha  # type: ignore[assignment]
         if changed_files is not None:
             cp.changed_files_json = json.dumps(changed_files)
         if deleted_files is not None:
@@ -177,7 +177,7 @@ class CheckpointService:
                 IndexingCheckpoint.updated_at < cutoff,
             ),
         )
-        count = result.rowcount  # type: ignore[union-attr]
+        count = result.rowcount  # type: ignore[attr-defined]
         if count:
             await session.commit()
             logger.info("Cleaned up %d stale indexing checkpoints", count)

@@ -7,6 +7,7 @@ Prompt logic has been split into per-agent modules under
 
 from __future__ import annotations
 
+from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
 from app.agents.prompts.sql_prompt import DIALECT_HINTS
 
@@ -39,4 +40,5 @@ def build_agent_system_prompt(
         has_connection=has_connection,
         has_knowledge_base=has_knowledge_base,
         table_map=table_map,
+        current_datetime=get_current_datetime_str(),
     )

@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.base import AgentContext, AgentResult, BaseAgent
-from app.agents.prompts.knowledge_prompt import KNOWLEDGE_SYSTEM_PROMPT
+from app.agents.prompts import get_current_datetime_str
+from app.agents.prompts.knowledge_prompt import build_knowledge_system_prompt
 from app.agents.tools.knowledge_tools import get_knowledge_tools
 from app.config import settings
 from app.core.types import RAGSource
@@ -59,8 +60,11 @@ class KnowledgeAgent(BaseAgent):
         question = question or context.user_question
 
         tools = get_knowledge_tools()
+        system_prompt = build_knowledge_system_prompt(
+            current_datetime=get_current_datetime_str(),
+        )
         messages: list[Message] = [
-            Message(role="system", content=KNOWLEDGE_SYSTEM_PROMPT),
+            Message(role="system", content=system_prompt),
             Message(role="user", content=question),
         ]
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.base import AgentContext, AgentResult, BaseAgent
+from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.mcp_prompt import build_mcp_source_system_prompt
 from app.config import settings
 from app.connectors.mcp_client import MCPClientAdapter
@@ -96,7 +97,7 @@ class MCPSourceAgent(BaseAgent):
 
         return "\n".join(lines) if lines else "No tools available."
 
-    async def run(  # type: ignore[override]
+    async def run(
         self,
         context: AgentContext,
         *,
@@ -123,6 +124,7 @@ class MCPSourceAgent(BaseAgent):
         system_prompt = build_mcp_source_system_prompt(
             source_name=source_name,
             tool_descriptions=self._build_tool_description_text(),
+            current_datetime=get_current_datetime_str(),
         )
 
         messages: list[Message] = [

@@ -106,8 +106,10 @@ async def create_project(
         user["user_id"][:8],
     )
     audit_log(
-        "project.create", user_id=user["user_id"],
-        project_id=project.id, resource_type="project",
+        "project.create",
+        user_id=user["user_id"],
+        project_id=project.id,
+        resource_type="project",
     )
     return ProjectResponse(
         **{k: getattr(project, k) for k in ProjectResponse.model_fields if k not in ("user_role",)},
@@ -207,8 +209,10 @@ async def delete_project(
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
     audit_log(
-        "project.delete", user_id=user["user_id"],
-        project_id=project_id, resource_type="project",
+        "project.delete",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="project",
     )
     return {"ok": True}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AgentLearningDTO } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import { confirmAction } from "@/components/ui/ConfirmModal";
@@ -24,6 +24,8 @@ const CATEGORY_COLORS: Record<string, string> = {
   performance_hint: "text-cyan-400 bg-cyan-900/20",
 };
 
+type SortKey = "confidence" | "date" | "confirmed" | "applied";
+
 interface LearningsPanelProps {
   connectionId: string;
   onClose: () => void;
@@ -35,13 +37,14 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLesson, setEditLesson] = useState("");
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("confidence");
 
   const load = async () => {
     setLoading(true);
     try {
       const data = await api.connections.listLearnings(connectionId);
       setLearnings(data);
-      onCountChange?.(data.filter((l) => l.is_active).length);
     } catch {
       toast("Failed to load learnings", "error");
     } finally {
@@ -54,12 +57,15 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
+  useEffect(() => {
+    onCountChange?.(learnings.filter((l) => l.is_active).length);
+  }, [learnings, onCountChange]);
+
   const handleDelete = async (learningId: string) => {
     if (!(await confirmAction("Delete this learning?"))) return;
     try {
       await api.connections.deleteLearning(connectionId, learningId);
       setLearnings((prev) => prev.filter((l) => l.id !== learningId));
-      onCountChange?.(learnings.filter((l) => l.is_active && l.id !== learningId).length);
       toast("Learning deleted", "success");
     } catch {
       toast("Failed to delete", "error");
@@ -71,9 +77,6 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
       await api.connections.updateLearning(connectionId, l.id, { is_active: !l.is_active });
       setLearnings((prev) =>
         prev.map((x) => (x.id === l.id ? { ...x, is_active: !x.is_active } : x))
-      );
-      onCountChange?.(
-        learnings.filter((x) => (x.id === l.id ? !x.is_active : x.is_active)).length
       );
     } catch {
       toast("Failed to update", "error");
@@ -94,19 +97,63 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
     }
   };
 
+  const handleRecompile = async () => {
+    try {
+      await api.connections.recompileLearnings(connectionId);
+      toast("Learnings prompt recompiled", "success");
+    } catch {
+      toast("Failed to recompile", "error");
+    }
+  };
+
   const handleClearAll = async () => {
     if (!(await confirmAction("Clear ALL learnings for this connection? This cannot be undone."))) return;
     try {
       const result = await api.connections.clearLearnings(connectionId);
       setLearnings([]);
-      onCountChange?.(0);
       toast(`Cleared ${result.deleted} learnings`, "success");
     } catch {
       toast("Failed to clear", "error");
     }
   };
 
-  const grouped = learnings.reduce<Record<string, AgentLearningDTO[]>>((acc, l) => {
+  const sortFn = useCallback(
+    (a: AgentLearningDTO, b: AgentLearningDTO) => {
+      switch (sortKey) {
+        case "confidence":
+          return b.confidence - a.confidence;
+        case "date":
+          return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+        case "confirmed":
+          return b.times_confirmed - a.times_confirmed;
+        case "applied":
+          return b.times_applied - a.times_applied;
+        default:
+          return 0;
+      }
+    },
+    [sortKey]
+  );
+
+  const filtered = useMemo(() => {
+    const base = filterCategory ? learnings.filter((l) => l.category === filterCategory) : learnings;
+    return [...base].sort(sortFn);
+  }, [learnings, filterCategory, sortFn]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const l of learnings) {
+      counts[l.category] = (counts[l.category] || 0) + 1;
+    }
+    return counts;
+  }, [learnings]);
+
+  const presentCategories = useMemo(
+    () => Object.keys(categoryCounts).sort(),
+    [categoryCounts]
+  );
+
+  const grouped = filtered.reduce<Record<string, AgentLearningDTO[]>>((acc, l) => {
     (acc[l.category] ??= []).push(l);
     return acc;
   }, {});
@@ -121,12 +168,21 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         </div>
         <div className="flex items-center gap-1">
           {learnings.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              className="text-[10px] px-2 py-0.5 rounded text-red-400 hover:bg-red-900/20 transition-colors"
-            >
-              Clear all
-            </button>
+            <>
+              <button
+                onClick={handleRecompile}
+                className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
+                title="Recompile learnings prompt"
+              >
+                <Icon name="refresh-cw" size={11} />
+              </button>
+              <button
+                onClick={handleClearAll}
+                className="text-[10px] px-2 py-0.5 rounded text-red-400 hover:bg-red-900/20 transition-colors"
+              >
+                Clear all
+              </button>
+            </>
           )}
           <button
             onClick={onClose}
@@ -137,12 +193,57 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         </div>
       </div>
 
+      {/* Category filter pills + sort dropdown */}
+      {learnings.length > 0 && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle overflow-x-auto">
+          <button
+            onClick={() => setFilterCategory(null)}
+            className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+              filterCategory === null
+                ? "bg-accent/20 text-accent"
+                : "text-text-muted hover:text-text-primary hover:bg-surface-3"
+            }`}
+          >
+            All ({learnings.length})
+          </button>
+          {presentCategories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
+              className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+                filterCategory === cat
+                  ? CATEGORY_COLORS[cat] || "bg-surface-3 text-text-primary"
+                  : "text-text-muted hover:text-text-primary hover:bg-surface-3"
+              }`}
+            >
+              {CATEGORY_LABELS[cat] || cat} ({categoryCounts[cat]})
+            </button>
+          ))}
+          <div className="ml-auto shrink-0">
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              className="text-[9px] bg-surface-1 border border-border-subtle rounded px-1.5 py-0.5 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="confidence">Sort: Confidence</option>
+              <option value="date">Sort: Newest</option>
+              <option value="confirmed">Sort: Most confirmed</option>
+              <option value="applied">Sort: Most applied</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       <div className="max-h-80 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {loading ? (
           <div className="p-4 text-center text-text-muted text-xs">Loading...</div>
         ) : learnings.length === 0 ? (
           <div className="p-4 text-center text-text-muted text-xs">
             No learnings yet. The agent will automatically learn from query outcomes.
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-4 text-center text-text-muted text-xs">
+            No learnings in this category.
           </div>
         ) : (
           <div className="divide-y divide-border-subtle">

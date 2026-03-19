@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.project import Project
+    from app.models.user import User
 
 
 class ProjectInvite(Base):
@@ -48,5 +55,5 @@ class ProjectInvite(Base):
         nullable=True,
     )
 
-    project: Mapped["Project"] = relationship(back_populates="invites")  # noqa: F821
-    inviter: Mapped["User"] = relationship()  # noqa: F821
+    project: Mapped[Project] = relationship(back_populates="invites")  # noqa: F821
+    inviter: Mapped[User] = relationship()  # noqa: F821

@@ -17,6 +17,7 @@ from typing import Any
 
 from app.agents.base import AgentContext, AgentResult, BaseAgent
 from app.agents.errors import AgentFatalError
+from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.sql_prompt import build_sql_system_prompt
 from app.agents.tools.sql_tools import get_sql_agent_tools
 from app.config import settings
@@ -45,6 +46,38 @@ from app.llm.router import LLMRouter
 from app.services.project_cache_service import ProjectCacheService
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_warning_tag(warnings_text: str) -> str:
+    """Derive a short tag from conversion_warnings for the table map."""
+    text = warnings_text.lower()
+    if "cent" in text or "/ 100" in text:
+        return "!cents"
+    if "soft" in text and "delet" in text:
+        return "!soft-del"
+    if "utc" in text or "timezone" in text:
+        return "!tz"
+    if "enum" in text:
+        return "!enum"
+    if "json" in text:
+        return "!json"
+    return "!warn"
+
+
+def _build_enriched_table_map(
+    entries: list, sync_warnings_map: dict[str, str]
+) -> str:
+    """One-liner-per-table map, annotated with sync warning tags."""
+    items: list[str] = []
+    for e in entries:
+        if not e.is_active or e.relevance_score < 2:
+            continue
+        rows = f"~{e.row_count:,}" if e.row_count else "?"
+        desc = (e.business_description or "")[:50].rstrip(".")
+        tag = sync_warnings_map.get(e.table_name.lower(), "")
+        tag_str = f" [{tag}]" if tag else ""
+        items.append(f"{e.table_name}({rows}, {desc}){tag_str}")
+    return ", ".join(items) if items else ""
 
 
 @dataclass
@@ -114,11 +147,18 @@ class SQLAgent(BaseAgent):
 
         table_map = ""
         if has_db_idx and cfg.connection_id:
-            table_map = await self._build_table_map(cfg.connection_id)
+            table_map = await self._build_table_map(cfg.connection_id, has_sync)
 
         learnings_prompt = ""
         if has_learnings and cfg.connection_id:
             learnings_prompt = await self._load_learnings_prompt(cfg.connection_id)
+
+        sync_conventions = ""
+        sync_critical_warnings = ""
+        if has_sync and cfg.connection_id:
+            sync_conventions, sync_critical_warnings = await self._load_sync_for_prompt(
+                cfg.connection_id
+            )
 
         system_prompt = build_sql_system_prompt(
             db_type=cfg.db_type,
@@ -128,6 +168,9 @@ class SQLAgent(BaseAgent):
             has_learnings=has_learnings,
             table_map=table_map,
             learnings_prompt=learnings_prompt,
+            sync_conventions=sync_conventions,
+            sync_critical_warnings=sync_critical_warnings,
+            current_datetime=get_current_datetime_str(),
         )
 
         tools = get_sql_agent_tools(
@@ -266,7 +309,7 @@ class SQLAgent(BaseAgent):
         val_config = self._build_validation_config()
 
         db_idx_ctx = await self._load_db_index_hints(cfg)
-        sync_ctx = await self._load_sync_warnings(cfg)
+        sync_warnings, sync_tips = await self._load_sync_for_repair(cfg)
         rules_ctx = await self._load_rules_for_repair(ctx.project_id)
         dv = await self._load_distinct_values(cfg)
         learn_ctx = await self._load_learnings_for_repair(cfg)
@@ -274,10 +317,11 @@ class SQLAgent(BaseAgent):
             schema,
             self._vector_store,
             db_index_context=db_idx_ctx,
-            sync_context=sync_ctx,
+            sync_context=sync_warnings,
             rules_context=rules_ctx,
             distinct_values=dv,
             learnings_context=learn_ctx,
+            sync_query_tips=sync_tips,
         )
         repairer = QueryRepairer(self._llm)
         validation_loop = ValidationLoop(
@@ -451,6 +495,8 @@ class SQLAgent(BaseAgent):
         if not learnings:
             return "No learnings recorded yet for this database."
 
+        await self._track_applied_learnings(learnings)
+
         from app.services.agent_learning_service import CATEGORY_LABELS
 
         by_cat: dict[str, list] = {}
@@ -561,6 +607,9 @@ class SQLAgent(BaseAgent):
 
         parts: list[str] = ["## Query Context\n"]
 
+        if sync_summary and sync_summary.global_notes:
+            parts.append(f"**Data overview:** {sync_summary.global_notes}\n")
+
         if sync_summary and sync_summary.data_conventions:
             parts.append(f"**Data conventions:** {sync_summary.data_conventions}\n")
 
@@ -585,6 +634,10 @@ class SQLAgent(BaseAgent):
 
         if sync_summary and sync_summary.query_guidelines:
             parts.append(f"### Query Guidelines\n{sync_summary.query_guidelines}\n")
+
+        join_recs = getattr(sync_summary, "join_recommendations", "") if sync_summary else ""
+        if join_recs:
+            parts.append(f"### Recommended JOIN Paths\n{join_recs}\n")
 
         if rules_text:
             parts.append(f"### Applicable Rules\n{rules_text}\n")
@@ -696,7 +749,9 @@ class SQLAgent(BaseAgent):
         except Exception:
             return False
 
-    async def _build_table_map(self, connection_id: str) -> str:
+    async def _build_table_map(
+        self, connection_id: str, has_sync: bool = False
+    ) -> str:
         try:
             from app.models.base import async_session_factory
             from app.services.db_index_service import DbIndexService
@@ -704,7 +759,24 @@ class SQLAgent(BaseAgent):
             svc = DbIndexService()
             async with async_session_factory() as session:
                 entries = await svc.get_index(session, connection_id)
-            return svc.build_table_map(entries)
+
+            sync_warnings_map: dict[str, str] = {}
+            if has_sync:
+                try:
+                    from app.services.code_db_sync_service import CodeDbSyncService
+
+                    sync_svc = CodeDbSyncService()
+                    async with async_session_factory() as session:
+                        sync_entries = await sync_svc.get_sync(session, connection_id)
+                    for se in sync_entries:
+                        if se.conversion_warnings and se.confidence_score >= 3:
+                            tag = _extract_warning_tag(se.conversion_warnings)
+                            if tag:
+                                sync_warnings_map[se.table_name.lower()] = tag
+                except Exception:
+                    pass
+
+            return _build_enriched_table_map(entries, sync_warnings_map)
         except Exception:
             return ""
 
@@ -718,6 +790,33 @@ class SQLAgent(BaseAgent):
                 return await svc.get_or_compile_summary(session, connection_id)
         except Exception:
             return ""
+
+    async def _load_sync_for_prompt(
+        self, connection_id: str
+    ) -> tuple[str, str]:
+        """Return (data_conventions, critical_warnings) for the system prompt."""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                entries = await svc.get_sync(session, connection_id)
+                summary = await svc.get_summary(session, connection_id)
+
+            conventions = ""
+            if summary and summary.data_conventions:
+                conventions = summary.data_conventions[:500]
+
+            critical: list[str] = []
+            for e in entries:
+                if e.conversion_warnings and e.confidence_score >= 4:
+                    critical.append(f"- {e.table_name}: {e.conversion_warnings}")
+            warnings_text = "\n".join(critical)[:500] if critical else ""
+
+            return conventions, warnings_text
+        except Exception:
+            return "", ""
 
     async def _resolve_connection_id(self, project_id: str, cfg: ConnectionConfig) -> str | None:
         from app.models.base import async_session_factory
@@ -750,9 +849,12 @@ class SQLAgent(BaseAgent):
         except Exception:
             return ""
 
-    async def _load_sync_warnings(self, cfg: ConnectionConfig) -> str:
+    async def _load_sync_for_repair(
+        self, cfg: ConnectionConfig
+    ) -> tuple[str, str]:
+        """Return (warnings_text, query_tips_text) from sync entries."""
         if not cfg.connection_id:
-            return ""
+            return "", ""
         try:
             from app.models.base import async_session_factory
             from app.services.code_db_sync_service import CodeDbSyncService
@@ -761,14 +863,19 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 entries = await svc.get_sync(session, cfg.connection_id)
             if not entries:
-                return ""
-            warnings = []
+                return "", ""
+            warnings: list[str] = []
+            tips: list[str] = []
             for e in entries:
                 if e.conversion_warnings:
                     warnings.append(f"- {e.table_name}: {e.conversion_warnings}")
-            return "\n".join(warnings)
+                if e.query_recommendations:
+                    tips.append(f"- {e.table_name}: {e.query_recommendations}")
+                if e.business_logic_notes:
+                    tips.append(f"- {e.table_name} (logic): {e.business_logic_notes[:150]}")
+            return "\n".join(warnings), "\n".join(tips)
         except Exception:
-            return ""
+            return "", ""
 
     async def _load_rules_for_repair(self, project_id: str) -> str:
         try:
@@ -839,6 +946,20 @@ class SQLAgent(BaseAgent):
             self._knowledge_cache[project_id] = knowledge
         return knowledge
 
+    async def _track_applied_learnings(self, learnings: list) -> None:
+        """Fire-and-forget: bump times_applied for each learning the LLM consumed."""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.agent_learning_service import AgentLearningService
+
+            svc = AgentLearningService()
+            async with async_session_factory() as session:
+                for lrn in learnings:
+                    await svc.apply_learning(session, lrn.id)
+                await session.commit()
+        except Exception:
+            logger.debug("apply_learning tracking failed (non-critical)", exc_info=True)
+
     async def _extract_learnings(
         self,
         attempts: list,
@@ -861,6 +982,21 @@ class SQLAgent(BaseAgent):
                     attempts=attempts,
                     success=success,
                 )
+
+            if len(attempts) >= 3:
+                try:
+                    from app.knowledge.learning_analyzer import LLMAnalyzer
+
+                    llm_analyzer = LLMAnalyzer()
+                    async with async_session_factory() as session:
+                        await llm_analyzer.analyze(
+                            session=session,
+                            connection_id=cfg.connection_id,
+                            attempts=attempts,
+                        )
+                except Exception:
+                    logger.debug("LLM learning analysis failed (non-critical)", exc_info=True)
+
         except Exception:
             logger.debug("Learning extraction failed (non-critical)", exc_info=True)
 
@@ -1000,6 +1136,18 @@ class SQLAgent(BaseAgent):
         if col_notes_merged:
             notes_lines = [f"  {c}: {n}" for c, n in col_notes_merged.items()]
             parts.append("Column notes:\n" + "\n".join(notes_lines))
+
+        numeric_notes_raw = getattr(db_entry, "numeric_format_notes", "{}")
+        try:
+            numeric_notes = _json.loads(numeric_notes_raw) if numeric_notes_raw else {}
+        except (_json.JSONDecodeError, TypeError):
+            numeric_notes = {}
+        if numeric_notes and isinstance(numeric_notes, dict):
+            nf_lines = [f"  {c}: {n}" for c, n in numeric_notes.items()]
+            parts.append("Numeric formats:\n" + "\n".join(nf_lines))
+
+        if sync_entry and sync_entry.business_logic_notes:
+            parts.append(f"Business logic: {sync_entry.business_logic_notes[:200]}")
 
         if sync_entry and sync_entry.query_recommendations:
             parts.append(f"Query tips: {sync_entry.query_recommendations}")

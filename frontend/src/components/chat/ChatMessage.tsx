@@ -3,11 +3,14 @@
 import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
+import { useAppStore } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
 import { VizToolbar } from "@/components/viz/VizToolbar";
 import { rerenderViz, type VizTypeKey } from "@/lib/viz-utils";
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
+import { useNotesStore } from "@/stores/notes-store";
+import { Icon } from "@/components/ui/Icon";
 
 const mdComponents: Components = {
   p: ({ children }) => <p className="text-sm mb-2 last:mb-0">{children}</p>,
@@ -171,6 +174,38 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
     }
   };
 
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(() =>
+    message.query ? useNotesStore.getState().hasSqlQuery(message.query) : false,
+  );
+
+  const handleSaveToNotes = async () => {
+    if (noteSaving || noteSaved) return;
+    const { activeProject, activeConnection } = useAppStore.getState();
+    if (!activeProject || !message.query) return;
+
+    setNoteSaving(true);
+    try {
+      const title = message.content.split("\n")[0].slice(0, 200) || "Saved query";
+      const resultJson = message.rawResult ? JSON.stringify(message.rawResult) : null;
+      const note = await api.notes.create({
+        project_id: activeProject.id,
+        connection_id: activeConnection?.id ?? null,
+        title,
+        sql_query: message.query,
+        last_result_json: resultJson,
+      });
+      useNotesStore.getState().addNote(note);
+      useNotesStore.getState().setOpen(true);
+      setNoteSaved(true);
+      toast("Query saved to notes", "info");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to save note", "error");
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
   let toolCalls: Array<{ tool?: string; arguments?: Record<string, unknown>; result_preview?: string }> = [];
   if (message.toolCallsJson) {
     try {
@@ -327,7 +362,7 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
           </div>
         )}
 
-        {/* Thumbs up/down feedback */}
+        {/* Thumbs up/down feedback + save to notes */}
         {!isUser && (
           <div className="mt-2 flex items-center gap-1">
             <button
@@ -360,6 +395,21 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z" />
               </svg>
             </button>
+            {isSqlResult && message.query && (
+              <button
+                onClick={handleSaveToNotes}
+                aria-label="Save to notes"
+                disabled={noteSaving || noteSaved}
+                className={`p-1 rounded transition-colors disabled:opacity-50 ml-1 ${
+                  noteSaved
+                    ? "text-accent bg-accent-muted"
+                    : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
+                }`}
+                title={noteSaved ? "Saved to notes" : "Save to notes"}
+              >
+                <Icon name="bookmark" size={14} className={noteSaving ? "animate-pulse" : ""} />
+              </button>
+            )}
           </div>
         )}
 

@@ -12,10 +12,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents.base import AgentContext
-from app.agents.mcp_source_agent import MAX_MCP_ITERATIONS, MCPSourceAgent, MCPSourceResult
+from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
+from app.config import settings
 from app.connectors.mcp_client import MCPClientAdapter
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import LLMResponse, ToolCall
+
+MAX_MCP_ITERATIONS = settings.max_mcp_iterations
 
 # ---------------------------------------------------------------------------
 # Fixtures

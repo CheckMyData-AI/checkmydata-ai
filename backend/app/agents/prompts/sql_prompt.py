@@ -45,15 +45,25 @@ def build_sql_system_prompt(
     has_learnings: bool = False,
     table_map: str = "",
     learnings_prompt: str = "",
+    sync_conventions: str = "",
+    sync_critical_warnings: str = "",
+    current_datetime: str | None = None,
 ) -> str:
     """Assemble a SQL-focused system prompt for the SQL agent."""
 
     sections: list[str] = [
         "You are an expert SQL query agent. Your job is to gather schema "
         "context and build precise, efficient queries to answer data questions.",
-        "",
-        "WORKFLOW:",
     ]
+
+    if current_datetime:
+        sections.append(
+            f"Current date/time: {current_datetime}. "
+            "Use this for relative date calculations (yesterday, last week, last month, etc.)."
+        )
+
+    sections.append("")
+    sections.append("WORKFLOW:")
 
     if has_db_index:
         sections.append(
@@ -103,6 +113,14 @@ def build_sql_system_prompt(
         )
 
     sections.append("- When you discover something new about the data, use `record_learning`.")
+
+    if sync_conventions or sync_critical_warnings:
+        sections.append("")
+        sections.append("CRITICAL DATA FORMAT RULES (from code-DB sync):")
+        if sync_conventions:
+            sections.append(sync_conventions)
+        if sync_critical_warnings:
+            sections.append(sync_critical_warnings)
 
     if table_map:
         sections.append("")

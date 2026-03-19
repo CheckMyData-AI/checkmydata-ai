@@ -39,6 +39,8 @@ class DbIndex(Base):
     column_distinct_values_json: Mapped[str] = mapped_column(Text, default="{}")
     query_hints: Mapped[str] = mapped_column(Text, default="")
 
+    numeric_format_notes: Mapped[str] = mapped_column(Text, default="{}")
+
     code_match_status: Mapped[str] = mapped_column(String(50), default="unknown")
     code_match_details: Mapped[str] = mapped_column(Text, default="")
 

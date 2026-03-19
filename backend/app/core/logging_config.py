@@ -12,8 +12,8 @@ class CorrelationFilter(logging.Filter):
     """Injects workflow_id and request_id from contextvars into every log record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.workflow_id = workflow_id_var.get(None) or ""  # type: ignore[attr-defined]
-        record.request_id = request_id_var.get(None) or ""  # type: ignore[attr-defined]
+        record.workflow_id = workflow_id_var.get(None) or ""
+        record.request_id = request_id_var.get(None) or ""
         return True
 
 

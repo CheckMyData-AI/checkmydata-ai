@@ -114,8 +114,8 @@ class TestWorkflowTracker:
         t = WorkflowTracker()
         queue = t.subscribe()
 
-        # fill the queue
-        for _ in range(256):
+        # fill the queue to its maximum capacity (1024)
+        for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
             queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
 
         # next broadcast should evict the full queue

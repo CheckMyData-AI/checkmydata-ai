@@ -143,6 +143,7 @@ export function ConnectionSelector() {
     >
   >({});
   const [learningsCount, setLearningsCount] = useState<Record<string, number>>({});
+  const [learningsCategories, setLearningsCategories] = useState<Record<string, Record<string, number>>>({});
   const [showLearnings, setShowLearnings] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<
@@ -158,16 +159,18 @@ export function ConnectionSelector() {
       }
     >
   >({});
-  const indexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const indexPollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const syncPollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (indexPollRef.current) clearInterval(indexPollRef.current);
-      if (syncPollRef.current) clearInterval(syncPollRef.current);
+      for (const t of indexPollRef.current.values()) clearInterval(t);
+      indexPollRef.current.clear();
+      for (const t of syncPollRef.current.values()) clearInterval(t);
+      syncPollRef.current.clear();
     };
   }, []);
 
@@ -178,7 +181,6 @@ export function ConnectionSelector() {
     setIndexStatus({});
     setSyncStatus({});
     resetForm();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject?.id]);
 
   useEffect(() => {
@@ -197,6 +199,9 @@ export function ConnectionSelector() {
                 indexed_at: s.indexed_at ?? undefined,
               },
             }));
+            if (s.is_indexing && !indexPollRef.current.has(c.id)) {
+              startIndexPoll(c.id);
+            }
           }
         })
         .catch(() => {});
@@ -215,6 +220,9 @@ export function ConnectionSelector() {
                 sync_status: s.sync_status,
               },
             }));
+            if (s.is_syncing && !syncPollRef.current.has(c.id)) {
+              startSyncPoll(c.id);
+            }
           }
         })
         .catch(() => {});
@@ -223,6 +231,9 @@ export function ConnectionSelector() {
         .then((s) => {
           if (mountedRef.current) {
             setLearningsCount((prev) => ({ ...prev, [c.id]: s.total_active }));
+            if (s.categories) {
+              setLearningsCategories((prev) => ({ ...prev, [c.id]: s.categories }));
+            }
           }
         })
         .catch(() => {});
@@ -451,6 +462,103 @@ export function ConnectionSelector() {
     }
   };
 
+  const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+
+  const startIndexPoll = (id: string) => {
+    const prevTimer = indexPollRef.current.get(id);
+    if (prevTimer) clearInterval(prevTimer);
+    const pollStart = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        clearInterval(timer);
+        indexPollRef.current.delete(id);
+        setIndexing((prev) => (prev === id ? null : prev));
+        toast("DB indexing timed out — check connection settings", "error");
+        return;
+      }
+      try {
+        const s = await api.connections.indexDbStatus(id);
+        setIndexStatus((prev) => ({
+          ...prev,
+          [id]: {
+            is_indexed: s.is_indexed,
+            active_tables: s.active_tables,
+            total_tables: s.total_tables,
+            is_indexing: s.is_indexing,
+            indexed_at: s.indexed_at ?? undefined,
+          },
+        }));
+        if (!s.is_indexing) {
+          clearInterval(timer);
+          indexPollRef.current.delete(id);
+          setIndexing((prev) => (prev === id ? null : prev));
+          if (s.is_indexed) {
+            toast(
+              `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
+              "success",
+            );
+          } else {
+            toast("DB indexing failed — try again or check connection", "error");
+          }
+        }
+      } catch {
+        clearInterval(timer);
+        indexPollRef.current.delete(id);
+        setIndexing((prev) => (prev === id ? null : prev));
+        toast("Lost connection while checking index status", "error");
+      }
+    }, 3000);
+    indexPollRef.current.set(id, timer);
+  };
+
+  const startSyncPoll = (id: string) => {
+    const prevTimer = syncPollRef.current.get(id);
+    if (prevTimer) clearInterval(prevTimer);
+    const pollStart = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        clearInterval(timer);
+        syncPollRef.current.delete(id);
+        setSyncing((prev) => (prev === id ? null : prev));
+        toast("Code-DB sync timed out — check connection settings", "error");
+        return;
+      }
+      try {
+        const s = await api.connections.syncStatus(id);
+        setSyncStatus((prev) => ({
+          ...prev,
+          [id]: {
+            is_synced: s.is_synced,
+            is_syncing: s.is_syncing,
+            synced_tables: s.synced_tables,
+            total_tables: s.total_tables,
+            synced_at: s.synced_at ?? undefined,
+            sync_status: s.sync_status,
+          },
+        }));
+        if (!s.is_syncing) {
+          clearInterval(timer);
+          syncPollRef.current.delete(id);
+          setSyncing((prev) => (prev === id ? null : prev));
+          if (s.is_synced) {
+            toast(
+              `Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`,
+              "success",
+            );
+          } else {
+            toast("Code-DB sync failed — ensure DB is indexed first", "error");
+          }
+        }
+      } catch {
+        clearInterval(timer);
+        syncPollRef.current.delete(id);
+        setSyncing((prev) => (prev === id ? null : prev));
+        toast("Lost connection while checking sync status", "error");
+      }
+    }, 3000);
+    syncPollRef.current.set(id, timer);
+  };
+
   const handleIndexDb = async (id: string) => {
     setIndexing(id);
     try {
@@ -464,49 +572,7 @@ export function ConnectionSelector() {
           is_indexed: prev[id]?.is_indexed ?? false,
         },
       }));
-      if (indexPollRef.current) clearInterval(indexPollRef.current);
-      const pollStart = Date.now();
-      const MAX_POLL_MS = 10 * 60 * 1000;
-      indexPollRef.current = setInterval(async () => {
-        if (Date.now() - pollStart > MAX_POLL_MS) {
-          if (indexPollRef.current) clearInterval(indexPollRef.current);
-          indexPollRef.current = null;
-          setIndexing(null);
-          toast("DB indexing timed out — check connection settings", "error");
-          return;
-        }
-        try {
-          const s = await api.connections.indexDbStatus(id);
-          setIndexStatus((prev) => ({
-            ...prev,
-            [id]: {
-              is_indexed: s.is_indexed,
-              active_tables: s.active_tables,
-              total_tables: s.total_tables,
-              is_indexing: s.is_indexing,
-              indexed_at: s.indexed_at ?? undefined,
-            },
-          }));
-          if (!s.is_indexing) {
-            if (indexPollRef.current) clearInterval(indexPollRef.current);
-            indexPollRef.current = null;
-            setIndexing(null);
-            if (s.is_indexed) {
-              toast(
-                `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
-                "success",
-              );
-            } else {
-              toast("DB indexing failed — try again or check connection", "error");
-            }
-          }
-        } catch {
-          if (indexPollRef.current) clearInterval(indexPollRef.current);
-          indexPollRef.current = null;
-          setIndexing(null);
-          toast("Lost connection while checking index status", "error");
-        }
-      }, 3000);
+      startIndexPoll(id);
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "DB indexing failed",
@@ -529,50 +595,7 @@ export function ConnectionSelector() {
           is_synced: prev[id]?.is_synced ?? false,
         },
       }));
-      if (syncPollRef.current) clearInterval(syncPollRef.current);
-      const syncPollStart = Date.now();
-      const SYNC_MAX_POLL_MS = 10 * 60 * 1000;
-      syncPollRef.current = setInterval(async () => {
-        if (Date.now() - syncPollStart > SYNC_MAX_POLL_MS) {
-          if (syncPollRef.current) clearInterval(syncPollRef.current);
-          syncPollRef.current = null;
-          setSyncing(null);
-          toast("Code-DB sync timed out — check connection settings", "error");
-          return;
-        }
-        try {
-          const s = await api.connections.syncStatus(id);
-          setSyncStatus((prev) => ({
-            ...prev,
-            [id]: {
-              is_synced: s.is_synced,
-              is_syncing: s.is_syncing,
-              synced_tables: s.synced_tables,
-              total_tables: s.total_tables,
-              synced_at: s.synced_at ?? undefined,
-              sync_status: s.sync_status,
-            },
-          }));
-          if (!s.is_syncing) {
-            if (syncPollRef.current) clearInterval(syncPollRef.current);
-            syncPollRef.current = null;
-            setSyncing(null);
-            if (s.is_synced) {
-              toast(
-                `Code-DB synced: ${s.synced_tables ?? 0}/${s.total_tables ?? 0} tables matched`,
-                "success",
-              );
-            } else {
-              toast("Code-DB sync failed — ensure DB is indexed first", "error");
-            }
-          }
-        } catch {
-          if (syncPollRef.current) clearInterval(syncPollRef.current);
-          syncPollRef.current = null;
-          setSyncing(null);
-          toast("Lost connection while checking sync status", "error");
-        }
-      }, 3000);
+      startSyncPoll(id);
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Code-DB sync failed",
@@ -1181,7 +1204,24 @@ export function ConnectionSelector() {
                       </Tooltip>
                     ) : null}
                     {(learningsCount[c.id] ?? 0) > 0 ? (
-                      <Tooltip label={`${learningsCount[c.id]} agent learnings. Click to manage`} position="bottom">
+                      <Tooltip label={(() => {
+                        const catLabels: Record<string, string> = {
+                          table_preference: "table prefs",
+                          column_usage: "column usage",
+                          data_format: "data formats",
+                          query_pattern: "query patterns",
+                          schema_gotcha: "schema gotchas",
+                          performance_hint: "perf hints",
+                        };
+                        const cats = learningsCategories[c.id];
+                        if (!cats || Object.keys(cats).length === 0) {
+                          return `${learningsCount[c.id]} agent learnings. Click to manage`;
+                        }
+                        const breakdown = Object.entries(cats)
+                          .map(([k, v]) => `${v} ${catLabels[k] || k}`)
+                          .join(", ");
+                        return `${learningsCount[c.id]} learnings: ${breakdown}`;
+                      })()} position="bottom">
                         <button
                           type="button"
                           aria-label="Manage agent learnings"

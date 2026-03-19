@@ -1,10 +1,25 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.chat_session import ChatSession
+    from app.models.commit_index import CommitIndex
+    from app.models.connection import Connection
+    from app.models.knowledge_doc import KnowledgeDoc
+    from app.models.project_cache import ProjectCache
+    from app.models.project_invite import ProjectInvite
+    from app.models.project_member import ProjectMember
+    from app.models.rag_feedback import RAGFeedback
+    from app.models.repository import ProjectRepository
+    from app.models.user import User
 
 
 class Project(Base):
@@ -37,45 +52,45 @@ class Project(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    repositories: Mapped[list["ProjectRepository"]] = relationship(  # noqa: F821
+    repositories: Mapped[list[ProjectRepository]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    connections: Mapped[list["Connection"]] = relationship(  # noqa: F821
+    connections: Mapped[list[Connection]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    chat_sessions: Mapped[list["ChatSession"]] = relationship(  # noqa: F821
+    chat_sessions: Mapped[list[ChatSession]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    members: Mapped[list["ProjectMember"]] = relationship(  # noqa: F821
+    members: Mapped[list[ProjectMember]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    invites: Mapped[list["ProjectInvite"]] = relationship(  # noqa: F821
+    invites: Mapped[list[ProjectInvite]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    knowledge_docs: Mapped[list["KnowledgeDoc"]] = relationship(  # noqa: F821
+    knowledge_docs: Mapped[list[KnowledgeDoc]] = relationship(  # noqa: F821
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    commit_indices: Mapped[list["CommitIndex"]] = relationship(  # noqa: F821
+    commit_indices: Mapped[list[CommitIndex]] = relationship(  # noqa: F821
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    caches: Mapped[list["ProjectCache"]] = relationship(  # noqa: F821
+    caches: Mapped[list[ProjectCache]] = relationship(  # noqa: F821
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    rag_feedbacks: Mapped[list["RAGFeedback"]] = relationship(  # noqa: F821
+    rag_feedbacks: Mapped[list[RAGFeedback]] = relationship(  # noqa: F821
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    owner: Mapped["User | None"] = relationship()  # noqa: F821
+    owner: Mapped[User | None] = relationship()  # noqa: F821

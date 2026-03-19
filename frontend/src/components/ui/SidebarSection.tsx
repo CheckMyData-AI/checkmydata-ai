@@ -82,7 +82,9 @@ export function SidebarSection({
   }
 
   return (
-    <div>
+    <div className={`rounded-lg mx-0.5 transition-colors duration-200 ${
+      open ? "bg-surface-1/50" : ""
+    }`}>
       <div className="flex items-center mx-1 group/section">
         <button
           onClick={onToggle}

@@ -40,7 +40,7 @@ function getStoredCollapsed(): boolean {
 }
 
 export function Sidebar() {
-  const { activeProject, sshKeys, setSshKeys, projects, connections } =
+  const { activeProject, sshKeys, setSshKeys, projects, connections, restoringState } =
     useAppStore();
   const { user, logout } = useAuthStore();
   const [collapsed, setCollapsed] = useState(getStoredCollapsed);
@@ -51,6 +51,7 @@ export function Sidebar() {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadStatus = useCallback(async () => {
     if (!activeProject?.repo_url) {
@@ -66,14 +67,23 @@ export function Sidebar() {
   }, [activeProject]);
 
   useEffect(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
     setRepoStatus(null);
     setUpdateCheck(null);
     setIndexResult(null);
+    setIndexWorkflowId(null);
     loadStatus();
   }, [activeProject?.id, loadStatus]);
 
   const handleIndex = async () => {
     if (!activeProject) return;
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
     setIndexing(true);
     setIndexResult(null);
     setIndexWorkflowId(null);
@@ -99,6 +109,14 @@ export function Sidebar() {
         setIndexResult(`Error: ${detail || "Indexing failed"}`);
       }
       loadStatus();
+
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      const delay = status === "failed" ? 15_000 : 5_000;
+      dismissTimerRef.current = setTimeout(() => {
+        setIndexWorkflowId(null);
+        setIndexResult(null);
+        dismissTimerRef.current = null;
+      }, delay);
     },
     [loadStatus],
   );
@@ -464,7 +482,15 @@ export function Sidebar() {
               onToggle={chatCollapse.toggle}
               collapsed={collapsed}
             >
-              <ChatSessionList />
+              {restoringState ? (
+                <div className="px-3 py-2 space-y-1.5">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
+                  ))}
+                </div>
+              ) : (
+                <ChatSessionList />
+              )}
             </SidebarSection>
 
             <SidebarSection

@@ -49,7 +49,7 @@ class AnthropicAdapter(BaseLLMProvider):
             properties = {}
             required = []
             for p in tool.parameters:
-                prop = {"type": p.type, "description": p.description}
+                prop: dict = {"type": p.type, "description": p.description}
                 if p.enum:
                     prop["enum"] = p.enum
                 properties[p.name] = prop

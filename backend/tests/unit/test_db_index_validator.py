@@ -418,6 +418,78 @@ class TestAnalyzeTableBatch:
         assert results == []
 
 
+class TestNumericFormatNotes:
+    @pytest.mark.asyncio
+    async def test_numeric_format_notes_from_llm(self):
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 4,
+                    "business_description": "Payments table",
+                    "data_patterns": "amount in cents",
+                    "column_notes": "{}",
+                    "query_hints": "",
+                    "code_match_status": "matched",
+                    "numeric_format_notes": '{"amount": "cents (integer), divide by 100 for USD"}',
+                }
+            )
+        )
+
+        validator = DbIndexValidator(mock_llm)
+        result = await validator.analyze_table(
+            table=_make_table(),
+            sample_data=_make_sample_data(),
+            code_context="",
+            rules_context="",
+        )
+        import json
+
+        notes = json.loads(result.numeric_format_notes)
+        assert "amount" in notes
+        assert "cents" in notes["amount"]
+
+    @pytest.mark.asyncio
+    async def test_numeric_format_notes_dict_converted(self):
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            return_value=_make_llm_response(
+                {
+                    "is_active": True,
+                    "relevance_score": 3,
+                    "business_description": "test",
+                    "data_patterns": "",
+                    "column_notes": "{}",
+                    "query_hints": "",
+                    "code_match_status": "no_code_info",
+                    "numeric_format_notes": {"price": "USD dollars, decimal(10,2)"},
+                }
+            )
+        )
+
+        validator = DbIndexValidator(mock_llm)
+        result = await validator.analyze_table(
+            table=_make_table(), sample_data=None, code_context="", rules_context=""
+        )
+        import json
+
+        notes = json.loads(result.numeric_format_notes)
+        assert notes["price"] == "USD dollars, decimal(10,2)"
+
+    def test_fallback_has_empty_numeric_notes(self):
+        validator = DbIndexValidator()
+        table = _make_table(row_count=100)
+        result = validator._fallback_analysis(table, None)
+        assert result.numeric_format_notes == "{}"
+
+    def test_system_prompt_mentions_numeric(self):
+        prompt = DbIndexValidator._system_prompt()
+        assert "numeric" in prompt.lower() or "NUMERIC" in prompt
+        assert "cents" in prompt.lower()
+        assert "currency" in prompt.lower()
+
+
 class TestCodeMatchStatusClamping:
     def test_valid_statuses_pass_through(self):
         from app.knowledge.db_index_validator import _clamp_code_match

@@ -74,6 +74,7 @@ def _fallback_create_all() -> None:
         project_member,
         rag_feedback,
         repository,
+        saved_note,
         ssh_key,
         user,
     )
@@ -89,6 +90,7 @@ def _fallback_create_all() -> None:
 
     if loop and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             pool.submit(asyncio.run, _create()).result()
     else:
@@ -113,6 +115,7 @@ async def init_db():
         project_member,
         rag_feedback,
         repository,
+        saved_note,
         ssh_key,
         user,
     )

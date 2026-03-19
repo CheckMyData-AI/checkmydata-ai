@@ -235,16 +235,17 @@ class Orchestrator:
             connector = await self.get_or_create_connector(connection_config)
             val_config = self._build_validation_config()
             db_idx_ctx = await self._get_db_index_context(project_id, connection_config)
-            sync_ctx = await self._get_sync_warnings(connection_config)
+            sync_warnings, sync_tips = await self._get_sync_for_repair(connection_config)
             rules_ctx = await self._get_repair_rules_context(project_id)
             dv = await self._get_distinct_values(connection_config)
             enricher = ContextEnricher(
                 schema,
                 self._vector_store,
                 db_index_context=db_idx_ctx,
-                sync_context=sync_ctx,
+                sync_context=sync_warnings,
                 rules_context=rules_ctx,
                 distinct_values=dv,
+                sync_query_tips=sync_tips,
             )
             repairer = QueryRepairer(self._llm_router)
 
@@ -295,8 +296,9 @@ class Orchestrator:
                     staleness_warning=staleness_warning,
                 )
 
-            results = loop_result.results
-            assert results is not None
+            results_opt = loop_result.results
+            assert results_opt is not None
+            results = results_opt
 
             self._query_result_cache.put(conn_key, loop_result.query, results)
 
@@ -500,15 +502,15 @@ class Orchestrator:
             logger.debug("DB index context load failed", exc_info=True)
             return ""
 
-    async def _get_sync_warnings(
+    async def _get_sync_for_repair(
         self,
         connection_config: ConnectionConfig,
-    ) -> str:
-        """Load compact sync conversion warnings for query repair context."""
+    ) -> tuple[str, str]:
+        """Return (warnings_text, query_tips_text) from sync entries."""
         try:
             connection_id = connection_config.connection_id
             if not connection_id:
-                return ""
+                return "", ""
 
             from app.models.base import async_session_factory
             from app.services.code_db_sync_service import CodeDbSyncService
@@ -517,15 +519,20 @@ class Orchestrator:
             async with async_session_factory() as session:
                 entries = await svc.get_sync(session, connection_id)
             if not entries:
-                return ""
-            warnings = []
+                return "", ""
+            warnings: list[str] = []
+            tips: list[str] = []
             for e in entries:
                 if e.conversion_warnings:
                     warnings.append(f"- {e.table_name}: {e.conversion_warnings}")
-            return "\n".join(warnings)
+                if e.query_recommendations:
+                    tips.append(f"- {e.table_name}: {e.query_recommendations}")
+                if e.business_logic_notes:
+                    tips.append(f"- {e.table_name} (logic): {e.business_logic_notes[:150]}")
+            return "\n".join(warnings), "\n".join(tips)
         except Exception:
-            logger.debug("Sync warnings load failed", exc_info=True)
-            return ""
+            logger.debug("Sync load failed", exc_info=True)
+            return "", ""
 
     async def _get_distinct_values(
         self,

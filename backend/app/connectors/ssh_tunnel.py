@@ -82,25 +82,46 @@ class SSHTunnel:
     _ALIVE_MARKER = "__SSH_TUNNEL_ALIVE__"
 
     async def is_alive(self) -> bool:
-        if self._conn is None:
+        if self._conn is None or self._listener is None:
             return False
         try:
             transport = self._conn.get_extra_info("socket")
             if transport is None:
                 logger.debug("SSH tunnel is_alive: transport is None")
                 return False
+
+            listener_port = self._listener.get_port()
+            if not listener_port:
+                logger.debug("SSH tunnel is_alive: listener has no port")
+                return False
+
             result = await asyncio.wait_for(
                 self._conn.run(f"echo {self._ALIVE_MARKER}", check=False),
                 timeout=5,
             )
-            alive = self._ALIVE_MARKER in (result.stdout or "")
-            if not alive:
-                logger.warning(
-                    "SSH tunnel is_alive: marker not found in stdout (exit=%s, stdout=%r)",
+            if self._ALIVE_MARKER in (result.stdout or ""):
+                return True
+
+            # Shell command failed (e.g. nologin/restricted shell) but the SSH
+            # connection itself may still be alive with working port forwarding.
+            # Verify the transport is open and the listener is still active.
+            if result.exit_status is not None and listener_port:
+                logger.debug(
+                    "SSH tunnel is_alive: shell unavailable (exit=%s, stdout=%r) "
+                    "but transport open on port %d",
                     result.exit_status,
-                    (result.stdout or "")[:200],
+                    (result.stdout or "")[:120],
+                    listener_port,
                 )
-            return alive
+                return True
+
+            logger.warning(
+                "SSH tunnel is_alive: marker not found and transport unhealthy "
+                "(exit=%s, stdout=%r)",
+                result.exit_status,
+                (result.stdout or "")[:200],
+            )
+            return False
         except (TimeoutError, asyncssh.Error, OSError) as exc:
             logger.warning("SSH tunnel is_alive check failed: %s", exc)
             return False

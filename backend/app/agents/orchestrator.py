@@ -21,6 +21,7 @@ from app.agents.errors import (
 )
 from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
+from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.tools.orchestrator_tools import get_orchestrator_tools
@@ -146,6 +147,7 @@ class OrchestratorAgent(BaseAgent):
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
                 table_map=table_map,
+                current_datetime=get_current_datetime_str(),
             )
 
             tools = get_orchestrator_tools(
@@ -321,7 +323,11 @@ class OrchestratorAgent(BaseAgent):
         if tc.name == "query_mcp_source":
             return await self._handle_query_mcp_source(tc, context, wf_id, total_usage)
         logger.warning("Unknown meta-tool called: %s", tc.name)
-        return f"Error: unknown tool '{tc.name}'. Available tools: query_database, search_codebase, manage_rules, query_mcp_source.", None
+        return (
+            f"Error: unknown tool '{tc.name}'. Available tools: "
+            "query_database, search_codebase, manage_rules, "
+            "query_mcp_source."
+        ), None
 
     async def _handle_query_database(
         self,
@@ -465,14 +471,14 @@ class OrchestratorAgent(BaseAgent):
                         update_kwargs["name"] = name
                     if content:
                         update_kwargs["content"] = content
-                    rule = await rule_svc.update(session, rule_id, **update_kwargs)
-                    if not rule:
+                    updated_rule = await rule_svc.update(session, rule_id, **update_kwargs)
+                    if not updated_rule:
                         return f"Error: rule with id '{rule_id}' not found."
                     return (
                         f"Rule updated successfully.\n"
-                        f"- **Name:** {rule.name}\n"
-                        f"- **ID:** {rule.id}\n"
-                        f"- **Content:** {rule.content[:200]}"
+                        f"- **Name:** {updated_rule.name}\n"
+                        f"- **ID:** {updated_rule.id}\n"
+                        f"- **Content:** {updated_rule.content[:200]}"
                     )
 
                 deleted = await rule_svc.delete(session, rule_id)

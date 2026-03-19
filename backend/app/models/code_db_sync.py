@@ -67,6 +67,7 @@ class CodeDbSyncSummary(Base):
     global_notes: Mapped[str] = mapped_column(Text, default="")
     data_conventions: Mapped[str] = mapped_column(Text, default="")
     query_guidelines: Mapped[str] = mapped_column(Text, default="")
+    join_recommendations: Mapped[str] = mapped_column(Text, default="")
 
     sync_status: Mapped[str] = mapped_column(String(20), default="idle")
 

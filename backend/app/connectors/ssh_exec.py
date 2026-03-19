@@ -163,10 +163,12 @@ class SSHExecConnector(BaseConnector):
                     except Exception:
                         self._conn = None
                         await self.connect(self._config)
+            if not self._conn:
+                raise RuntimeError("Reconnect failed")
             result = await self._conn.run(command, timeout=timeout, check=False)
 
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
+        stdout = str(result.stdout or "")
+        stderr = str(result.stderr or "")
 
         if len(stdout) > MAX_OUTPUT_BYTES:
             stdout = stdout[:MAX_OUTPUT_BYTES]

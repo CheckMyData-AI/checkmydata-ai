@@ -17,6 +17,7 @@ from app.api.routes import (
     invites,
     metrics,
     models,
+    notes,
     projects,
     repos,
     rules,
@@ -42,11 +43,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
+
     await asyncio.to_thread(run_migrations)
     await init_db()
     await _cleanup_stale_checkpoints()
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
+    await _decay_stale_learnings()
     yield
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
@@ -74,6 +77,7 @@ async def lifespan(app: FastAPI):
                 logger.exception("Error closing tunnel manager")
     try:
         from app.models.base import engine
+
         await engine.dispose()
         logger.info("Database engine disposed")
     except Exception:
@@ -87,7 +91,7 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -155,6 +159,7 @@ app.include_router(ssh_keys.router, prefix="/api/ssh-keys", tags=["ssh-keys"])
 app.include_router(visualizations.router, prefix="/api/visualizations", tags=["visualizations"])
 app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"])
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
+app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
@@ -192,13 +197,13 @@ async def _reset_stale_indexing_statuses() -> None:
                 .where(CodeDbSyncSummary.sync_status == "running")
                 .values(sync_status="failed")
             )
-            total = (idx_result.rowcount or 0) + (sync_result.rowcount or 0)
+            total = (idx_result.rowcount or 0) + (sync_result.rowcount or 0)  # type: ignore[attr-defined]
             if total:
                 await session.commit()
                 logger.info(
                     "Startup: reset stale 'running' statuses — %d indexing, %d sync",
-                    idx_result.rowcount or 0,
-                    sync_result.rowcount or 0,
+                    idx_result.rowcount or 0,  # type: ignore[attr-defined]
+                    sync_result.rowcount or 0,  # type: ignore[attr-defined]
                 )
     except Exception:
         logger.warning("Failed to reset stale indexing statuses at startup", exc_info=True)
@@ -245,6 +250,21 @@ async def _backfill_default_rules() -> None:
                 logger.info("Startup: created default rules for %d projects", created)
     except Exception:
         logger.warning("Failed to backfill default rules at startup", exc_info=True)
+
+
+async def _decay_stale_learnings() -> None:
+    """Reduce confidence of learnings inactive for >30 days (runs once at startup)."""
+    try:
+        from app.services.agent_learning_service import AgentLearningService
+
+        svc = AgentLearningService()
+        async with async_session_factory() as session:
+            affected = await svc.decay_stale_learnings(session)
+            await session.commit()
+            if affected:
+                logger.info("Startup: decayed confidence for %d stale learnings", affected)
+    except Exception:
+        logger.warning("Failed to decay stale learnings at startup", exc_info=True)
 
 
 @app.get("/api/health")

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 from fastapi import (
     APIRouter,
@@ -12,7 +13,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -69,10 +70,13 @@ class SessionCreate(BaseModel):
 
 
 class SessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     project_id: str
     title: str
     connection_id: str | None = None
+    created_at: datetime | None = None
 
 
 @router.post("/sessions", response_model=SessionResponse)
@@ -102,7 +106,11 @@ async def list_sessions(
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
     return await _chat_svc.list_sessions(
-        db, project_id, user_id=user["user_id"], skip=skip, limit=limit,
+        db,
+        project_id,
+        user_id=user["user_id"],
+        skip=skip,
+        limit=limit,
     )
 
 
@@ -221,7 +229,10 @@ async def submit_feedback(
 
     if msg.session and msg.session.project_id:
         await _membership_svc.require_role(
-            db, msg.session.project_id, user["user_id"], "viewer",
+            db,
+            msg.session.project_id,
+            user["user_id"],
+            "viewer",
         )
 
     msg.user_rating = max(-1, min(1, body.rating))
@@ -438,6 +449,7 @@ async def ask(
         metadata={
             "query": result.query,
             "query_explanation": result.query_explanation,
+            "question": body.message,
             "viz_type": result.viz_type,
             "visualization": viz_data,
             "raw_result": raw_result,
@@ -642,6 +654,7 @@ async def ask_stream(
                 metadata={
                     "query": result.query,
                     "query_explanation": result.query_explanation,
+                    "question": body.message,
                     "viz_type": result.viz_type,
                     "visualization": viz_data,
                     "raw_result": raw_result,
@@ -758,7 +771,7 @@ async def chat_websocket(
                     "elapsed_ms": event.elapsed_ms,
                 }
                 if msg_type in ("agent_start", "agent_end"):
-                    payload["agent"] = agent_name  # type: ignore[possibly-undefined]
+                    payload["agent"] = agent_name
                 await websocket.send_json(payload)
                 if event.step == "pipeline_end":
                     break
@@ -870,6 +883,7 @@ async def chat_websocket(
                         metadata={
                             "query": result.query,
                             "query_explanation": result.query_explanation,
+                            "question": message,
                             "viz_type": result.viz_type,
                             "visualization": viz_data,
                             "raw_result": ws_raw_result,

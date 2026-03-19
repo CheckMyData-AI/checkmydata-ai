@@ -50,8 +50,10 @@ class GitTracker:
         repo = Repo(str(repo_dir))
 
         if from_sha is None:
-            all_files = [
-                item.path for item in repo.commit(to_sha).tree.traverse() if item.type == "blob"
+            all_files: list[str] = [
+                str(item.path)  # type: ignore[union-attr]
+                for item in repo.commit(to_sha).tree.traverse()
+                if hasattr(item, "type") and item.type == "blob"  # type: ignore[union-attr]
             ]
             return ChangedFilesResult(changed=all_files)
 
@@ -64,7 +66,9 @@ class GitTracker:
                 to_sha,
             )
             all_files = [
-                item.path for item in repo.commit(to_sha).tree.traverse() if item.type == "blob"
+                str(item.path)  # type: ignore[union-attr]
+                for item in repo.commit(to_sha).tree.traverse()
+                if hasattr(item, "type") and item.type == "blob"  # type: ignore[union-attr]
             ]
             return ChangedFilesResult(changed=all_files)
 
@@ -152,7 +156,7 @@ class GitTracker:
                 CommitIndex.id.not_in(select(subq.c.id)),
             )
         )
-        deleted = result.rowcount  # type: ignore[union-attr]
+        deleted = result.rowcount  # type: ignore[attr-defined]
         if deleted:
             await session.commit()
             logger.info(

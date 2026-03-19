@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.base import AgentContext, AgentResult, BaseAgent
-from app.agents.prompts.viz_prompt import VIZ_SYSTEM_PROMPT
+from app.agents.prompts import get_current_datetime_str
+from app.agents.prompts.viz_prompt import build_viz_system_prompt
 from app.agents.tools.viz_tools import RECOMMEND_VISUALIZATION_TOOL
 from app.config import settings
 from app.connectors.base import QueryResult
@@ -111,8 +112,11 @@ class VizAgent(BaseAgent):
     ) -> VizResult:
         results_summary = self._summarize_results(results)
 
+        system_prompt = build_viz_system_prompt(
+            current_datetime=get_current_datetime_str(),
+        )
         messages = [
-            Message(role="system", content=VIZ_SYSTEM_PROMPT),
+            Message(role="system", content=system_prompt),
             Message(
                 role="user",
                 content=f"Question: {question}\nQuery: {query}\nResults:\n{results_summary}",

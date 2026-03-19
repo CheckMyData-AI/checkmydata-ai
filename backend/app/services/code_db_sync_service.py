@@ -270,6 +270,11 @@ class CodeDbSyncService:
         else:
             parts.append("## Code-DB Sync\n")
 
+        if summary and summary.global_notes:
+            parts.append("### Project Data Overview\n")
+            parts.append(summary.global_notes)
+            parts.append("")
+
         if summary and summary.data_conventions:
             parts.append("### Project Data Conventions\n")
             parts.append(summary.data_conventions)

@@ -31,9 +31,10 @@ async def get_project_schema(project_id: str) -> str:
             entries = await _db_index_svc.get_index(session, conn.id)
             for entry in entries:
                 columns = []
-                if entry.columns_json:
+                columns_raw = getattr(entry, "column_notes_json", None) or "{}"
+                if columns_raw and columns_raw != "{}":
                     try:
-                        columns = json.loads(entry.columns_json)
+                        columns = json.loads(columns_raw)
                     except (json.JSONDecodeError, TypeError):
                         pass
                 all_tables.append(

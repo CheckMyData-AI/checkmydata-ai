@@ -4,16 +4,21 @@ import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { LogPanel } from "@/components/log/LogPanel";
+import { NotesPanel } from "@/components/notes/NotesPanel";
 import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { useRestoreState } from "@/hooks/useRestoreState";
 import { Icon } from "@/components/ui/Icon";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 export default function Home() {
   const { activeProject, activeConnection } = useAppStore();
   const { user } = useAuthStore();
+  const { isOpen: notesOpen, toggleOpen: toggleNotes } = useNotesStore();
+  const notesCount = useNotesStore((s) => s.notes.length);
 
   useGlobalEvents(!!user);
   useRestoreState(!!user);
@@ -56,10 +61,33 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                <ActiveTasksWidget />
+                <div className="flex items-center gap-2">
+                  <ActiveTasksWidget />
+                  {activeProject && (
+                    <Tooltip label={notesOpen ? "Hide saved queries" : "Saved queries"} position="bottom">
+                      <button
+                        onClick={toggleNotes}
+                        aria-label={notesOpen ? "Hide saved queries" : "Show saved queries"}
+                        className={`relative p-1.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                          notesOpen
+                            ? "text-accent bg-accent-muted"
+                            : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
+                        }`}
+                      >
+                        <Icon name="bookmark" size={16} />
+                        {notesCount > 0 && !notesOpen && (
+                          <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-accent text-white text-[8px] font-bold flex items-center justify-center">
+                            {notesCount > 9 ? "9+" : notesCount}
+                          </span>
+                        )}
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
               </header>
               <ChatPanel />
             </div>
+            <NotesPanel />
           </div>
           <LogPanel />
         </div>

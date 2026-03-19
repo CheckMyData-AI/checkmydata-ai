@@ -251,6 +251,32 @@ class IndexingPipelineRunner:
             if filtered:
                 logger.info("Pre-filtered %d binary/missing files from changed_files", filtered)
 
+        # --- Early exit: nothing changed since last index ---
+        if (
+            not state.changed_files
+            and not state.deleted_files
+            and state.last_sha is not None
+            and not force_full
+        ):
+            logger.info("No file changes detected, skipping doc generation")
+            await tracker.emit(
+                wf_id,
+                "no_changes",
+                "completed",
+                "No file changes detected since last index, skipping doc generation",
+            )
+            return await self._record_and_finish(
+                project_id=project_id,
+                project=project,
+                db=db,
+                wf_id=wf_id,
+                cp_id=cp_id,
+                state=state,
+                result=result,
+                resuming=resuming,
+                live_table_names=live_table_names,
+            )
+
         # --- Step 4: cleanup_deleted ---
         if "cleanup_deleted" not in done:
             if state.deleted_files:
@@ -380,6 +406,7 @@ class IndexingPipelineRunner:
                     cached_knowledge=cached_knowledge,
                     detected_orms=state.profile.orms if state.profile else None,
                 )
+            assert state.knowledge is not None
             await tracker.emit(
                 wf_id,
                 "cross_file_analysis",
@@ -401,6 +428,7 @@ class IndexingPipelineRunner:
             )
 
         # --- Step 8: enrich + summary (always re-run; fast, in-memory) ---
+        assert state.knowledge is not None
         state.enriched_docs = await asyncio.to_thread(
             run_pass4_enrich,
             state.schemas,
@@ -423,6 +451,8 @@ class IndexingPipelineRunner:
 
         # --- Step 9: generate_docs (per-doc atomic with checkpoint) ---
         processed_paths = CheckpointService.get_processed_doc_paths(checkpoint)
+        changed_set = set(state.changed_files)
+        is_incremental = state.last_sha is not None and not force_full
         total = len(state.enriched_docs)
         skipped = 0
         batch_flush_size = 10
@@ -471,9 +501,10 @@ class IndexingPipelineRunner:
                             pending_paths = []
                         continue
 
-                prev_content = None
+                # Skip unchanged files during incremental runs if we already
+                # have a generated doc — avoids unnecessary LLM calls.
                 existing_doc_content = None
-                if state.last_sha is not None:
+                if is_incremental:
                     existing_kd = await self._doc_store.get_doc_by_path(
                         db,
                         project_id,
@@ -481,6 +512,28 @@ class IndexingPipelineRunner:
                     )
                     if existing_kd:
                         existing_doc_content = existing_kd.content
+
+                    if (
+                        edoc.file_path not in changed_set
+                        and edoc.file_path != "__project_summary__"
+                        and existing_doc_content
+                    ):
+                        skipped += 1
+                        pending_paths.append(edoc.file_path)
+                        if len(pending_paths) >= batch_flush_size:
+                            await self._cp_svc.mark_docs_batch_processed(
+                                db, cp_id, pending_paths
+                            )
+                            pending_paths = []
+                        continue
+
+                # For changed files with existing docs, load the previous raw
+                # content from git so the doc generator can use diff-based updates.
+                prev_content = None
+                if is_incremental and existing_doc_content and state.repo_dir:
+                    prev_content = await self._git_show(
+                        state.repo_dir, state.last_sha, edoc.file_path
+                    )
 
                 generated_content = await self._doc_generator.generate(
                     file_path=edoc.file_path,
@@ -555,10 +608,54 @@ class IndexingPipelineRunner:
 
         result.docs_skipped = skipped
 
-        # --- Step 10: record_index ---
+        return await self._record_and_finish(
+            project_id=project_id,
+            project=project,
+            db=db,
+            wf_id=wf_id,
+            cp_id=cp_id,
+            state=state,
+            result=result,
+            resuming=resuming,
+            live_table_names=live_table_names,
+        )
+
+    @staticmethod
+    async def _git_show(repo_dir: Path, sha: str | None, file_path: str) -> str | None:
+        """Load the raw content of *file_path* at commit *sha* via ``git show``.
+
+        Returns ``None`` on any error (file didn't exist in that commit,
+        binary, etc.) — callers should treat it as "no previous content".
+        """
+        if not sha:
+            return None
+        # file_path may contain a chunk suffix like "file.py#file.py#part0"
+        git_path = file_path.split("#")[0]
+        try:
+            repo = await asyncio.to_thread(Repo, str(repo_dir))
+            blob = await asyncio.to_thread(
+                lambda: repo.git.show(f"{sha}:{git_path}")
+            )
+            return blob if isinstance(blob, str) else None
+        except Exception:
+            return None
+
+    async def _record_and_finish(
+        self,
+        project_id: str,
+        project,
+        db: AsyncSession,
+        wf_id: str,
+        cp_id: str,
+        state: _PipelineState,
+        result: PipelineResult,
+        resuming: bool,
+        live_table_names: list[str] | None = None,
+    ) -> PipelineResult:
+        """Record the index commit, save caches, cleanup checkpoint, and emit completion."""
         async with tracker.step(wf_id, "record_index", "Recording commit index"):
             repo = await asyncio.to_thread(Repo, str(state.repo_dir))
-            commit_msg = repo.head.commit.message.strip()[:200]
+            commit_msg = str(repo.head.commit.message).strip()[:200]
             await self._git_tracker.record_index(
                 session=db,
                 project_id=project_id,
@@ -575,10 +672,10 @@ class IndexingPipelineRunner:
                 profile=state.profile,
             )
 
-            await self._mark_db_index_code_stale(db, project_id)
-            await self._mark_sync_stale(db, project_id)
+            if state.changed_files:
+                await self._mark_db_index_code_stale(db, project_id)
+                await self._mark_sync_stale(db, project_id)
 
-        # --- Cleanup checkpoint ---
         await self._cp_svc.delete(db, cp_id)
 
         await tracker.end(
@@ -586,7 +683,7 @@ class IndexingPipelineRunner:
             "index_repo",
             "completed",
             f"Indexed {len(state.changed_files)} files, {len(state.schemas)} schemas"
-            + (f" (resumed, {skipped} docs skipped)" if resuming else ""),
+            + (f" (resumed, {result.docs_skipped} docs skipped)" if resuming else ""),
         )
 
         result.commit_sha = state.head_sha

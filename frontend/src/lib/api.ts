@@ -150,6 +150,7 @@ export interface ChatSession {
   project_id: string;
   title: string;
   connection_id?: string | null;
+  created_at?: string | null;
 }
 
 export interface ChatMessageDTO {
@@ -282,6 +283,7 @@ export interface SyncResponse {
 export interface LearningsStatus {
   has_learnings: boolean;
   total_active: number;
+  categories: Record<string, number>;
   last_compiled_at: string | null;
 }
 
@@ -316,6 +318,26 @@ export interface LLMModel {
   name: string;
   context_length: number | null;
   pricing: { prompt: string; completion: string } | null;
+}
+
+export interface SavedNote {
+  id: string;
+  project_id: string;
+  connection_id: string | null;
+  title: string;
+  comment: string | null;
+  sql_query: string;
+  last_result_json: string | null;
+  last_executed_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ExecuteNoteResponse {
+  id: string;
+  last_result_json: string | null;
+  last_executed_at: string | null;
+  error: string | null;
 }
 
 export interface AuthUser {
@@ -428,11 +450,6 @@ export const api = {
   },
 
   chat: {
-    createSession: (projectId: string, title?: string) =>
-      request<ChatSession>("/chat/sessions", {
-        method: "POST",
-        body: JSON.stringify({ project_id: projectId, title }),
-      }),
     listSessions: (projectId: string) =>
       request<ChatSession[]>(`/chat/sessions/${projectId}`),
     updateSession: (sessionId: string, data: { title: string }) =>
@@ -611,6 +628,31 @@ export const api = {
     removeMember: (projectId: string, userId: string) =>
       request<{ ok: boolean }>(`/invites/${projectId}/members/${userId}`, {
         method: "DELETE",
+      }),
+  },
+
+  notes: {
+    list: (projectId: string) =>
+      request<SavedNote[]>(`/notes?project_id=${projectId}`),
+    get: (id: string) =>
+      request<SavedNote>(`/notes/${id}`),
+    create: (data: {
+      project_id: string;
+      connection_id?: string | null;
+      title: string;
+      comment?: string | null;
+      sql_query: string;
+      last_result_json?: string | null;
+    }) =>
+      request<SavedNote>("/notes", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: { title?: string; comment?: string | null }) =>
+      request<SavedNote>(`/notes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/notes/${id}`, { method: "DELETE" }),
+    execute: (id: string) =>
+      request<ExecuteNoteResponse>(`/notes/${id}/execute`, {
+        method: "POST",
+        timeoutMs: 120_000,
       }),
   },
 

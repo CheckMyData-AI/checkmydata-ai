@@ -70,7 +70,7 @@ describe("AuthGate", () => {
   it("shows loading state when isLoading is true", async () => {
     useAuthStore.setState({ isLoading: true });
     await renderAuthGate();
-    expect(screen.getByText("...")).toBeInTheDocument();
+    expect(screen.getByText("Signing in...")).toBeInTheDocument();
   });
 
   it("renders children when user is logged in", async () => {

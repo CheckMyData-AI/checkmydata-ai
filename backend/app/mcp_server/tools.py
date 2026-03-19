@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any
 
 from app.agents.base import AgentContext
@@ -58,7 +57,7 @@ def _agent_response_to_dict(resp: AgentResponse) -> dict[str, Any]:
         result["viz_config"] = resp.viz_config
     if resp.knowledge_sources:
         result["sources"] = [
-            {"content": s.content[:500], "metadata": s.metadata} for s in resp.knowledge_sources
+            {"source_path": s.source_path, "doc_type": s.doc_type} for s in resp.knowledge_sources
         ]
     if resp.error:
         result["error"] = resp.error
@@ -95,8 +94,7 @@ async def query_database(
         config.connection_id = conn.id
 
     tracker = WorkflowTracker()
-    wf_id = f"mcp-{uuid.uuid4().hex[:8]}"
-    await tracker.start(wf_id, "mcp_query_database")
+    wf_id = await tracker.begin("mcp_query_database")
 
     ctx = AgentContext(
         project_id=project_id,
@@ -123,8 +121,7 @@ async def search_codebase(project_id: str, question: str) -> str:
             return json.dumps({"error": f"Project '{project_id}' not found"})
 
     tracker = WorkflowTracker()
-    wf_id = f"mcp-{uuid.uuid4().hex[:8]}"
-    await tracker.start(wf_id, "mcp_search_codebase")
+    wf_id = await tracker.begin("mcp_search_codebase")
 
     ctx = AgentContext(
         project_id=project_id,
@@ -187,10 +184,11 @@ async def get_schema(connection_id: str) -> str:
 
     tables = []
     for entry in entries:
-        columns = []
-        if entry.columns_json:
+        columns = {}
+        columns_raw = entry.column_notes_json or "{}"
+        if columns_raw != "{}":
             try:
-                columns = json.loads(entry.columns_json)
+                columns = json.loads(columns_raw)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -200,7 +198,7 @@ async def get_schema(connection_id: str) -> str:
                 "schema": entry.table_schema or "public",
                 "columns": columns,
                 "row_count": entry.row_count,
-                "comment": entry.comment,
+                "description": entry.business_description,
             }
         )
 

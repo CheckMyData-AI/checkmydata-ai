@@ -58,7 +58,7 @@ class BaseLLMProvider(ABC):
         """Generate a completion."""
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         tools: list[Tool] | None = None,
@@ -67,6 +67,7 @@ class BaseLLMProvider(ABC):
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
         """Stream a completion token by token."""
+        ...
 
     @property
     @abstractmethod

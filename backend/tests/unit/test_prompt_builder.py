@@ -7,6 +7,12 @@ search_codebase, manage_rules) rather than the raw SQL-level tools
 (execute_query, get_schema_info, etc.).
 """
 
+from app.agents.prompts import get_current_datetime_str
+from app.agents.prompts.knowledge_prompt import build_knowledge_system_prompt
+from app.agents.prompts.mcp_prompt import build_mcp_source_system_prompt
+from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+from app.agents.prompts.sql_prompt import build_sql_system_prompt
+from app.agents.prompts.viz_prompt import build_viz_system_prompt
 from app.core.prompt_builder import build_agent_system_prompt
 
 
@@ -113,3 +119,97 @@ class TestBuildAgentSystemPrompt:
             has_knowledge_base=True,
         )
         assert "manage_rules" not in prompt
+
+    def test_datetime_injected_via_deprecated_builder(self):
+        prompt = build_agent_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "Current date/time:" in prompt
+        assert "UTC" in prompt
+
+
+class TestOrchestratorDatetime:
+    def test_datetime_present_when_provided(self):
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            current_datetime="2026-03-19 14:30 UTC (Thursday)",
+        )
+        assert "2026-03-19 14:30 UTC (Thursday)" in prompt
+        assert "Current date/time:" in prompt
+
+    def test_datetime_absent_when_none(self):
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "Current date/time:" not in prompt
+
+
+class TestSqlDatetime:
+    def test_datetime_present_when_provided(self):
+        prompt = build_sql_system_prompt(
+            db_type="mysql",
+            current_datetime="2026-03-19 14:30 UTC (Thursday)",
+        )
+        assert "2026-03-19 14:30 UTC (Thursday)" in prompt
+        assert "relative date calculations" in prompt
+
+    def test_datetime_absent_when_none(self):
+        prompt = build_sql_system_prompt(db_type="mysql")
+        assert "Current date/time:" not in prompt
+
+
+class TestKnowledgeDatetime:
+    def test_datetime_present(self):
+        prompt = build_knowledge_system_prompt(
+            current_datetime="2026-03-19 14:30 UTC (Thursday)",
+        )
+        assert "2026-03-19 14:30 UTC (Thursday)" in prompt
+
+    def test_datetime_absent(self):
+        prompt = build_knowledge_system_prompt()
+        assert "Current date/time:" not in prompt
+
+    def test_contains_workflow(self):
+        prompt = build_knowledge_system_prompt()
+        assert "search_knowledge" in prompt
+
+
+class TestVizDatetime:
+    def test_datetime_present(self):
+        prompt = build_viz_system_prompt(
+            current_datetime="2026-03-19 14:30 UTC (Thursday)",
+        )
+        assert "2026-03-19 14:30 UTC (Thursday)" in prompt
+
+    def test_datetime_absent(self):
+        prompt = build_viz_system_prompt()
+        assert "Current date/time:" not in prompt
+
+    def test_contains_rules(self):
+        prompt = build_viz_system_prompt()
+        assert "bar_chart" in prompt
+        assert "recommend_visualization" in prompt
+
+
+class TestMcpDatetime:
+    def test_datetime_present(self):
+        prompt = build_mcp_source_system_prompt(
+            source_name="TestSource",
+            current_datetime="2026-03-19 14:30 UTC (Thursday)",
+        )
+        assert "2026-03-19 14:30 UTC (Thursday)" in prompt
+        assert "TestSource" in prompt
+
+    def test_datetime_absent(self):
+        prompt = build_mcp_source_system_prompt(source_name="Test")
+        assert "Current date/time:" not in prompt
+
+
+class TestGetCurrentDatetimeStr:
+    def test_returns_utc_string(self):
+        result = get_current_datetime_str()
+        assert "UTC" in result
+        assert "202" in result

@@ -136,7 +136,7 @@ class DocGenerator:
                 file_path=file_path,
                 doc_type=doc_type,
                 enrichment_section=enrichment_section,
-                existing_doc=existing_doc[:MAX_CONTENT_LENGTH],
+                existing_doc=(existing_doc or "")[:MAX_CONTENT_LENGTH],
                 diff_text=diff_text[:4000],
                 content=truncated,
             )

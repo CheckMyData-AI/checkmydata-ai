@@ -32,7 +32,11 @@ type IconName =
   | "activity"
   | "copy"
   | "help-circle"
-  | "arrow-right";
+  | "arrow-right"
+  | "bookmark"
+  | "play"
+  | "sidebar-right"
+  | "clipboard";
 
 const PATHS: Record<IconName, string> = {
   key: "M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4",
@@ -86,6 +90,10 @@ const PATHS: Record<IconName, string> = {
   "help-circle":
     "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01",
   "arrow-right": "M5 12h14M12 5l7 7-7 7",
+  bookmark: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
+  play: "M5 3l14 9-14 9V3z",
+  "sidebar-right": "M3 3h18v18H3zM15 3v18",
+  clipboard: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
 };
 
 interface IconProps extends SVGProps<SVGSVGElement> {

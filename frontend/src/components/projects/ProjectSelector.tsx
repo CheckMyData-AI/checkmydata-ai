@@ -362,19 +362,18 @@ export function ProjectSelector() {
     if (!(await confirmAction(`Delete project "${project.name}"?`))) return;
     try {
       await api.projects.delete(project.id);
+      const wasActive = useAppStore.getState().activeProject?.id === project.id;
       useAppStore.setState((state) => ({
         projects: state.projects.filter((p) => p.id !== project.id),
-        ...(state.activeProject?.id === project.id
-          ? {
-              activeProject: null,
-              connections: [],
-              activeConnection: null,
-              chatSessions: [],
-              activeSession: null,
-              messages: [],
-            }
-          : {}),
       }));
+      if (wasActive) {
+        setActiveProject(null);
+        setConnections([]);
+        setActiveConnection(null);
+        setChatSessions([]);
+        setActiveSession(null);
+        clearMessages();
+      }
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Failed to delete project",

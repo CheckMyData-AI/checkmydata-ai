@@ -18,6 +18,7 @@ import app.models.project_invite  # noqa: F401
 import app.models.project_member  # noqa: F401
 import app.models.rag_feedback  # noqa: F401
 import app.models.repository  # noqa: F401
+import app.models.saved_note  # noqa: F401
 import app.models.ssh_key  # noqa: F401
 import app.models.user  # noqa: F401
 from alembic import context

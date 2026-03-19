@@ -102,8 +102,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MASTER_ENCRYPTION_KEY must be set in production. "
                 "Generate one with: python -c "
-                "\"from cryptography.fernet import Fernet; "
-                "print(Fernet.generate_key().decode())\""
+                '"from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"'
             )
         return self
 
@@ -115,6 +115,4 @@ if settings.jwt_secret == "change-me-in-production":
         "JWT_SECRET is using the insecure default. Set JWT_SECRET env var for production."
     )
 if not settings.master_encryption_key:
-    _config_logger.warning(
-        "MASTER_ENCRYPTION_KEY is empty. Credential encryption will not work."
-    )
+    _config_logger.warning("MASTER_ENCRYPTION_KEY is empty. Credential encryption will not work.")

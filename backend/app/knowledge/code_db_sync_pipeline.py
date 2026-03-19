@@ -15,6 +15,7 @@ import logging
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.code_db_sync_analyzer import CodeDbSyncAnalyzer, TableSyncAnalysis
+from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.entity_extractor import EntityInfo, ProjectKnowledge, TableUsage
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
@@ -42,6 +43,7 @@ class CodeDbSyncPipeline:
         self._sync_svc = CodeDbSyncService()
         self._db_index_svc = DbIndexService()
         self._cache_svc = ProjectCacheService()
+        self._rules_engine = CustomRulesEngine()
 
     async def run(
         self,
@@ -118,6 +120,9 @@ class CodeDbSyncPipeline:
                 connection_id[:8],
             )
 
+            # Load custom rules for enriched context
+            rules_context = await self._load_rules_context(project_id)
+
             # Step 3: Match tables
             matched_tables: list[_MatchedTable] = []
             async with self._tracker.step(
@@ -125,7 +130,7 @@ class CodeDbSyncPipeline:
                 "match_tables",
                 f"Matching {len(db_entries)} DB tables with code entities",
             ):
-                matched_tables = self._match_tables(knowledge, db_entries)
+                matched_tables = self._match_tables(knowledge, db_entries, rules_context)
 
             code_info_count = sum(1 for m in matched_tables if m.has_code_info)
             db_only_match = len(matched_tables) - code_info_count
@@ -207,7 +212,7 @@ class CodeDbSyncPipeline:
 
                     mt_lookup = {m.table_name: m for m in matched_tables}
                     for analysis in analyses:
-                        mt = mt_lookup.get(analysis.table_name)
+                        mt = mt_lookup.get(analysis.table_name)  # type: ignore[assignment]
                         sync_data = {
                             "table_name": analysis.table_name,
                             "entity_name": mt.entity_name if mt else None,
@@ -244,9 +249,11 @@ class CodeDbSyncPipeline:
                 "Generating sync summary",
             ):
                 project_ctx = self._build_project_context(knowledge)
+                fk_ctx = self._build_fk_context(knowledge, db_entries)
                 summary_result = await self._analyzer.generate_summary(
                     analyses=analyses,
                     project_context=project_ctx,
+                    fk_relationships=fk_ctx,
                     preferred_provider=preferred_provider,
                     model=model,
                 )
@@ -264,6 +271,7 @@ class CodeDbSyncPipeline:
                             "global_notes": summary_result.global_notes,
                             "data_conventions": summary_result.data_conventions,
                             "query_guidelines": summary_result.query_guidelines,
+                            "join_recommendations": summary_result.join_recommendations,
                             "sync_status": "completed",
                         },
                     )
@@ -323,10 +331,22 @@ class CodeDbSyncPipeline:
             )
             return None
 
+    async def _load_rules_context(self, project_id: str) -> str:
+        try:
+            file_rules = self._rules_engine.load_rules(
+                project_rules_dir=f"./rules/{project_id}"
+            )
+            db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
+            return self._rules_engine.rules_to_context(file_rules + db_rules)
+        except Exception:
+            logger.debug("Failed to load rules for sync pipeline", exc_info=True)
+            return ""
+
     def _match_tables(
         self,
         knowledge: ProjectKnowledge,
         db_entries: list[DbIndex],
+        rules_context: str = "",
     ) -> list[_MatchedTable]:
         """Cross-reference code entities/table_usage with DB index entries."""
         results: list[_MatchedTable] = []
@@ -346,7 +366,7 @@ class CodeDbSyncPipeline:
 
         for tbl_lower in sorted(all_tables):
             db_entry = db_table_names.get(tbl_lower)
-            entity = entity_by_table.get(tbl_lower)
+            entity = entity_by_table.get(tbl_lower)  # type: ignore[assignment]
             usage = knowledge.table_usage.get(tbl_lower) or knowledge.table_usage.get(
                 next((k for k in knowledge.table_usage if k.lower() == tbl_lower), "")
             )
@@ -354,7 +374,9 @@ class CodeDbSyncPipeline:
             table_name = db_entry.table_name if db_entry else tbl_lower
 
             db_context = self._build_db_context(db_entry) if db_entry else ""
-            code_context = self._build_code_context(entity, usage, knowledge, tbl_lower)
+            code_context = self._build_code_context(
+                entity, usage, knowledge, tbl_lower, rules_context
+            )
 
             has_code = bool(entity or (usage and usage.is_active))
             _has_db = db_entry is not None
@@ -393,6 +415,8 @@ class CodeDbSyncPipeline:
             parts.append(f"Description: {entry.business_description}")
         if entry.row_count is not None:
             parts.append(f"Rows: ~{entry.row_count:,}")
+        if entry.column_count:
+            parts.append(f"Column count: {entry.column_count}")
         if entry.data_patterns:
             parts.append(f"Data patterns: {entry.data_patterns}")
         if entry.query_hints:
@@ -406,8 +430,19 @@ class CodeDbSyncPipeline:
                         parts.append(f"  {col}: {note}")
             except (json.JSONDecodeError, TypeError):
                 pass
+        dv_json = getattr(entry, "column_distinct_values_json", None) or "{}"
+        if dv_json and dv_json != "{}":
+            try:
+                distinct = json.loads(dv_json)
+                if distinct:
+                    parts.append("Actual distinct values in DB:")
+                    for col, vals in distinct.items():
+                        vals_str = " | ".join(str(v) for v in vals[:15])
+                        parts.append(f"  {col}: [{vals_str}]")
+            except (json.JSONDecodeError, TypeError):
+                pass
         if entry.sample_data_json and entry.sample_data_json != "[]":
-            parts.append(f"Sample data: {entry.sample_data_json[:500]}")
+            parts.append(f"Sample data: {entry.sample_data_json[:800]}")
         return "\n".join(parts)
 
     @staticmethod
@@ -416,6 +451,7 @@ class CodeDbSyncPipeline:
         usage: TableUsage | None,
         knowledge: ProjectKnowledge,
         table_lower: str,
+        rules_context: str = "",
     ) -> str:
         parts: list[str] = []
 
@@ -464,7 +500,12 @@ class CodeDbSyncPipeline:
         if relevant_services:
             parts.append("Service functions:")
             for sf in relevant_services[:5]:
-                parts.append(f"  {sf['name']} in {sf['file_path']}")
+                snippet = sf.get("snippet", "")
+                if snippet:
+                    parts.append(f"  {sf['name']} in {sf['file_path']}:")
+                    parts.append(f"    {snippet[:300]}")
+                else:
+                    parts.append(f"  {sf['name']} in {sf['file_path']}")
 
         relevant_rules = [
             r
@@ -476,6 +517,52 @@ class CodeDbSyncPipeline:
             for r in relevant_rules[:5]:
                 parts.append(f"  [{r.rule_type}] {r.expression[:100]}")
 
+        if rules_context:
+            table_rules = [
+                line
+                for line in rules_context.split("\n")
+                if table_lower in line.lower()
+            ]
+            if table_rules:
+                parts.append("Custom project rules:")
+                for line in table_rules[:5]:
+                    parts.append(f"  {line.strip()[:200]}")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _build_fk_context(
+        knowledge: ProjectKnowledge,
+        db_entries: list[DbIndex],
+    ) -> str:
+        """Build a compact FK relationship list from code entities."""
+        fk_lines: list[str] = []
+        for _name, entity in knowledge.entities.items():
+            if not entity.columns:
+                continue
+            for col in entity.columns:
+                if col.is_fk and col.fk_target:
+                    src_table = entity.table_name or _name
+                    fk_lines.append(
+                        f"  {src_table}.{col.name} -> {col.fk_target}"
+                    )
+        usage_overlap: dict[str, set[str]] = {}
+        for tbl_name, usage in knowledge.table_usage.items():
+            files = set(usage.readers + usage.writers)
+            for f in files:
+                usage_overlap.setdefault(f, set()).add(tbl_name)
+        co_used: list[str] = []
+        for _file, tables in usage_overlap.items():
+            if len(tables) >= 2:
+                co_used.append(", ".join(sorted(tables)[:4]))
+        fk_text = "\n".join(fk_lines[:30]) if fk_lines else "None found"
+        parts = [f"FK relationships:\n{fk_text}"]
+        if co_used:
+            unique_groups = list(set(co_used))[:10]
+            parts.append(
+                "Tables commonly used together in code:\n"
+                + "\n".join(f"  {g}" for g in unique_groups)
+            )
         return "\n".join(parts)
 
     @staticmethod

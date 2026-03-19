@@ -1,14 +1,17 @@
 """Extracts lessons from query validation outcomes.
 
 Heuristic extractors fire after every validation loop at zero LLM cost.
-An optional LLM analyzer can be triggered for deeper pattern extraction.
+The ``LLMAnalyzer`` can be triggered for deeper cross-query pattern
+extraction when the heuristics alone are insufficient.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.query_validation import QueryAttempt, QueryErrorType
@@ -17,6 +20,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+_llm_analysis_timestamps: dict[str, datetime] = {}
 
 
 @dataclass
@@ -37,6 +42,56 @@ _TABLE_RE = re.compile(
 
 def _extract_tables(sql: str) -> list[str]:
     return [m.group(1).lower() for m in _TABLE_RE.finditer(sql)]
+
+
+async def _load_sync_warnings_for_dedup(
+    session: AsyncSession, connection_id: str
+) -> dict[str, str]:
+    """Load sync conversion_warnings keyed by table name (lowercase)."""
+    try:
+        from app.services.code_db_sync_service import CodeDbSyncService
+
+        svc = CodeDbSyncService()
+        entries = await svc.get_sync(session, connection_id)
+        return {
+            e.table_name.lower(): (e.conversion_warnings or "").lower()
+            for e in entries
+            if e.conversion_warnings
+        }
+    except Exception:
+        return {}
+
+
+def _is_covered_by_sync(
+    lesson: ExtractedLesson, sync_warnings: dict[str, str]
+) -> bool:
+    """Return True if a sync conversion_warning already covers this lesson."""
+    if lesson.category not in ("data_format", "schema_gotcha"):
+        return False
+
+    subject_lower = lesson.subject.lower()
+    warning = sync_warnings.get(subject_lower, "")
+    if not warning:
+        return False
+
+    lesson_lower = lesson.lesson.lower()
+    if lesson.category == "data_format":
+        if "cent" in lesson_lower and ("cent" in warning or "/ 100" in warning):
+            return True
+        if "1000" in lesson_lower and ("1000" in warning or "minor unit" in warning):
+            return True
+        if "::text" in lesson_lower and "text" in warning:
+            return True
+
+    if lesson.category == "schema_gotcha":
+        if "deleted_at" in lesson_lower and "delet" in warning:
+            return True
+        if "is_deleted" in lesson_lower and "delet" in warning:
+            return True
+        if "schema prefix" in lesson_lower and "schema" in warning:
+            return True
+
+    return False
 
 
 class LearningAnalyzer:
@@ -66,11 +121,18 @@ class LearningAnalyzer:
         if not lessons:
             return []
 
+        sync_warnings = await _load_sync_warnings_for_dedup(session, connection_id)
+
         from app.services.agent_learning_service import AgentLearningService
 
         svc = AgentLearningService()
         stored: list[ExtractedLesson] = []
         for lesson in lessons:
+            if _is_covered_by_sync(lesson, sync_warnings):
+                logger.debug(
+                    "Skipping learning (covered by sync): %s", lesson.lesson
+                )
+                continue
             try:
                 await svc.create_learning(
                     session,
@@ -430,3 +492,166 @@ class LearningAnalyzer:
                 )
 
         return lessons
+
+
+# ======================================================================
+# LLM-based Analyzer (deeper cross-query pattern extraction)
+# ======================================================================
+
+_LLM_EXTRACTION_PROMPT = """\
+You are a database expert analyzing a series of SQL query attempts against the same database.
+Your goal is to extract reusable lessons that will help future query generation.
+
+For each lesson, output a JSON array of objects with these fields:
+- "category": one of "table_preference", "column_usage", "data_format", \
+"query_pattern", "schema_gotcha", "performance_hint"
+- "subject": the main table or column the lesson is about
+- "lesson": a clear, actionable sentence (max 200 chars)
+- "confidence": a float between 0.5 and 0.9
+
+Only output lessons that are clearly supported by the evidence. Do NOT guess.
+If there are no lessons, output an empty array: []
+
+Respond with ONLY the JSON array, no markdown fences, no explanation.
+"""
+
+
+class LLMAnalyzer:
+    """Batch LLM-based analysis for complex cross-query pattern extraction.
+
+    Triggered less frequently than heuristic extractors to control cost:
+    - Max one analysis per connection per hour
+    - Only when there are 3+ query attempts in a session, or on negative feedback
+    """
+
+    COOLDOWN_SECONDS = 3600
+
+    @classmethod
+    def should_run(cls, connection_id: str) -> bool:
+        last = _llm_analysis_timestamps.get(connection_id)
+        if last is None:
+            return True
+        elapsed = (datetime.now(UTC) - last).total_seconds()
+        return elapsed >= cls.COOLDOWN_SECONDS
+
+    @classmethod
+    def _mark_run(cls, connection_id: str) -> None:
+        _llm_analysis_timestamps[connection_id] = datetime.now(UTC)
+
+    async def analyze(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        attempts: list[QueryAttempt],
+    ) -> list[ExtractedLesson]:
+        """Run LLM analysis on a batch of query attempts and store results."""
+        if not connection_id or len(attempts) < 3:
+            return []
+
+        if not self.should_run(connection_id):
+            logger.debug("LLM analyzer cooldown active for %s, skipping", connection_id)
+            return []
+
+        self._mark_run(connection_id)
+
+        from app.llm.base import Message
+        from app.llm.router import LLMRouter
+
+        attempts_text = self._format_attempts(attempts)
+
+        llm = LLMRouter()
+        messages = [
+            Message(role="system", content=_LLM_EXTRACTION_PROMPT),
+            Message(role="user", content=attempts_text),
+        ]
+
+        try:
+            response = await llm.complete(messages=messages, temperature=0.0, max_tokens=2048)
+            raw = response.content.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = re.sub(r"\s*```$", "", raw)
+            parsed = json.loads(raw)
+        except Exception:
+            logger.warning("LLM analyzer failed to parse response", exc_info=True)
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        valid_categories = {
+            "table_preference",
+            "column_usage",
+            "data_format",
+            "query_pattern",
+            "schema_gotcha",
+            "performance_hint",
+        }
+
+        lessons: list[ExtractedLesson] = []
+        for item in parsed:
+            cat = item.get("category", "")
+            if cat not in valid_categories:
+                continue
+            subject = item.get("subject", "")
+            lesson_text = item.get("lesson", "")
+            conf = item.get("confidence", 0.7)
+            if not subject or not lesson_text:
+                continue
+            conf = max(0.5, min(0.9, float(conf)))
+            lessons.append(
+                ExtractedLesson(
+                    category=cat,
+                    subject=subject[:255],
+                    lesson=lesson_text[:500],
+                    confidence=conf,
+                )
+            )
+
+        if not lessons:
+            return []
+
+        from app.services.agent_learning_service import AgentLearningService
+
+        svc = AgentLearningService()
+        stored: list[ExtractedLesson] = []
+        for lesson in lessons:
+            try:
+                await svc.create_learning(
+                    session,
+                    connection_id=connection_id,
+                    category=lesson.category,
+                    subject=lesson.subject,
+                    lesson=lesson.lesson,
+                    confidence=lesson.confidence,
+                    source_query=None,
+                    source_error="llm_analysis",
+                )
+                stored.append(lesson)
+            except Exception:
+                logger.debug("Failed to store LLM-extracted learning", exc_info=True)
+
+        if stored:
+            await session.commit()
+            logger.info(
+                "LLM analyzer extracted %d learnings for connection %s",
+                len(stored),
+                connection_id,
+            )
+
+        return stored
+
+    @staticmethod
+    def _format_attempts(attempts: list[QueryAttempt]) -> str:
+        parts: list[str] = []
+        for i, a in enumerate(attempts, 1):
+            status = "SUCCESS" if (a.results and not a.error) else "FAILED"
+            error_msg = a.error.message[:300] if a.error else "none"
+            row_count = a.results.row_count if a.results else 0
+            parts.append(
+                f"Attempt {i} ({status}):\n"
+                f"  SQL: {a.query[:500]}\n"
+                f"  Error: {error_msg}\n"
+                f"  Rows returned: {row_count}"
+            )
+        return "\n\n".join(parts)

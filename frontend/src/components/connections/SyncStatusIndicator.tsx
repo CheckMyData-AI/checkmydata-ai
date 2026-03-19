@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type SyncStatus } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { useTaskStore } from "@/stores/task-store";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -15,9 +16,14 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+const REFRESH_PIPELINES = new Set(["code_db_sync", "db_index"]);
+
 export function SyncStatusIndicator() {
   const { activeConnection } = useAppStore();
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const tasks = useTaskStore((s) => s.tasks);
+  const prevFinishedRef = useRef<Set<string>>(new Set());
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!activeConnection) {
@@ -26,6 +32,57 @@ export function SyncStatusIndicator() {
     }
     api.connections.syncStatus(activeConnection.id).then(setSyncStatus).catch(() => {});
   }, [activeConnection]);
+
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    if (!activeConnection || syncStatus?.sync_status !== "running") return;
+
+    const connId = activeConnection.id;
+    pollRef.current = setInterval(() => {
+      api.connections.syncStatus(connId).then(setSyncStatus).catch(() => {});
+    }, 5000);
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [activeConnection, syncStatus?.sync_status]);
+
+  const prevRunningRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!activeConnection) return;
+
+    const finished = new Set<string>();
+    const running = new Set<string>();
+    for (const t of Object.values(tasks)) {
+      if (
+        REFRESH_PIPELINES.has(t.pipeline) &&
+        t.extra.connection_id === activeConnection.id
+      ) {
+        if (t.status === "running") {
+          running.add(t.workflowId);
+        } else {
+          finished.add(t.workflowId);
+        }
+      }
+    }
+
+    const newFinished = [...finished].some((id) => !prevFinishedRef.current.has(id));
+    const newRunning = [...running].some((id) => !prevRunningRef.current.has(id));
+    prevFinishedRef.current = finished;
+    prevRunningRef.current = running;
+
+    if (newFinished || newRunning) {
+      api.connections.syncStatus(activeConnection.id).then(setSyncStatus).catch(() => {});
+    }
+  }, [tasks, activeConnection]);
 
   if (!activeConnection || !syncStatus) return null;
 

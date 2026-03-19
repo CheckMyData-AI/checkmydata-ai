@@ -103,7 +103,7 @@ class MCPPipeline(DataSourcePipeline):
                     }
                     for s in schemas
                 ]
-                collection.upsert(documents=tool_docs, ids=ids, metadatas=metadatas)
+                collection.upsert(documents=tool_docs, ids=ids, metadatas=metadatas)  # type: ignore[arg-type]
             except Exception:
                 logger.warning("Failed to store MCP tool schemas in vector store", exc_info=True)
 

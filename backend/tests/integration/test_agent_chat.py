@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tests.integration.conftest import auth_headers, register_user
 
@@ -363,7 +364,7 @@ class TestStreamEndpointAgent:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
-    async def test_stream_without_connection(self, mock_agent, auth_client, project_id):
+    async def test_stream_without_connection(self, mock_agent, auth_client, project_id, engine):
         from app.core.agent import AgentResponse
 
         mock_agent.run = AsyncMock(
@@ -373,12 +374,15 @@ class TestStreamEndpointAgent:
             )
         )
 
-        resp = await auth_client.post(
-            "/api/chat/ask/stream",
-            json={
-                "project_id": project_id,
-                "message": "Hello stream",
-            },
-        )
+        test_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        with patch("app.models.base.async_session_factory", test_factory):
+            resp = await auth_client.post(
+                "/api/chat/ask/stream",
+                json={
+                    "project_id": project_id,
+                    "message": "Hello stream",
+                },
+            )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")

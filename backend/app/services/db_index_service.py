@@ -343,6 +343,17 @@ class DbIndexService:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        numeric_notes_raw = getattr(entry, "numeric_format_notes", "{}")
+        if numeric_notes_raw and numeric_notes_raw != "{}":
+            try:
+                numeric_notes = json.loads(numeric_notes_raw)
+                if numeric_notes:
+                    parts.append("\n**Numeric format notes:**")
+                    for col, note in numeric_notes.items():
+                        parts.append(f"- `{col}`: {note}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         if entry.sample_data_json and entry.sample_data_json != "[]":
             try:
                 samples = json.loads(entry.sample_data_json)

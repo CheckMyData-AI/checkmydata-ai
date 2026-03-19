@@ -53,10 +53,10 @@ class RetryStrategy:
         elif et == QueryErrorType.TABLE_NOT_FOUND:
             target = error.suggested_tables[0] if error.suggested_tables else ""
             if target and isinstance(target, str):
-                similar = find_similar_tables(target, schema)
-                if similar:
+                similar_tables = find_similar_tables(target, schema)
+                if similar_tables:
                     parts.append("Did you mean one of these tables?")
-                    for tbl, score in similar:
+                    for tbl, score in similar_tables:
                         parts.append(f"  - {tbl} (similarity: {score})")
             parts.append(list_all_tables_summary(schema))
 

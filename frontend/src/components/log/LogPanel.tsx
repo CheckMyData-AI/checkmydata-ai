@@ -6,6 +6,9 @@ import { Icon } from "@/components/ui/Icon";
 
 const PIPELINE_COLORS: Record<string, string> = {
   index_repo: "text-purple-400",
+  db_index: "text-emerald-400",
+  code_db_sync: "text-teal-400",
+  orchestrator: "text-orange-400",
   query: "text-cyan-400",
   agent: "text-amber-400",
   system: "text-text-muted",
@@ -20,9 +23,54 @@ const STATUS_COLORS: Record<string, string> = {
 
 const PIPELINE_LABELS: Record<string, string> = {
   index_repo: "INDEX",
+  db_index: "DB-IDX",
+  code_db_sync: "SYNC",
+  orchestrator: "ORCH",
   query: "QUERY",
   agent: "AGENT",
   system: "SYS",
+};
+
+const STEP_LABELS: Record<string, string> = {
+  pipeline_start: "Starting",
+  pipeline_resume: "Resuming",
+  pipeline_end: "Done",
+  no_changes: "No Changes",
+  resolve_ssh_key: "SSH Key",
+  clone_or_pull: "Git Clone/Pull",
+  detect_changes: "Detect Changes",
+  cleanup_deleted: "Cleanup Deleted",
+  project_profile: "Project Profile",
+  analyze_files: "Analyze Files",
+  cross_file_analysis: "Cross-File Analysis",
+  enrich_docs: "Enrich Docs",
+  generate_docs: "Generate Docs",
+  record_index: "Record Index",
+  resolve_connection: "Connection",
+  introspect_schema: "Introspect Schema",
+  fetch_samples: "Fetch Samples",
+  load_context: "Load Context",
+  validate_tables: "LLM Analysis",
+  store_results: "Store Results",
+  generate_summary: "Generate Summary",
+  load_code_knowledge: "Load Code Knowledge",
+  load_db_index: "Load DB Index",
+  match_tables: "Match Tables",
+  analyze_sync: "Analyze Code-DB",
+  store_sync: "Store Sync",
+  generate_sync_summary: "Generate Summary",
+  load_rules: "Rules",
+  rag_context: "RAG Context",
+  build_query: "Build Query",
+  safety_check: "Safety Check",
+  pre_validate: "Schema Validation",
+  explain_check: "EXPLAIN Check",
+  execute_query: "Execute Query",
+  post_validate: "Result Validation",
+  error_classify: "Error Analysis",
+  query_repair: "Query Repair",
+  interpret_results: "Interpret",
+  render_viz: "Visualize",
 };
 
 function formatTime(ts: number): string {
@@ -59,10 +107,16 @@ const LogLine = memo(function LogLine({ entry }: { entry: LogEntry }) {
       >
         {label}
       </span>
-      <span className="text-text-muted shrink-0">{entry.step}:</span>
+      <span className="text-text-muted shrink-0">{STEP_LABELS[entry.step] || entry.step}:</span>
       <span className={`shrink-0 ${statusColor}`}>{entry.status}</span>
       {entry.detail && (
-        <span className="text-text-muted truncate">{entry.detail}</span>
+        <span className={`truncate ${
+          entry.status === "failed"
+            ? "text-error/70"
+            : entry.step === "pipeline_start" || entry.step === "pipeline_end"
+              ? "text-text-secondary"
+              : "text-text-muted"
+        }`}>{entry.detail}</span>
       )}
       {elapsed && (
         <span className="text-text-muted ml-auto shrink-0 tabular-nums">

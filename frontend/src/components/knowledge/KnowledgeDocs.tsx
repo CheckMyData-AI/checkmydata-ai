@@ -46,7 +46,7 @@ export function KnowledgeDocs() {
       .then(setDocs)
       .catch(() => {})
       .finally(() => setListLoading(false));
-  }, [activeProject?.id]);
+  }, [activeProject]);
 
   const handleView = async (doc: DocMeta) => {
     if (!activeProject) return;

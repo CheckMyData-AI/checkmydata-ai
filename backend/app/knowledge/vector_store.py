@@ -42,12 +42,12 @@ class VectorStore:
             self._client = chromadb.HttpClient(
                 host=settings.chroma_server_url,
             )
-            logger.info("ChromaDB: using remote server at %s", settings.chroma_server_url)
+            logger.debug("ChromaDB: using remote server at %s", settings.chroma_server_url)
         else:
             persist_dir = Path(settings.chroma_persist_dir)
             persist_dir.mkdir(parents=True, exist_ok=True)
             self._client = chromadb.PersistentClient(path=str(persist_dir))
-            logger.info("ChromaDB: using local PersistentClient at %s", persist_dir)
+            logger.debug("ChromaDB: using local PersistentClient at %s", persist_dir)
 
         self._embedding_fn = _get_embedding_function()
 
@@ -75,7 +75,7 @@ class VectorStore:
         collection.upsert(
             ids=doc_ids,
             documents=documents,
-            metadatas=metadatas,
+            metadatas=metadatas,  # type: ignore[arg-type]
         )
         logger.debug("Upserted %d documents to collection %s", len(doc_ids), project_id)
 
@@ -102,10 +102,10 @@ class VectorStore:
                 entry = {
                     "id": results["ids"][0][i] if results["ids"] else None,
                     "document": doc,
-                    "distance": results["distances"][0][i] if results.get("distances") else None,
+                    "distance": results["distances"][0][i] if results.get("distances") else None,  # type: ignore[index]
                 }
-                if results.get("metadatas") and results["metadatas"][0]:
-                    entry["metadata"] = results["metadatas"][0][i]
+                if results.get("metadatas") and results["metadatas"][0]:  # type: ignore[index]
+                    entry["metadata"] = results["metadatas"][0][i]  # type: ignore[index]
                 docs.append(entry)
 
         return docs

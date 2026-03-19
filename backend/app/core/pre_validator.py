@@ -60,9 +60,9 @@ class PreValidator:
                             col,
                             resolved_table,
                         )
-                        similar = find_similar_columns(col, self._schema)
-                        table_cols = [s[1] for s in similar if s[0].lower() == resolved_table]
-                        all_suggestions = table_cols or [s[1] for s in similar[:3]]
+                        similar_cols = find_similar_columns(col, self._schema)
+                        table_cols = [s[1] for s in similar_cols if s[0].lower() == resolved_table]
+                        all_suggestions = table_cols or [s[1] for s in similar_cols[:3]]
                         return ValidationResult(
                             is_valid=False,
                             error=QueryError(

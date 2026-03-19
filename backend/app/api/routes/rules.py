@@ -93,15 +93,17 @@ async def update_rule(
     if rule.project_id:
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
     updates = body.model_dump(exclude_unset=True)
-    rule = await _svc.update(db, rule_id, **updates)
+    updated_rule = await _svc.update(db, rule_id, **updates)
+    if not updated_rule:
+        raise HTTPException(status_code=404, detail="Rule not found after update")
     audit_log(
         "rule.update",
         user_id=user["user_id"],
-        project_id=rule.project_id,
+        project_id=updated_rule.project_id,
         resource_type="rule",
         resource_id=rule_id,
     )
-    return rule
+    return updated_rule
 
 
 @router.delete("/{rule_id}")

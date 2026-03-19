@@ -6,6 +6,11 @@ import { useAppStore, getPersistedId } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 
+function isAccessError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("403") || err.message.includes("404");
+}
+
 export function useRestoreState(isAuthenticated: boolean) {
   const ran = useRef(false);
 
@@ -64,7 +69,6 @@ export function useRestoreState(isAuthenticated: boolean) {
             try {
               const msgs = await api.chat.getMessages(sessionId);
               const mapped: ChatMessage[] = msgs.map((m) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 let meta: any = {};
                 try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
                 return {
@@ -93,14 +97,18 @@ export function useRestoreState(isAuthenticated: boolean) {
           }
         }
       } catch (err) {
-        const msg =
-          err instanceof Error && err.message.includes("403")
-            ? "You no longer have access to the previous project"
-            : "Failed to restore previous session — please select a project";
-        toast(msg, "error");
-        localStorage.removeItem("active_project_id");
-        localStorage.removeItem("active_connection_id");
-        localStorage.removeItem("active_session_id");
+        if (isAccessError(err)) {
+          toast("You no longer have access to the previous project", "error");
+          localStorage.removeItem("active_project_id");
+          localStorage.removeItem("active_connection_id");
+          localStorage.removeItem("active_session_id");
+        } else {
+          toast(
+            "Failed to restore session — will retry on next refresh",
+            "error",
+          );
+          ran.current = false;
+        }
       } finally {
         store.setRestoringState(false);
       }

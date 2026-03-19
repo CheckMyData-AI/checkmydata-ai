@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agents.base import AgentContext
-from app.agents.knowledge_agent import RAG_RELEVANCE_THRESHOLD, KnowledgeAgent, KnowledgeResult
+from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
+from app.config import settings
 from app.core.workflow_tracker import WorkflowTracker
 from app.knowledge.entity_extractor import (
     ColumnInfo,
@@ -20,6 +21,8 @@ from app.knowledge.entity_extractor import (
     TableUsage,
 )
 from app.llm.base import LLMResponse, ToolCall
+
+RAG_RELEVANCE_THRESHOLD = settings.rag_relevance_threshold
 
 # ── fixtures ──────────────────────────────────────────────────────────
 

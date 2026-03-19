@@ -272,9 +272,9 @@ class TestEnricherReceivesSyncAndRules:
             _patch("app.core.orchestrator.get_connector", return_value=mock_connector),
             _patch.object(
                 orchestrator,
-                "_get_sync_warnings",
+                "_get_sync_for_repair",
                 new_callable=AsyncMock,
-                return_value="- orders: amount in cents",
+                return_value=("- orders: amount in cents", ""),
             ),
             _patch.object(
                 orchestrator,

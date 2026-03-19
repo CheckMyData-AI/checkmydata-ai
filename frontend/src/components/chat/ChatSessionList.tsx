@@ -43,7 +43,6 @@ export function ChatSessionList() {
     try {
       const msgs = await api.chat.getMessages(sessionId);
       const mapped: ChatMessage[] = msgs.map((m) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let meta: any = {};
         try {
           meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
@@ -85,12 +84,12 @@ export function ChatSessionList() {
     if (!(await confirmAction("Delete this chat session?"))) return;
     try {
       await api.chat.deleteSession(sessionId);
-      useAppStore.setState((state) => ({
-        chatSessions: state.chatSessions.filter((s) => s.id !== sessionId),
-        ...(state.activeSession?.id === sessionId
-          ? { activeSession: null, messages: [] }
-          : {}),
-      }));
+      const wasActive = useAppStore.getState().activeSession?.id === sessionId;
+      setChatSessions(chatSessions.filter((s) => s.id !== sessionId));
+      if (wasActive) {
+        setActiveSession(null);
+        setMessages([]);
+      }
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Failed to delete session",

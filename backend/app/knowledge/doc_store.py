@@ -85,7 +85,7 @@ class DocStore:
             )
         )
         await session.commit()
-        count = result.rowcount  # type: ignore[union-attr]
+        count = result.rowcount  # type: ignore[attr-defined]
         logger.debug(
             "Deleted %d knowledge docs for %d paths in project %s",
             count,

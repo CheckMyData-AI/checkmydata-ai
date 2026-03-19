@@ -13,17 +13,25 @@ interface StepState {
 
 const STEP_LABELS: Record<string, string> = {
   pipeline_start: "Starting",
+  pipeline_resume: "Resuming...",
   resolve_ssh_key: "SSH Key",
   clone_or_pull: "Git Clone/Pull",
   detect_changes: "Detect Changes",
+  no_changes: "No Changes",
+  cleanup_deleted: "Cleanup Deleted",
+  project_profile: "Project Profile",
   analyze_files: "Analyze Files",
+  cross_file_analysis: "Cross-File Analysis",
+  enrich_docs: "Enrich Docs",
   generate_docs: "Generate Docs",
-  chunk_and_store: "Store Vectors",
   record_index: "Record Index",
   pipeline_end: "Done",
   resolve_connection: "Connection",
   introspect_schema: "Schema",
+  fetch_samples: "Fetch Samples",
+  load_context: "Load Context",
   load_rules: "Rules",
+  validate_tables: "LLM Analysis",
   rag_context: "RAG Context",
   build_query: "Build Query",
   safety_check: "Safety Check",
@@ -32,6 +40,8 @@ const STEP_LABELS: Record<string, string> = {
   execute_query: "Execute Query",
   post_validate: "Result Validation",
   error_classify: "Error Analysis",
+  store_results: "Store Results",
+  generate_summary: "Generate Summary",
   load_code_knowledge: "Load Code Knowledge",
   load_db_index: "Load DB Index",
   match_tables: "Match Tables",
@@ -144,6 +154,16 @@ export function WorkflowProgress({ workflowId, compact = false, onComplete }: Wo
   if (!workflowId || steps.length === 0) return null;
 
   if (compact) {
+    if (pipelineStatus !== "running") {
+      const last = steps[steps.length - 1];
+      return (
+        <div className="flex items-center gap-2 text-xs text-zinc-400">
+          <StepIcon status={pipelineStatus === "completed" ? "completed" : "failed"} />
+          <span>{pipelineStatus === "completed" ? "Done" : "Failed"}</span>
+          {last?.detail && <span className="text-zinc-600 truncate max-w-40">{last.detail}</span>}
+        </div>
+      );
+    }
     const current = steps.findLast((s) => s.status === "started") || steps[steps.length - 1];
     return (
       <div className="flex items-center gap-2 text-xs text-zinc-400">

@@ -1,5 +1,11 @@
 """Execute agent tool calls by routing to the appropriate handler.
 
+DEPRECATED: This module is preserved for backward compatibility with
+existing tests.  Production code now lives in the multi-agent system —
+``app.agents.sql_agent.SQLAgent`` absorbed all tool handlers, learning
+extraction, and query-context building that previously lived here.
+New code should use ``SQLAgent`` instead.
+
 Each handler wraps existing infrastructure (``ValidationLoop``,
 ``VectorStore``, ``SchemaIndexer``, ``CustomRulesEngine``) so that the
 conversational agent re-uses the battle-tested query pipeline without
@@ -146,7 +152,7 @@ class ToolExecutor:
         val_config = self._build_validation_config()
 
         db_idx_ctx = await self._load_db_index_hints()
-        sync_ctx = await self._load_sync_warnings()
+        sync_warnings, sync_tips = await self._load_sync_for_repair()
         rules_ctx = await self._load_rules_for_repair()
         dv = await self._load_distinct_values()
         learn_ctx = await self._load_learnings_for_repair()
@@ -154,10 +160,11 @@ class ToolExecutor:
             schema,
             self._vector_store,
             db_index_context=db_idx_ctx,
-            sync_context=sync_ctx,
+            sync_context=sync_warnings,
             rules_context=rules_ctx,
             distinct_values=dv,
             learnings_context=learn_ctx,
+            sync_query_tips=sync_tips,
         )
         repairer = QueryRepairer(self._llm)
 
@@ -346,14 +353,14 @@ class ToolExecutor:
                         update_kwargs["name"] = name
                     if content:
                         update_kwargs["content"] = content
-                    rule = await rule_svc.update(session, rule_id, **update_kwargs)
-                    if not rule:
+                    updated_rule = await rule_svc.update(session, rule_id, **update_kwargs)
+                    if not updated_rule:
                         return f"Error: rule with id '{rule_id}' not found."
                     return (
                         f"Rule updated successfully.\n"
-                        f"- **Name:** {rule.name}\n"
-                        f"- **ID:** {rule.id}\n"
-                        f"- **Content:** {rule.content[:200]}"
+                        f"- **Name:** {updated_rule.name}\n"
+                        f"- **ID:** {updated_rule.id}\n"
+                        f"- **Content:** {updated_rule.content[:200]}"
                     )
 
                 deleted = await rule_svc.delete(session, rule_id)
@@ -597,6 +604,8 @@ class ToolExecutor:
         else:
             relevant = self._auto_detect_tables(question, all_entries)
 
+        if not self._connection_config:
+            return "No database connection configured."
         schema = await self._get_cached_schema(self._connection_config)
         schema_map = {t.name.lower(): t for t in schema.tables}
 
@@ -612,6 +621,9 @@ class ToolExecutor:
         rules_text = self._filter_rules(all_rules, question, relevant)
 
         parts: list[str] = ["## Query Context\n"]
+
+        if sync_summary and sync_summary.global_notes:
+            parts.append(f"**Data overview:** {sync_summary.global_notes}\n")
 
         if sync_summary and sync_summary.data_conventions:
             parts.append(f"**Data conventions:** {sync_summary.data_conventions}\n")
@@ -637,6 +649,10 @@ class ToolExecutor:
 
         if sync_summary and sync_summary.query_guidelines:
             parts.append(f"### Query Guidelines\n{sync_summary.query_guidelines}\n")
+
+        join_recs = getattr(sync_summary, "join_recommendations", "") if sync_summary else ""
+        if join_recs:
+            parts.append(f"### Recommended JOIN Paths\n{join_recs}\n")
 
         if rules_text:
             parts.append(f"### Applicable Rules\n{rules_text}\n")
@@ -749,6 +765,18 @@ class ToolExecutor:
         if col_notes_merged:
             notes_lines = [f"  {c}: {n}" for c, n in col_notes_merged.items()]
             parts.append("Column notes:\n" + "\n".join(notes_lines))
+
+        numeric_notes_raw = getattr(db_entry, "numeric_format_notes", "{}")
+        try:
+            numeric_notes = _json.loads(numeric_notes_raw) if numeric_notes_raw else {}
+        except (_json.JSONDecodeError, TypeError):
+            numeric_notes = {}
+        if numeric_notes and isinstance(numeric_notes, dict):
+            nf_lines = [f"  {c}: {n}" for c, n in numeric_notes.items()]
+            parts.append("Numeric formats:\n" + "\n".join(nf_lines))
+
+        if sync_entry and sync_entry.business_logic_notes:
+            parts.append(f"Business logic: {sync_entry.business_logic_notes[:200]}")
 
         if sync_entry and sync_entry.query_recommendations:
             parts.append(f"Query tips: {sync_entry.query_recommendations}")
@@ -872,10 +900,10 @@ class ToolExecutor:
             logger.debug("Failed to load DB index hints for repair context", exc_info=True)
             return ""
 
-    async def _load_sync_warnings(self) -> str:
-        """Load compact sync conversion warnings for query repair context."""
+    async def _load_sync_for_repair(self) -> tuple[str, str]:
+        """Return (warnings_text, query_tips_text) from sync entries."""
         if not self._connection_config or not self._connection_config.connection_id:
-            return ""
+            return "", ""
         try:
             from app.models.base import async_session_factory
             from app.services.code_db_sync_service import CodeDbSyncService
@@ -884,15 +912,20 @@ class ToolExecutor:
             async with async_session_factory() as session:
                 entries = await svc.get_sync(session, self._connection_config.connection_id)
             if not entries:
-                return ""
-            warnings = []
+                return "", ""
+            warnings: list[str] = []
+            tips: list[str] = []
             for e in entries:
                 if e.conversion_warnings:
                     warnings.append(f"- {e.table_name}: {e.conversion_warnings}")
-            return "\n".join(warnings)
+                if e.query_recommendations:
+                    tips.append(f"- {e.table_name}: {e.query_recommendations}")
+                if e.business_logic_notes:
+                    tips.append(f"- {e.table_name} (logic): {e.business_logic_notes[:150]}")
+            return "\n".join(warnings), "\n".join(tips)
         except Exception:
-            logger.debug("Failed to load sync warnings for repair context", exc_info=True)
-            return ""
+            logger.debug("Failed to load sync for repair context", exc_info=True)
+            return "", ""
 
     async def _load_rules_for_repair(self) -> str:
         """Load custom rules text for repair context."""

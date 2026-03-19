@@ -82,6 +82,20 @@ ANALYZE_TABLE_TOOL = Tool(
             ),
             required=False,
         ),
+        ToolParameter(
+            name="numeric_format_notes",
+            type="string",
+            description=(
+                "JSON object documenting every numeric column: storage format "
+                "(cents vs whole units, integer vs decimal), currency (which currency, "
+                "single or multi-currency, column holding currency code), decimal precision, "
+                "unit of measurement, value ranges from sample data. "
+                'E.g. {"price": "cents (integer), divide by 100 for USD", '
+                '"weight_kg": "kilograms, decimal(10,2), range 0.5-150", '
+                '"discount_percent": "whole percentage 0-100"}'
+            ),
+            required=False,
+        ),
     ],
 )
 
@@ -120,6 +134,7 @@ class TableAnalysis:
     query_hints: str = ""
     code_match_status: str = "no_code_info"
     code_match_details: str = ""
+    numeric_format_notes: str = "{}"
 
 
 @dataclass
@@ -166,6 +181,9 @@ class DbIndexValidator:
                 col_notes = args.get("column_notes", "{}")
                 if isinstance(col_notes, dict):
                     col_notes = json.dumps(col_notes)
+                numeric_notes = args.get("numeric_format_notes", "{}")
+                if isinstance(numeric_notes, dict):
+                    numeric_notes = json.dumps(numeric_notes)
 
                 return TableAnalysis(
                     table_name=table.name,
@@ -179,6 +197,7 @@ class DbIndexValidator:
                         args.get("code_match_status", "no_code_info"),
                     ),
                     code_match_details=args.get("code_match_details", ""),
+                    numeric_format_notes=numeric_notes,
                 )
 
             return self._fallback_analysis(table, sample_data)
@@ -238,6 +257,9 @@ class DbIndexValidator:
                     col_notes = args.get("column_notes", "{}")
                     if isinstance(col_notes, dict):
                         col_notes = json.dumps(col_notes)
+                    numeric_notes = args.get("numeric_format_notes", "{}")
+                    if isinstance(numeric_notes, dict):
+                        numeric_notes = json.dumps(numeric_notes)
                     results.append(
                         TableAnalysis(
                             table_name=tbl.name,
@@ -251,6 +273,7 @@ class DbIndexValidator:
                                 args.get("code_match_status", "no_code_info"),
                             ),
                             code_match_details=args.get("code_match_details", ""),
+                            numeric_format_notes=numeric_notes,
                         )
                     )
                     tool_idx += 1
@@ -352,7 +375,18 @@ class DbIndexValidator:
             "actionable insights. Always use the provided tool to return structured "
             "results. Focus on practical information that helps a query agent write "
             "correct SQL: column purposes, enum values, join keys, date handling, "
-            "and common filter patterns."
+            "and common filter patterns.\n\n"
+            "PAY SPECIAL ATTENTION TO NUMERIC COLUMNS:\n"
+            "- Monetary values: determine if stored in cents/minor units (integer) "
+            "or whole currency units (decimal). Infer from column type AND sample data.\n"
+            "- Currency: identify the currency (USD, EUR, etc.) or if multiple "
+            "currencies are used. Look for a companion currency-code column.\n"
+            "- Decimal precision: note the precision for financial columns "
+            "(e.g. decimal(10,2) means 2 decimal places).\n"
+            "- Percentages: determine if stored as 0-100 or 0.0-1.0.\n"
+            "- Units of measurement: document units (grams, kg, seconds, minutes, etc.).\n"
+            "- Value ranges: use sample data to infer typical ranges and flag outliers.\n"
+            "Return these findings in the `numeric_format_notes` field as a JSON object."
         )
 
     @staticmethod

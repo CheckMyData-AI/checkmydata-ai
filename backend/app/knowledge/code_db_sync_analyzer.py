@@ -115,6 +115,16 @@ SYNC_SUMMARY_TOOL = Tool(
                 "which tables to prefer, what to avoid"
             ),
         ),
+        ToolParameter(
+            name="join_recommendations",
+            type="string",
+            description=(
+                "Recommended JOIN paths based on FK relationships and code usage: "
+                "e.g. 'orders JOIN users ON orders.user_id = users.id', "
+                "'payments JOIN orders ON payments.order_id = orders.id'. "
+                "List the most common and important join paths used in the codebase."
+            ),
+        ),
     ],
 )
 
@@ -136,6 +146,7 @@ class SyncSummaryResult:
     global_notes: str = ""
     data_conventions: str = ""
     query_guidelines: str = ""
+    join_recommendations: str = ""
 
 
 class CodeDbSyncAnalyzer:
@@ -281,6 +292,7 @@ class CodeDbSyncAnalyzer:
         analyses: list[TableSyncAnalysis],
         project_context: str,
         *,
+        fk_relationships: str = "",
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> SyncSummaryResult:
@@ -295,9 +307,12 @@ class CodeDbSyncAnalyzer:
             if a.data_format_notes:
                 prompt_parts.append(f"  Format: {a.data_format_notes[:120]}")
 
+        if fk_relationships:
+            prompt_parts.append(f"\nForeign Key relationships:\n{fk_relationships}")
+
         prompt_parts.append(
-            "\nGenerate a project-wide summary with data conventions "
-            "and query guidelines for the SQL agent."
+            "\nGenerate a project-wide summary with data conventions, "
+            "query guidelines, and recommended JOIN paths for the SQL agent."
         )
 
         messages = [
@@ -325,6 +340,7 @@ class CodeDbSyncAnalyzer:
                     global_notes=args.get("global_notes", ""),
                     data_conventions=args.get("data_conventions", ""),
                     query_guidelines=args.get("query_guidelines", ""),
+                    join_recommendations=args.get("join_recommendations", ""),
                 )
 
             logger.info("LLM sync summary: fallback (no tool call)")
@@ -351,11 +367,16 @@ class CodeDbSyncAnalyzer:
             "Your primary goal is to discover DATA FORMAT DETAILS that would trip up "
             "a SQL query agent:\n"
             "- Money/currency: stored in cents (integer) vs dollars (decimal)? "
-            "What precision?\n"
+            "What precision? Which currency (USD, EUR, etc.)? If multiple currencies "
+            "are used, which column holds the currency code and how should amounts "
+            "be interpreted?\n"
             "- Dates/timestamps: UTC or local? Unix epoch or ISO 8601? "
             "What timezone conventions?\n"
             "- Enums: what are the valid string values? Are they stored as "
             "integers or strings?\n"
+            "- Percentages: stored as 0-100 (whole) or 0.0-1.0 (fractional)?\n"
+            "- Units of measurement: what units are numeric columns stored in "
+            "(grams, kg, seconds, minutes, etc.)?\n"
             "- Soft deletes: is there a deleted_at or is_deleted column?\n"
             "- JSON columns: what structure is expected?\n"
             "- Booleans: stored as 0/1, true/false, or 'Y'/'N'?\n"

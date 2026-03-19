@@ -452,7 +452,9 @@ class TestSQLAgent:
 
         result = await agent.run(context)
 
-        assert mock_llm.complete.call_count == SQLAgent.MAX_ITERATIONS
+        from app.config import settings
+
+        assert mock_llm.complete.call_count == settings.max_sql_iterations
         assert result.status == "no_result"
 
     # 17
@@ -631,7 +633,10 @@ class TestSQLAgent:
             patch("app.agents.sql_agent.ValidationLoop") as mock_vl,
             patch.object(agent, "_build_validation_config", return_value=MagicMock()),
             patch.object(agent, "_load_db_index_hints", new_callable=AsyncMock, return_value=""),
-            patch.object(agent, "_load_sync_warnings", new_callable=AsyncMock, return_value=""),
+            patch.object(
+                agent, "_load_sync_for_repair",
+                new_callable=AsyncMock, return_value=("", ""),
+            ),
             patch.object(agent, "_load_rules_for_repair", new_callable=AsyncMock, return_value=""),
             patch.object(agent, "_load_distinct_values", new_callable=AsyncMock, return_value={}),
             patch.object(
@@ -657,3 +662,104 @@ class TestSQLAgent:
         mock_extract.assert_awaited_once()
         call_args = mock_extract.call_args
         assert call_args[0][1] is True  # success=True
+
+
+# ---------------------------------------------------------------------------
+# ALM integration: extract_learnings, query_context, repair learnings
+# ---------------------------------------------------------------------------
+
+
+class TestSQLAgentALMIntegration:
+    """Tests for ALM-specific logic inside SQLAgent."""
+
+    @pytest.fixture
+    def agent(self, mock_tracker):
+        a = SQLAgent()
+        a._has_learnings = AsyncMock(return_value=False)
+        a._load_learnings_prompt = AsyncMock(return_value="")
+        return a
+
+    @pytest.fixture
+    def config(self):
+        cfg = ConnectionConfig(
+            db_type="postgres",
+            db_host="127.0.0.1",
+            db_port=5432,
+            db_name="testdb",
+        )
+        cfg.connection_id = "conn-alm"
+        return cfg
+
+    @pytest.mark.asyncio
+    async def test_extract_learnings_fires_when_multiple_attempts(self, agent, config):
+        """_extract_learnings should call LearningAnalyzer.analyze when attempts >= 2."""
+        mock_analyzer = MagicMock()
+        mock_analyzer.analyze = AsyncMock(return_value=[])
+        mock_session = AsyncMock()
+
+        with (
+            patch("app.knowledge.learning_analyzer.LearningAnalyzer", return_value=mock_analyzer),
+            patch("app.models.base.async_session_factory") as mock_sf,
+        ):
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            await agent._extract_learnings(
+                attempts=[MagicMock(), MagicMock()],
+                success=True,
+                question="test query",
+                cfg=config,
+            )
+
+        mock_analyzer.analyze.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_extract_learnings_skips_single_attempt(self, agent, config):
+        """Single successful attempt should not trigger extraction."""
+        with patch("app.knowledge.learning_analyzer.LearningAnalyzer") as mock_cls:
+            await agent._extract_learnings(
+                attempts=[MagicMock()],
+                success=True,
+                question="test",
+                cfg=config,
+            )
+            mock_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_learnings_skips_no_connection_id(self, agent):
+        cfg = ConnectionConfig(db_type="postgres", db_host="h", db_name="db")
+        with patch("app.knowledge.learning_analyzer.LearningAnalyzer") as mock_cls:
+            await agent._extract_learnings(
+                attempts=[MagicMock(), MagicMock()],
+                success=True,
+                question="test",
+                cfg=cfg,
+            )
+            mock_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_track_applied_learnings(self, agent):
+        """_track_applied_learnings should call apply_learning for each."""
+        mock_svc = MagicMock()
+        mock_svc.apply_learning = AsyncMock()
+
+        mock_session = AsyncMock()
+        learning1 = MagicMock()
+        learning1.id = "l1"
+        learning2 = MagicMock()
+        learning2.id = "l2"
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService",
+                return_value=mock_svc,
+            ),
+        ):
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            await agent._track_applied_learnings([learning1, learning2])
+
+        assert mock_svc.apply_learning.call_count == 2
+        mock_session.commit.assert_awaited_once()

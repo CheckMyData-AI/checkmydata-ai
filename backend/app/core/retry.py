@@ -55,7 +55,7 @@ def retry(
                             pass
                     await asyncio.sleep(delay)
                     delay *= backoff_multiplier
-            raise last_exc  # type: ignore[misc]
+            raise last_exc  # pragma: no cover
 
         return wrapper
 

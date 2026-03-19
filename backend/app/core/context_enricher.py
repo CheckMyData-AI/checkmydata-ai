@@ -29,6 +29,7 @@ class ContextEnricher:
         rules_context: str = "",
         distinct_values: dict[str, dict[str, list[str]]] | None = None,
         learnings_context: str = "",
+        sync_query_tips: str = "",
     ):
         self._schema = schema
         self._vector_store = vector_store
@@ -37,6 +38,7 @@ class ContextEnricher:
         self._rules_context = rules_context
         self._distinct_values = distinct_values or {}
         self._learnings_context = learnings_context
+        self._sync_query_tips = sync_query_tips
         self._retry_strategy = RetryStrategy()
 
     async def build_repair_context(
@@ -74,7 +76,10 @@ class ContextEnricher:
             sections.append(f"## Relevant Schema\n{schema_detail}")
 
         if self._sync_context:
-            sections.append(f"## Data Format Warnings\n{self._sync_context[:1500]}")
+            sections.append(f"## Data Format Warnings\n{self._sync_context[:2000]}")
+
+        if self._sync_query_tips:
+            sections.append(f"## Query Recommendations (from sync)\n{self._sync_query_tips[:1500]}")
 
         dv_section = self._get_distinct_values_for_query(failed_query)
         if dv_section:
@@ -175,8 +180,8 @@ class ContextEnricher:
                 for tbl in error.suggested_tables[:3]:
                     table_hints.append(get_table_detail(tbl, self._schema))
             if not table_hints:
-                for tbl in self._schema.tables[:5]:
-                    table_hints.append(get_table_detail(tbl.name, self._schema))
+                for table_info in self._schema.tables[:5]:
+                    table_hints.append(get_table_detail(table_info.name, self._schema))
             return "\n\n".join(table_hints) if table_hints else None
 
         return None

@@ -221,7 +221,7 @@ class ConnectionService:
                     timeout=10,
                     check=False,
                 )
-                stdout = (result.stdout or "").strip()
+                stdout = str(result.stdout or "").strip()
                 ok = _marker in stdout
                 hostname = "unknown"
                 if ok:

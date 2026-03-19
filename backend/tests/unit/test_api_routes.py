@@ -415,7 +415,7 @@ class TestSyncBackgroundPipelineFailure:
 
         with (
             patch("app.models.base.async_session_factory", return_value=mock_session),
-            patch("app.api.routes.connections._sync_svc"),
+            patch("app.api.routes.connections._sync_svc") as mock_sync_svc,
             patch(
                 "app.knowledge.code_db_sync_pipeline.CodeDbSyncPipeline",
                 return_value=mock_pipeline,
@@ -423,10 +423,14 @@ class TestSyncBackgroundPipelineFailure:
             patch("app.api.routes.connections._sync_tasks", {}),
             patch("app.api.routes.connections.logger") as mock_logger,
         ):
+            mock_sync_svc.set_sync_status = AsyncMock()
             await _run_sync_background("conn-1", "proj-1")
 
             mock_logger.info.assert_called_once()
             mock_logger.error.assert_not_called()
+            mock_sync_svc.set_sync_status.assert_called_once_with(
+                mock_session, "conn-1", "completed"
+            )
 
 
 class TestStartupStaleReset:

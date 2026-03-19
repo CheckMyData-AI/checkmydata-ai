@@ -59,9 +59,9 @@ async def export_data(body: ExportRequest, user: dict = Depends(get_current_user
             headers={"Content-Disposition": "attachment; filename=export.json"},
         )
     elif body.format == "xlsx":
-        content = export_xlsx(result)
+        xlsx_content = export_xlsx(result)
         return Response(
-            content=content,
+            content=xlsx_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=export.xlsx"},
         )

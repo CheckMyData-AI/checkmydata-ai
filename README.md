@@ -9,23 +9,23 @@ AI-powered database query agent that analyzes Git repositories, understands data
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                        User  (Browser)                               │
-│  ┌─────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │  Auth    │  │  Sidebar     │  │  Chat    │  │  Visualization   │  │
-│  │  Gate    │  │  (Projects,  │  │  Panel   │  │  (Table/Chart/   │  │
-│  │         │  │  Connections, │  │          │  │   Export)        │  │
-│  │         │  │  SSH Keys,   │  │          │  │                  │  │
-│  │         │  │  Rules, Docs)│  │          │  │                  │  │
-│  └────┬────┘  └──────┬───────┘  └────┬─────┘  └────────┬─────────┘  │
-│       │              │               │                  │            │
-└───────┼──────────────┼───────────────┼──────────────────┼────────────┘
-        │              │               │                  │
-        ▼              ▼               ▼                  ▼
+│  ┌─────────┐  ┌──────────────┐  ┌──────────┐  ┌────────────┐  ┌──────┐│
+│  │  Auth    │  │  Sidebar     │  │  Chat    │  │ Visualiz.  │  │Notes ││
+│  │  Gate    │  │  (Projects,  │  │  Panel   │  │ (Table/    │  │Panel ││
+│  │         │  │  Connections, │  │          │  │  Chart/    │  │(Saved││
+│  │         │  │  SSH Keys,   │  │          │  │  Export)   │  │Quer.)││
+│  │         │  │  Rules, Docs)│  │          │  │            │  │      ││
+│  └────┬────┘  └──────┬───────┘  └────┬─────┘  └─────┬──────┘  └──┬───┘│
+│       │              │               │              │            │    │
+└───────┼──────────────┼───────────────┼──────────────┼────────────┼────┘
+        │              │               │              │            │
+        ▼              ▼               ▼              ▼            ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │                    FastAPI  Backend  (Python)                         │
 │                                                                       │
 │  ┌────────────────────────────────────────────────────────────────┐   │
 │  │  API Layer  (/api/...)                                        │   │
-│  │  auth · projects · connections · ssh-keys · chat              │   │
+│  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · health          │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
@@ -184,7 +184,7 @@ After creating and testing a database connection, you can run a **database index
    - **Introspect Schema** — fetches all tables, columns, types, FKs, indexes
    - **Fetch Sample Data** — queries the 3 newest rows per table (ordered by `created_at`, `updated_at`, or PK)
    - **Load Project Knowledge** — loads code-level entity info and custom rules
-   - **LLM Validation** — an LLM analyzes each table: determines if it's active, rates relevance (1-5), writes a business description, identifies data patterns, and checks alignment with code
+   - **LLM Validation** — an LLM analyzes each table: determines if it's active, rates relevance (1-5), writes a business description, identifies data patterns, analyzes numeric column formats (currency in cents vs dollars, decimal precision, units of measurement, value ranges), and checks alignment with code
    - **Store Results** — persists the per-table index in the internal database
    - **Generate Summary** — LLM produces an overall database summary with query recommendations
 
@@ -197,6 +197,7 @@ After creating and testing a database connection, you can run a **database index
    - A `get_db_index` tool to look up table descriptions, relevance scores, and query hints
    - Enriched schema context injected automatically into every query
    - Knowledge of which tables are active, empty, or orphaned (exist in DB but not in code)
+   - Numeric format notes per table: currency storage (cents vs whole units), decimal precision, units of measurement, value ranges
    - DB index context in the query repair loop for better SQL error recovery
 
 6. The index can be re-triggered at any time by clicking IDX again. Stale entries for removed tables are automatically cleaned up.
@@ -253,11 +254,15 @@ After both the **repository** is indexed and the **database** is indexed, you ca
 
 The agent automatically **learns from query outcomes** and accumulates per-connection knowledge that improves future queries. No manual setup required — learning happens transparently.
 
+> **Architecture note:** In the multi-agent system, ALM lives inside `SQLAgent` (`backend/app/agents/sql_agent.py`). The orchestrator delegates database queries to `SQLAgent`, which loads learnings into its system prompt, extracts new ones post-execution, and exposes learning tools.
+
 **How it works:**
 - After every query that requires a retry (validation loop fires), the system analyzes what went wrong and what fixed it
-- Lessons are extracted using zero-cost heuristic extractors (no LLM calls)
+- Lessons are extracted using zero-cost **heuristic extractors** (no LLM calls) for common patterns
+- For complex sessions (3+ query attempts), an optional **LLM-based analyzer** performs deeper cross-query pattern extraction (max once per connection per hour to control cost)
 - Each lesson is stored per-connection with a confidence score that grows with confirmations
 - On the next query, accumulated learnings are injected into the system prompt and query context
+- Usage is tracked: `times_applied` increments each time a learning is loaded for context
 
 **What it learns automatically:**
 | Category | Example | Trigger |
@@ -265,7 +270,7 @@ The agent automatically **learns from query outcomes** and accumulates per-conne
 | Table Preference | "Use `orders_v2` not `orders_legacy` for revenue" | Agent tries table A (fails), succeeds with table B |
 | Column Usage | "`amount_total` doesn't exist; use `total_amount`" | `column_not_found` error repaired |
 | Data Format | "`amount` stored in cents, divide by 100" | Repair added `/ 100` division |
-| Query Pattern | "Always JOIN `currencies` when querying revenue" | Repeated repair pattern |
+| Query Pattern | "Always JOIN `currencies` when querying revenue" | Repeated repair pattern / LLM analysis |
 | Schema Gotcha | "`deleted_at IS NULL` required for active records" | Soft-delete filter added in repair |
 | Performance Hint | "`events` table: always filter by date range" | Timeout resolved by adding filter |
 
@@ -274,11 +279,16 @@ The agent automatically **learns from query outcomes** and accumulates per-conne
 - Agent-recorded lessons start at 80%
 - Each confirmation adds +10% (capped at 100%)
 - Contradictions reduce by −30%
+- **Confidence decay:** Learnings not updated in 30+ days lose 0.02 confidence per decay cycle (runs at startup). Learnings that decay below 20% are automatically deactivated
 - Only lessons with ≥50% confidence appear in the system prompt
 
 **Managing learnings:**
 - A blue **LEARN** badge with count appears on connections that have accumulated learnings
+- Hover over the badge for a **category breakdown tooltip** (e.g., "3 table prefs, 2 schema gotchas")
 - Click the badge to open the **LearningsPanel** — view, edit, deactivate, or delete individual lessons
+- **Filter by category** using the filter pills above the learnings list
+- **Sort** by confidence, date, most confirmed, or most applied
+- **Recompile** the learnings prompt on demand using the refresh button
 - Use **Clear all** to reset the learning memory for a connection
 - The agent also has `get_agent_learnings` and `record_learning` tools — it can manually record discoveries during conversations
 
@@ -482,6 +492,30 @@ Project owners can invite other users to collaborate on a project via email:
    - **Remove** a member (owners cannot be removed)
    - **View** all current members and their roles in the InviteManager panel
 
+### 16. Saved Queries (Notes Panel)
+
+The **Notes** panel lets you save SQL queries from agent responses for quick reference and re-execution.
+
+1. **Save a query**: When the agent returns SQL results, click the **bookmark icon** (🔖) next to the thumbs up/down feedback buttons. The query, its result, and a title (auto-generated from the answer) are saved to your notes.
+
+2. **View notes**: Click the **bookmark button** in the header bar (top-right) to toggle the Notes panel on the right side. The panel shows all saved queries for the active project, sorted by most recently updated.
+
+3. **Re-execute**: Each saved note has a **▶ Run Again** button. Clicking it re-runs the SQL query against the original database connection and updates the stored result. This is useful for monitoring queries that you check regularly.
+
+4. **Edit & manage**:
+   - Click on a note's comment area to **add or edit a comment** — useful for annotating what the query does
+   - Expand **SQL Query** to view and **copy** the full SQL
+   - Expand **Result** to see the data table (last 20 rows shown inline)
+   - Click the **trash icon** to delete a saved note (with confirmation)
+
+5. **How it works**:
+   - Notes are **per-user, per-project** — each user has their own saved queries
+   - The panel state (open/closed) persists in localStorage
+   - Saved queries store the connection ID so re-execution uses the correct database
+   - Results are capped at 500 rows to keep storage manageable
+
+**API endpoints**: `POST /api/notes`, `GET /api/notes?project_id=X`, `GET /api/notes/{id}`, `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`, `POST /api/notes/{id}/execute`
+
 ---
 
 ## Architecture Deep Dive
@@ -567,7 +601,7 @@ OrchestratorAgent.run(context)
     │     has_kb = ChromaDB collection has documents
     │     has_mcp = any Connection with source_type == "mcp" in project
     │  3. Build table_map from DB index (if connection exists)
-    │  4. Build system prompt and meta-tools list
+    │  4. Build system prompt with current date/time and meta-tools list
     │  5. Enter orchestrator LLM loop (max 5 iterations)
     ▼
 ┌──────── Orchestrator LLM Loop ────────┐
@@ -1192,7 +1226,8 @@ app/
 │   │   ├── knowledge_tools.py ← search_knowledge, get_entity_info
 │   │   ├── mcp_tools.py ← query_mcp_source meta-tool definition
 │   │   └── viz_tools.py ← recommend_visualization
-│   └── prompts/        ← Per-agent system prompts
+│   └── prompts/        ← Per-agent system prompts (all include current date/time)
+│       ├── __init__.py ← get_current_datetime_str() helper
 │       ├── orchestrator_prompt.py
 │       ├── sql_prompt.py
 │       ├── viz_prompt.py
@@ -1284,7 +1319,8 @@ app/
 │   ├── project_cache.py ← Cached ProjectKnowledge + ProjectProfile per project
 │   ├── agent_learning.py ← AgentLearning + AgentLearningSummary
 │   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
-│   └── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
+│   ├── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
+│   └── saved_note.py   ← SavedNote: user-scoped saved SQL queries per project
 ├── services/           ← Business logic layer
 │   ├── project_service.py, connection_service.py
 │   ├── repository_service.py ← CRUD for ProjectRepository
@@ -1297,6 +1333,7 @@ app/
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
 │   ├── agent_learning_service.py ← CRUD, dedup, confidence management for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
+│   ├── note_service.py ← CRUD for saved notes (create, list, update, delete, update_result)
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)
@@ -1373,6 +1410,18 @@ User Question
 
 The system prompt is **dialect-aware** — it includes specific guidance for MySQL (backtick quoting), PostgreSQL (double-quote quoting, schema prefixes), ClickHouse (approximate functions), and MongoDB (JSON pipeline format).
 
+**Date/time awareness** — All agent system prompts (Orchestrator, SQL, Knowledge, Viz, MCP) receive the current UTC date and time (e.g. `"2026-03-19 14:30 UTC (Thursday)"`). This enables accurate handling of relative date queries ("yesterday", "last week", "last month") without relying on the LLM's potentially outdated internal clock. The SQL agent specifically uses this for precise date calculations in generated queries.
+
+**Numeric format analysis** — During DB indexing, the LLM validator produces per-table `numeric_format_notes` that document:
+- Whether monetary values are stored in cents (integer) or whole currency units (decimal)
+- Which currency is used (single or multi-currency), and which column holds the currency code
+- Decimal precision for financial columns
+- Whether percentages are stored as 0-100 or 0.0-1.0
+- Units of measurement (grams, kg, seconds, etc.)
+- Value ranges inferred from sample data
+
+These notes are surfaced to the SQL agent in the "Numeric formats" section of every table context, alongside column notes and conversion warnings.
+
 ### SSH Tunnel Architecture
 
 The system supports **two SSH modes** for connecting to databases on remote servers:
@@ -1411,7 +1460,7 @@ User's Machine                        Target Server
 
 SSH keys are loaded directly into memory via `asyncssh.import_private_key()` — no temporary files needed for database connections. For Git operations (which use the `git` CLI), the key is briefly written to a temp file with `0600` permissions and deleted immediately after.
 
-SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check uses a unique stdout marker (`__SSH_TUNNEL_ALIVE__`) instead of relying on exit codes, making it robust against shell profile noise on the remote server. The SSH test endpoint (`POST /connections/{id}/test-ssh`) also uses a stdout marker (`__SSH_TEST_OK__`) and returns the actual stdout on failure for debugging. If an SSH tunnel is recreated (new port), the MySQL and PostgreSQL connectors automatically detect the broken connection during schema introspection and reconnect with a single retry. If an SSH connection drops mid-query, the exec connector automatically attempts one reconnection before failing.
+SSH connections include a 30-second connect timeout and 15-second keepalive interval. The `is_alive()` check first tries a unique stdout marker (`__SSH_TUNNEL_ALIVE__`) via shell echo. If the shell command fails (e.g. the SSH account uses a `nologin` shell), it falls back to checking whether the SSH transport is open and the port-forwarding listener is still active — this supports tunnel-only accounts that block shell access. The SSH test endpoint (`POST /connections/{id}/test-ssh`) also uses a stdout marker (`__SSH_TEST_OK__`) and returns the actual stdout on failure for debugging. If an SSH tunnel is recreated (new port), the MySQL and PostgreSQL connectors automatically detect the broken connection during schema introspection and reconnect with a single retry. If an SSH connection drops mid-query, the exec connector automatically attempts one reconnection before failing.
 
 ### Data Flow for Repository Indexing (Multi-Pass Pipeline)
 
@@ -1513,6 +1562,9 @@ src/
     ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with inline icon + type badge + hover delete
     ├── rules/RulesManager.tsx ← CRUD with inline badges (default/global) + hover edit/delete overlay
     ├── knowledge/KnowledgeDocs.tsx ← Browse indexed docs with "Show all N" cap + active left bar
+    ├── notes/
+    │   ├── NotesPanel.tsx    ← Right-side panel: list of saved queries per project
+    │   └── NoteCard.tsx      ← Individual saved query card: view/edit/execute/delete
     ├── tasks/ActiveTasksWidget.tsx ← Header widget: running background tasks with live progress
     ├── workflow/WorkflowProgress.tsx ← Real-time step tracking (SSE-based)
     ├── workflow/StreamWorkflowProgress.tsx ← Inline progress from SSE stream events
@@ -1572,6 +1624,12 @@ src/
 | `GET` | `/api/repos/{project_id}/docs/{doc_id}` | Get doc content |
 | `GET` | `/api/models?provider={name}` | List available LLM models for provider (openrouter fetched live, others static) |
 | `POST/GET/PATCH/DELETE` | `/api/rules` | Custom rules CRUD |
+| `POST` | `/api/notes` | Create saved note |
+| `GET` | `/api/notes?project_id=X` | List notes (user-scoped) |
+| `GET` | `/api/notes/{id}` | Get single note |
+| `PATCH` | `/api/notes/{id}` | Update note (title, comment) |
+| `DELETE` | `/api/notes/{id}` | Delete note |
+| `POST` | `/api/notes/{id}/execute` | Re-execute SQL (10/min rate limit) |
 | `POST` | `/api/invites/{project_id}/invites` | Invite a user by email (owner only) |
 | `GET` | `/api/invites/{project_id}/invites` | List invites (owner only) |
 | `DELETE` | `/api/invites/{project_id}/invites/{id}` | Revoke a pending invite (owner only) |
@@ -1595,7 +1653,7 @@ src/
 | **Project sharing** | Email-based invite system. Invites auto-accept on registration. Session isolation per user. |
 | **Encryption at rest** | Fernet (AES-128-CBC + HMAC-SHA256) for SSH keys, passwords, connection strings |
 | **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing |
-| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat |
+| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat, 10/min note execute |
 | **CORS** | Configurable origins via `CORS_ORIGINS` env var |
 | **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). `get_decrypted()` enforces ownership when `user_id` is provided. |
 | **Shell injection prevention** | SSH exec template variables (`db_name`, `db_user`, `db_host`, `db_password`) are shell-escaped via single-quoting before substitution. Queries are piped via stdin. |
@@ -1624,11 +1682,12 @@ db_index         — id, connection_id (FK→connections CASCADE), table_name, t
 db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total_tables, active_tables, empty_tables, orphan_tables, phantom_tables, summary_text, recommendations, indexed_at
 agent_learnings  — id, connection_id (FK→connections CASCADE), category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active  [UNIQUE(connection_id, category, subject, lesson_hash)]
 agent_learning_summaries — id, connection_id (FK→connections CASCADE, UNIQUE), total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
+saved_notes      — id, project_id (FK→projects CASCADE), user_id (FK→users CASCADE), connection_id (FK→connections SET NULL), title, comment, sql_query, last_result_json, last_executed_at, created_at, updated_at  [INDEX(project_id), INDEX(user_id)]
 ```
 
-Managed via **Alembic migrations** (20 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables).
+Managed via **Alembic migrations** (28 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table).
 
-All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints).
+All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints, saved notes).
 
 ---
 
@@ -1782,11 +1841,15 @@ make test-frontend    # frontend vitest
 | Rules | — | 5 (CRUD + viewer access control) |
 | Chat Sessions | — | 8 (create, delete, not found, session isolation, cross-user protection, connection_id, tool_calls_json in messages) |
 | Chat Extended | — | 10 (update title, generate title, messages empty/not found, feedback submit/missing/analytics, auth checks) |
+| AgentLearningService CRUD | 19 (create/dedup/fuzzy match/confirm/contradict/apply/deactivate/get/count/decay) | — |
+| LearningAnalyzer Extended | 13 (full pipeline, negative feedback, edge cases, LLM analyzer cooldown/format) | — |
+| SQLAgent ALM | 4 (extract_learnings fire/skip, no connection_id, track_applied) | — |
 | Connection Operations | — | 18 (test connection: not found/mock success/failure, test-ssh, refresh-schema, index-db CRUD/status, learnings CRUD/status/summary/recompile, RBAC, auth) |
 | Repo Operations | — | 12 (repo status, docs list/get, check-updates, repository CRUD, auth) |
 | Visualizations | — | 8 (export CSV/JSON/XLSX, missing data, empty rows, render table, missing fields, auth) |
 | Models | — | 5 (list default/openai/anthropic/openrouter mocked, auth) |
 | WebSocket Auth | — | 4 (valid/invalid/empty/tampered token) |
+| Learnings API | — | 11 (list/status/summary/update/toggle/delete/clear/recompile/auth) |
 | Health | — | 2 (basic, modules) |
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
@@ -1796,6 +1859,8 @@ make test-frontend    # frontend vitest
 | Frontend (ConnectionSelector) | 10 (render, create button, list items, DB type badge, test button, index button, sync button, delete button, form fields, DB type switch) | — |
 | Frontend (ChatPanel) | 8 (render, empty state, user/assistant messages, loading indicator, error display, scroll-to-bottom, input area) | — |
 | Frontend (ChatMessage) | 8 (user/assistant content, feedback buttons, no feedback for user, SQL query block, visualization, error+retry, markdown) | — |
+| Note Service | 10 (create, get, list_by_project, update, delete, update_result, filtering, ordering) | — |
+| Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
 | SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
 | KnowledgeAgent | 12 (name, text response, search_knowledge results/empty/below threshold, get_entity_info list/detail/table_map/enums, unknown tool, max iterations, token usage) | — |
 | VizAgent | 15 (name, empty/error results, single value numeric/text, preferred viz bar/pie cap, LLM recommendation/no tool, post-validate pie/line/bar, token usage, truncation, invalid JSON config) | — |
@@ -2030,6 +2095,139 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-19 — Sync/Index Polling Never Detects Completion (frontend)
+
+**Status polling not resumed on page reload:**
+
+- **ConnectionSelector.tsx:** Extracted polling logic into reusable `startIndexPoll(id)` and `startSyncPoll(id)` helpers. The initial status `useEffect` now starts polling automatically when it detects an in-progress index or sync (`is_indexing === true` / `is_syncing === true`). Previously, polling only started when the user clicked the button, so a page refresh during sync left the UI stuck on "SYNC..." forever.
+
+**Poll timeout too short for large databases:**
+
+- **ConnectionSelector.tsx:** Increased `POLL_TIMEOUT_MS` from 10 minutes to 30 minutes. Databases with 150+ tables can take 15–20 minutes to sync; the old timeout fired a misleading "timed out" error while the backend was still processing successfully.
+
+**SyncStatusIndicator stuck on "Syncing...":**
+
+- **SyncStatusIndicator.tsx:** Added a 5-second polling interval while `sync_status === "running"`. Previously the indicator only fetched on connection change or task-store events, so it could miss completion if SSE events were lost or the page was reloaded mid-sync.
+
+### 2026-03-19 — Sync Status & WorkflowProgress Fixes
+
+**Sync status never marked as completed (backend):**
+
+- **connections.py:** Fixed `_run_sync_background` setting `final_status = "idle"` on success, which overwrote the pipeline's `"completed"` status. The readiness endpoint (`is_synced()`) checks for `sync_status == "completed"`, so the ReadinessGate step 5 ("Sync code ↔ database") would never show as done. Changed to `final_status = "completed"`.
+
+**WorkflowProgress compact spinner persists after completion (frontend):**
+
+- **WorkflowProgress.tsx:** Fixed compact mode always showing the last step with `status === "started"` regardless of pipeline completion. The `pipeline_resume` meta-step stays `"started"` forever since it has no corresponding `"completed"` event. Compact mode now checks `pipelineStatus` and renders a checkmark/X icon when the pipeline finishes, instead of showing a perpetual spinner.
+
+### 2026-03-19 — Sync System Accuracy Improvements
+
+**Expanded repair context (backend):**
+
+- **context_enricher.py:** Added `sync_query_tips` parameter. Repair context now includes a "Query Recommendations (from sync)" section alongside the existing "Data Format Warnings" section. Increased sync context budget from 1500 to 2000 chars for warnings, plus 1500 for tips.
+- **sql_agent.py, orchestrator.py, tool_executor.py:** Replaced `_load_sync_warnings` / `_get_sync_warnings` with `_load_sync_for_repair` / `_get_sync_for_repair` that returns both warnings and query tips (including `query_recommendations` and `business_logic_notes`).
+
+**Proactive sync injection into system prompt (backend):**
+
+- **sql_prompt.py:** Added `sync_conventions` and `sync_critical_warnings` parameters. When sync data is available, a "CRITICAL DATA FORMAT RULES" section is injected directly into the system prompt with project-wide conventions and high-confidence conversion warnings.
+- **sql_agent.py:** Added `_load_sync_for_prompt` method that loads `data_conventions` from sync summary and `conversion_warnings` from entries with confidence >= 4.
+
+**Business logic and global notes surfaced (backend):**
+
+- **sql_agent.py, tool_executor.py:** `_format_table_context` now includes `business_logic_notes` (truncated to 200 chars) per table.
+- **sql_agent.py, tool_executor.py:** `_build_query_context` now includes `global_notes` from sync summary as "Data overview" header.
+- **code_db_sync_service.py:** `sync_to_prompt_context` now renders `global_notes` as "Project Data Overview" section.
+
+**Enriched sync analyzer inputs (backend):**
+
+- **code_db_sync_pipeline.py:** `_build_db_context` now includes `column_distinct_values_json` (actual DB enum values) and `column_count`. Sample data budget increased from 500 to 800 chars. `_build_code_context` now includes service function snippets (truncated to 300 chars) and custom project rules relevant to each table. Pipeline loads rules via `CustomRulesEngine`.
+
+**ALM deduplication with sync (backend):**
+
+- **learning_analyzer.py:** Before storing `data_format` or `schema_gotcha` learnings, checks if an equivalent `conversion_warning` already exists in sync data. Skips duplicate learnings to reduce noise and save LLM calls.
+
+**Cross-table join intelligence (backend):**
+
+- **code_db_sync_analyzer.py:** Added `join_recommendations` parameter to `SYNC_SUMMARY_TOOL` and `SyncSummaryResult`. Summary generation prompt now receives FK relationships and co-usage patterns.
+- **code_db_sync_pipeline.py:** Added `_build_fk_context` that collects FK relationships from code entities and identifies tables commonly used together. Passed to summary generation.
+- **code_db_sync.py:** Added `join_recommendations` field to `CodeDbSyncSummary` model.
+- **Migration:** `t5u6v7w8x9y0_add_join_recommendations_to_sync.py` adds the column.
+- **sql_agent.py, tool_executor.py:** `_build_query_context` now includes "Recommended JOIN Paths" section from sync summary.
+
+**Table map enrichment (backend):**
+
+- **sql_agent.py:** `_build_table_map` now annotates tables with sync warning tags (e.g. `orders(~10K, order records) [!cents]`). Added `_extract_warning_tag` and `_build_enriched_table_map` helpers.
+
+### 2026-03-19 — Sync Pipeline Bug Fixes
+
+**Status overwrite fix (backend):**
+
+- **connections.py:** Fixed `_run_db_index_background` overwriting successful `"completed"` status with `"idle"` in the finally block. DB index now correctly persists `"completed"` on success, matching the sync background task.
+
+**Pipeline plugin signatures (backend):**
+
+- **database_pipeline.py:** Fixed `DatabasePipeline.index()` — removed wrong `session=`, `workflow_id=`, `force_full=` kwargs and added missing `connection_config` resolution via `ConnectionService`. Fixed `sync_with_code()` — removed wrong kwargs, now calls `CodeDbSyncPipeline.run()` with correct `connection_id` and `project_id` parameters.
+
+**Concurrent poll fix (frontend):**
+
+- **ConnectionSelector.tsx:** Replaced single `indexPollRef` and `syncPollRef` refs with per-connection `Map<string, Timeout>` refs. Starting a poll for connection B no longer kills connection A's active poll. Cleanup on `setSyncing`/`setIndexing` is now connection-aware (only clears if the current value matches the finished connection).
+
+**Sync indicator reactivity (frontend):**
+
+- **SyncStatusIndicator.tsx:** Now detects both newly started (`running`) and newly finished tasks. Previously only refetched sync status when a task transitioned to a non-running state, so navigating to a connection with an active sync would not show "Syncing..." until completion.
+
+**Workflow tracker safety (backend):**
+
+- **workflow_tracker.py:** Wrapped `_broadcast` call in `end()` with try/except to ensure `workflow_id_var` is always cleaned up even if broadcasting the `pipeline_end` event fails.
+
+### 2026-03-19 — UI Progress State and Label Fixes
+
+**Stale progress state (frontend):**
+
+- **Sidebar.tsx:** Fixed repo indexing progress widget and result message staying visible permanently after completion. Added auto-dismiss timer (5s for success, 15s for failure) that clears both `indexWorkflowId` and `indexResult`. Timer is properly cleaned up on project switch and re-index.
+
+**Missing step labels (frontend):**
+
+- **WorkflowProgress.tsx:** Added missing step labels for `pipeline_resume`, `no_changes`, `cleanup_deleted`, `project_profile`, `cross_file_analysis`, `enrich_docs`, `fetch_samples`, `load_context`, `validate_tables`, `store_results`, `generate_summary`. Removed stale `chunk_and_store` entry.
+- **LogPanel.tsx:** Added `db_index`, `code_db_sync`, and `orchestrator` pipeline color/label mappings. Added full `STEP_LABELS` map so step names display as human-readable text instead of raw identifiers. Failed event details now render in error color.
+
+**Sync status refresh (frontend):**
+
+- **SyncStatusIndicator.tsx:** Now subscribes to the task store and auto-refreshes sync status when a `code_db_sync` or `db_index` task completes for the active connection.
+
+### 2026-03-19 — Indexing Performance Fixes
+
+**SSH tunnel health check (backend):**
+
+- **ssh_tunnel.py:** Fixed `is_alive()` always returning `false` for SSH accounts with restricted shells (e.g. `nologin`). The check now treats a completed SSH command with an active listener as "alive" even when the echo marker fails. Previously, every `get_or_create()` call killed and recreated the tunnel, causing connection losses for concurrent MySQL queries and adding ~2.5 minutes of startup delay.
+
+**Indexing pipeline performance (backend):**
+
+- **pipeline_runner.py:** Added early exit when `detect_changes` reports 0 changed + 0 deleted files and a previous index exists. Skips all expensive steps (analyze, cross-file analysis, enrich, generate_docs) and jumps directly to `record_index`. Reduces no-change re-index from ~50 minutes to ~30 seconds.
+- **pipeline_runner.py:** During incremental indexing, unchanged files with existing docs are now skipped entirely in the `generate_docs` loop — no LLM call is made. Only files in `changed_files` are sent to the LLM.
+- **pipeline_runner.py:** Wired up `prev_content` for the diff-based doc update path. For changed files with existing docs, the previous raw content is loaded via `git show` so `DocGenerator.generate()` can use a lighter diff-based prompt instead of regenerating from scratch.
+- **pipeline_runner.py:** Extracted `_record_and_finish()` method to share the record_index + cleanup logic between the normal path and the early-exit path. Code-DB stale markers are now only set when there are actual file changes.
+
+**Log noise reduction (backend):**
+
+- **vector_store.py:** Changed `VectorStore.__init__` log from INFO to DEBUG. Since new instances are created per status-polling request, the INFO-level "ChromaDB: using local PersistentClient" message was spamming logs every ~4 seconds.
+
+### 2026-03-19 — Chat Session Persistence Fixes
+
+**Critical fixes (frontend):**
+
+- **useRestoreState:** Fixed aggressive localStorage wipe on transient errors (network timeout, 500, etc.). Now only clears persisted IDs on 403/404 (permanent access errors). Transient failures preserve IDs for retry on next refresh and reset the `ran.current` guard so the restore can re-run.
+- **ChatPanel:** Added `restoringState` loading indicator — users now see a "Restoring your session..." animation instead of an empty app while the async restore runs.
+- **Sidebar:** Chat History section shows skeleton placeholders during restore instead of an empty state.
+- **auth-store:** `restore()` now validates JWT `exp` claim before setting the user as authenticated. Expired tokens are cleared immediately, preventing the cascade where all API calls fail with 401 and `handleSessionExpired` nukes all localStorage.
+- **ChatSessionList:** `handleDelete` now calls `setActiveSession(null)` (with `persistId`) instead of raw `setState`, ensuring `active_session_id` is cleared from localStorage when the active session is deleted.
+- **ProjectSelector:** `handleDelete` now calls proper setter functions (`setActiveProject`, `setActiveConnection`, `setActiveSession`, etc.) instead of raw `setState`, ensuring all three localStorage keys are cleared when the active project is deleted.
+
+**Minor improvements:**
+
+- **SessionResponse (backend):** Added `created_at` field with `from_attributes=True` so frontend can display session age and sort locally.
+- **ChatSession (frontend):** Added `created_at` to the TypeScript interface.
+- **api.ts:** Removed unused `createSession` method (dead code — sessions are created implicitly via the streaming ask endpoint).
 
 ### 2026-03-18 — Comprehensive Audit Fixes
 

@@ -35,17 +35,24 @@ class DatabasePipeline(DataSourcePipeline):
         """Run the DB index pipeline for a given connection."""
         from app.knowledge.db_index_pipeline import DbIndexPipeline
         from app.models.base import async_session_factory
+        from app.services.connection_service import ConnectionService
 
         try:
-            pipeline = DbIndexPipeline()
+            conn_svc = ConnectionService()
             async with async_session_factory() as session:
-                await pipeline.run(
-                    session=session,
-                    connection_id=source_id,
-                    project_id=context.project_id,
-                    workflow_id=context.workflow_id,
-                    force_full=context.force_full,
-                )
+                conn = await conn_svc.get(session, source_id)
+                if not conn:
+                    return PipelineResult(success=False, error="Connection not found")
+                config = await conn_svc.to_config(session, conn)
+
+            pipeline = DbIndexPipeline()
+            result = await pipeline.run(
+                connection_id=source_id,
+                connection_config=config,
+                project_id=context.project_id,
+            )
+            if isinstance(result, dict) and result.get("status") == "failed":
+                return PipelineResult(success=False, error=result.get("error", "unknown"))
             return PipelineResult(success=True)
         except Exception as exc:
             logger.exception("Database index pipeline failed for %s", source_id)
@@ -58,17 +65,15 @@ class DatabasePipeline(DataSourcePipeline):
     ) -> PipelineResult:
         """Run code-DB sync for a given connection."""
         from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
-        from app.models.base import async_session_factory
 
         try:
             pipeline = CodeDbSyncPipeline()
-            async with async_session_factory() as session:
-                await pipeline.run(
-                    session=session,
-                    connection_id=source_id,
-                    project_id=context.project_id,
-                    workflow_id=context.workflow_id,
-                )
+            result = await pipeline.run(
+                connection_id=source_id,
+                project_id=context.project_id,
+            )
+            if isinstance(result, dict) and result.get("status") == "failed":
+                return PipelineResult(success=False, error=result.get("error", "unknown"))
             return PipelineResult(success=True)
         except Exception as exc:
             logger.exception("Code-DB sync pipeline failed for %s", source_id)

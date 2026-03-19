@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.project import Project
+    from app.models.user import User
 
 
 class ChatSession(Base):
@@ -29,9 +36,9 @@ class ChatSession(Base):
     title: Mapped[str] = mapped_column(String(255), default="New Chat")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    project: Mapped["Project"] = relationship(back_populates="chat_sessions")  # noqa: F821
-    user: Mapped["User | None"] = relationship()  # noqa: F821
-    messages: Mapped[list["ChatMessage"]] = relationship(
+    project: Mapped[Project] = relationship(back_populates="chat_sessions")  # noqa: F821
+    user: Mapped[User | None] = relationship()  # noqa: F821
+    messages: Mapped[list[ChatMessage]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at"
     )
 
@@ -54,4 +61,4 @@ class ChatMessage(Base):
     )  # 1 (thumbs up) / -1 (thumbs down)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    session: Mapped["ChatSession"] = relationship(back_populates="messages")
+    session: Mapped[ChatSession] = relationship(back_populates="messages")

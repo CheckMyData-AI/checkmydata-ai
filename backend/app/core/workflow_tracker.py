@@ -89,8 +89,16 @@ class WorkflowTracker:
             detail=detail or f"Pipeline {pipeline} {status}",
             pipeline=pipeline,
         )
-        await self._broadcast(event)
-        workflow_id_var.set(None)
+        try:
+            await self._broadcast(event)
+        except Exception:
+            logger.warning(
+                "Failed to broadcast pipeline_end for workflow %s",
+                workflow_id[:8],
+                exc_info=True,
+            )
+        finally:
+            workflow_id_var.set(None)
 
     def get_active(self) -> list[dict[str, Any]]:
         """Return a snapshot of currently running background workflows."""
