@@ -16,7 +16,7 @@ env:
   FRONTEND_APP: esim-db-agent-web
   BACKEND_API_URL: https://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api
   BACKEND_WS_URL: wss://esim-db-agent-api-d1031c6e1d47.herokuapp.com/api/chat/ws
-  FRONTEND_URL: https://esim-db-agent-web.herokuapp.com
+  FRONTEND_URL: https://esim-db-agent-web-e3dda1811661.herokuapp.com
 
 jobs:
   deploy:
