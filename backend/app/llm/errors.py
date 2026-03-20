@@ -39,10 +39,7 @@ class LLMRateLimitError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "The AI service is temporarily overloaded. "
-            "Please try again in a moment."
-        )
+        return "The AI service is temporarily overloaded. Please try again in a moment."
 
 
 class LLMServerError(LLMError):
@@ -53,10 +50,7 @@ class LLMServerError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "The AI service encountered an internal error. "
-            "Retrying automatically…"
-        )
+        return "The AI service encountered an internal error. Retrying automatically…"
 
 
 class LLMAuthError(LLMError):
@@ -66,10 +60,7 @@ class LLMAuthError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "AI service configuration error. "
-            "Please contact the project administrator."
-        )
+        return "AI service configuration error. Please contact the project administrator."
 
 
 class LLMTokenLimitError(LLMError):
@@ -106,10 +97,7 @@ class LLMTimeoutError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "The AI service took too long to respond. "
-            "Retrying automatically…"
-        )
+        return "The AI service took too long to respond. Retrying automatically…"
 
 
 class LLMConnectionError(LLMError):
@@ -120,10 +108,7 @@ class LLMConnectionError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "Could not reach the AI service. "
-            "Retrying automatically…"
-        )
+        return "Could not reach the AI service. Retrying automatically…"
 
 
 class LLMAllProvidersFailedError(LLMError):
@@ -134,10 +119,7 @@ class LLMAllProvidersFailedError(LLMError):
 
     @property
     def user_message(self) -> str:
-        return (
-            "AI service is temporarily unavailable. "
-            "Please try again shortly."
-        )
+        return "AI service is temporarily unavailable. Please try again shortly."
 
 
 RETRYABLE_LLM_ERRORS: tuple[type[LLMError], ...] = (

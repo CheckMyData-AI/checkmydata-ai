@@ -102,14 +102,54 @@ def _sample_to_json(result: QueryResult) -> str:
 
 
 CANDIDATE_ENUM_PATTERNS = {
-    "status", "state", "type", "kind", "category", "role", "level",
-    "priority", "severity", "gender", "country", "currency", "lang",
-    "language", "plan", "tier", "phase", "mode", "source", "channel",
-    "platform", "provider", "method", "payment_method", "billing_type",
-    "region", "locale", "stage", "grade", "class", "group", "reason",
-    "action", "event", "origin", "target", "scope", "visibility",
-    "access", "permission", "frequency", "interval", "direction",
-    "protocol", "format", "encoding", "scheme", "variant",
+    "status",
+    "state",
+    "type",
+    "kind",
+    "category",
+    "role",
+    "level",
+    "priority",
+    "severity",
+    "gender",
+    "country",
+    "currency",
+    "lang",
+    "language",
+    "plan",
+    "tier",
+    "phase",
+    "mode",
+    "source",
+    "channel",
+    "platform",
+    "provider",
+    "method",
+    "payment_method",
+    "billing_type",
+    "region",
+    "locale",
+    "stage",
+    "grade",
+    "class",
+    "group",
+    "reason",
+    "action",
+    "event",
+    "origin",
+    "target",
+    "scope",
+    "visibility",
+    "access",
+    "permission",
+    "frequency",
+    "interval",
+    "direction",
+    "protocol",
+    "format",
+    "encoding",
+    "scheme",
+    "variant",
 }
 
 MAX_DISTINCT_VALUES = 30
@@ -300,7 +340,9 @@ class DbIndexPipeline:
                             heuristic_cols.add(col.name)
 
                     sample_extra = _detect_low_cardinality_columns(
-                        result, table, heuristic_cols,
+                        result,
+                        table,
+                        heuristic_cols,
                     )
                     all_distinct_cols = heuristic_cols | set(sample_extra)
 

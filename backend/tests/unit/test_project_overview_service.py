@@ -205,12 +205,14 @@ class TestBuildProfileSection:
         session, results = _mock_session_factory()
 
         cache = MagicMock()
-        cache.profile_json = json.dumps({
-            "primary_language": "Python",
-            "frameworks": ["Django", "FastAPI"],
-            "orms": ["SQLAlchemy"],
-            "key_directories": {"models": "app/models", "api": "app/api"},
-        })
+        cache.profile_json = json.dumps(
+            {
+                "primary_language": "Python",
+                "frameworks": ["Django", "FastAPI"],
+                "orms": ["SQLAlchemy"],
+                "key_directories": {"models": "app/models", "api": "app/api"},
+            }
+        )
         cache_result = MagicMock()
         cache_result.scalar_one_or_none.return_value = cache
         results.append(cache_result)

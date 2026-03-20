@@ -166,7 +166,8 @@ class VizAgent(BaseAgent):
                     viz_type = tc.arguments.get("viz_type", "table")
                     summary = tc.arguments.get("summary", llm_resp.content or "")
 
-                    viz_type = self._post_validate(viz_type, results, config if isinstance(config, dict) else None)
+                    valid_cfg = config if isinstance(config, dict) else None
+                    viz_type = self._post_validate(viz_type, results, valid_cfg)
                     config = config if isinstance(config, dict) else {}
                     config = self._validate_and_fix_config(config, viz_type, results)
 
@@ -226,7 +227,11 @@ class VizAgent(BaseAgent):
                 if isinstance(vals, list):
                     for v in vals:
                         if v and _resolve_col_idx(v, results, -1) == -1:
-                            logger.debug("viz_config key '%s' references missing column '%s'", key, v)
+                            logger.debug(
+                                "viz_config key '%s' references missing column '%s'",
+                                key,
+                                v,
+                            )
                             has_invalid = True
                             break
 

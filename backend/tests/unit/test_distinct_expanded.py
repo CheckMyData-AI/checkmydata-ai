@@ -71,15 +71,14 @@ class TestDetectLowCardinalityColumns:
     def _make_table(self, *col_specs: tuple[str, str]) -> TableInfo:
         return TableInfo(
             name="test_table",
-            columns=[
-                ColumnInfo(name=name, data_type=dtype)
-                for name, dtype in col_specs
-            ],
+            columns=[ColumnInfo(name=name, data_type=dtype) for name, dtype in col_specs],
         )
 
     def test_detects_binary_flag(self):
         table = self._make_table(
-            ("id", "int"), ("processed", "integer"), ("amount", "decimal"),
+            ("id", "int"),
+            ("processed", "integer"),
+            ("amount", "decimal"),
         )
         result = QueryResult(
             columns=["id", "processed", "amount"],
@@ -151,7 +150,8 @@ class TestDetectLowCardinalityColumns:
 
     def test_detects_string_enum(self):
         table = self._make_table(
-            ("id", "int"), ("payment_status", "varchar"),
+            ("id", "int"),
+            ("payment_status", "varchar"),
         )
         result = QueryResult(
             columns=["id", "payment_status"],

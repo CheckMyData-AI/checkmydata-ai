@@ -6,12 +6,11 @@ from app.config import settings
 from app.llm.anthropic_adapter import AnthropicAdapter
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool
 from app.llm.errors import (
+    RETRYABLE_LLM_ERRORS,
     LLMAllProvidersFailedError,
     LLMAuthError,
     LLMError,
-    LLMRateLimitError,
     LLMTokenLimitError,
-    RETRYABLE_LLM_ERRORS,
 )
 from app.llm.openai_adapter import OpenAIAdapter
 from app.llm.openrouter_adapter import OpenRouterAdapter
@@ -91,7 +90,9 @@ class LLMRouter:
             except _NON_RETRYABLE_PER_PROVIDER as exc:
                 logger.warning(
                     "Provider %s non-retryable error (attempt %d): %s",
-                    provider_name, attempt, exc,
+                    provider_name,
+                    attempt,
+                    exc,
                 )
                 raise
             except RETRYABLE_LLM_ERRORS as exc:
@@ -100,10 +101,12 @@ class LLMRouter:
                     break
                 wait = exc.retry_after_seconds or delay
                 logger.warning(
-                    "Provider %s retryable error (attempt %d/%d), "
-                    "retrying in %.1fs: %s",
-                    provider_name, attempt, _MAX_RETRIES_PER_PROVIDER,
-                    wait, exc,
+                    "Provider %s retryable error (attempt %d/%d), retrying in %.1fs: %s",
+                    provider_name,
+                    attempt,
+                    _MAX_RETRIES_PER_PROVIDER,
+                    wait,
+                    exc,
                 )
                 await asyncio.sleep(wait)
                 delay *= _BACKOFF_MULTIPLIER
@@ -112,10 +115,12 @@ class LLMRouter:
                 if attempt >= _MAX_RETRIES_PER_PROVIDER:
                     break
                 logger.warning(
-                    "Provider %s unexpected error (attempt %d/%d), "
-                    "retrying in %.1fs: %s",
-                    provider_name, attempt, _MAX_RETRIES_PER_PROVIDER,
-                    delay, exc,
+                    "Provider %s unexpected error (attempt %d/%d), retrying in %.1fs: %s",
+                    provider_name,
+                    attempt,
+                    _MAX_RETRIES_PER_PROVIDER,
+                    delay,
+                    exc,
                 )
                 await asyncio.sleep(delay)
                 delay *= _BACKOFF_MULTIPLIER
@@ -138,13 +143,20 @@ class LLMRouter:
             try:
                 provider = self._get_provider(provider_name)
                 return await self._call_with_retry(
-                    provider, provider_name,
-                    messages, tools, model, temperature, max_tokens,
+                    provider,
+                    provider_name,
+                    messages,
+                    tools,
+                    model,
+                    temperature,
+                    max_tokens,
                 )
             except LLMError as e:
                 logger.warning(
                     "Provider %s exhausted retries: [%s] %s",
-                    provider_name, type(e).__name__, e,
+                    provider_name,
+                    type(e).__name__,
+                    e,
                 )
                 last_error = e
                 if not e.is_retryable:
@@ -191,12 +203,16 @@ class LLMRouter:
                     logger.error(
                         "Provider %s streaming failed after yielding tokens; "
                         "cannot retry safely: [%s] %s",
-                        provider_name, type(e).__name__, e,
+                        provider_name,
+                        type(e).__name__,
+                        e,
                     )
                     raise
                 logger.warning(
                     "Provider %s streaming failed before tokens: [%s] %s",
-                    provider_name, type(e).__name__, e,
+                    provider_name,
+                    type(e).__name__,
+                    e,
                 )
                 last_error = e
                 if not e.is_retryable:
@@ -207,12 +223,14 @@ class LLMRouter:
                     logger.error(
                         "Provider %s streaming failed after yielding tokens; "
                         "cannot retry safely: %s",
-                        provider_name, e,
+                        provider_name,
+                        e,
                     )
                     raise
                 logger.warning(
                     "Provider %s streaming failed before tokens: %s",
-                    provider_name, e,
+                    provider_name,
+                    e,
                 )
                 last_error = e
                 continue

@@ -331,9 +331,7 @@ async def _backup_cron_loop() -> None:
             logger.exception("Scheduled backup failed, will retry next cycle")
             try:
                 async with async_session_factory() as session:
-                    session.add(
-                        BackupRecord(reason="scheduled", status="failed")
-                    )
+                    session.add(BackupRecord(reason="scheduled", status="failed"))
                     await session.commit()
             except Exception:
                 pass

@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +50,7 @@ class UsageService:
         user_id: str,
         days: int = 30,
     ) -> dict:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         current_start = now - timedelta(days=days)
         previous_start = current_start - timedelta(days=days)
 
@@ -58,7 +58,14 @@ class UsageService:
         previous = await self._aggregate_period(db, user_id, previous_start, current_start)
 
         change: dict[str, float | None] = {}
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "request_count"):
+        _keys = (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "estimated_cost_usd",
+            "request_count",
+        )
+        for key in _keys:
             cur_val = current.get(key, 0) or 0
             prev_val = previous.get(key, 0) or 0
             if prev_val > 0:
@@ -101,7 +108,9 @@ class UsageService:
             "prompt_tokens": int(row.prompt_tokens),
             "completion_tokens": int(row.completion_tokens),
             "total_tokens": int(row.total_tokens),
-            "estimated_cost_usd": round(float(row.estimated_cost_usd), 6) if row.estimated_cost_usd else None,
+            "estimated_cost_usd": (
+                round(float(row.estimated_cost_usd), 6) if row.estimated_cost_usd else None
+            ),
             "request_count": int(row.request_count),
         }
 
@@ -137,7 +146,9 @@ class UsageService:
                 "prompt_tokens": int(r.prompt_tokens),
                 "completion_tokens": int(r.completion_tokens),
                 "total_tokens": int(r.total_tokens),
-                "estimated_cost_usd": round(float(r.estimated_cost_usd), 6) if r.estimated_cost_usd else None,
+                "estimated_cost_usd": (
+                    round(float(r.estimated_cost_usd), 6) if r.estimated_cost_usd else None
+                ),
                 "request_count": int(r.request_count),
             }
             for r in rows

@@ -29,7 +29,8 @@ RULES FOR CHOOSING viz_type:
 Always include a concise `summary` that a non-technical user would understand.
 
 CRITICAL — column names in your config MUST exactly match the column names from the results.
-Copy them character-for-character. Do NOT invent column names or guess — only use columns listed in the results.
+Copy them character-for-character. Do NOT invent column names or guess —
+only use columns listed in the results.
 
 CONFIG FORMAT — use these exact keys (the chart renderer reads them literally):
 

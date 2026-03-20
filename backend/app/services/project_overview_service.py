@@ -79,9 +79,7 @@ class ProjectOverviewService:
         connection_id: str | None = None,
     ) -> str:
         overview = await self.generate_overview(db, project_id, connection_id)
-        row = await db.execute(
-            select(ProjectCache).where(ProjectCache.project_id == project_id)
-        )
+        row = await db.execute(select(ProjectCache).where(ProjectCache.project_id == project_id))
         cache = row.scalar_one_or_none()
         if cache:
             cache.overview_text = overview
@@ -108,21 +106,15 @@ class ProjectOverviewService:
     ) -> list[str]:
         if connection_id:
             return [connection_id]
-        result = await db.execute(
-            select(Connection.id).where(Connection.project_id == project_id)
-        )
+        result = await db.execute(select(Connection.id).where(Connection.project_id == project_id))
         return list(result.scalars().all())
 
-    async def _build_db_section(
-        self, db: AsyncSession, connection_ids: list[str]
-    ) -> str:
+    async def _build_db_section(self, db: AsyncSession, connection_ids: list[str]) -> str:
         parts: list[str] = ["## Database Structure"]
 
         for conn_id in connection_ids:
             summary_row = await db.execute(
-                select(DbIndexSummary).where(
-                    DbIndexSummary.connection_id == conn_id
-                )
+                select(DbIndexSummary).where(DbIndexSummary.connection_id == conn_id)
             )
             summary = summary_row.scalar_one_or_none()
             if summary:
@@ -161,17 +153,13 @@ class ProjectOverviewService:
 
         return "\n".join(parts) if len(parts) > 1 else ""
 
-    async def _build_sync_section(
-        self, db: AsyncSession, connection_ids: list[str]
-    ) -> str:
+    async def _build_sync_section(self, db: AsyncSession, connection_ids: list[str]) -> str:
         parts: list[str] = ["## Data Conventions (Code-DB Sync)"]
         has_content = False
 
         for conn_id in connection_ids:
             sum_row = await db.execute(
-                select(CodeDbSyncSummary).where(
-                    CodeDbSyncSummary.connection_id == conn_id
-                )
+                select(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id == conn_id)
             )
             summary = sum_row.scalar_one_or_none()
             if summary:
@@ -224,15 +212,10 @@ class ProjectOverviewService:
 
         return "\n".join(parts) if has_content else ""
 
-    async def _build_rules_section(
-        self, db: AsyncSession, project_id: str
-    ) -> str:
+    async def _build_rules_section(self, db: AsyncSession, project_id: str) -> str:
         result = await db.execute(
             select(CustomRule)
-            .where(
-                (CustomRule.project_id == project_id)
-                | (CustomRule.project_id.is_(None))
-            )
+            .where((CustomRule.project_id == project_id) | (CustomRule.project_id.is_(None)))
             .order_by(CustomRule.created_at.desc())
         )
         rules = list(result.scalars().all())
@@ -245,9 +228,7 @@ class ProjectOverviewService:
             parts.append(f"- **{rule.name}**: {first_line}")
         return "\n".join(parts)
 
-    async def _build_learnings_section(
-        self, db: AsyncSession, connection_ids: list[str]
-    ) -> str:
+    async def _build_learnings_section(self, db: AsyncSession, connection_ids: list[str]) -> str:
         if not connection_ids:
             return ""
 
@@ -325,12 +306,8 @@ class ProjectOverviewService:
 
         return "\n".join(parts)
 
-    async def _build_profile_section(
-        self, db: AsyncSession, project_id: str
-    ) -> str:
-        row = await db.execute(
-            select(ProjectCache).where(ProjectCache.project_id == project_id)
-        )
+    async def _build_profile_section(self, db: AsyncSession, project_id: str) -> str:
+        row = await db.execute(select(ProjectCache).where(ProjectCache.project_id == project_id))
         cache = row.scalar_one_or_none()
         if not cache or cache.profile_json in ("{}", "", None):
             return ""

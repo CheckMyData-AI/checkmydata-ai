@@ -19,27 +19,42 @@ def _normalize_config(config: dict) -> dict:
     """Map alternative key names produced by LLMs to the canonical keys."""
     out = dict(config)
 
-    _LABELS_ALIASES = (
-        "x", "label", "x_column", "x_axis", "labels", "categories",
-        "category", "dimension", "category_column",
+    labels_aliases = (
+        "x",
+        "label",
+        "x_column",
+        "x_axis",
+        "labels",
+        "categories",
+        "category",
+        "dimension",
+        "category_column",
     )
-    for alias in _LABELS_ALIASES:
+    for alias in labels_aliases:
         if alias in out and "labels_column" not in out:
             out["labels_column"] = out.pop(alias)
             break
 
-    _DATA_COLS_ALIASES = (
-        "y", "y_column", "y_axis", "values", "series", "metrics",
-        "y_columns", "value_columns", "measure", "measures",
+    data_cols_aliases = (
+        "y",
+        "y_column",
+        "y_axis",
+        "values",
+        "series",
+        "metrics",
+        "y_columns",
+        "value_columns",
+        "measure",
+        "measures",
     )
-    for alias in _DATA_COLS_ALIASES:
+    for alias in data_cols_aliases:
         if alias in out and "data_columns" not in out:
             val = out.pop(alias)
             out["data_columns"] = val if isinstance(val, list) else [val]
             break
 
-    _DATA_COL_ALIASES = ("value", "metric", "data", "y_value")
-    for alias in _DATA_COL_ALIASES:
+    data_col_aliases = ("value", "metric", "data", "y_value")
+    for alias in data_col_aliases:
         if alias in out and "data_column" not in out:
             out["data_column"] = out.pop(alias)
             break
@@ -56,8 +71,8 @@ def _normalize_config(config: dict) -> dict:
     if isinstance(dc, str):
         out["data_columns"] = [dc]
 
-    _GROUP_ALIASES = ("group", "series_by", "color", "split_by", "segment")
-    for alias in _GROUP_ALIASES:
+    group_aliases = ("group", "series_by", "color", "split_by", "segment")
+    for alias in group_aliases:
         if alias in out and "group_by" not in out:
             out["group_by"] = out.pop(alias)
             break
@@ -131,13 +146,21 @@ def _auto_detect_columns(
     numeric_cols = [c for c in cols if col_types.get(c) == "numeric"]
 
     if chart_type in ("line", "line_chart"):
-        labels = temporal_cols[0] if temporal_cols else (categorical_cols[0] if categorical_cols else cols[0])
+        labels = (
+            temporal_cols[0]
+            if temporal_cols
+            else (categorical_cols[0] if categorical_cols else cols[0])
+        )
     elif chart_type in ("scatter",):
         if len(numeric_cols) >= 2:
             return numeric_cols[0], [numeric_cols[1]]
         return cols[0], [cols[1]] if len(cols) > 1 else []
     else:
-        labels = categorical_cols[0] if categorical_cols else (temporal_cols[0] if temporal_cols else cols[0])
+        labels = (
+            categorical_cols[0]
+            if categorical_cols
+            else (temporal_cols[0] if temporal_cols else cols[0])
+        )
 
     data = numeric_cols if numeric_cols else [c for c in cols if c != labels]
     if labels in data:
@@ -227,7 +250,11 @@ def _build_series(
     auto_labels, auto_data = _auto_detect_columns(result, chart_type)
     if not labels_col or _resolve_col_idx(labels_col, result, -1) == -1:
         if labels_col:
-            logger.debug("Configured labels_column '%s' not found, using auto-detected '%s'", labels_col, auto_labels)
+            logger.debug(
+                "Configured labels_column '%s' not found, using auto-detected '%s'",
+                labels_col,
+                auto_labels,
+            )
         labels_col = auto_labels
     if not data_cols:
         data_cols = auto_data
@@ -323,7 +350,11 @@ def generate_pie_chart(result: QueryResult, config: dict) -> dict[str, Any]:
     data_col = cfg.get("data_column")
     if not data_col:
         data_cols = cfg.get("data_columns")
-        data_col = data_cols[0] if data_cols and isinstance(data_cols, list) else (auto_data[0] if auto_data else result.columns[1])
+        data_col = (
+            data_cols[0]
+            if data_cols and isinstance(data_cols, list)
+            else (auto_data[0] if auto_data else result.columns[1])
+        )
 
     labels_idx = _resolve_col_idx(labels_col, result, 0)
     data_idx = _resolve_col_idx(data_col, result, 1)

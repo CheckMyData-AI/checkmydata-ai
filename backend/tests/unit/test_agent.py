@@ -423,18 +423,14 @@ class TestOrchestratorErrorResilience:
 
     @pytest.mark.asyncio
     async def test_connection_refused_returns_db_error(self, agent, mock_llm):
-        mock_llm.complete = AsyncMock(
-            side_effect=RuntimeError("connection refused by host")
-        )
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("connection refused by host"))
         resp = await agent.run(question="test", project_id="proj-1")
         assert resp.response_type == "error"
         assert "database connection error" in resp.answer.lower()
 
     @pytest.mark.asyncio
     async def test_permission_denied_returns_permission_message(self, agent, mock_llm):
-        mock_llm.complete = AsyncMock(
-            side_effect=RuntimeError("access denied for user")
-        )
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("access denied for user"))
         resp = await agent.run(question="test", project_id="proj-1")
         assert resp.response_type == "error"
         assert "permission" in resp.answer.lower()
@@ -488,20 +484,27 @@ class TestSubAgentErrorHandling:
 
         with (
             patch.object(
-                agent._orchestrator._sql, "run",
-                new_callable=AsyncMock, side_effect=sql_side_effect,
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                side_effect=sql_side_effect,
             ),
             patch.object(
-                agent._orchestrator, "_resolve_connection_id",
-                new_callable=AsyncMock, return_value=None,
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch.object(
-                agent._orchestrator, "_build_table_map",
-                new_callable=AsyncMock, return_value="",
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
             ),
         ):
             resp = await agent.run(
-                question="test", project_id="proj-1",
+                question="test",
+                project_id="proj-1",
                 connection_config=config,
             )
         assert sql_call_count >= 2
@@ -532,21 +535,27 @@ class TestSubAgentErrorHandling:
 
         with (
             patch.object(
-                agent._orchestrator._sql, "run",
+                agent._orchestrator._sql,
+                "run",
                 new_callable=AsyncMock,
                 side_effect=AgentFatalError("schema not found"),
             ),
             patch.object(
-                agent._orchestrator, "_resolve_connection_id",
-                new_callable=AsyncMock, return_value=None,
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch.object(
-                agent._orchestrator, "_build_table_map",
-                new_callable=AsyncMock, return_value="",
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
             ),
         ):
             resp = await agent.run(
-                question="test", project_id="proj-1",
+                question="test",
+                project_id="proj-1",
                 connection_config=config,
             )
         assert "The query failed" in resp.answer or "failed" in resp.answer.lower()
@@ -576,21 +585,27 @@ class TestSubAgentErrorHandling:
 
         with (
             patch.object(
-                agent._orchestrator._sql, "run",
+                agent._orchestrator._sql,
+                "run",
                 new_callable=AsyncMock,
                 side_effect=AgentRetryableError("still failing"),
             ),
             patch.object(
-                agent._orchestrator, "_resolve_connection_id",
-                new_callable=AsyncMock, return_value=None,
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch.object(
-                agent._orchestrator, "_build_table_map",
-                new_callable=AsyncMock, return_value="",
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
             ),
         ):
             resp = await agent.run(
-                question="test", project_id="proj-1",
+                question="test",
+                project_id="proj-1",
                 connection_config=config,
             )
         assert "failed" in resp.answer.lower()
@@ -628,9 +643,7 @@ class TestSubAgentErrorHandling:
             )
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            resp = await agent.run(
-                question="create a rule", project_id="proj-1", user_id="user-1"
-            )
+            resp = await agent.run(question="create a rule", project_id="proj-1", user_id="user-1")
 
         assert resp.response_type != "error" or "error" in resp.answer.lower()
 
@@ -762,26 +775,33 @@ class TestVizFallback:
 
         with (
             patch.object(
-                agent._orchestrator._sql, "run",
+                agent._orchestrator._sql,
+                "run",
                 new_callable=AsyncMock,
                 return_value=SQLAgentResult(status="success", query="SELECT 1", results=qr),
             ),
             patch.object(
-                agent._orchestrator._viz, "run",
+                agent._orchestrator._viz,
+                "run",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("viz exploded"),
             ),
             patch.object(
-                agent._orchestrator, "_resolve_connection_id",
-                new_callable=AsyncMock, return_value=None,
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch.object(
-                agent._orchestrator, "_build_table_map",
-                new_callable=AsyncMock, return_value="",
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
             ),
         ):
             resp = await agent.run(
-                question="test", project_id="proj-1",
+                question="test",
+                project_id="proj-1",
                 connection_config=config,
             )
 

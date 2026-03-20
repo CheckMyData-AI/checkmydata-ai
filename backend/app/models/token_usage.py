@@ -45,6 +45,4 @@ class TokenUsage(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        Index("ix_token_usage_user_created", "user_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_token_usage_user_created", "user_id", "created_at"),)

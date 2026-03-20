@@ -42,9 +42,7 @@ _usage_svc = UsageService()
 _membership_svc = MembershipService()
 
 
-def _estimate_cost(
-    model: str | None, prompt_tokens: int, completion_tokens: int
-) -> float | None:
+def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Estimate USD cost using cached OpenRouter pricing data when available."""
     if not model:
         return None
@@ -490,12 +488,16 @@ async def ask(
     ask_cost = _estimate_cost(
         result.llm_model, ask_usage.get("prompt_tokens", 0), ask_usage.get("completion_tokens", 0)
     )
-    enriched_token_usage = {
-        **(result.token_usage or {}),
-        "provider": result.llm_provider or "unknown",
-        "model": result.llm_model or "unknown",
-        "estimated_cost_usd": ask_cost,
-    } if result.token_usage else None
+    enriched_token_usage = (
+        {
+            **(result.token_usage or {}),
+            "provider": result.llm_provider or "unknown",
+            "model": result.llm_model or "unknown",
+            "estimated_cost_usd": ask_cost,
+        }
+        if result.token_usage
+        else None
+    )
 
     assistant_msg = await _chat_svc.add_message(
         db,
@@ -625,7 +627,7 @@ async def ask_stream(
     sql_model = (project.sql_llm_model if project else None) or agent_model
     project_name = project.name if project else None
 
-    _STREAM_TIMEOUT_SECONDS = 120
+    stream_timeout_seconds = 120
 
     async def _generate():
         result_holder: list = []
@@ -649,7 +651,7 @@ async def ask_stream(
         task = asyncio.create_task(_process())
 
         wf_id = None
-        loop_deadline = time.monotonic() + _STREAM_TIMEOUT_SECONDS + 30
+        loop_deadline = time.monotonic() + stream_timeout_seconds + 30
         while not task.done() or not queue.empty():
             if time.monotonic() > loop_deadline:
                 logger.warning("SSE event loop exceeded safety timeout, breaking")
@@ -689,8 +691,8 @@ async def ask_stream(
                 break
 
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=_STREAM_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(asyncio.shield(task), timeout=stream_timeout_seconds)
+        except TimeoutError:
             task.cancel()
             tracker.unsubscribe(queue)
             error_payload = {
@@ -753,12 +755,16 @@ async def ask_stream(
             s_usage.get("prompt_tokens", 0),
             s_usage.get("completion_tokens", 0),
         )
-        s_enriched_usage = {
-            **(result.token_usage or {}),
-            "provider": result.llm_provider or "unknown",
-            "model": result.llm_model or "unknown",
-            "estimated_cost_usd": s_cost,
-        } if result.token_usage else None
+        s_enriched_usage = (
+            {
+                **(result.token_usage or {}),
+                "provider": result.llm_provider or "unknown",
+                "model": result.llm_model or "unknown",
+                "estimated_cost_usd": s_cost,
+            }
+            if result.token_usage
+            else None
+        )
 
         async with _stream_session_factory() as stream_db:
             assistant_msg = await _chat_svc.add_message(

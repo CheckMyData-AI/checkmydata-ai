@@ -258,6 +258,7 @@ class TestAutoDetectColumns:
 
     def test_line_chart_prefers_temporal(self):
         from datetime import date
+
         result = QueryResult(
             columns=["date_col", "value"],
             rows=[[date(2024, 1, 1), 100], [date(2024, 2, 1), 200]],
@@ -312,6 +313,7 @@ class TestSafeNumeric:
 
     def test_decimal(self):
         from decimal import Decimal
+
         assert _safe_numeric(Decimal("99.9")) == 99.9
 
 

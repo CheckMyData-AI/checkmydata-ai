@@ -337,7 +337,8 @@ class OrchestratorAgent(BaseAgent):
             user_msg = llm_exc.user_message
             logger.error(
                 "Orchestrator LLM error [%s]: %s",
-                type(llm_exc).__name__, llm_exc,
+                type(llm_exc).__name__,
+                llm_exc,
             )
             try:
                 await self._tracker.end(wf_id, "orchestrator", "failed", type(llm_exc).__name__)
@@ -390,14 +391,18 @@ class OrchestratorAgent(BaseAgent):
                     break
                 wait = exc.retry_after_seconds or delay
                 logger.warning(
-                    "Orchestrator LLM retryable error (attempt %d/%d), "
-                    "retrying in %.1fs: [%s] %s",
-                    attempt, _LLM_CALL_MAX_RETRIES, wait,
-                    type(exc).__name__, exc,
+                    "Orchestrator LLM retryable error (attempt %d/%d), retrying in %.1fs: [%s] %s",
+                    attempt,
+                    _LLM_CALL_MAX_RETRIES,
+                    wait,
+                    type(exc).__name__,
+                    exc,
                 )
                 await self._tracker.emit(
-                    wf_id, "orchestrator:llm_retry",
-                    "retrying", f"Attempt {attempt} failed, retrying…",
+                    wf_id,
+                    "orchestrator:llm_retry",
+                    "retrying",
+                    f"Attempt {attempt} failed, retrying…",
                 )
                 await asyncio.sleep(wait)
                 delay *= 2.0
@@ -407,11 +412,15 @@ class OrchestratorAgent(BaseAgent):
                     break
                 logger.warning(
                     "All providers failed (attempt %d/%d), retrying whole chain in %.1fs",
-                    attempt, _LLM_CALL_MAX_RETRIES, delay,
+                    attempt,
+                    _LLM_CALL_MAX_RETRIES,
+                    delay,
                 )
                 await self._tracker.emit(
-                    wf_id, "orchestrator:llm_retry",
-                    "retrying", "All providers failed, retrying…",
+                    wf_id,
+                    "orchestrator:llm_retry",
+                    "retrying",
+                    "All providers failed, retrying…",
                 )
                 await asyncio.sleep(delay)
                 delay *= 2.0
@@ -425,15 +434,9 @@ class OrchestratorAgent(BaseAgent):
         """Convert arbitrary exceptions to user-friendly messages."""
         msg = str(exc).lower()
         if "connection" in msg and ("refused" in msg or "reset" in msg or "timeout" in msg):
-            return (
-                "Database connection error. "
-                "Please check your connection settings and try again."
-            )
+            return "Database connection error. Please check your connection settings and try again."
         if "permission" in msg or "access denied" in msg:
-            return (
-                "Permission error. "
-                "Please check your database credentials and permissions."
-            )
+            return "Permission error. Please check your database credentials and permissions."
         return "An unexpected error occurred. Please try again shortly."
 
     # ------------------------------------------------------------------
@@ -703,7 +706,8 @@ class OrchestratorAgent(BaseAgent):
                         config = await conn_svc.to_config(session, conn)
                     else:
                         connections = await conn_svc.list_by_project(
-                            session, context.project_id,
+                            session,
+                            context.project_id,
                         )
                         mcp_conns = [c for c in connections if c.source_type == "mcp"]
                         if not mcp_conns:
@@ -829,7 +833,9 @@ class OrchestratorAgent(BaseAgent):
             if wf_id:
                 try:
                     await self._tracker.emit(
-                        wf_id, "orchestrator:warning", "degraded",
+                        wf_id,
+                        "orchestrator:warning",
+                        "degraded",
                         "MCP source check failed; MCP tools unavailable this request",
                     )
                 except Exception:
@@ -857,7 +863,9 @@ class OrchestratorAgent(BaseAgent):
             if wf_id:
                 try:
                     await self._tracker.emit(
-                        wf_id, "orchestrator:warning", "degraded",
+                        wf_id,
+                        "orchestrator:warning",
+                        "degraded",
                         "Schema map unavailable; SQL quality may be reduced",
                     )
                 except Exception:
@@ -892,9 +900,7 @@ class OrchestratorAgent(BaseAgent):
 
             async with async_session_factory() as session:
                 result = await session.execute(
-                    select(ProjectCache.overview_text).where(
-                        ProjectCache.project_id == project_id
-                    )
+                    select(ProjectCache.overview_text).where(ProjectCache.project_id == project_id)
                 )
                 text = result.scalar_one_or_none()
                 if isinstance(text, str) and text:
@@ -938,7 +944,9 @@ class OrchestratorAgent(BaseAgent):
             if wf_id:
                 try:
                     await self._tracker.emit(
-                        wf_id, "orchestrator:warning", "degraded",
+                        wf_id,
+                        "orchestrator:warning",
+                        "degraded",
                         "Staleness check failed; unable to verify knowledge base freshness",
                     )
                 except Exception:

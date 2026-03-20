@@ -108,7 +108,7 @@ class BackupManager:
         raw_url = settings.database_url
         for prefix in ("postgresql+asyncpg://", "postgres+asyncpg://"):
             if raw_url.startswith(prefix):
-                raw_url = "postgresql://" + raw_url[len(prefix):]
+                raw_url = "postgresql://" + raw_url[len(prefix) :]
                 break
 
         result = await asyncio.to_thread(
@@ -177,7 +177,7 @@ class BackupManager:
             reverse=True,
         )
 
-        to_remove = backups[self.retention_days:]
+        to_remove = backups[self.retention_days :]
         for old_dir in to_remove:
             try:
                 await asyncio.to_thread(shutil.rmtree, old_dir)
