@@ -19,7 +19,13 @@ vi.mock("@/components/ui/Icon", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAuthStore.setState({ user: null, token: null, isLoading: false, error: null });
+  useAuthStore.setState({
+    user: null,
+    token: null,
+    isLoading: false,
+    error: null,
+    restore: async () => {},
+  });
 });
 
 async function renderAuthGate() {
@@ -34,29 +40,40 @@ async function renderAuthGate() {
 describe("AuthGate", () => {
   it("renders login form when user is null", async () => {
     await renderAuthGate();
-    expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
+    });
   });
 
   it("can switch to register form", async () => {
     await renderAuthGate();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
+    });
     await userEvent.click(screen.getByText("Register"));
     expect(screen.getByRole("heading", { name: "Create Account" })).toBeInTheDocument();
   });
 
   it("shows email and password inputs", async () => {
     await renderAuthGate();
-    expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
+    });
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
   });
 
   it("has submit button", async () => {
     await renderAuthGate();
-    const submitBtn = screen.getByRole("button", { name: "Sign In" });
-    expect(submitBtn).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Sign In" })).toBeInTheDocument();
+    });
   });
 
   it("shows display name input in register mode", async () => {
     await renderAuthGate();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
+    });
     await userEvent.click(screen.getByText("Register"));
     expect(screen.getByPlaceholderText("Display Name")).toBeInTheDocument();
   });
@@ -64,22 +81,32 @@ describe("AuthGate", () => {
   it("displays error message from store", async () => {
     useAuthStore.setState({ error: "Invalid credentials" });
     await renderAuthGate();
-    expect(screen.getByText("Invalid credentials")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Invalid credentials")).toBeInTheDocument();
+    });
   });
 
   it("shows loading state when isLoading is true", async () => {
     useAuthStore.setState({ isLoading: true });
     await renderAuthGate();
-    expect(screen.getByText("Signing in...")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Signing in...")).toBeInTheDocument();
+    });
   });
 
   it("renders children when user is logged in", async () => {
+    const user = { id: "u1", email: "a@b.com", display_name: "A" };
     useAuthStore.setState({
-      user: { id: "u1", email: "a@b.com", display_name: "A" },
+      user,
       token: "tok",
+      restore: async () => {
+        useAuthStore.setState({ user, token: "tok" });
+      },
     });
     await renderAuthGate();
-    expect(screen.getByTestId("child-content")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("child-content")).toBeInTheDocument();
+    });
     expect(screen.queryByText("Sign In")).not.toBeInTheDocument();
   });
 });

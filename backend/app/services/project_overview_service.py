@@ -240,7 +240,7 @@ class ProjectOverviewService:
             )
             .group_by(AgentLearning.category)
         )
-        counts = dict(count_result.all())
+        counts: dict[str, int] = {str(r[0]): int(r[1]) for r in count_result.all()}
         if not counts:
             return ""
 
@@ -279,7 +279,7 @@ class ProjectOverviewService:
             )
             .group_by(SessionNote.category)
         )
-        note_counts = dict(note_result.all())
+        note_counts: dict[str, int] = {str(r[0]): int(r[1]) for r in note_result.all()}
 
         from app.models.benchmark import DataBenchmark
 

@@ -47,7 +47,7 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
-_backup_task: asyncio.Task | None = None  # type: ignore[type-arg]
+_backup_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
