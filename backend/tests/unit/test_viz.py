@@ -74,6 +74,73 @@ class TestChart:
         assert chart["type"] == "pie"
         assert len(chart["data"]["labels"]) == 3
 
+    def test_bar_chart_with_x_y_keys(self):
+        """LLM may return x/y instead of labels_column/data_columns."""
+        config = {"x": "name", "y": "count"}
+        chart = generate_bar_chart(_sample_result(), config)
+        assert chart["type"] == "bar"
+        assert chart["data"]["labels"] == ["Alice", "Bob", "Carol"]
+        assert len(chart["data"]["datasets"]) == 1
+        assert chart["data"]["datasets"][0]["label"] == "count"
+
+    def test_line_chart_with_group_by(self):
+        """Pivot rows by a category column into multi-series datasets."""
+        result = QueryResult(
+            columns=["month", "source", "revenue"],
+            rows=[
+                ["Jan", "Google", 100],
+                ["Jan", "Facebook", 50],
+                ["Feb", "Google", 150],
+                ["Feb", "Facebook", 80],
+                ["Mar", "Google", 200],
+                ["Mar", "Facebook", 120],
+            ],
+            row_count=6,
+            execution_time_ms=10,
+        )
+        config = {
+            "labels_column": "month",
+            "data_columns": ["revenue"],
+            "group_by": "source",
+        }
+        chart = generate_line_chart(result, config)
+        assert chart["type"] == "line"
+        assert chart["data"]["labels"] == ["Jan", "Feb", "Mar"]
+        ds_labels = {ds["label"] for ds in chart["data"]["datasets"]}
+        assert ds_labels == {"Google", "Facebook"}
+        google_ds = next(ds for ds in chart["data"]["datasets"] if ds["label"] == "Google")
+        assert google_ds["data"] == [100, 150, 200]
+
+    def test_bar_chart_with_group_by(self):
+        result = QueryResult(
+            columns=["month", "source", "revenue"],
+            rows=[
+                ["Jan", "A", 10],
+                ["Jan", "B", 20],
+                ["Feb", "A", 30],
+                ["Feb", "B", 40],
+            ],
+            row_count=4,
+            execution_time_ms=5,
+        )
+        config = {
+            "labels_column": "month",
+            "data_columns": ["revenue"],
+            "group_by": "source",
+        }
+        chart = generate_bar_chart(result, config)
+        assert chart["type"] == "bar"
+        assert chart["data"]["labels"] == ["Jan", "Feb"]
+        assert len(chart["data"]["datasets"]) == 2
+
+    def test_line_chart_with_legacy_x_column_y_column(self):
+        """Backward compat: x_column/y_column should be normalized."""
+        config = {"x_column": "name", "y_column": "count"}
+        chart = generate_line_chart(_sample_result(), config)
+        assert chart["type"] == "line"
+        assert chart["data"]["labels"] == ["Alice", "Bob", "Carol"]
+        assert len(chart["data"]["datasets"]) == 1
+
 
 class TestExport:
     def test_csv(self):

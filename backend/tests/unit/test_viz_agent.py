@@ -165,7 +165,7 @@ class TestVizAgent:
                         arguments={
                             "viz_type": "line_chart",
                             "summary": "Revenue trend over months",
-                            "config": '{"x_column": "month", "y_column": "revenue"}',
+                            "config": '{"labels_column": "month", "data_columns": ["revenue"]}',
                         },
                     ),
                 ],
@@ -181,7 +181,7 @@ class TestVizAgent:
             ),
         )
         assert result.viz_type == "line_chart"
-        assert result.viz_config["x_column"] == "month"
+        assert result.viz_config["labels_column"] == "month"
         assert result.summary == "Revenue trend over months"
 
     # 9. LLM returns text without tool call → fallback to table

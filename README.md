@@ -422,6 +422,8 @@ Your question
 ├── Data question → query_database → SQLAgent → VizAgent
 │   SQLAgent: gather context → generate SQL → validation loop → execute
 │   VizAgent: rule-based or LLM chart type selection
+│     Supports `group_by` pivoting for multi-series charts (e.g. revenue by source over time)
+│     Config keys are normalised so both LLM-style (x/y) and canonical (labels_column/data_columns) work
 │   ↓
 │   [Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute
 │   ↓  (if error: Classify → Enrich → Repair → retry, up to 3 attempts)
