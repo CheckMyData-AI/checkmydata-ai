@@ -20,14 +20,19 @@ def tmp_db(tmp_path):
 
 def _run_alembic(async_url: str, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": str(BACKEND_DIR), "DATABASE_URL": async_url}
-    return subprocess.run(
+    result = subprocess.run(
         ["alembic", *args],
         cwd=str(BACKEND_DIR),
-        check=True,
         capture_output=True,
         text=True,
         env=env,
     )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"alembic {' '.join(args)} exited {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+    return result
 
 
 def test_upgrade_head_creates_all_tables(tmp_db):
