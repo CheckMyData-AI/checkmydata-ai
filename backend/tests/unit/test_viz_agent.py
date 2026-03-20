@@ -447,7 +447,8 @@ class TestVizAgent:
                         arguments={
                             "viz_type": "bar_chart",
                             "summary": "Revenue by month",
-                            "config": '{"labels_column": "wrong_name", "data_columns": ["bad_col"]}',
+                            "config": '{"labels_column": "wrong_name",'
+                            ' "data_columns": ["bad_col"]}',
                         },
                     ),
                 ],

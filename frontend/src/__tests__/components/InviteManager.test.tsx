@@ -55,6 +55,7 @@ function makeInvite(overrides: Partial<ProjectInvite> = {}): ProjectInvite {
     invited_by: "u1",
     created_at: null,
     accepted_at: null,
+    project_name: null,
     ...overrides,
   };
 }

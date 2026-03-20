@@ -277,7 +277,6 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_llm_error_returns_friendly_message(self, agent, mock_llm):
-        from app.llm.errors import LLMAllProvidersFailedError
 
         mock_llm.complete = AsyncMock(
             side_effect=LLMAllProvidersFailedError("all providers down"),
@@ -488,11 +487,23 @@ class TestSubAgentErrorHandling:
             return SQLAgentResult(status="success", query="SELECT 1")
 
         with (
-            patch.object(agent._orchestrator._sql, "run", new_callable=AsyncMock, side_effect=sql_side_effect),
-            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
-            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+            patch.object(
+                agent._orchestrator._sql, "run",
+                new_callable=AsyncMock, side_effect=sql_side_effect,
+            ),
+            patch.object(
+                agent._orchestrator, "_resolve_connection_id",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator, "_build_table_map",
+                new_callable=AsyncMock, return_value="",
+            ),
         ):
-            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+            resp = await agent.run(
+                question="test", project_id="proj-1",
+                connection_config=config,
+            )
         assert sql_call_count >= 2
         assert resp.response_type != "error"
 
@@ -525,10 +536,19 @@ class TestSubAgentErrorHandling:
                 new_callable=AsyncMock,
                 side_effect=AgentFatalError("schema not found"),
             ),
-            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
-            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+            patch.object(
+                agent._orchestrator, "_resolve_connection_id",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator, "_build_table_map",
+                new_callable=AsyncMock, return_value="",
+            ),
         ):
-            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+            resp = await agent.run(
+                question="test", project_id="proj-1",
+                connection_config=config,
+            )
         assert "The query failed" in resp.answer or "failed" in resp.answer.lower()
 
     @pytest.mark.asyncio
@@ -560,10 +580,19 @@ class TestSubAgentErrorHandling:
                 new_callable=AsyncMock,
                 side_effect=AgentRetryableError("still failing"),
             ),
-            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
-            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+            patch.object(
+                agent._orchestrator, "_resolve_connection_id",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator, "_build_table_map",
+                new_callable=AsyncMock, return_value="",
+            ),
         ):
-            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+            resp = await agent.run(
+                question="test", project_id="proj-1",
+                connection_config=config,
+            )
         assert "failed" in resp.answer.lower()
 
     @pytest.mark.asyncio
@@ -742,10 +771,19 @@ class TestVizFallback:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("viz exploded"),
             ),
-            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
-            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+            patch.object(
+                agent._orchestrator, "_resolve_connection_id",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator, "_build_table_map",
+                new_callable=AsyncMock, return_value="",
+            ),
         ):
-            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+            resp = await agent.run(
+                question="test", project_id="proj-1",
+                connection_config=config,
+            )
 
         assert resp.viz_type == "table"
         assert resp.response_type == "sql_result"

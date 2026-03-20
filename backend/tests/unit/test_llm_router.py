@@ -7,8 +7,12 @@ from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     LLMAllProvidersFailedError,
     LLMAuthError,
+    LLMConnectionError,
+    LLMContentFilterError,
     LLMRateLimitError,
     LLMServerError,
+    LLMTimeoutError,
+    LLMTokenLimitError,
 )
 from app.llm.router import LLMRouter
 
@@ -320,3 +324,101 @@ class TestOpenAIFormatMessages:
         msgs = [Message(role="assistant", content="Just text.")]
         result = adapter._format_messages(msgs)
         assert "tool_calls" not in result[0]
+
+
+class TestLLMRouterErrorClassification:
+    """Verify that specific error types trigger fallback or stop the chain."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_triggers_fallback(self):
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMTimeoutError("timed out"))
+        router._instances["openai"] = failing
+
+        working = MagicMock()
+        working.complete = AsyncMock(return_value=LLMResponse(content="fallback ok"))
+        router._instances["anthropic"] = working
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = "sk-anthropic"
+            mock_settings.openrouter_api_key = ""
+            result = await router.complete(
+                messages=[Message(role="user", content="hi")],
+                preferred_provider="openai",
+            )
+        assert result.content == "fallback ok"
+
+    @pytest.mark.asyncio
+    async def test_connection_error_triggers_fallback(self):
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMConnectionError("unreachable"))
+        router._instances["openai"] = failing
+
+        working = MagicMock()
+        working.complete = AsyncMock(return_value=LLMResponse(content="recovered"))
+        router._instances["anthropic"] = working
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = "sk-anthropic"
+            mock_settings.openrouter_api_key = ""
+            result = await router.complete(
+                messages=[Message(role="user", content="hi")],
+                preferred_provider="openai",
+            )
+        assert result.content == "recovered"
+
+    @pytest.mark.asyncio
+    async def test_token_limit_error_stops_fallback(self):
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMTokenLimitError("prompt too long"))
+        router._instances["openai"] = failing
+
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value=LLMResponse(content="should not reach"))
+        router._instances["anthropic"] = fallback
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = "sk-anthropic"
+            mock_settings.openrouter_api_key = ""
+            with pytest.raises(LLMAllProvidersFailedError):
+                await router.complete(
+                    messages=[Message(role="user", content="hi")],
+                    preferred_provider="openai",
+                )
+        fallback.complete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_content_filter_error_stops_fallback(self):
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMContentFilterError("content blocked"))
+        router._instances["openai"] = failing
+
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value=LLMResponse(content="should not reach"))
+        router._instances["anthropic"] = fallback
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = "sk-anthropic"
+            mock_settings.openrouter_api_key = ""
+            with pytest.raises(LLMAllProvidersFailedError):
+                await router.complete(
+                    messages=[Message(role="user", content="hi")],
+                    preferred_provider="openai",
+                )
+        fallback.complete.assert_not_called()
