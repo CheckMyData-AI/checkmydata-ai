@@ -258,6 +258,34 @@ class IndexingPipelineRunner:
                     f"{len(state.changed_files)} files remaining",
                 )
 
+        # --- Guard: force full re-index when vector store lost data ---
+        if (
+            not force_full
+            and state.last_sha is not None
+            and not state.changed_files
+            and not state.deleted_files
+        ):
+            try:
+                col = self._vector_store.get_or_create_collection(project_id)
+                if col.count() == 0:
+                    existing_docs = await self._doc_store.get_docs_for_project(db, project_id)
+                    if existing_docs:
+                        logger.warning(
+                            "Vector store empty but %d docs exist in DB — forcing full re-index",
+                            len(existing_docs),
+                        )
+                        await tracker.emit(
+                            wf_id,
+                            "detect_changes",
+                            "started",
+                            f"Vector store empty but {len(existing_docs)} docs in DB, "
+                            "forcing full re-index",
+                        )
+                        force_full = True
+            except Exception:
+                logger.warning("Failed to check vector store, forcing full re-index", exc_info=True)
+                force_full = True
+
         # --- Early exit: nothing changed since last index ---
         if (
             not state.changed_files

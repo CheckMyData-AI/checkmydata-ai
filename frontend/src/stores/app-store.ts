@@ -90,6 +90,7 @@ interface AppState {
   setFocusSidebarSection: (section: string | null) => void;
   setTriggerProjectEdit: (v: boolean) => void;
   setReadinessCache: (projectId: string, entry: ReadinessCacheEntry) => void;
+  clearReadinessCache: (projectId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -157,6 +158,11 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       readinessCache: { ...state.readinessCache, [projectId]: entry },
     })),
+  clearReadinessCache: (projectId) =>
+    set((state) => {
+      const { [projectId]: _, ...rest } = state.readinessCache;
+      return { readinessCache: rest };
+    }),
 }));
 
 export type { ChatMessage, ChatMode, ToolCallEvent };

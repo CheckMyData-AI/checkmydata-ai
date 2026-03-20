@@ -111,6 +111,9 @@ export function Sidebar() {
         setIndexResult(`Error: ${detail || "Indexing failed"}`);
       }
       loadStatus();
+      if (activeProject) {
+        useAppStore.getState().clearReadinessCache(activeProject.id);
+      }
 
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       const delay = status === "failed" ? 15_000 : 5_000;
@@ -120,7 +123,7 @@ export function Sidebar() {
         dismissTimerRef.current = null;
       }, delay);
     },
-    [loadStatus],
+    [loadStatus, activeProject],
   );
 
   const handleCheckUpdates = async () => {

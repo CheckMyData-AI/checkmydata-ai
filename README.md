@@ -258,7 +258,10 @@ After both the **repository** is indexed and the **database** is indexed, you ca
    - **Green dot + "Done"** for completed steps (Git repository connected, repository indexed, database connection, database indexed, code-DB synced)
    - **Grey dot** for incomplete steps, with actionable "Run" buttons for indexing/sync and navigation links for connecting repos/DBs
    - The dashboard is **cached per project** so it doesn't flash "Checking readiness..." every time you open a new chat. If everything is ready, the gate is skipped entirely and you go straight to the chat.
+   - **Readiness cache invalidation**: When indexing, DB indexing, or sync completes via the sidebar or connection selector, the readiness cache is automatically cleared so the ReadinessGate shows the updated state on the next check.
+   - `repo_indexed` is determined by the presence of a `CommitIndex` record (SQL database) rather than a ChromaDB vector count, making it reliable across dyno restarts on Heroku.
    - **Staleness detection**: If the repository was indexed more than 7 days ago and there are new commits, an amber warning appears: "Index is outdated (> 7 days, N new commits). Re-indexing recommended." with a one-click "Re-index" button.
+   - **Vector store recovery**: If the vector store (ChromaDB) is empty but indexed documents exist in the SQL database (e.g. after a server restart on ephemeral filesystem), the indexing pipeline automatically detects this and triggers a full re-index to rebuild the vector store.
    - Shows "Last indexed X ago" and "N new commits" when applicable.
    - You can still "Chat anyway" to bypass the gate if setup is incomplete.
 

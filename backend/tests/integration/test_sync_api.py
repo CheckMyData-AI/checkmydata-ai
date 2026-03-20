@@ -1,8 +1,11 @@
 """Integration tests for Code-DB Sync API endpoints."""
 
+import uuid
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest_asyncio.fixture()
@@ -92,6 +95,46 @@ class TestReadinessEndpoint:
         assert data["last_indexed_at"] is None
         assert data["commits_behind"] == 0
         assert data["is_stale"] is False
+
+    @pytest.mark.asyncio
+    async def test_readiness_repo_indexed_via_commit_index(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        """repo_indexed should be True when a CommitIndex record exists for the project."""
+        from app.models.commit_index import CommitIndex
+
+        proj = await auth_client.post(
+            "/api/projects",
+            json={
+                "name": "RepoIndexTest",
+                "description": "test",
+                "repo_url": "git@example.com:org/repo.git",
+            },
+        )
+        assert proj.status_code == 200
+        project_id = proj.json()["id"]
+
+        resp = await auth_client.get(f"/api/projects/{project_id}/readiness")
+        assert resp.json()["repo_connected"] is True
+        assert resp.json()["repo_indexed"] is False
+
+        record = CommitIndex(
+            id=str(uuid.uuid4()),
+            project_id=project_id,
+            commit_sha="abc123def456",
+            branch="main",
+            commit_message="initial commit",
+            indexed_files="[]",
+        )
+        db_session.add(record)
+        await db_session.flush()
+
+        resp2 = await auth_client.get(f"/api/projects/{project_id}/readiness")
+        data = resp2.json()
+        assert data["repo_indexed"] is True
+        assert data["last_indexed_at"] is not None
 
     @pytest.mark.asyncio
     async def test_readiness_not_found(self, auth_client: AsyncClient):

@@ -239,38 +239,11 @@ async def project_readiness(
     repo_connected = bool(project.repo_url)
 
     repo_indexed = False
-    if repo_connected:
-        try:
-            from app.knowledge.vector_store import VectorStore
-
-            vs = VectorStore()
-            col = vs.get_or_create_collection(project_id)
-            repo_indexed = col.count() > 0
-        except Exception:
-            pass
-
-    connections = await _conn_svc.list_by_project(db, project_id)
-    db_connected = len(connections) > 0
-
-    db_indexed = False
-    code_db_synced = False
-    active_connection_id = None
-
-    for conn in connections:
-        active_connection_id = conn.id
-        indexed = await _db_index_svc.is_indexed(db, conn.id)
-        if indexed:
-            db_indexed = True
-            synced = await _sync_svc.is_synced(db, conn.id)
-            if synced:
-                code_db_synced = True
-            break
-
     last_indexed_at = None
     commits_behind = 0
     is_stale = False
 
-    if repo_connected and repo_indexed:
+    if repo_connected:
         git_tracker = GitTracker()
         repo_analyzer = RepoAnalyzer(settings.repo_clone_base_dir)
         try:
@@ -279,6 +252,7 @@ async def project_readiness(
                 project_id,
                 branch=project.repo_branch,
             )
+            repo_indexed = record is not None
             if record and record.created_at:
                 last_indexed_at = record.created_at.isoformat()
                 age = datetime.now(UTC) - record.created_at.replace(tzinfo=UTC)
@@ -298,7 +272,24 @@ async def project_readiness(
                         pass
                 is_stale = age > timedelta(days=7) and commits_behind > 0
         except Exception:
-            logger.debug("Staleness check in readiness failed", exc_info=True)
+            logger.warning("Readiness: repo index check failed", exc_info=True)
+
+    connections = await _conn_svc.list_by_project(db, project_id)
+    db_connected = len(connections) > 0
+
+    db_indexed = False
+    code_db_synced = False
+    active_connection_id = None
+
+    for conn in connections:
+        active_connection_id = conn.id
+        indexed = await _db_index_svc.is_indexed(db, conn.id)
+        if indexed:
+            db_indexed = True
+            synced = await _sync_svc.is_synced(db, conn.id)
+            if synced:
+                code_db_synced = True
+            break
 
     missing_steps = []
     if not repo_connected:

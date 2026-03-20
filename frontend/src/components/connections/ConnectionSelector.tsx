@@ -222,6 +222,8 @@ export function ConnectionSelector() {
           } else {
             toast("DB indexing failed — try again or check connection", "error");
           }
+          const pid = useAppStore.getState().activeProject?.id;
+          if (pid) useAppStore.getState().clearReadinessCache(pid);
         }
       } catch {
         clearInterval(timer);
@@ -270,6 +272,8 @@ export function ConnectionSelector() {
           } else {
             toast("Code-DB sync failed — ensure DB is indexed first", "error");
           }
+          const pid = useAppStore.getState().activeProject?.id;
+          if (pid) useAppStore.getState().clearReadinessCache(pid);
         }
       } catch {
         clearInterval(timer);
