@@ -129,7 +129,8 @@ class DataSanityChecker:
         columns: list[str],
     ) -> list[SanityWarning]:
         warnings: list[SanityWarning] = []
-        now = datetime.now(UTC)
+        now_utc = datetime.now(UTC)
+        now_naive = now_utc.replace(tzinfo=None)
 
         for col in columns:
             dates: list[datetime] = []
@@ -148,7 +149,7 @@ class DataSanityChecker:
             if not dates:
                 continue
 
-            future = [d for d in dates if d > now]
+            future = [d for d in dates if d > (now_utc if d.tzinfo else now_naive)]
             if future:
                 warnings.append(
                     SanityWarning(
