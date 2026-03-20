@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -17,6 +17,12 @@ vi.mock("@/components/ui/Icon", () => ({
   Icon: ({ name }: { name: string }) => <span data-testid={`icon-${name}`} />,
 }));
 
+vi.mock("next/link", () => ({
+  default: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => (
+    <a {...props}>{children}</a>
+  ),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   useAuthStore.setState({
@@ -30,11 +36,13 @@ beforeEach(() => {
 
 async function renderAuthGate() {
   const { AuthGate } = await import("@/components/auth/AuthGate");
-  return render(
-    <AuthGate>
-      <div data-testid="child-content">Protected</div>
-    </AuthGate>,
-  );
+  await act(async () => {
+    render(
+      <AuthGate>
+        <div data-testid="child-content">Protected</div>
+      </AuthGate>,
+    );
+  });
 }
 
 describe("AuthGate", () => {
