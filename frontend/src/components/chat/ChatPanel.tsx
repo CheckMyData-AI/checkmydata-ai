@@ -8,7 +8,6 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { StreamWorkflowProgress } from "../workflow/StreamWorkflowProgress";
-import { LogToggleButton } from "../log/LogPanel";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 
 export function ChatPanel() {
@@ -307,7 +306,7 @@ export function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
-      <ChatInput onSend={handleSend} disabled={isThinking} rightSlot={<LogToggleButton />} />
+      <ChatInput onSend={handleSend} disabled={isThinking} />
     </div>
   );
 }
