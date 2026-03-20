@@ -526,6 +526,7 @@ export function Sidebar() {
         <div className="relative shrink-0 px-3 py-2.5 border-t border-border-subtle animate-fade-in space-y-2">
           <div className="flex items-center gap-2.5">
             {user.picture_url ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={user.picture_url}
                 alt=""

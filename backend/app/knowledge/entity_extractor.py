@@ -460,9 +460,9 @@ def _incremental_update(
         if cm.file_path not in stale_set:
             knowledge.constant_mappings.append(cm)
 
-    for sf in cached.scope_filters:
-        if sf.file_path not in stale_set:
-            knowledge.scope_filters.append(sf)
+    for scope in cached.scope_filters:
+        if scope.file_path not in stale_set:
+            knowledge.scope_filters.append(scope)
 
     deleted_set = set(deleted_files or [])
     for name in list(knowledge.entities.keys()):

@@ -566,8 +566,8 @@ class CodeDbSyncPipeline:
         ]
         if relevant_scopes:
             parts.append("Default scopes/filters:")
-            for sf in relevant_scopes[:5]:
-                parts.append(f"  {sf.name}: {sf.filter_expression[:200]} ({sf.file_path})")
+            for scope in relevant_scopes[:5]:
+                parts.append(f"  {scope.name}: {scope.filter_expression[:200]} ({scope.file_path})")
 
         if rules_context:
             table_rules = [

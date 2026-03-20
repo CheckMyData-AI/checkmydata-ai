@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select, update
 
@@ -274,22 +274,22 @@ class CodeDbSyncService:
         appendable_text_fields = {"query_recommendations", "conversion_warnings"}
 
         if field in mergeable_json_fields:
-            existing = {}
+            existing_json: dict[str, Any] = {}
             current_val = getattr(entry, field, None)
             if current_val:
                 try:
-                    existing = json.loads(current_val)
+                    existing_json = json.loads(current_val)
                 except (json.JSONDecodeError, TypeError):
-                    existing = {}
+                    existing_json = {}
             try:
                 new_data = json.loads(value)
             except (json.JSONDecodeError, TypeError):
                 new_data = {}
-            if isinstance(existing, dict) and isinstance(new_data, dict):
-                existing.update(new_data)
-            setattr(entry, field, json.dumps(existing))
+            if isinstance(existing_json, dict) and isinstance(new_data, dict):
+                existing_json.update(new_data)
+            setattr(entry, field, json.dumps(existing_json))
         elif field in appendable_text_fields:
-            existing = getattr(entry, field, "") or ""
+            existing: str = getattr(entry, field, "") or ""
             if value not in existing:
                 setattr(entry, field, f"{existing}\n{value}".strip())
         else:

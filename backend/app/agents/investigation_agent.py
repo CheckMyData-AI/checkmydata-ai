@@ -45,18 +45,15 @@ class InvestigationAgent(BaseAgent):
     def name(self) -> str:
         return "investigation"
 
-    async def run(
-        self,
-        context: AgentContext,
-        *,
-        investigation_id: str = "",
-        original_query: str = "",
-        original_result_summary: str = "{}",
-        user_complaint_type: str = "other",
-        user_complaint_detail: str = "",
-        user_expected_value: str = "",
-        problematic_column: str = "",
-    ) -> InvestigationResult:
+    async def run(self, context: AgentContext, **kwargs: Any) -> InvestigationResult:
+        investigation_id: str = kwargs.get("investigation_id", "")
+        original_query: str = kwargs.get("original_query", "")
+        original_result_summary: str = kwargs.get("original_result_summary", "{}")
+        user_complaint_type: str = kwargs.get("user_complaint_type", "other")
+        user_complaint_detail: str = kwargs.get("user_complaint_detail", "")
+        user_expected_value: str = kwargs.get("user_expected_value", "")
+        problematic_column: str = kwargs.get("problematic_column", "")
+
         self._investigation_context = {
             "investigation_id": investigation_id,
             "original_query": original_query,

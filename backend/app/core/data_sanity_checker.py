@@ -180,7 +180,9 @@ class DataSanityChecker:
         ]
 
         for col in pct_cols:
-            values = [r.get(col) for r in rows if isinstance(r.get(col), (int, float))]
+            values: list[float] = [
+                float(r[col]) for r in rows if col in r and isinstance(r[col], (int, float))
+            ]
             if len(values) >= 2:
                 total = sum(values)
                 if 0 < total < 80 or total > 120:

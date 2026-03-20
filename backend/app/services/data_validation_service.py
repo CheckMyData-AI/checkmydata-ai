@@ -125,7 +125,7 @@ class DataValidationService:
             .where(DataValidationFeedback.connection_id == connection_id)
             .group_by(DataValidationFeedback.verdict)
         )
-        counts = dict(verdicts.all())
+        counts: dict[str, int] = {str(row[0]): int(row[1]) for row in verdicts.all()}
 
         resolved = await session.execute(
             select(func.count(DataValidationFeedback.id)).where(
