@@ -48,6 +48,9 @@ def build_sql_system_prompt(
     sync_conventions: str = "",
     sync_critical_warnings: str = "",
     current_datetime: str | None = None,
+    notes_prompt: str = "",
+    required_filters: str = "",
+    column_value_mappings: str = "",
 ) -> str:
     """Assemble a SQL-focused system prompt for the SQL agent."""
 
@@ -113,6 +116,25 @@ def build_sql_system_prompt(
         )
 
     sections.append("- When you discover something new about the data, use `record_learning`.")
+    sections.append(
+        "- Use `read_notes` to check session notes before writing queries. "
+        "Use `write_note` to record observations about data patterns."
+    )
+
+    sections.append("")
+    sections.append(
+        "SELF-IMPROVEMENT PROTOCOL:\n"
+        "1. Before writing a query, check session notes for relevant observations.\n"
+        "2. After getting results, run a quick sanity check:\n"
+        "   - Are numeric values in a reasonable range?\n"
+        "   - Do aggregations make sense (sum of parts ≈ total)?\n"
+        "   - Are there unexpected NULLs or zeros?\n"
+        "3. When you discover something new about the data (column format, "
+        "business logic, naming convention), ALWAYS use `write_note` to record it.\n"
+        "4. If you find a discrepancy between what the code says and what the "
+        "data shows, record it as a note with category 'data_observation'.\n"
+        "5. If a previous session note is relevant, apply it and confirm it still holds."
+    )
 
     if sync_conventions or sync_critical_warnings:
         sections.append("")
@@ -122,6 +144,16 @@ def build_sql_system_prompt(
         if sync_critical_warnings:
             sections.append(sync_critical_warnings)
 
+    if required_filters:
+        sections.append("")
+        sections.append("REQUIRED QUERY FILTERS (from code analysis — ALWAYS apply these):")
+        sections.append(required_filters)
+
+    if column_value_mappings:
+        sections.append("")
+        sections.append("COLUMN VALUE MEANINGS:")
+        sections.append(column_value_mappings)
+
     if table_map:
         sections.append("")
         sections.append(f"DATABASE TABLES: {table_map}")
@@ -129,6 +161,10 @@ def build_sql_system_prompt(
     if learnings_prompt:
         sections.append("")
         sections.append(learnings_prompt)
+
+    if notes_prompt:
+        sections.append("")
+        sections.append(notes_prompt)
 
     if db_type:
         hints = DIALECT_HINTS.get(db_type)

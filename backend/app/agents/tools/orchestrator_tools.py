@@ -73,6 +73,43 @@ MANAGE_RULES_TOOL = Tool(
 )
 
 
+ASK_USER_TOOL = Tool(
+    name="ask_user",
+    description=(
+        "Ask the user a structured clarification question. Use when you need "
+        "to verify data accuracy, confirm assumptions about metrics, or "
+        "clarify ambiguous requests before proceeding."
+    ),
+    parameters=[
+        ToolParameter(
+            name="question",
+            type="string",
+            description="The question to ask the user",
+        ),
+        ToolParameter(
+            name="question_type",
+            type="string",
+            description="Type of question",
+            enum=["yes_no", "multiple_choice", "numeric_range", "free_text"],
+        ),
+        ToolParameter(
+            name="options",
+            type="string",
+            description=(
+                "Comma-separated options for multiple_choice questions. Not needed for other types."
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="context",
+            type="string",
+            description="Additional context explaining why this question is being asked",
+            required=False,
+        ),
+    ],
+)
+
+
 def get_orchestrator_tools(
     *,
     has_connection: bool = False,
@@ -84,6 +121,7 @@ def get_orchestrator_tools(
     if has_connection:
         tools.append(QUERY_DATABASE_TOOL)
         tools.append(MANAGE_RULES_TOOL)
+        tools.append(ASK_USER_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_CODEBASE_TOOL)
     if has_mcp_sources:

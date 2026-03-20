@@ -60,11 +60,13 @@ def _fallback_create_all() -> None:
 
     from app.models import (  # noqa: F401
         agent_learning,
+        benchmark,
         chat_session,
         code_db_sync,
         commit_index,
         connection,
         custom_rule,
+        data_validation,
         db_index,
         indexing_checkpoint,
         knowledge_doc,
@@ -75,6 +77,7 @@ def _fallback_create_all() -> None:
         rag_feedback,
         repository,
         saved_note,
+        session_note,
         ssh_key,
         user,
     )
@@ -101,11 +104,13 @@ async def init_db():
     """Called at app startup. Imports all models so relationships are registered."""
     from app.models import (  # noqa: F401
         agent_learning,
+        benchmark,
         chat_session,
         code_db_sync,
         commit_index,
         connection,
         custom_rule,
+        data_validation,
         db_index,
         indexing_checkpoint,
         knowledge_doc,
@@ -116,6 +121,7 @@ async def init_db():
         rag_feedback,
         repository,
         saved_note,
+        session_note,
         ssh_key,
         user,
     )

@@ -72,6 +72,27 @@ SYNC_ANALYSIS_TOOL = Tool(
             ),
         ),
         ToolParameter(
+            name="required_filters",
+            type="string",
+            description=(
+                "JSON object of mandatory WHERE conditions the agent MUST use when querying "
+                "this table, based on patterns found in code. "
+                'E.g. {"status": "= 1 (processed only)", '
+                '"deleted_at": "IS NULL (exclude soft-deleted)"}. '
+                "If code always filters by a specific column value, include it here."
+            ),
+        ),
+        ToolParameter(
+            name="column_value_mappings",
+            type="string",
+            description=(
+                "JSON object mapping column names to their value meanings, based on constants and "
+                'code patterns. E.g. {"status": {"0": "pending", "1": "processed", "2": "failed"}, '
+                '"is_active": {"0": "inactive", "1": "active"}}. '
+                "Especially important for integer columns storing boolean-like or enum-like values."
+            ),
+        ),
+        ToolParameter(
             name="sync_status",
             type="string",
             description="How well code and database align for this table",
@@ -137,6 +158,8 @@ class TableSyncAnalysis:
     business_logic_notes: str = ""
     conversion_warnings: str = ""
     query_recommendations: str = ""
+    required_filters_json: str = "{}"
+    column_value_mappings_json: str = "{}"
     sync_status: str = "unknown"
     confidence_score: int = 3
 
@@ -194,6 +217,8 @@ class CodeDbSyncAnalyzer:
                     business_logic_notes=args.get("business_logic_notes", ""),
                     conversion_warnings=args.get("conversion_warnings", ""),
                     query_recommendations=args.get("query_recommendations", ""),
+                    required_filters_json=args.get("required_filters", "{}"),
+                    column_value_mappings_json=args.get("column_value_mappings", "{}"),
                     sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
                     confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
                 )
@@ -265,6 +290,8 @@ class CodeDbSyncAnalyzer:
                             business_logic_notes=args.get("business_logic_notes", ""),
                             conversion_warnings=args.get("conversion_warnings", ""),
                             query_recommendations=args.get("query_recommendations", ""),
+                            required_filters_json=args.get("required_filters", "{}"),
+                            column_value_mappings_json=args.get("column_value_mappings", "{}"),
                             sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
                             confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
                         )
@@ -381,6 +408,16 @@ class CodeDbSyncAnalyzer:
             "- JSON columns: what structure is expected?\n"
             "- Booleans: stored as 0/1, true/false, or 'Y'/'N'?\n"
             "- Status fields: what are the valid states and transitions?\n\n"
+            "PAY SPECIAL ATTENTION to:\n"
+            "- WHERE filter patterns found in code — if code always filters a table by "
+            "status=1 or is_processed=true, this means the agent MUST apply the same "
+            "filter. Include these as required_filters.\n"
+            "- Status/flag columns: look for integer columns that store boolean-like "
+            "values (0/1) or status codes. Cross-reference with constants in code to "
+            "determine what each value means. Include these as column_value_mappings.\n"
+            "- Default query scopes: if the code defines named scopes or managers that "
+            "apply default filters (e.g., 'active' scope excludes deleted records), "
+            "flag these as required_filters.\n\n"
             "Always use the provided tool to return structured results. "
             "Be specific and actionable — the query agent will use your notes "
             "to write correct SQL."

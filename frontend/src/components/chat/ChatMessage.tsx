@@ -11,6 +11,10 @@ import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { Icon } from "@/components/ui/Icon";
+import { ClarificationCard } from "./ClarificationCard";
+import { DataValidationCard } from "./DataValidationCard";
+import { VerificationBadge } from "./VerificationBadge";
+import { WrongDataModal } from "./WrongDataModal";
 
 const mdComponents: Components = {
   p: ({ children }) => <p className="text-sm mb-2 last:mb-0">{children}</p>,
@@ -85,6 +89,8 @@ interface ChatMessageProps {
   message: ChatMessageType;
   metadataJson?: string | null;
   onRetry?: () => void;
+  onSendMessage?: (text: string) => void;
+  sessionId?: string;
 }
 
 function resolveOriginalVizType(
@@ -105,7 +111,7 @@ function resolveOriginalVizType(
   return "table";
 }
 
-export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps) {
+export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, sessionId }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -125,10 +131,14 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
     }
   }
 
+  const [wrongDataOpen, setWrongDataOpen] = useState(false);
+
   const responseType = message.responseType || metadata?.response_type || "text";
   const isSqlResult = responseType === "sql_result";
+  const isClarification = responseType === "clarification_request";
   const hasViz = !!message.visualization;
   const hasRawResult = !!message.rawResult;
+  const resultColumns = message.rawResult?.columns ?? [];
 
   const originalVizType = resolveOriginalVizType(message.visualization, metadata?.viz_type);
   const [activeVizType, setActiveVizType] = useState<VizTypeKey>(originalVizType);
@@ -236,16 +246,21 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
 
         {/* Response type badge for non-text responses */}
         {!isUser && responseType !== "text" && responseType !== "error" && (
-          <div className="mb-1.5">
+          <div className="mb-1.5 flex items-center gap-1.5">
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded ${
                 responseType === "sql_result"
                   ? "bg-blue-900/30 text-blue-400"
+                  : responseType === "clarification_request"
+                  ? "bg-amber-900/30 text-amber-400"
                   : "bg-purple-900/30 text-purple-400"
               }`}
             >
-              {responseType === "sql_result" ? "SQL Result" : "Knowledge"}
+              {responseType === "sql_result" ? "SQL Result" : responseType === "clarification_request" ? "Question" : "Knowledge"}
             </span>
+            {isSqlResult && message.verificationStatus && (
+              <VerificationBadge status={message.verificationStatus} />
+            )}
           </div>
         )}
 
@@ -255,6 +270,14 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
           <div className="chat-markdown">
             <ReactMarkdown components={mdComponents}>{message.content}</ReactMarkdown>
           </div>
+        )}
+
+        {/* Clarification card for structured questions */}
+        {isClarification && message.clarificationData && onSendMessage && (
+          <ClarificationCard
+            data={message.clarificationData}
+            onSubmit={(answer) => onSendMessage(answer)}
+          />
         )}
 
         {/* SQL Query — only for sql_result responses */}
@@ -401,21 +424,53 @@ export function ChatMessage({ message, metadataJson, onRetry }: ChatMessageProps
               </svg>
             </button>
             {isSqlResult && message.query && (
-              <button
-                onClick={handleSaveToNotes}
-                aria-label="Save to notes"
-                disabled={noteSaving || noteSaved}
-                className={`p-1 rounded transition-colors disabled:opacity-50 ml-1 ${
-                  noteSaved
-                    ? "text-accent bg-accent-muted"
-                    : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
-                }`}
-                title={noteSaved ? "Saved to notes" : "Save to notes"}
-              >
-                <Icon name="bookmark" size={14} className={noteSaving ? "animate-pulse" : ""} />
-              </button>
+              <>
+                <button
+                  onClick={handleSaveToNotes}
+                  aria-label="Save to notes"
+                  disabled={noteSaving || noteSaved}
+                  className={`p-1 rounded transition-colors disabled:opacity-50 ml-1 ${
+                    noteSaved
+                      ? "text-accent bg-accent-muted"
+                      : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
+                  }`}
+                  title={noteSaved ? "Saved to notes" : "Save to notes"}
+                >
+                  <Icon name="bookmark" size={14} className={noteSaving ? "animate-pulse" : ""} />
+                </button>
+                <button
+                  onClick={() => setWrongDataOpen(true)}
+                  aria-label="Report wrong data"
+                  className="p-1 rounded transition-colors text-zinc-600 hover:text-amber-400 hover:bg-amber-900/20 ml-0.5"
+                  title="Report wrong data"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </button>
+              </>
             )}
           </div>
+        )}
+
+        {/* Data validation card for sql_result messages */}
+        {isSqlResult && message.query && sessionId && (
+          <DataValidationCard
+            messageId={message.id}
+            query={message.query}
+            sessionId={sessionId}
+          />
+        )}
+
+        {/* Wrong Data investigation modal */}
+        {wrongDataOpen && isSqlResult && message.query && sessionId && (
+          <WrongDataModal
+            messageId={message.id}
+            query={message.query}
+            sessionId={sessionId}
+            resultColumns={resultColumns}
+            onClose={() => setWrongDataOpen(false)}
+          />
         )}
 
         {/* Metadata badges */}

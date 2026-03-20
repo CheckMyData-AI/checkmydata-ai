@@ -21,4 +21,5 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     auth_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="email")
     google_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    picture_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

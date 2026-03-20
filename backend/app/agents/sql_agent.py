@@ -151,10 +151,20 @@ class SQLAgent(BaseAgent):
 
         sync_conventions = ""
         sync_critical_warnings = ""
+        required_filters_text = ""
+        column_value_mappings_text = ""
         if has_sync and cfg.connection_id:
             sync_conventions, sync_critical_warnings = await self._load_sync_for_prompt(
                 cfg.connection_id
             )
+            (
+                required_filters_text,
+                column_value_mappings_text,
+            ) = await self._load_sync_filters_and_mappings(cfg.connection_id)
+
+        notes_prompt = ""
+        if cfg.connection_id:
+            notes_prompt = await self._load_notes_prompt(cfg.connection_id)
 
         system_prompt = build_sql_system_prompt(
             db_type=cfg.db_type,
@@ -167,6 +177,9 @@ class SQLAgent(BaseAgent):
             sync_conventions=sync_conventions,
             sync_critical_warnings=sync_critical_warnings,
             current_datetime=get_current_datetime_str(),
+            notes_prompt=notes_prompt,
+            required_filters=required_filters_text,
+            column_value_mappings=column_value_mappings_text,
         )
 
         tools = get_sql_agent_tools(
@@ -278,6 +291,8 @@ class SQLAgent(BaseAgent):
             "get_query_context": self._handle_get_query_context,
             "get_agent_learnings": self._handle_get_agent_learnings,
             "record_learning": self._handle_record_learning,
+            "read_notes": self._handle_read_notes,
+            "write_note": self._handle_write_note,
         }.get(tool_call.name)
 
         if handler is None:
@@ -366,7 +381,16 @@ class SQLAgent(BaseAgent):
         conn_key = connector_key(cfg)
         self._query_cache.put(conn_key, loop_result.query, results)
 
-        return self._format_query_results(results)
+        formatted = self._format_query_results(results)
+
+        try:
+            sanity_text = await self._run_sanity_checks(results, loop_result.query, ctx)
+            if sanity_text:
+                formatted += sanity_text
+        except Exception:
+            logger.debug("Sanity check failed (non-critical)", exc_info=True)
+
+        return formatted
 
     async def _handle_get_schema_info(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
         scope: str = args.get("scope", "overview")
@@ -548,6 +572,112 @@ class SQLAgent(BaseAgent):
             f"- **Lesson:** {lesson}\n"
             f"- **Confidence:** {int(entry.confidence * 100)}%"
         )
+
+    # ------------------------------------------------------------------
+    # Session notes handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_read_notes(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+        cfg = ctx.connection_config
+        if cfg is None or not cfg.connection_id:
+            return "No session notes available (no connection)."
+
+        table_names_raw: str | None = args.get("table_names")
+        category: str | None = args.get("category")
+
+        table_list: list[str] | None = None
+        if table_names_raw:
+            table_list = [t.strip() for t in table_names_raw.split(",") if t.strip()]
+
+        from app.models.base import async_session_factory
+        from app.services.session_notes_service import SessionNotesService
+
+        svc = SessionNotesService()
+        async with ctx.tracker.step(wf_id, "sql:read_notes", "Reading session notes"):
+            async with async_session_factory() as session:
+                notes = await svc.get_notes_for_context(
+                    session,
+                    cfg.connection_id,
+                    table_names=table_list,
+                    category=category,
+                )
+
+        if not notes:
+            return "No session notes recorded yet for this database."
+
+        lines: list[str] = [f"Session notes ({len(notes)} found):\n"]
+        for n in notes[:20]:
+            verified = " [VERIFIED]" if n.is_verified else ""
+            conf = int(n.confidence * 100)
+            lines.append(f"- [{n.category}] {n.subject}: {n.note} ({conf}%{verified})")
+        return "\n".join(lines)
+
+    async def _handle_write_note(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+        category: str = args.get("category", "")
+        subject: str = args.get("subject", "").strip()
+        note_text: str = args.get("note", "").strip()
+
+        if not category or not subject or not note_text:
+            return "Error: category, subject, and note are all required."
+
+        cfg = ctx.connection_config
+        if cfg is None or not cfg.connection_id:
+            return "Error: connection ID not resolved."
+
+        from app.models.base import async_session_factory
+        from app.services.session_notes_service import SessionNotesService
+
+        svc = SessionNotesService()
+        async with ctx.tracker.step(wf_id, "sql:write_note", f"Recording note: {note_text[:60]}"):
+            async with async_session_factory() as session:
+                entry = await svc.create_note(
+                    session,
+                    connection_id=cfg.connection_id,
+                    project_id=ctx.project_id,
+                    category=category,
+                    subject=subject,
+                    note=note_text,
+                    confidence=0.7,
+                    source_session_id=ctx.session_id if hasattr(ctx, "session_id") else None,
+                )
+                await session.commit()
+
+        return (
+            f"Note recorded successfully.\n"
+            f"- **Category:** {category}\n"
+            f"- **Subject:** {subject}\n"
+            f"- **Note:** {note_text}\n"
+            f"- **Confidence:** {int(entry.confidence * 100)}%"
+        )
+
+    # ------------------------------------------------------------------
+    # Sanity checker integration
+    # ------------------------------------------------------------------
+
+    async def _run_sanity_checks(
+        self,
+        results: QueryResult,
+        query: str,
+        ctx: AgentContext,
+    ) -> str:
+        """Run data sanity checks on query results, return warning text if any."""
+        if not results.rows or not results.columns:
+            return ""
+
+        from app.core.data_sanity_checker import DataSanityChecker
+
+        checker = DataSanityChecker()
+
+        rows_as_dicts = [dict(zip(results.columns, row)) for row in results.rows]
+
+        warnings = checker.check(
+            rows=rows_as_dicts,
+            columns=results.columns,
+            query=query,
+            question=ctx.user_question or "",
+        )
+
+        return checker.format_warnings(warnings)
 
     # ------------------------------------------------------------------
     # Query context builder (mirrors ToolExecutor._build_query_context)
@@ -807,6 +937,57 @@ class SQLAgent(BaseAgent):
             warnings_text = "\n".join(critical)[:500] if critical else ""
 
             return conventions, warnings_text
+        except Exception:
+            return "", ""
+
+    async def _load_notes_prompt(self, connection_id: str) -> str:
+        try:
+            from app.models.base import async_session_factory
+            from app.services.session_notes_service import SessionNotesService
+
+            svc = SessionNotesService()
+            async with async_session_factory() as session:
+                return await svc.compile_notes_prompt(session, connection_id)
+        except Exception:
+            return ""
+
+    async def _load_sync_filters_and_mappings(self, connection_id: str) -> tuple[str, str]:
+        """Return (required_filters_text, column_value_mappings_text) from sync."""
+        try:
+            import json as json_mod
+
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+
+            svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                entries = await svc.get_sync(session, connection_id)
+
+            filters_lines: list[str] = []
+            mappings_lines: list[str] = []
+
+            for e in entries:
+                rf = getattr(e, "required_filters_json", "{}") or "{}"
+                try:
+                    filters = json_mod.loads(rf)
+                except (json_mod.JSONDecodeError, TypeError):
+                    filters = {}
+                if filters and isinstance(filters, dict):
+                    for col, cond in filters.items():
+                        filters_lines.append(f"- {e.table_name}: ALWAYS add WHERE {col} {cond}")
+
+                cvm = getattr(e, "column_value_mappings_json", "{}") or "{}"
+                try:
+                    mappings = json_mod.loads(cvm)
+                except (json_mod.JSONDecodeError, TypeError):
+                    mappings = {}
+                if mappings and isinstance(mappings, dict):
+                    for col, vals in mappings.items():
+                        if isinstance(vals, dict):
+                            parts = ", ".join(f"{k}={v}" for k, v in vals.items())
+                            mappings_lines.append(f"- {e.table_name}.{col}: {parts}")
+
+            return "\n".join(filters_lines), "\n".join(mappings_lines)
         except Exception:
             return "", ""
 

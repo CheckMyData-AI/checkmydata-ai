@@ -525,11 +525,20 @@ export function Sidebar() {
       {user && !collapsed && (
         <div className="relative shrink-0 px-3 py-2.5 border-t border-border-subtle animate-fade-in space-y-2">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
-              <span className="text-[10px] font-semibold text-text-secondary">
-                {userInitials}
-              </span>
-            </div>
+            {user.picture_url ? (
+              <img
+                src={user.picture_url}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="w-7 h-7 rounded-full border border-border-default shrink-0 object-cover"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
+                <span className="text-[10px] font-semibold text-text-secondary">
+                  {userInitials}
+                </span>
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <p className="text-xs text-text-primary truncate leading-tight">
                 {user.display_name || user.email.split("@")[0]}

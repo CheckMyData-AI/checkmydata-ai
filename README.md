@@ -26,7 +26,8 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  ┌────────────────────────────────────────────────────────────────┐   │
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
-│  │  repos · rules · visualizations · workflows · health          │   │
+│  │  repos · rules · visualizations · workflows · data-validation │   │
+│  │  health                                                       │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -91,12 +92,18 @@ When you first open the app, you see the **AuthGate** — a login/registration f
 
 **Google OAuth Setup** (required for "Sign in with Google"):
 
-1. Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
-2. Create an OAuth 2.0 Client ID (Web application type)
-3. Add `http://localhost:3100` to "Authorized JavaScript origins"
-4. Copy the Client ID and set it in:
+1. Go to [Google Cloud Console → OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) and configure:
+   - App name, user support email, developer contact email
+   - Scopes: `openid`, `email`, `profile`
+   - Publishing status: "Testing" (for dev) or "In production" (for public access)
+2. Go to [Credentials](https://console.cloud.google.com/apis/credentials) → Create OAuth 2.0 Client ID (Web application type)
+3. Under **Authorized JavaScript origins**, add every origin that loads the sign-in page:
+   - `http://localhost:3100` (local development)
+   - `https://checkmydata.ai` (production — replace with your actual domain)
+4. Copy the **Client ID** and set it in:
    - `backend/.env` → `GOOGLE_CLIENT_ID=your-client-id`
    - `frontend/.env.local` → `NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-client-id`
+5. No `GOOGLE_CLIENT_SECRET` is needed — the app uses Google Identity Services (GIS) with ID-token verification, which only requires the Client ID. A client secret would only be necessary for the server-side Authorization Code flow (e.g. accessing Google Drive on behalf of users).
 
 ### 3. Add SSH Keys
 
@@ -315,6 +322,60 @@ The agent automatically **learns from query outcomes** and accumulates per-conne
 
 **User feedback integration:**
 - When you give a **thumbs down** on an assistant message, the system triggers a learning analysis on the failed interaction
+
+### 8b. Agent Self-Improvement Feedback Loop
+
+The agent has a **proactive data accuracy verification system** that goes beyond reactive thumbs-up/down feedback. It detects anomalies, asks users for validation, and builds persistent knowledge.
+
+**Components:**
+
+1. **Data Sanity Checker** (`backend/app/core/data_sanity_checker.py`) — Automatic checks on every query result before presenting to users:
+   - All-null / all-zero column detection
+   - Future date anomalies
+   - Percentage sum validation (should add to ~100%)
+   - Benchmark comparison (deviations from verified values)
+
+2. **Session Notes (Agent Working Memory)** (`backend/app/services/session_notes_service.py`) — Persistent per-connection notes that the agent uses across sessions. Categories: data_observation, column_mapping, business_logic, calculation_note, user_preference, verified_benchmark. Fuzzy deduplication prevents redundant notes.
+
+3. **Data Validation Feedback** (`backend/app/services/data_validation_service.py`) — Structured user feedback beyond thumbs up/down:
+   - **Confirmed** — data is correct, creates a benchmark
+   - **Approximate** — close enough, creates benchmark + observation note
+   - **Rejected** — incorrect, creates learning + note + flags stale benchmarks
+
+4. **Benchmark Store** (`backend/app/services/benchmark_service.py`) — Stores verified metric values (e.g., "Monthly Revenue ≈ $50,000") for sanity-checking future queries. Confidence grows with confirmations, decays when flagged stale.
+
+5. **Feedback Pipeline** (`backend/app/services/feedback_pipeline.py`) — Processes validation feedback → creates learnings, notes, and benchmarks automatically.
+
+6. **Structured Clarification** — The orchestrator can ask structured questions (yes/no, multiple choice, numeric, free text) via the `ask_user` tool, rendered as `ClarificationCard` in the UI.
+
+**"Wrong Data" Investigation Cycle:**
+
+When a user clicks the **"Wrong Data" button** (warning triangle icon) on any SQL result message:
+1. **Collect** — User selects complaint type (numbers too high/low, wrong time period, missing data, wrong categories) and optionally provides expected value and problematic column
+2. **Investigate** — `InvestigationAgent` runs diagnostic queries, checks column formats, compares results, identifies root cause (missing filter, wrong JOIN, data format, aggregation error)
+3. **Present Fix** — Shows original vs corrected results side-by-side with diff highlighting, root cause explanation, and corrected SQL
+4. **Confirm** — User accepts the fix (triggers memory updates: learnings, notes, benchmarks, sync enrichments) or rejects to re-investigate
+
+**Enhanced Code-DB Sync:**
+
+The Code-DB Sync pipeline now extracts additional intelligence from the codebase:
+- **Query Patterns** — WHERE/filter conditions found in code (e.g., `transactions WHERE status = 1`)
+- **Constant Mappings** — Status/flag constants (e.g., `STATUS_ACTIVE = 1`, `STATUS_PENDING = 0`)
+- **Scope Filters** — ORM scopes/managers defining default filters (Rails scopes, Django managers, Laravel scopes)
+- **Required Filters** — Per-table mandatory WHERE conditions the SQL agent must always apply
+- **Column Value Mappings** — Integer-to-meaning maps (e.g., status: 0=pending, 1=processed, 2=failed)
+
+These are stored in `code_db_sync.required_filters_json` and `code_db_sync.column_value_mappings_json`, and injected into the SQL agent's system prompt as critical warnings.
+
+**Frontend components:** `ClarificationCard`, `DataValidationCard`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`)
+
+**API endpoints** (prefix `/api/data-validation/`):
+- `POST /validate-data` — Record user validation feedback
+- `GET /validation-stats/{connection_id}` — Aggregated accuracy statistics
+- `GET /benchmarks/{connection_id}` — All verified benchmarks
+- `POST /investigate` — Start "Wrong Data" investigation
+- `GET /investigate/{id}` — Poll investigation progress
+- `POST /investigate/{id}/confirm-fix` — Accept or reject investigation fix
 
 ### 9. Index the Repository (Knowledge Base)
 
@@ -711,11 +772,12 @@ Every sub-agent result passes through `AgentResultValidator` before being return
 | `backend/app/api/routes/chat.py` | HTTP endpoint, session management, history loading |
 | `backend/app/core/agent.py` | `ConversationalAgent` — thin wrapper that builds `AgentContext` and calls `OrchestratorAgent.run()` |
 | `backend/app/agents/orchestrator.py` | `OrchestratorAgent.run()` (the main loop), `_handle_meta_tool()` dispatch, `_has_mcp_sources()` check |
-| `backend/app/agents/tools/orchestrator_tools.py` | `get_orchestrator_tools()` — conditional tool list, tool definitions (`QUERY_DATABASE_TOOL`, `SEARCH_CODEBASE_TOOL`, `MANAGE_RULES_TOOL`, `QUERY_MCP_SOURCE_TOOL`) |
-| `backend/app/agents/sql_agent.py` | `SQLAgent` — schema introspection, SQL generation, validation loop, execution, learning extraction |
+| `backend/app/agents/tools/orchestrator_tools.py` | `get_orchestrator_tools()` — conditional tool list, tool definitions (`QUERY_DATABASE_TOOL`, `SEARCH_CODEBASE_TOOL`, `MANAGE_RULES_TOOL`, `QUERY_MCP_SOURCE_TOOL`, `ASK_USER_TOOL`) |
+| `backend/app/agents/sql_agent.py` | `SQLAgent` — schema introspection, SQL generation, validation loop, execution, learning extraction, sanity checks, session notes |
 | `backend/app/agents/viz_agent.py` | `VizAgent` — rule-based + LLM chart type selection |
 | `backend/app/agents/knowledge_agent.py` | `KnowledgeAgent` — RAG search, entity info, codebase Q&A |
 | `backend/app/agents/mcp_source_agent.py` | `MCPSourceAgent` — LLM loop for external MCP tool calls |
+| `backend/app/agents/investigation_agent.py` | `InvestigationAgent` — diagnoses data accuracy issues with diagnostic queries |
 | `backend/app/agents/validation.py` | `AgentResultValidator` — validates sub-agent outputs |
 
 **Agent hierarchy:**
@@ -727,6 +789,7 @@ Every sub-agent result passes through `AgentResultValidator` before being return
 | **VizAgent** | `agents/viz_agent.py` | Chart type selection (rule-based + LLM fallback), config gen | Auto-runs after SQLAgent returns results |
 | **KnowledgeAgent** | `agents/knowledge_agent.py` | RAG search, entity info, codebase Q&A | `search_codebase` meta-tool |
 | **MCPSourceAgent** | `agents/mcp_source_agent.py` | Queries external MCP servers via MCPClientAdapter | `query_mcp_source` meta-tool |
+| **InvestigationAgent** | `agents/investigation_agent.py` | Diagnoses data accuracy issues, runs diagnostic queries, identifies root causes | "Wrong Data" button / investigation API |
 
 **Agent communication protocol (`agents/base.py`):**
 
@@ -1259,21 +1322,25 @@ app/
 │   ├── viz_agent.py    ← VizAgent: rule-based + LLM chart type selection
 │   ├── knowledge_agent.py ← KnowledgeAgent: RAG search, entity info, codebase Q&A
 │   ├── mcp_source_agent.py ← MCPSourceAgent: queries external MCP servers
+│   ├── investigation_agent.py ← InvestigationAgent: diagnoses data accuracy issues
 │   ├── tools/          ← Per-agent tool definitions
-│   │   ├── orchestrator_tools.py ← Meta-tools (query_database, search_codebase, manage_rules, query_mcp_source)
-│   │   ├── sql_tools.py ← execute_query, get_schema_info, get_query_context, etc.
+│   │   ├── orchestrator_tools.py ← Meta-tools (query_database, search_codebase, manage_rules, query_mcp_source, ask_user)
+│   │   ├── sql_tools.py ← execute_query, get_schema_info, get_query_context, read_notes, write_note, etc.
 │   │   ├── knowledge_tools.py ← search_knowledge, get_entity_info
 │   │   ├── mcp_tools.py ← query_mcp_source meta-tool definition
+│   │   ├── investigation_tools.py ← get_original_context, run_diagnostic_query, compare_results, etc.
 │   │   └── viz_tools.py ← recommend_visualization
 │   └── prompts/        ← Per-agent system prompts (all include current date/time)
 │       ├── __init__.py ← get_current_datetime_str() helper
-│       ├── orchestrator_prompt.py
-│       ├── sql_prompt.py
+│       ├── orchestrator_prompt.py ← Includes DATA VERIFICATION PROTOCOL
+│       ├── sql_prompt.py ← Includes SELF-IMPROVEMENT PROTOCOL + required filters/value mappings
 │       ├── viz_prompt.py
 │       ├── knowledge_prompt.py
+│       ├── investigation_prompt.py ← Investigation checklist and diagnostic process
 │       └── mcp_prompt.py ← System prompt for MCPSourceAgent
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
 ├── core/               ← Utilities + backward-compatible wrappers
+│   ├── data_sanity_checker.py ← Automated anomaly detection on query results
 │   ├── agent.py        ← ConversationalAgent wrapper → delegates to OrchestratorAgent
 │   ├── tools.py        ← Deprecated: re-exports from agents/tools/
 │   ├── prompt_builder.py ← Deprecated: delegates to agents/prompts/
@@ -1359,7 +1426,10 @@ app/
 │   ├── agent_learning.py ← AgentLearning + AgentLearningSummary
 │   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
 │   ├── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
-│   └── saved_note.py   ← SavedNote: user-scoped saved SQL queries per project
+│   ├── saved_note.py   ← SavedNote: user-scoped saved SQL queries per project
+│   ├── session_note.py ← SessionNote: agent working memory (per-connection observations)
+│   ├── data_validation.py ← DataValidationFeedback + DataInvestigation models
+│   └── benchmark.py    ← DataBenchmark: verified metric values for sanity-checking
 ├── services/           ← Business logic layer
 │   ├── project_service.py, connection_service.py
 │   ├── repository_service.py ← CRUD for ProjectRepository
@@ -1373,6 +1443,12 @@ app/
 │   ├── agent_learning_service.py ← CRUD, dedup, confidence management for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
 │   ├── note_service.py ← CRUD for saved notes (create, list, update, delete, update_result)
+│   ├── session_notes_service.py ← CRUD, fuzzy dedup, prompt compilation for agent notes
+│   ├── data_validation_service.py ← CRUD + accuracy stats for validation feedback
+│   ├── benchmark_service.py ← Create/confirm/flag benchmarks for verified metrics
+│   ├── feedback_pipeline.py ← Process validation feedback → learnings + notes + benchmarks
+│   ├── investigation_service.py ← Lifecycle management for data investigations
+│   ├── code_db_sync_service.py ← ... + add_runtime_enrichment() for investigation findings
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)
@@ -1385,11 +1461,12 @@ app/
 
 When the orchestrator delegates to the SQLAgent via `query_database`:
 
-1. **Context gathering** — Check for DB index, sync context, learnings
-2. **Tool loop** — SQLAgent has its own LLM loop (max 3 iterations) with SQL-specific tools
+1. **Context gathering** — Check for DB index, sync context, learnings, session notes, required filters, column value mappings
+2. **Tool loop** — SQLAgent has its own LLM loop (max 3 iterations) with SQL-specific tools (including `read_notes`, `write_note`)
 3. **Validation loop** — Generated queries go through the self-healing cycle (see below)
-4. **Learning extraction** — After multiple attempts, patterns are recorded for future queries
-5. **Result** — Returns `SQLAgentResult` with query, results, and attempt history
+4. **Sanity checks** — `DataSanityChecker` runs on results: zero/null detection, temporal anomalies, aggregation checks, benchmark comparisons
+5. **Learning extraction** — After multiple attempts, patterns are recorded for future queries
+6. **Result** — Returns `SQLAgentResult` with query, results, attempt history, and any sanity warnings
 
 ### Query Validation & Self-Healing Loop
 
@@ -1681,6 +1758,12 @@ src/
 | `GET` | `/api/invites/pending` | List pending invites for current user |
 | `GET` | `/api/invites/{project_id}/members` | List project members |
 | `DELETE` | `/api/invites/{project_id}/members/{user_id}` | Remove a member (owner only) |
+| `POST` | `/api/data-validation/validate-data` | Record structured validation feedback (confirmed/rejected/approximate) |
+| `GET` | `/api/data-validation/validation-stats/{cid}` | Aggregated accuracy stats for a connection |
+| `GET` | `/api/data-validation/benchmarks/{cid}` | List all verified benchmarks for a connection |
+| `POST` | `/api/data-validation/investigate` | Start "Wrong Data" investigation |
+| `GET` | `/api/data-validation/investigate/{id}` | Poll investigation status and progress |
+| `POST` | `/api/data-validation/investigate/{id}/confirm-fix` | Accept or reject investigation fix |
 | `POST` | `/api/visualizations/render` | Render visualization |
 | `POST` | `/api/visualizations/export` | Export data (CSV/JSON/XLSX) |
 | `GET` | `/api/workflows/events` | SSE workflow progress |
@@ -1709,7 +1792,7 @@ src/
 The agent uses SQLite (default) or PostgreSQL (recommended for production) to store its own data:
 
 ```
-users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, created_at
+users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, picture_url, created_at
 projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, default_rule_initialized, indexing_llm_provider, indexing_llm_model, agent_llm_provider, agent_llm_model, sql_llm_provider, sql_llm_model
 connections      — id, project_id, name, db_type, ssh_*, db_*, ssh_exec_mode, ssh_command_template, ssh_pre_commands, is_read_only, is_active
 ssh_keys         — id, user_id (FK→users), name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type
@@ -1727,9 +1810,14 @@ db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total
 agent_learnings  — id, connection_id (FK→connections CASCADE), category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active  [UNIQUE(connection_id, category, subject, lesson_hash)]
 agent_learning_summaries — id, connection_id (FK→connections CASCADE, UNIQUE), total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
 saved_notes      — id, project_id (FK→projects CASCADE), user_id (FK→users CASCADE), connection_id (FK→connections SET NULL), title, comment, sql_query, last_result_json, last_executed_at, created_at, updated_at  [INDEX(project_id), INDEX(user_id)]
+session_notes    — id, connection_id (FK→connections CASCADE), project_id, category (data_observation|column_mapping|business_logic|calculation_note|user_preference|verified_benchmark), subject, note, note_hash, confidence, is_verified, source_session_id, created_at, updated_at  [UNIQUE(connection_id, note_hash), INDEX(connection_id, category)]
+data_validation_feedback — id, connection_id, session_id, message_id, query, metric_description, agent_value, user_expected_value, deviation_pct, verdict (confirmed|rejected|approximate|unknown), rejection_reason, resolution, resolved, created_at  [INDEX(connection_id), INDEX(message_id)]
+data_benchmarks  — id, connection_id (FK→connections CASCADE), metric_key, metric_description, value, value_numeric, unit, confidence, source (agent_derived|user_confirmed|cross_validated), times_confirmed, last_confirmed_at, created_at  [UNIQUE(connection_id, metric_key)]
+data_investigations — id, validation_feedback_id (FK→data_validation_feedback), connection_id, session_id, trigger_message_id, status (active|completed|failed|cancelled), phase, user_complaint_type, user_complaint_detail, user_expected_value, problematic_column, investigation_log_json, original_query, original_result_summary, corrected_query, corrected_result_json, root_cause, root_cause_category, learnings_created_json, notes_created_json, benchmarks_updated_json, created_at, completed_at
+code_db_sync     — ... + required_filters_json, column_value_mappings_json (new columns)
 ```
 
-Managed via **Alembic migrations** (28 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table).
+Managed via **Alembic migrations** (34 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table → ... → add_self_improvement_tables → add_picture_url_to_users).
 
 All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints, saved notes).
 
@@ -1765,7 +1853,7 @@ Copy `backend/.env.example` to `backend/.env` and set:
 |---|---|---|
 | `MASTER_ENCRYPTION_KEY` | **Yes** | Fernet key for encrypting stored credentials. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `JWT_SECRET` | **Yes (prod)** | Secret for signing JWT tokens. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth Client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Enables "Sign in with Google" button. |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth Client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Enables "Sign in with Google" button. No `GOOGLE_CLIENT_SECRET` needed (GIS ID-token flow). |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | Same value as above, set in `frontend/.env.local` for the GIS JavaScript SDK. |
 | `OPENAI_API_KEY` | One of three | OpenAI API key (for GPT-4o, etc.) |
 | `ANTHROPIC_API_KEY` | One of three | Anthropic API key (for Claude) |
@@ -1928,6 +2016,17 @@ make test-frontend    # frontend vitest
 | Note Service | 10 (create, get, list_by_project, update, delete, update_result, filtering, ordering) | — |
 | Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
 | SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
+| DataSanityChecker | 9 (all null, all zero, future dates, percentage sums, benchmark deviations, format warnings) | — |
+| SessionNotesService | 10 (create, invalid category, duplicate, similar merge, context filtering, prompt compilation, verify, deactivate, delete all) | — |
+| DataValidationService | 7 (record basic, record with rejection, get by id/message, unresolved filter, resolve, accuracy stats) | — |
+| BenchmarkService | 6 (normalize key, create new, user confirmed, confirm existing, find, flag stale, get all) | — |
+| FeedbackPipeline | 4 (confirmed → benchmark, approximate → benchmark+note, rejected → learning+note+stale, unknown) | — |
+| InvestigationService | 8 (create basic, create all fields, update phase, append log, record finding, complete, fail, get active) | — |
+| Entity Extractor Enhanced | 7 (query patterns SQL/ORM, constant mappings Python/JS/dict, scope filters Rails/Laravel, serialization roundtrip) | — |
+| Feedback Loop Integration | 3 (rejection creates learning+note, confirmation strengthens benchmark, accuracy stats aggregate) | — |
+| Frontend (ClarificationCard) | 5 (yes_no, multiple_choice, free_text, numeric_range rendering, onSubmit, context display) | — |
+| Frontend (DataValidationCard) | 3 (quick actions, confirmation flow, rejection form) | — |
+| Frontend (VerificationBadge) | 3 (verified, unverified, flagged rendering) | — |
 | KnowledgeAgent | 12 (name, text response, search_knowledge results/empty/below threshold, get_entity_info list/detail/table_map/enums, unknown tool, max iterations, token usage) | — |
 | VizAgent | 15 (name, empty/error results, single value numeric/text, preferred viz bar/pie cap, LLM recommendation/no tool, post-validate pie/line/bar, token usage, truncation, invalid JSON config) | — |
 | MCPSourceAgent | 10 (name, no adapter, no tools, text response, tool call success/multiple/error, max iterations, set_adapter, token usage) | — |

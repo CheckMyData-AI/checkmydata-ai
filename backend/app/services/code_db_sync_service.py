@@ -250,6 +250,62 @@ class CodeDbSyncService:
             await session.flush()
 
     # ------------------------------------------------------------------
+    # Runtime enrichment (from investigation feedback loop)
+    # ------------------------------------------------------------------
+
+    async def add_runtime_enrichment(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        table_name: str,
+        field: str,
+        value: str,
+    ) -> CodeDbSync | None:
+        """Patch a specific sync field without re-running the full pipeline.
+
+        Supported fields: required_filters_json, column_value_mappings_json,
+        query_recommendations, conversion_warnings.
+        """
+        entry = await self.get_table_sync(session, connection_id, table_name)
+        if not entry:
+            return None
+
+        mergeable_json_fields = {"required_filters_json", "column_value_mappings_json"}
+        appendable_text_fields = {"query_recommendations", "conversion_warnings"}
+
+        if field in mergeable_json_fields:
+            existing = {}
+            current_val = getattr(entry, field, None)
+            if current_val:
+                try:
+                    existing = json.loads(current_val)
+                except (json.JSONDecodeError, TypeError):
+                    existing = {}
+            try:
+                new_data = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                new_data = {}
+            if isinstance(existing, dict) and isinstance(new_data, dict):
+                existing.update(new_data)
+            setattr(entry, field, json.dumps(existing))
+        elif field in appendable_text_fields:
+            existing = getattr(entry, field, "") or ""
+            if value not in existing:
+                setattr(entry, field, f"{existing}\n{value}".strip())
+        else:
+            return None
+
+        entry.updated_at = datetime.now(UTC)
+        await session.flush()
+        logger.info(
+            "Runtime enrichment for %s.%s on connection=%s",
+            table_name,
+            field,
+            connection_id[:8],
+        )
+        return entry
+
+    # ------------------------------------------------------------------
     # Formatting for LLM / query agent
     # ------------------------------------------------------------------
 

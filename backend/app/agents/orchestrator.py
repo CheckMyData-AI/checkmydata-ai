@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 MAX_SUB_AGENT_RETRIES = 2
 
 
+class _ClarificationRequestError(Exception):
+    """Internal signal: the orchestrator wants to ask the user a question."""
+
+    def __init__(self, payload_json: str) -> None:
+        self.payload_json = payload_json
+        super().__init__(payload_json)
+
+
 @dataclass
 class AgentResponse:
     """Final response returned to the caller (chat route)."""
@@ -288,6 +296,18 @@ class OrchestratorAgent(BaseAgent):
                 tool_call_log=tool_call_log,
             )
 
+        except _ClarificationRequestError as cr:
+            import json as _json
+
+            payload = _json.loads(cr.payload_json)
+            await self._tracker.end(wf_id, "orchestrator", "clarification", "ask_user")
+            return AgentResponse(
+                answer=payload.get("question", ""),
+                workflow_id=wf_id,
+                response_type="clarification_request",
+                viz_config=payload,
+            )
+
         except Exception as exc:
             logger.exception("Orchestrator error processing question")
             await self._tracker.end(wf_id, "orchestrator", "failed", str(exc))
@@ -322,11 +342,13 @@ class OrchestratorAgent(BaseAgent):
             return text, None
         if tc.name == "query_mcp_source":
             return await self._handle_query_mcp_source(tc, context, wf_id, total_usage)
+        if tc.name == "ask_user":
+            return await self._handle_ask_user(tc, context, wf_id)
         logger.warning("Unknown meta-tool called: %s", tc.name)
         return (
             f"Error: unknown tool '{tc.name}'. Available tools: "
             "query_database, search_codebase, manage_rules, "
-            "query_mcp_source."
+            "query_mcp_source, ask_user."
         ), None
 
     async def _handle_query_database(
@@ -485,6 +507,40 @@ class OrchestratorAgent(BaseAgent):
                 if not deleted:
                     return f"Error: rule with id '{rule_id}' not found."
                 return f"Rule deleted successfully (id: {rule_id})."
+
+    async def _handle_ask_user(
+        self,
+        tc: ToolCall,
+        context: AgentContext,
+        wf_id: str,
+    ) -> tuple[str, None]:
+        """Return a clarification request to the user via AgentResponse.
+
+        The orchestrator loop is interrupted; the caller (chat route) converts
+        the special return into a ``clarification_request`` message.
+        """
+        args = tc.arguments or {}
+        question = args.get("question", "")
+        question_type = args.get("question_type", "free_text")
+        options_raw = args.get("options", "")
+        ask_context = args.get("context", "")
+
+        options: list[str] = []
+        if options_raw:
+            options = [o.strip() for o in options_raw.split(",") if o.strip()]
+
+        import json as _json
+
+        clarification_payload = _json.dumps(
+            {
+                "question": question,
+                "question_type": question_type,
+                "options": options,
+                "context": ask_context,
+            }
+        )
+
+        raise _ClarificationRequestError(clarification_payload)
 
     async def _handle_query_mcp_source(
         self,

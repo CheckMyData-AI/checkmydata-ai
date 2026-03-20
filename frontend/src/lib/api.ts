@@ -173,13 +173,19 @@ export interface ChatResponse {
   error: string | null;
   workflow_id: string | null;
   staleness_warning: string | null;
-  response_type?: "text" | "sql_result" | "knowledge" | "error";
+  response_type?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request";
   assistant_message_id?: string | null;
   user_message_id?: string | null;
   raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
   rag_sources?: Array<{ source_path: string; distance?: number; doc_type?: string }> | null;
   token_usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
   rules_changed?: boolean;
+  clarification_data?: {
+    question: string;
+    question_type: "yes_no" | "multiple_choice" | "numeric_range" | "free_text";
+    options?: string[];
+    context?: string;
+  } | null;
 }
 
 export interface RepoCheckResult {
@@ -350,6 +356,7 @@ export interface AuthUser {
   id: string;
   email: string;
   display_name: string;
+  picture_url?: string | null;
 }
 
 export interface AuthResponse {
@@ -715,6 +722,83 @@ export const api = {
     getActive: () =>
       request<{ workflow_id: string; pipeline: string; started_at: number; extra: Record<string, unknown> }[]>(
         "/tasks/active",
+      ),
+  },
+
+  dataValidation: {
+    validateData: (body: {
+      connection_id: string;
+      session_id: string;
+      message_id: string;
+      query: string;
+      verdict: string;
+      metric_description?: string;
+      agent_value?: string;
+      user_expected_value?: string;
+      deviation_pct?: number;
+      rejection_reason?: string;
+      project_id: string;
+    }) =>
+      request<{
+        ok: boolean;
+        feedback_id: string;
+        verdict: string;
+        learnings_created: string[];
+        notes_created: string[];
+        benchmark_updated: boolean;
+        resolution: string;
+      }>("/data-validation/validate-data", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+
+    getValidationStats: (connectionId: string, projectId: string) =>
+      request<{
+        total: number;
+        confirmed: number;
+        rejected: number;
+        approximate: number;
+        unknown: number;
+        resolved: number;
+        confirmation_rate: number | null;
+      }>(`/data-validation/validation-stats/${connectionId}?project_id=${projectId}`),
+
+    getBenchmarks: (connectionId: string, projectId: string) =>
+      request<Array<{
+        id: string;
+        metric_key: string;
+        metric_description: string;
+        value: string;
+        value_numeric: number | null;
+        unit: string | null;
+        confidence: number;
+        source: string;
+        times_confirmed: number;
+        last_confirmed_at: string | null;
+      }>>(`/data-validation/benchmarks/${connectionId}?project_id=${projectId}`),
+
+    startInvestigation: (body: {
+      project_id: string;
+      connection_id: string;
+      session_id: string;
+      message_id: string;
+      complaint_type: string;
+      complaint_detail?: string;
+      expected_value?: string;
+      problematic_column?: string;
+    }) =>
+      request<{ ok: boolean; investigation_id: string; status: string }>(
+        "/data-validation/investigate",
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+
+    getInvestigation: (investigationId: string) =>
+      request<Record<string, unknown>>(`/data-validation/investigate/${investigationId}`),
+
+    confirmFix: (investigationId: string, body: { accepted: boolean; project_id: string }) =>
+      request<{ ok: boolean; status: string; learnings_created?: string[]; notes_created?: string[] }>(
+        `/data-validation/investigate/${investigationId}/confirm-fix`,
+        { method: "POST", body: JSON.stringify(body) },
       ),
   },
 };

@@ -87,6 +87,38 @@ class ConfigRef:
 
 
 @dataclass
+class QueryPattern:
+    """A WHERE/filter condition found in code for a specific table."""
+
+    table: str
+    column: str
+    operator: str
+    value: str
+    file_path: str
+    snippet: str = ""
+
+
+@dataclass
+class ConstantMapping:
+    """A constant definition that maps to a column value."""
+
+    name: str
+    value: str
+    context: str
+    file_path: str
+
+
+@dataclass
+class ScopeFilter:
+    """A named scope/manager that defines default filters."""
+
+    name: str
+    table: str
+    filter_expression: str
+    file_path: str
+
+
+@dataclass
 class ProjectKnowledge:
     """Aggregate cross-file knowledge about the project's data layer."""
 
@@ -96,6 +128,9 @@ class ProjectKnowledge:
     service_functions: list[dict] = field(default_factory=list)
     config_refs: list[ConfigRef] = field(default_factory=list)
     validation_rules: list[ValidationRule] = field(default_factory=list)
+    query_patterns: list[QueryPattern] = field(default_factory=list)
+    constant_mappings: list[ConstantMapping] = field(default_factory=list)
+    scope_filters: list[ScopeFilter] = field(default_factory=list)
 
     @property
     def dead_tables(self) -> list[str]:
@@ -122,6 +157,12 @@ class ProjectKnowledge:
             knowledge.config_refs.append(ConfigRef(**cref))
         for vr in data.get("validation_rules", []):
             knowledge.validation_rules.append(ValidationRule(**vr))
+        for qp in data.get("query_patterns", []):
+            knowledge.query_patterns.append(QueryPattern(**qp))
+        for cm in data.get("constant_mappings", []):
+            knowledge.constant_mappings.append(ConstantMapping(**cm))
+        for sf in data.get("scope_filters", []):
+            knowledge.scope_filters.append(ScopeFilter(**sf))
         return knowledge
 
 
@@ -355,6 +396,9 @@ def _full_scan(
         _extract_service_functions(rel_path, content, knowledge)
         _extract_config_refs(rel_path, content, knowledge)
         _extract_validation_rules(rel_path, content, knowledge)
+        _extract_query_patterns(rel_path, content, knowledge)
+        _extract_constant_mappings(rel_path, content, knowledge)
+        _extract_scope_filters(rel_path, content, knowledge)
 
     return knowledge
 
@@ -408,6 +452,18 @@ def _incremental_update(
         if vr.file_path not in stale_set:
             knowledge.validation_rules.append(vr)
 
+    for qp in cached.query_patterns:
+        if qp.file_path not in stale_set:
+            knowledge.query_patterns.append(qp)
+
+    for cm in cached.constant_mappings:
+        if cm.file_path not in stale_set:
+            knowledge.constant_mappings.append(cm)
+
+    for sf in cached.scope_filters:
+        if sf.file_path not in stale_set:
+            knowledge.scope_filters.append(sf)
+
     deleted_set = set(deleted_files or [])
     for name in list(knowledge.entities.keys()):
         if knowledge.entities[name].file_path in deleted_set:
@@ -434,6 +490,9 @@ def _incremental_update(
         _extract_service_functions(rel_path, content, knowledge)
         _extract_config_refs(rel_path, content, knowledge)
         _extract_validation_rules(rel_path, content, knowledge)
+        _extract_query_patterns(rel_path, content, knowledge)
+        _extract_constant_mappings(rel_path, content, knowledge)
+        _extract_scope_filters(rel_path, content, knowledge)
 
     return knowledge
 
@@ -824,6 +883,215 @@ def _extract_config_refs(
                 context="Database configuration block detected",
             )
         )
+
+
+SQL_WHERE_FILTER = re.compile(
+    r"""(?:FROM|JOIN)\s+[`"\[]?(\w+)[`"\]]?\s+(?:\w+\s+)?WHERE\s+[`"\[]?(\w+)[`"\]]?\s*(=|!=|<>|>=|<=|>|<|IS(?:\s+NOT)?|IN|LIKE)\s*['"]?([^'")\s,;]+)""",
+    re.IGNORECASE,
+)
+ORM_FILTER_CHAIN = re.compile(
+    r"""\.(?:where|filter|find|filter_by|find_by)\s*\(\s*\{?\s*[`"']?(\w+)[`"']?\s*[:=]\s*['"]?([^'")\s,}]+)""",
+    re.IGNORECASE,
+)
+ORM_EQ_FILTER = re.compile(
+    r"""\.(?:where|filter)\s*\(\s*(\w+)\.(\w+)\s*==\s*['"]?([^'")\s,]+)""",
+    re.IGNORECASE,
+)
+_CONST_SUFFIX = (
+    r"(?:_STATUS|_STATE|_TYPE|_ROLE|_FLAG|_MODE"
+    r"|_ACTIVE|_PROCESSED|_DELETED|_PENDING|_COMPLETED|_FAILED)"
+)
+CONST_ASSIGNMENT = re.compile(
+    r"^[ \t]*(?:const|let|var|export\s+(?:const|let))?\s*"
+    r"([A-Z][A-Z0-9_]*" + _CONST_SUFFIX + r")"
+    r"""\s*[=:]\s*['"]?(\d+|true|false|['"][^'"]+['"])""",
+    re.MULTILINE | re.IGNORECASE,
+)
+CONST_PY_ASSIGNMENT = re.compile(
+    r"^([A-Z][A-Z0-9_]*" + _CONST_SUFFIX + r")"
+    r"""\s*=\s*['"]?(\d+|True|False|['"][^'"]+['"])""",
+    re.MULTILINE,
+)
+CONST_DICT_MAP = re.compile(
+    r"""([A-Z_]+(?:MAP|MAPPING|STATUSES|TYPES|ROLES|STATES|FLAGS))\s*[=:]\s*\{([^}]{5,500})\}""",
+    re.IGNORECASE,
+)
+CONST_DICT_ENTRY = re.compile(
+    r"""['"]?(\w+)['"]?\s*[:=]\s*['"]([^'"]+)['"]""",
+)
+
+DJANGO_SCOPE_MANAGER = re.compile(
+    r"""class\s+(\w+Manager)\b[^{]*?def\s+get_queryset\s*\([^)]*\)[^:]*:([^}]{20,500})""",
+    re.DOTALL,
+)
+DJANGO_SCOPE_FILTER = re.compile(
+    r"""\.filter\s*\(([^)]+)\)""",
+)
+RAILS_SCOPE = re.compile(
+    r"""scope\s+:(\w+)\s*,\s*->\s*(?:\([^)]*\))?\s*\{\s*(.*?)\}""",
+    re.DOTALL,
+)
+LARAVEL_SCOPE = re.compile(
+    r"""public\s+function\s+scope(\w+)\s*\(\s*\$query[^)]*\)[^{]*\{([^}]+)\}""",
+    re.DOTALL,
+)
+
+
+def _extract_query_patterns(
+    rel_path: str,
+    content: str,
+    knowledge: ProjectKnowledge,
+) -> None:
+    """Extract WHERE/filter conditions from SQL and ORM code."""
+    for m in SQL_WHERE_FILTER.finditer(content):
+        knowledge.query_patterns.append(
+            QueryPattern(
+                table=m.group(1),
+                column=m.group(2),
+                operator=m.group(3).strip(),
+                value=m.group(4).strip("'\""),
+                file_path=rel_path,
+                snippet=content[max(0, m.start() - 20) : m.end() + 20].strip(),
+            )
+        )
+
+    for m in ORM_FILTER_CHAIN.finditer(content):
+        table = _infer_table_from_context(content, m.start(), knowledge)
+        knowledge.query_patterns.append(
+            QueryPattern(
+                table=table,
+                column=m.group(1),
+                operator="=",
+                value=m.group(2).strip("'\""),
+                file_path=rel_path,
+                snippet=content[max(0, m.start() - 20) : m.end() + 20].strip(),
+            )
+        )
+
+    for m in ORM_EQ_FILTER.finditer(content):
+        model_name = m.group(1)
+        table = _model_to_table(model_name, knowledge)
+        knowledge.query_patterns.append(
+            QueryPattern(
+                table=table,
+                column=m.group(2),
+                operator="=",
+                value=m.group(3).strip("'\""),
+                file_path=rel_path,
+                snippet=content[max(0, m.start() - 20) : m.end() + 20].strip(),
+            )
+        )
+
+
+def _extract_constant_mappings(
+    rel_path: str,
+    content: str,
+    knowledge: ProjectKnowledge,
+) -> None:
+    """Extract constant definitions that map to column status/flag values."""
+    for m in CONST_ASSIGNMENT.finditer(content):
+        knowledge.constant_mappings.append(
+            ConstantMapping(
+                name=m.group(1),
+                value=m.group(2).strip("'\""),
+                context=content[max(0, m.start() - 10) : m.end() + 30].strip(),
+                file_path=rel_path,
+            )
+        )
+    for m in CONST_PY_ASSIGNMENT.finditer(content):
+        knowledge.constant_mappings.append(
+            ConstantMapping(
+                name=m.group(1),
+                value=m.group(2).strip("'\""),
+                context=content[max(0, m.start() - 10) : m.end() + 30].strip(),
+                file_path=rel_path,
+            )
+        )
+
+    for m in CONST_DICT_MAP.finditer(content):
+        dict_name = m.group(1)
+        body = m.group(2)
+        for entry in CONST_DICT_ENTRY.finditer(body):
+            knowledge.constant_mappings.append(
+                ConstantMapping(
+                    name=f"{dict_name}[{entry.group(1)}]",
+                    value=entry.group(2),
+                    context=f"{dict_name}: {entry.group(1)} = {entry.group(2)}",
+                    file_path=rel_path,
+                )
+            )
+
+
+def _extract_scope_filters(
+    rel_path: str,
+    content: str,
+    knowledge: ProjectKnowledge,
+) -> None:
+    """Extract ORM scopes and named query builders that define default filters."""
+    for m in DJANGO_SCOPE_MANAGER.finditer(content):
+        manager_name = m.group(1)
+        body = m.group(2)
+        filters = DJANGO_SCOPE_FILTER.findall(body)
+        if filters:
+            table = _infer_table_from_context(content, m.start(), knowledge)
+            knowledge.scope_filters.append(
+                ScopeFilter(
+                    name=manager_name,
+                    table=table,
+                    filter_expression="; ".join(f.strip() for f in filters),
+                    file_path=rel_path,
+                )
+            )
+
+    for m in RAILS_SCOPE.finditer(content):
+        scope_name = m.group(1)
+        body = m.group(2).strip()
+        table = _infer_table_from_context(content, m.start(), knowledge)
+        knowledge.scope_filters.append(
+            ScopeFilter(
+                name=scope_name,
+                table=table,
+                filter_expression=body[:300],
+                file_path=rel_path,
+            )
+        )
+
+    for m in LARAVEL_SCOPE.finditer(content):
+        scope_name = m.group(1)
+        body = m.group(2).strip()
+        table = _infer_table_from_context(content, m.start(), knowledge)
+        knowledge.scope_filters.append(
+            ScopeFilter(
+                name=scope_name,
+                table=table,
+                filter_expression=body[:300],
+                file_path=rel_path,
+            )
+        )
+
+
+def _infer_table_from_context(
+    content: str,
+    position: int,
+    knowledge: ProjectKnowledge,
+) -> str:
+    """Best-effort: look backwards for a model/table name near the match position."""
+    window = content[max(0, position - 500) : position]
+    for entity in knowledge.entities.values():
+        if entity.name in window:
+            return entity.table_name or entity.name
+    table_m = SQLALCHEMY_TABLE.search(window)
+    if table_m:
+        return table_m.group(1)
+    return "unknown"
+
+
+def _model_to_table(model_name: str, knowledge: ProjectKnowledge) -> str:
+    """Convert model name to table name using knowledge or heuristic."""
+    entity = knowledge.entities.get(model_name)
+    if entity and entity.table_name:
+        return entity.table_name
+    return _model_name_to_table(model_name)
 
 
 def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:

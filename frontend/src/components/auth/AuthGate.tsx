@@ -24,22 +24,6 @@ function getCookie(name: string): string | undefined {
     ?.split("=")[1];
 }
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: Record<string, unknown>) => void;
-          renderButton: (
-            el: HTMLElement,
-            config: Record<string, unknown>,
-          ) => void;
-        };
-      };
-    };
-  }
-}
-
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, restore, login, register, googleLogin, isLoading, error } =
     useAuthStore();

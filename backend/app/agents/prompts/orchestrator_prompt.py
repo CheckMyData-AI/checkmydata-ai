@@ -25,7 +25,7 @@ def build_orchestrator_system_prompt(
         sections.append(f"Current date/time: {current_datetime}")
 
     sections.append("")
-    sections.append("You coordinate specialised sub-agents to answer user questions.")
+    sections.append("You coordinate specialized sub-agents to answer user questions.")
 
     sections.append("")
     sections.append("AVAILABLE CAPABILITIES:")
@@ -80,7 +80,7 @@ def build_orchestrator_system_prompt(
         "already in the conversation — do NOT re-run the same query."
     )
     n += 1
-    sections.append(f"{n}. Always explain your reasoning and summarise results clearly.")
+    sections.append(f"{n}. Always explain your reasoning and summarize results clearly.")
     n += 1
     if has_connection:
         sections.append(
@@ -97,6 +97,26 @@ def build_orchestrator_system_prompt(
             '(e.g., "show as pie chart", "make it a bar chart"), '
             "call `query_database` with the original question again — "
             "the system will re-execute and apply the requested chart type."
+        )
+
+        sections.append("")
+        sections.append(
+            "DATA VERIFICATION PROTOCOL:\n"
+            "1. When data is raw/unverified (no DB index or first-time queries), "
+            "after presenting results, ask the user: 'Do these numbers align "
+            "with what you expect? This helps me calibrate my understanding.'\n"
+            "2. If results contain financial figures, always mention the unit "
+            "(cents vs dollars) and ask for confirmation when uncertain.\n"
+            "3. If the sanity checker flags anomalies, proactively explain the "
+            "concern and ask the user to verify.\n"
+            "4. When the user says numbers 'don't match' or 'seem off':\n"
+            "   a. Ask what they expected\n"
+            "   b. Investigate the discrepancy (check column formats, joins, filters)\n"
+            "   c. Record the finding as a session note and learning\n"
+            "5. Track verification status: first query on a new metric = 'unverified', "
+            "user-confirmed = 'verified', user-rejected = 'investigate'.\n"
+            "6. Use `ask_user` to ask structured verification questions "
+            "when you need to confirm data accuracy or clarify ambiguous requests."
         )
 
     return "\n".join(sections)

@@ -107,6 +107,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       clearTimeout(refreshTimer);
       refreshTimer = null;
     }
+    if (typeof window !== "undefined" && window.google?.accounts?.id) {
+      window.google.accounts.id.disableAutoSelect();
+    }
     localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_user");
     localStorage.removeItem("active_project_id");

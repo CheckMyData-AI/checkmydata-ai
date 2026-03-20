@@ -14,6 +14,7 @@ from app.api.routes import (
     auth,
     chat,
     connections,
+    data_validation,
     invites,
     metrics,
     models,
@@ -164,6 +165,7 @@ app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(metrics.router, prefix="/api", tags=["metrics"])
+app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
 
 
 async def _cleanup_stale_checkpoints() -> None:

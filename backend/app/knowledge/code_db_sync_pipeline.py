@@ -237,6 +237,8 @@ class CodeDbSyncPipeline:
                             "business_logic_notes": analysis.business_logic_notes,
                             "conversion_warnings": analysis.conversion_warnings,
                             "query_recommendations": analysis.query_recommendations,
+                            "required_filters_json": analysis.required_filters_json,
+                            "column_value_mappings_json": analysis.column_value_mappings_json,
                             "sync_status": analysis.sync_status,
                             "confidence_score": analysis.confidence_score,
                         }
@@ -530,6 +532,42 @@ class CodeDbSyncPipeline:
             parts.append("Validation rules:")
             for r in relevant_rules[:5]:
                 parts.append(f"  [{r.rule_type}] {r.expression[:100]}")
+
+        relevant_patterns = [
+            qp
+            for qp in knowledge.query_patterns
+            if qp.table.lower() == table_lower or table_lower in qp.table.lower()
+        ]
+        if relevant_patterns:
+            parts.append("Query patterns used in code:")
+            seen = set()
+            for qp in relevant_patterns[:10]:
+                key = f"{qp.table}.{qp.column} {qp.operator} {qp.value}"
+                if key not in seen:
+                    seen.add(key)
+                    parts.append(
+                        f"  WHERE {qp.column} {qp.operator} {qp.value} (in {qp.file_path})"
+                    )
+
+        relevant_constants = [
+            cm
+            for cm in knowledge.constant_mappings
+            if table_lower in cm.name.lower() or table_lower in cm.context.lower()
+        ]
+        if relevant_constants:
+            parts.append("Constants/status mappings:")
+            for cm in relevant_constants[:10]:
+                parts.append(f"  {cm.name} = {cm.value} ({cm.file_path})")
+
+        relevant_scopes = [
+            sf
+            for sf in knowledge.scope_filters
+            if sf.table.lower() == table_lower or table_lower in sf.table.lower()
+        ]
+        if relevant_scopes:
+            parts.append("Default scopes/filters:")
+            for sf in relevant_scopes[:5]:
+                parts.append(f"  {sf.name}: {sf.filter_expression[:200]} ({sf.file_path})")
 
         if rules_context:
             table_rules = [

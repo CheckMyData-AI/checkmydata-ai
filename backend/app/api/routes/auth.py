@@ -47,6 +47,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     display_name: str
+    picture_url: str | None = None
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -62,7 +63,12 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
-        user={"id": user.id, "email": user.email, "display_name": user.display_name},
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "picture_url": user.picture_url,
+        },
     )
 
 
@@ -75,7 +81,12 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
-        user={"id": user.id, "email": user.email, "display_name": user.display_name},
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "picture_url": user.picture_url,
+        },
     )
 
 
@@ -110,7 +121,12 @@ async def google_login(
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
-        user={"id": user.id, "email": user.email, "display_name": user.display_name},
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "picture_url": user.picture_url,
+        },
     )
 
 
@@ -146,7 +162,12 @@ async def refresh_token(
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
-        user={"id": user.id, "email": user.email, "display_name": user.display_name},
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "picture_url": user.picture_url,
+        },
     )
 
 
@@ -159,7 +180,12 @@ async def me(
     user = await _auth.get_by_id(db, current_user["user_id"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    return UserResponse(id=user.id, email=user.email, display_name=user.display_name)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        picture_url=user.picture_url,
+    )
 
 
 @router.delete("/account")

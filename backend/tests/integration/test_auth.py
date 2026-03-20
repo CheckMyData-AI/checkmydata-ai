@@ -17,6 +17,7 @@ FAKE_GOOGLE_PAYLOAD = {
     "email": "testuser@example.com",
     "name": "Google User",
     "email_verified": True,
+    "picture": "https://lh3.googleusercontent.com/a/test-photo",
 }
 
 
@@ -239,6 +240,26 @@ class TestGoogleAuth:
             )
         assert resp.status_code == 200
         assert resp.json()["token"]
+
+    async def test_google_login_returns_picture_url(self, client):
+        email = _email()
+        payload = {**FAKE_GOOGLE_PAYLOAD, "email": email, "sub": f"gid-{uuid.uuid4().hex[:8]}"}
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value=payload,
+        ):
+            resp = await client.post("/api/auth/google", json={"credential": "fake"})
+        assert resp.status_code == 200
+        assert resp.json()["user"]["picture_url"] == payload["picture"]
+
+    async def test_google_login_unverified_email_rejected(self, client):
+        """verify_google_token rejects payloads where email_verified is False."""
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            side_effect=ValueError("Google account email is not verified"),
+        ):
+            resp = await client.post("/api/auth/google", json={"credential": "fake"})
+        assert resp.status_code == 401
 
     async def test_google_login_normalizes_email(self, client):
         email_raw = f"  User-{uuid.uuid4().hex[:8]}@EXAMPLE.COM  "

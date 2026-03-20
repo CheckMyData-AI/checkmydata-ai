@@ -19,11 +19,18 @@ interface ChatMessage {
   error?: string | null;
   metadataJson?: string | null;
   stalenessWarning?: string | null;
-  responseType?: "text" | "sql_result" | "knowledge" | "error";
+  responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request";
   userRating?: number | null;
   toolCallsJson?: string | null;
   rawResult?: RawResult | null;
   timestamp: number;
+  clarificationData?: {
+    question: string;
+    question_type: "yes_no" | "multiple_choice" | "numeric_range" | "free_text";
+    options?: string[];
+    context?: string;
+  } | null;
+  verificationStatus?: "verified" | "unverified" | "flagged" | null;
 }
 
 interface ToolCallEvent {

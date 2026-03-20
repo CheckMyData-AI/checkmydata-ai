@@ -136,6 +136,8 @@ export function ChatPanel() {
             metadataJson: JSON.stringify(metadataObj),
             rawResult: rawResult ?? undefined,
             timestamp: Date.now(),
+            clarificationData: result.clarification_data ?? undefined,
+            verificationStatus: result.response_type === "sql_result" ? "unverified" : undefined,
           });
 
           if (result.rules_changed) {
@@ -284,6 +286,8 @@ export function ChatPanel() {
               message={msg}
               metadataJson={msg.metadataJson}
               onRetry={prevUserMsg ? () => handleSend(prevUserMsg.content) : undefined}
+              onSendMessage={handleSend}
+              sessionId={activeSession?.id ?? undefined}
             />
           );
         })}

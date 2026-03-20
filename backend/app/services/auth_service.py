@@ -98,6 +98,10 @@ class AuthService:
             google_requests.Request(),
             settings.google_client_id,
         )
+
+        if not payload.get("email_verified", False):
+            raise ValueError("Google account email is not verified")
+
         return payload
 
     async def find_or_create_google_user(
@@ -115,11 +119,16 @@ class AuthService:
         google_id = google_payload["sub"]
         email = google_payload["email"].lower().strip()
         name = google_payload.get("name", "") or email.split("@")[0]
+        picture = google_payload.get("picture")
 
         gid_result = await session.execute(select(User).where(User.google_id == google_id))
         user = gid_result.scalar_one_or_none()
 
         if user:
+            if picture and user.picture_url != picture:
+                user.picture_url = picture
+                await session.commit()
+                await session.refresh(user)
             logger.info("User logged in: %s (provider=google)", email)
             return user
 
@@ -129,6 +138,7 @@ class AuthService:
         if user:
             user.google_id = google_id
             user.auth_provider = "google"
+            user.picture_url = picture
             await session.commit()
             await session.refresh(user)
             logger.info("Google account linked for existing user: %s", email)
@@ -139,6 +149,7 @@ class AuthService:
             display_name=name,
             auth_provider="google",
             google_id=google_id,
+            picture_url=picture,
             password_hash=None,
         )
         session.add(user)

@@ -200,6 +200,77 @@ RECORD_LEARNING_TOOL = Tool(
 )
 
 
+READ_NOTES_TOOL = Tool(
+    name="read_notes",
+    description=(
+        "Read agent session notes (working memory) for this database. "
+        "Returns persistent observations about data patterns, column mappings, "
+        "business logic, and calculation notes collected from previous sessions. "
+        "Use to recall what was learned about the data before writing queries."
+    ),
+    parameters=[
+        ToolParameter(
+            name="table_names",
+            type="string",
+            description=(
+                "Comma-separated table names to filter notes by. "
+                "If omitted, returns all notes for this connection."
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="category",
+            type="string",
+            description="Filter by note category",
+            enum=[
+                "data_observation",
+                "column_mapping",
+                "business_logic",
+                "calculation_note",
+                "user_preference",
+                "verified_benchmark",
+            ],
+            required=False,
+        ),
+    ],
+)
+
+WRITE_NOTE_TOOL = Tool(
+    name="write_note",
+    description=(
+        "Record an observation about the data as a persistent session note. "
+        "Use when you discover something about the database that should be "
+        "remembered for future queries — e.g., column value meanings, "
+        "required filters, business logic rules, or calculation conventions."
+    ),
+    parameters=[
+        ToolParameter(
+            name="category",
+            type="string",
+            description="Type of observation",
+            enum=[
+                "data_observation",
+                "column_mapping",
+                "business_logic",
+                "calculation_note",
+                "user_preference",
+                "verified_benchmark",
+            ],
+        ),
+        ToolParameter(
+            name="subject",
+            type="string",
+            description="Table or metric this note is about",
+        ),
+        ToolParameter(
+            name="note",
+            type="string",
+            description="Clear, actionable observation text",
+        ),
+    ],
+)
+
+
 def get_sql_agent_tools(
     *,
     has_db_index: bool = False,
@@ -215,6 +286,8 @@ def get_sql_agent_tools(
     tools.append(GET_CUSTOM_RULES_TOOL)
     tools.append(EXECUTE_QUERY_TOOL)
     tools.append(RECORD_LEARNING_TOOL)
+    tools.append(READ_NOTES_TOOL)
+    tools.append(WRITE_NOTE_TOOL)
     if has_learnings:
         tools.append(GET_AGENT_LEARNINGS_TOOL)
     if has_code_db_sync:
