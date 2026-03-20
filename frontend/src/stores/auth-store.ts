@@ -14,7 +14,7 @@ interface AuthState {
   register: (email: string, password: string, displayName?: string) => Promise<void>;
   googleLogin: (credential: string, nonce?: string, csrfToken?: string) => Promise<void>;
   logout: () => void;
-  restore: () => void;
+  restore: () => Promise<void>;
 }
 
 function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; user: AuthUser }) {
@@ -23,11 +23,17 @@ function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; u
   set({ user: res.user, token: res.token, isLoading: false });
 }
 
+function base64UrlDecode(str: string): string {
+  let s = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return atob(s);
+}
+
 function getTokenExpMs(token: string): number | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const payload = JSON.parse(atob(parts[1]));
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
     return payload.exp ? payload.exp * 1000 : null;
   } catch {
     return null;
@@ -118,7 +124,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: null, token: null });
   },
 
-  restore: () => {
+  restore: async () => {
     if (typeof window === "undefined") return;
     const token = localStorage.getItem("auth_token");
     const userStr = localStorage.getItem("auth_user");
@@ -133,14 +139,15 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ user: JSON.parse(userStr), token });
         scheduleRefresh(set);
 
-        api.auth.me().then((fresh) => {
+        try {
+          const fresh = await api.auth.me();
           localStorage.setItem("auth_user", JSON.stringify(fresh));
           set({ user: fresh });
-        }).catch(() => {
+        } catch {
           localStorage.removeItem("auth_token");
           localStorage.removeItem("auth_user");
           set({ user: null, token: null });
-        });
+        }
       } catch {
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");

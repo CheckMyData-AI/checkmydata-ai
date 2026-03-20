@@ -2,19 +2,84 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
+import openai
 from openai import AsyncOpenAI
 
 from app.config import settings
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.errors import (
+    LLMAuthError,
+    LLMConnectionError,
+    LLMContentFilterError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMTokenLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4o"
 
 
+def _classify_openai_error(exc: Exception) -> Exception:
+    """Map openai SDK exceptions to the unified LLM error hierarchy."""
+    if isinstance(exc, openai.RateLimitError):
+        retry_after = None
+        if hasattr(exc, "response") and exc.response is not None:
+            raw = exc.response.headers.get("retry-after")
+            if raw:
+                try:
+                    retry_after = float(raw)
+                except (ValueError, TypeError):
+                    pass
+        return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)
+
+    if isinstance(exc, openai.AuthenticationError):
+        return LLMAuthError(str(exc), cause=exc)
+
+    if isinstance(exc, openai.BadRequestError):
+        msg = str(exc).lower()
+        if "content_policy" in msg or "content management" in msg or "content filter" in msg:
+            return LLMContentFilterError(str(exc), cause=exc)
+        if "maximum context length" in msg or "max tokens" in msg or "token" in msg:
+            return LLMTokenLimitError(str(exc), cause=exc)
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, openai.APITimeoutError):
+        return LLMTimeoutError(str(exc), cause=exc)
+
+    if isinstance(exc, openai.APIConnectionError):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    if isinstance(exc, openai.InternalServerError):
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, openai.APIStatusError):
+        status = getattr(exc, "status_code", 0)
+        if status == 429:
+            return LLMRateLimitError(str(exc), cause=exc)
+        if status in (401, 403):
+            return LLMAuthError(str(exc), cause=exc)
+        if 500 <= status < 600:
+            return LLMServerError(str(exc), cause=exc)
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    return exc
+
+
+_REQUEST_TIMEOUT = 90.0
+
+
 class OpenAIAdapter(BaseLLMProvider):
     def __init__(self):
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            timeout=_REQUEST_TIMEOUT,
+        )
 
     @property
     def provider_name(self) -> str:
@@ -60,7 +125,11 @@ class OpenAIAdapter(BaseLLMProvider):
         if tools:
             kwargs["tools"] = self._tools_to_schema(tools)
 
-        response = await self._client.chat.completions.create(**kwargs)
+        try:
+            response = await self._client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise _classify_openai_error(exc) from exc
+
         choice = response.choices[0]
 
         tool_calls: list[ToolCall] = []
@@ -108,7 +177,11 @@ class OpenAIAdapter(BaseLLMProvider):
         if tools:
             kwargs["tools"] = self._tools_to_schema(tools)
 
-        response = await self._client.chat.completions.create(**kwargs)
+        try:
+            response = await self._client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise _classify_openai_error(exc) from exc
+
         async for chunk in response:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content

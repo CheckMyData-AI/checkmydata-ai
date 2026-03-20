@@ -27,7 +27,7 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · data-validation │   │
-│  │  health                                                       │   │
+│  │  usage · health                                               │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -86,7 +86,9 @@ When you first open the app, you see the **AuthGate** — a login/registration f
 - JWT token is stored in `localStorage`, so you stay logged in across page refreshes
 - Tokens include `iat` (issued-at) timestamps and are automatically refreshed before expiry (30 minutes before)
 - On page load, the session is validated server-side via `GET /api/auth/me`
-- Your email appears in the sidebar footer; click the **settings icon** to access account options (change password, sign out, delete account)
+- Your email appears in the sidebar footer; click the **settings icon** to access account options (change password, sign out, delete account). The "Change Password" option is hidden for Google-only users since they have no local password
+- Auth responses include `auth_provider` (`"email"` or `"google"`) so the frontend can adapt the UI accordingly
+- Pending invite responses include `project_name` so users can distinguish which project each invite is for
 
 **Google OAuth**: If you register with email/password first and later sign in with Google using the same email, your accounts are automatically linked. Google Sign In uses nonce-based replay protection and CSRF double-submit cookies.
 
@@ -367,6 +369,26 @@ The Code-DB Sync pipeline now extracts additional intelligence from the codebase
 
 These are stored in `code_db_sync.required_filters_json` and `code_db_sync.column_value_mappings_json`, and injected into the SQL agent's system prompt as critical warnings.
 
+**Project Knowledge Overview:**
+
+A unified "Agent Briefing" document (`ProjectOverviewService`) that synthesizes all knowledge sources into a single, compact markdown summary (~500–1000 tokens). Automatically regenerated after DB indexing, Code-DB sync, repo indexing, and custom rule changes. Contents:
+- **Database Structure** — table count, key tables with row counts, DISTINCT values for categorical columns
+- **Data Conventions** — from Code-DB sync: required filters, column value mappings, conversion warnings
+- **Custom Rules** — rule names with one-line descriptions
+- **Agent Learnings** — counts by category, top high-confidence lessons
+- **Session Notes & Benchmarks** — verified metric values, note category counts
+- **Repository Profile** — language, frameworks, ORMs, key directories
+
+Stored in `project_cache.overview_text` and injected into the orchestrator's system prompt for better routing decisions. Also available to the SQL agent via `get_db_index(scope="project_overview")`.
+
+**Expanded DISTINCT value collection:**
+
+During DB indexing, DISTINCT values are now collected more broadly:
+- **Name heuristics** — 40+ pattern names (`status`, `type`, `region`, `locale`, `direction`, `protocol`, etc.) plus prefixes (`is_`, `has_`, `can_`, `allow_`) and suffixes (`_flag`, `_bool`, `_yn`, `_code`)
+- **Type-based** — `tinyint`, `smallint`, `int2` types are always collected (likely hold flags/status codes)
+- **Sample-data-driven** — Columns with <= 3 distinct values in sample rows (catches unlabeled flag columns like `processed: 0, 1`)
+- DISTINCT values are included in `table_index_to_detail` output for the SQL agent
+
 **Frontend components:** `ClarificationCard`, `DataValidationCard`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`)
 
 **API endpoints** (prefix `/api/data-validation/`):
@@ -485,6 +507,9 @@ Your question
 │   VizAgent: rule-based or LLM chart type selection
 │     Supports `group_by` pivoting for multi-series charts (e.g. revenue by source over time)
 │     Config keys are normalised so both LLM-style (x/y) and canonical (labels_column/data_columns) work
+│     Auto-detects column types (numeric/temporal/categorical) and generates proper viz_config
+│     Case-insensitive column matching with fallback to auto-detection when LLM config is wrong
+│     NULL values in chart data are replaced with 0 (bar/line/pie) or skipped (scatter)
 │   ↓
 │   [Validation Loop] — Pre-validate → Safety check → EXPLAIN → Execute
 │   ↓  (if error: Classify → Enrich → Repair → retry, up to 3 attempts)
@@ -510,7 +535,7 @@ Your question
      - **Code Context** — which RAG documents were used (with similarity scores)
      - **Attempt History** — full retry details if validation loop triggered
      - **Token Usage** — prompt, completion, and total tokens consumed
-   - A **table or chart** with the data, plus a **Visual / Text toggle** to switch between the rendered visualization and the plain-text answer
+   - A **table or chart** with the data, plus a **Visual / Text toggle** to switch between the rendered visualization and a DataTable showing raw query results
    - A **Viz Type Toolbar** on SQL result messages (when raw data is available) — switch between Table, Bar, Line, Pie, and Scatter views without re-querying the database. The toolbar calls `/api/visualizations/render` with the stored raw data to produce a new chart type on the fly.
    - **Export buttons** to download as CSV, JSON, or XLSX
 5. **Session titles** are auto-generated by the LLM after the first response
@@ -749,7 +774,24 @@ The LLM itself decides which tool to call based on the user's question — there
 
 **Sub-agent retry logic:**
 
-`_handle_query_database` retries the SQLAgent up to `MAX_SUB_AGENT_RETRIES` (1 extra attempt) when the `AgentResultValidator` reports failures. `AgentRetryableError` exceptions also trigger retries. `AgentFatalError` and `AgentError` abort immediately.
+All three sub-agent handlers (`_handle_query_database`, `_handle_search_codebase`, `_handle_query_mcp_source`) retry up to `MAX_SUB_AGENT_RETRIES` (1 extra attempt) on transient failures. `AgentRetryableError` and retryable `LLMError` subclasses trigger retries with backoff. `AgentFatalError` and non-retryable LLM errors (auth, token limit) abort immediately.
+
+**LLM error handling architecture (`llm/errors.py`):**
+
+Provider-specific exceptions (openai, anthropic, httpx) are caught in each adapter and re-raised as a unified error hierarchy:
+
+| Error class | Retryable | Trigger |
+|---|---|---|
+| `LLMRateLimitError` | Yes (5s backoff) | 429 from any provider |
+| `LLMServerError` | Yes (2s backoff) | 5xx from any provider |
+| `LLMTimeoutError` | Yes (2s backoff) | Request timeout |
+| `LLMConnectionError` | Yes (2s backoff) | Network failure |
+| `LLMAuthError` | No | 401/403, bad API key |
+| `LLMTokenLimitError` | No | Context/output token limit exceeded |
+| `LLMContentFilterError` | No | Content policy refusal |
+| `LLMAllProvidersFailedError` | Yes (3s) | Every provider in the fallback chain failed |
+
+The `LLMRouter` retries each provider up to 3 times with exponential backoff before falling through to the next provider. Non-retryable errors (auth, token limit) skip retries and immediately try the next provider. The `OrchestratorAgent` adds a second retry layer around the router call itself, and maps all LLM errors to user-friendly messages (e.g., "The AI service is temporarily overloaded" instead of raw stack traces).
 
 **Resource management & resilience:**
 
@@ -757,6 +799,9 @@ The LLM itself decides which tool to call based on the user's question — there
 - **External call retry** — `ConnectionService.test_connection()` retries `connector.connect()` up to 3 times with exponential backoff for transient errors (`TimeoutError`, `ConnectionError`, `OSError`). The MCP pipeline's `adapter.connect()` uses the same retry pattern.
 - **Pipeline failure cleanup** — `IndexingPipelineRunner.run()` catches exceptions from the entire step pipeline, marks the checkpoint as `pipeline_failed`, emits a tracker failure event, and returns a result with `status="failed"` instead of propagating the exception.
 - **Streaming fallback safety** — `LLMRouter.stream()` tracks whether any tokens have been yielded. If the provider stream fails *after* tokens were sent, it raises immediately (to avoid duplicate/corrupted output). Fallback to the next provider only happens if the failure occurs before any tokens are yielded.
+- **Streaming timeout** — The SSE endpoint (`/ask/stream`) wraps the agent task in `asyncio.wait_for()` with a 120-second timeout. On timeout, a structured error event is sent and the stream closes gracefully.
+- **Structured SSE error events** — Error events sent via SSE include `error_type`, `is_retryable`, and `user_message` fields so the frontend can display appropriate UI (retry buttons for transient errors, "contact support" for permanent ones).
+- **Error toast duration** — Error toasts persist for 10 seconds (vs. 4 seconds for success/info) to ensure users can read the message.
 
 **Result validation:**
 
@@ -774,7 +819,7 @@ Every sub-agent result passes through `AgentResultValidator` before being return
 | `backend/app/agents/orchestrator.py` | `OrchestratorAgent.run()` (the main loop), `_handle_meta_tool()` dispatch, `_has_mcp_sources()` check |
 | `backend/app/agents/tools/orchestrator_tools.py` | `get_orchestrator_tools()` — conditional tool list, tool definitions (`QUERY_DATABASE_TOOL`, `SEARCH_CODEBASE_TOOL`, `MANAGE_RULES_TOOL`, `QUERY_MCP_SOURCE_TOOL`, `ASK_USER_TOOL`) |
 | `backend/app/agents/sql_agent.py` | `SQLAgent` — schema introspection, SQL generation, validation loop, execution, learning extraction, sanity checks, session notes |
-| `backend/app/agents/viz_agent.py` | `VizAgent` — rule-based + LLM chart type selection |
+| `backend/app/agents/viz_agent.py` | `VizAgent` — rule-based + LLM chart type selection, auto-generates viz_config, validates column references |
 | `backend/app/agents/knowledge_agent.py` | `KnowledgeAgent` — RAG search, entity info, codebase Q&A |
 | `backend/app/agents/mcp_source_agent.py` | `MCPSourceAgent` — LLM loop for external MCP tool calls |
 | `backend/app/agents/investigation_agent.py` | `InvestigationAgent` — diagnoses data accuracy issues with diagnostic queries |
@@ -1452,7 +1497,7 @@ app/
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)
-    ├── chart.py        ← Chart.js config generation (bar/line/pie)
+    ├── chart.py        ← Chart.js config generation (bar/line/pie/scatter) with auto-detection and error boundary
     ├── table.py        ← Tabular data formatting
     └── export.py       ← CSV, JSON, XLSX export
 ```
@@ -1770,13 +1815,16 @@ src/
 | `GET` | `/api/tasks/active` | List currently running background tasks |
 | `GET` | `/api/health` | Basic health check |
 | `GET` | `/api/health/modules` | Per-module health status |
+| `POST` | `/api/backup/trigger` | Trigger a manual backup |
+| `GET` | `/api/backup/list` | List available backups from disk |
+| `GET` | `/api/backup/history` | List backup records from database |
 
 ### Security Model
 
 | Concern | Implementation |
 |---|---|
 | **Authentication** | JWT tokens (HS256), 24h expiry with automatic proactive refresh, bcrypt password hashing. Google OAuth via GIS ID token verification. Password change and account deletion endpoints. All routes require auth (except `/auth/*` and `/health`). |
-| **Authorization** | Role-based access control per project: owner, editor, viewer. Membership checked via `MembershipService.require_role()`. |
+| **Authorization** | Role-based access control per project: owner, editor, viewer. Membership checked via `MembershipService.require_role()`. See permission matrix below. |
 | **Project sharing** | Email-based invite system. Invites auto-accept on registration. Session isolation per user. |
 | **Encryption at rest** | Fernet (AES-128-CBC + HMAC-SHA256) for SSH keys, passwords, connection strings |
 | **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing |
@@ -1786,6 +1834,25 @@ src/
 | **Shell injection prevention** | SSH exec template variables (`db_name`, `db_user`, `db_host`, `db_password`) are shell-escaped via single-quoting before substitution. Queries are piped via stdin. |
 | **Invite scoping** | `revoke_invite()` enforces `project_id` to prevent cross-project invite revocation by guessing IDs. |
 | **WebSocket auth** | JWT token passed as query parameter, validated before connection acceptance. Project membership verified before granting access. |
+
+**Permission Matrix (Role-Based Access Control):**
+
+| Operation | Owner | Editor | Viewer |
+|---|---|---|---|
+| Delete project, connection, repository | Yes | No | No |
+| Delete DB index, sync data, all learnings, single learning | Yes | No | No |
+| Delete custom rules | Yes | No | No |
+| Manage invites (create, revoke), remove members | Yes | No | No |
+| Trigger backup, view backups | Yes | No | No |
+| Create/edit custom rules | Yes | Yes | No |
+| Trigger DB indexing, repo indexing, code-DB sync | Yes | Yes | No |
+| Create chat sessions, send messages | Yes | Yes | Yes |
+| Save/delete own notes | Yes | Yes | Yes |
+| Train agent (create learnings via feedback) | Yes | Yes | No |
+| View all project data | Yes | Yes | Yes |
+| Delete own SSH keys | Own keys only | Own keys only | Own keys only |
+
+The frontend enforces this via the `usePermission()` hook which reads the active project's `userRole` from the app store. Delete buttons are hidden for non-owner users.
 
 ### Database Schema (Internal)
 
@@ -1804,7 +1871,7 @@ custom_rules     — id, project_id, name, content, format, is_default, created_
 knowledge_docs   — id, project_id, doc_type, source_path, content, commit_sha, updated_at
 commit_index     — id, project_id, commit_sha, branch, commit_message, indexed_files, created_at
 rag_feedback     — id, project_id, chunk_id, source_path, doc_type, distance, query_succeeded, commit_sha, created_at
-project_cache    — id, project_id, knowledge_json, profile_json, created_at, updated_at
+project_cache    — id, project_id, knowledge_json, profile_json, overview_text, overview_generated_at, created_at, updated_at
 db_index         — id, connection_id (FK→connections CASCADE), table_name, table_schema, column_count, row_count, sample_data_json, ordering_column, latest_record_at, is_active, relevance_score, business_description, data_patterns, column_notes_json, query_hints, code_match_status, code_match_details, indexed_at  [UNIQUE(connection_id, table_name)]
 db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total_tables, active_tables, empty_tables, orphan_tables, phantom_tables, summary_text, recommendations, indexed_at
 agent_learnings  — id, connection_id (FK→connections CASCADE), category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active  [UNIQUE(connection_id, category, subject, lesson_hash)]
@@ -1815,9 +1882,10 @@ data_validation_feedback — id, connection_id, session_id, message_id, query, m
 data_benchmarks  — id, connection_id (FK→connections CASCADE), metric_key, metric_description, value, value_numeric, unit, confidence, source (agent_derived|user_confirmed|cross_validated), times_confirmed, last_confirmed_at, created_at  [UNIQUE(connection_id, metric_key)]
 data_investigations — id, validation_feedback_id (FK→data_validation_feedback), connection_id, session_id, trigger_message_id, status (active|completed|failed|cancelled), phase, user_complaint_type, user_complaint_detail, user_expected_value, problematic_column, investigation_log_json, original_query, original_result_summary, corrected_query, corrected_result_json, root_cause, root_cause_category, learnings_created_json, notes_created_json, benchmarks_updated_json, created_at, completed_at
 code_db_sync     — ... + required_filters_json, column_value_mappings_json (new columns)
+backup_records   — id, created_at, reason (scheduled|initial_sync|manual), status (success|failed), size_bytes, manifest_json, backup_path, error_message
 ```
 
-Managed via **Alembic migrations** (34 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table → ... → add_self_improvement_tables → add_picture_url_to_users).
+Managed via **Alembic migrations** (36 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table → ... → add_self_improvement_tables → add_picture_url_to_users → add_backup_records_table → add_overview_to_project_cache).
 
 All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints, saved notes).
 
@@ -1975,7 +2043,8 @@ make test-frontend    # frontend vitest
 | MCP Server | 19 (auth: API key/JWT/anonymous, tools: list/query/schema/raw, resources: rules/knowledge/schema, server creation) | — |
 | Custom Rules | 16 (file loading, YAML, context generation, default template, DB rule IDs in context) | 9 (CRUD, access control, default rule auto-creation) |
 | Retry | 5 (success, retry, max attempts, callback) | — |
-| ConversationalAgent / OrchestratorAgent | 8 (text reply, text with connection, knowledge search, max iterations, error handling, token accumulation, workflow_id, tool_call_log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
+| LLMRouter | 14 (primary succeeds, fallback on failure, all-fail raises LLMAllProvidersFailedError, non-retryable stops chain, retries within provider, fallback chain ordering/filtering/default, unknown provider, no keys, close, OpenRouter/OpenAI format messages) | — |
+| ConversationalAgent / OrchestratorAgent | 9 (text reply, text with connection, knowledge search, max iterations, error handling, LLM error friendly message, token accumulation, workflow_id, tool_call_log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
 | ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
@@ -2174,7 +2243,30 @@ GitHub secret required: `HEROKU_API_KEY` — long-lived OAuth token for Heroku C
 
 ## Backup, Restore, and Migration Runbook
 
-### Database Backup
+### Automated Daily Backups
+
+The system includes an automated backup mechanism that runs daily at 00:00 UTC (configurable). It backs up the database (SQLite `.backup` or PostgreSQL `pg_dump`), ChromaDB vectors (local only), and custom rules directory. Backups are stored in `backend/data/backups/{timestamp}/` with a JSON manifest. The retention policy keeps the last 7 daily backups (configurable).
+
+**Configuration (environment variables / `.env`):**
+
+| Setting | Default | Description |
+|---|---|---|
+| `BACKUP_ENABLED` | `true` | Enable/disable automated backups |
+| `BACKUP_HOUR` | `0` | Hour (UTC) to run daily backup |
+| `BACKUP_RETENTION_DAYS` | `7` | Number of backups to retain |
+| `BACKUP_DIR` | `./data/backups` | Backup storage directory |
+
+**API endpoints (authenticated, owner only):**
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/backup/trigger` | Trigger a manual backup |
+| `GET` | `/api/backup/list` | List available backups from disk |
+| `GET` | `/api/backup/history` | List backup records from database |
+
+An initial backup runs automatically on first startup if no backups exist yet.
+
+### Manual Database Backup
 
 **SQLite (development):**
 
@@ -2260,6 +2352,147 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-20 — Token Usage Tracking and Statistics
+
+**Token usage tracking system:**
+
+- New `TokenUsage` database table (`backend/app/models/token_usage.py`) persists per-request token usage: user, project, session, message, provider, model, prompt/completion/total tokens, and estimated cost in USD. Indexed on `(user_id, created_at)` for fast aggregation.
+- Alembic migration `b3c4d5e6f7g8` creates the table with foreign keys to users, projects, and chat_sessions.
+- `UsageService` (`backend/app/services/usage_service.py`) provides `record_usage()` for persistence and `get_period_comparison()` for 30-day aggregation with previous-period comparison and daily breakdown.
+- Usage is automatically recorded after every chat response (both `/ask` and `/ask/stream` endpoints).
+- LLM provider and model are now propagated through the agent pipeline (`LLMResponse.provider`, `AgentResponse.llm_provider/llm_model`) so each request is tagged with the actual provider used.
+- Cost estimation uses cached OpenRouter pricing data (prompt + completion price per token). For direct OpenAI/Anthropic calls, cost is null since their pricing is not tracked.
+
+**Usage API:**
+
+- `GET /api/usage/stats?days=30` returns aggregated token stats for the authenticated user:
+  - `current_period` / `previous_period`: prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, request_count
+  - `change_percent`: percentage change for each metric vs the previous period
+  - `daily_breakdown`: per-day totals for charting
+
+**Enhanced per-message token display:**
+
+- Chat messages now show "X in / Y out" tokens (input/output breakdown) instead of just total.
+- Estimated cost badge shown when available (violet badge, e.g. "$0.0032").
+- Expandable details include provider, model, and cost.
+
+**Usage statistics panel in sidebar:**
+
+- New `UsageStatsPanel` component (`frontend/src/components/usage/UsageStatsPanel.tsx`) with:
+  - 2x2 grid of stat cards (input tokens, output tokens, total tokens, estimated cost)
+  - Period-over-period change badges (green for decrease, amber for increase)
+  - Mini bar chart showing daily token usage over the last 30 days
+  - Request count summary
+- Integrated as a collapsible "Usage" section in the sidebar (collapsed by default).
+
+**Files changed:**
+
+- `backend/app/models/token_usage.py` — new TokenUsage model
+- `backend/app/models/__init__.py` — register model
+- `backend/app/models/base.py` — register model in fallback/init
+- `backend/alembic/env.py` — register model
+- `backend/alembic/versions/b3c4d5e6f7g8_add_token_usage_table.py` — new migration
+- `backend/app/services/usage_service.py` — new service
+- `backend/app/api/routes/usage.py` — new API routes
+- `backend/app/main.py` — register usage router
+- `backend/app/llm/base.py` — add `provider` field to LLMResponse
+- `backend/app/llm/router.py` — stamp provider on LLMResponse
+- `backend/app/agents/orchestrator.py` — add `llm_provider`/`llm_model` to AgentResponse, capture from LLM calls
+- `backend/app/api/routes/chat.py` — record usage, enrich token_usage metadata with provider/model/cost, cost estimation helper
+- `frontend/src/lib/api.ts` — usage types and API client
+- `frontend/src/components/chat/ChatMessage.tsx` — enhanced token display (in/out, cost, provider/model details)
+- `frontend/src/components/usage/UsageStatsPanel.tsx` — new component
+- `frontend/src/components/Sidebar.tsx` — usage section
+
+### 2026-03-20 — Enhanced DISTINCT Values & Project Knowledge Overview
+
+**Broader DISTINCT value collection during DB indexing:**
+
+- Expanded `_is_enum_candidate` heuristic with ~15 additional name patterns (`region`, `locale`, `stage`, `direction`, `protocol`, `variant`, etc.), prefix patterns (`is_`, `has_`, `can_`, `allow_`), suffix patterns (`_code`), and type-based detection (`tinyint`, `smallint`, `int2`).
+- New `_detect_low_cardinality_columns` function: scans sample data for columns with <= 3 distinct values not already caught by name/type heuristics. Catches unlabeled flag columns (e.g., `processed` with values `0, 1`).
+- DISTINCT values are now injected into `table_index_to_detail` output, making them visible to the SQL agent when it examines individual tables.
+
+**Project Knowledge Overview ("Agent Briefing"):**
+
+- New `ProjectOverviewService` (`backend/app/services/project_overview_service.py`): generates a unified markdown overview combining all knowledge sources — DB index (table structure, row counts, DISTINCT values), Code-DB sync (data conventions, required filters, column value mappings, conversion warnings), custom rules, agent learnings (counts by category, top lessons), session notes and benchmarks, and repository profile (language, frameworks, ORMs, key directories).
+- Overview stored in `project_cache.overview_text` with `overview_generated_at` timestamp. New Alembic migration `z3a4b5c6d7e8`.
+- Auto-regenerated after: DB indexing completion, Code-DB sync completion, repo indexing completion, and custom rule create/update/delete.
+- Injected into the orchestrator's system prompt (`PROJECT KNOWLEDGE OVERVIEW` section) so it can make better routing decisions.
+- Available to the SQL agent via `get_db_index` with `scope="project_overview"`.
+
+**Files changed:**
+
+- `backend/app/knowledge/db_index_pipeline.py` — expanded patterns, type detection, low-cardinality detection
+- `backend/app/services/db_index_service.py` — DISTINCT values in `table_index_to_detail`
+- `backend/app/services/project_overview_service.py` — new
+- `backend/app/models/project_cache.py` — `overview_text`, `overview_generated_at`
+- `backend/alembic/versions/z3a4b5c6d7e8_add_overview_to_project_cache.py` — new migration
+- `backend/app/api/routes/connections.py` — overview regeneration after DB index and sync
+- `backend/app/api/routes/repos.py` — overview regeneration after repo index
+- `backend/app/api/routes/rules.py` — overview regeneration after rule changes
+- `backend/app/agents/prompts/orchestrator_prompt.py` — `project_overview` parameter
+- `backend/app/agents/orchestrator.py` — loads and injects overview
+- `backend/app/agents/sql_agent.py` — `project_overview` scope support
+- `backend/app/core/tool_executor.py` — `project_overview` scope support
+- `backend/app/agents/tools/sql_tools.py` — updated tool description/enum
+
+**Tests:**
+
+- `backend/tests/unit/test_distinct_expanded.py` — 26 tests for expanded heuristics and low-cardinality detection
+- `backend/tests/unit/test_table_detail_distinct.py` — 5 tests for DISTINCT values in detail output
+- `backend/tests/unit/test_project_overview_service.py` — 14 tests for overview service and prompt integration
+
+### 2026-03-20 — UI, Backup, and Permissions Hardening
+
+**Chat input redesign:**
+
+- Restyled `ChatInput` to be narrower (`max-w-2xl`), centered on screen, with transparent background, softer borders (`border-zinc-700/50`, `rounded-xl`), and an icon-only send button for a cleaner look.
+
+**Automated daily backup system:**
+
+- New `BackupManager` class (`backend/app/core/backup_manager.py`): supports SQLite (`.backup` command) and PostgreSQL (`pg_dump`), ChromaDB directory copy, and custom rules directory copy. Includes retention policy (default 7 days) and JSON manifest per backup.
+- Asyncio-based cron loop in `main.py` runs daily at 00:00 UTC (configurable via `BACKUP_HOUR`). Initial backup runs on first startup if no backups exist.
+- New `BackupRecord` model and Alembic migration (`y2z3a4b5c6d7`) track backup history.
+- API endpoints: `POST /api/backup/trigger`, `GET /api/backup/list`, `GET /api/backup/history`.
+- Config settings: `BACKUP_ENABLED`, `BACKUP_HOUR`, `BACKUP_RETENTION_DAYS`, `BACKUP_DIR`.
+
+**Delete confirmation hardening:**
+
+- Enhanced `ConfirmModal` with `detail` text, `severity` levels (normal/warning/critical), and optional `confirmText` (type-to-confirm) for critical operations.
+- Connection deletion now shows affected data and requires typing "DELETE".
+- Project deletion requires typing the project name to confirm.
+- SSH key deletion warns about lost tunnel access.
+- Learnings "Clear all" requires typing "DELETE".
+- Invite revoke now has a confirmation dialog.
+
+**Permission system hardening:**
+
+- Backend: repository delete changed from `editor` to `owner`; single learning delete changed from `editor` to `owner`; rule create/update changed from `owner` to `editor`.
+- Frontend: new `usePermission()` hook returns `{ role, isOwner, canDelete, canEdit, canManageMembers }`.
+- Delete buttons hidden for non-owner users in `ConnectionSelector`, `RulesManager`, `LearningsPanel`.
+- Create/edit rule buttons hidden for viewers.
+- Full permission matrix documented in Security Model section.
+
+**Files changed:**
+
+- `frontend/src/components/chat/ChatInput.tsx` — restyled
+- `frontend/src/components/ui/ConfirmModal.tsx` — severity, detail, type-to-confirm
+- `frontend/src/hooks/usePermission.ts` — new hook
+- `frontend/src/components/connections/ConnectionSelector.tsx` — permission check, detailed warning
+- `frontend/src/components/rules/RulesManager.tsx` — permission check
+- `frontend/src/components/learnings/LearningsPanel.tsx` — permission check, detailed warning
+- `frontend/src/components/projects/ProjectSelector.tsx` — detailed warning
+- `frontend/src/components/projects/InviteManager.tsx` — revoke confirmation
+- `frontend/src/components/ssh/SshKeyManager.tsx` — detailed warning
+- `backend/app/api/routes/repos.py` — owner-only delete
+- `backend/app/api/routes/connections.py` — owner-only learning delete
+- `backend/app/api/routes/rules.py` — editor create/update
+- `backend/app/core/backup_manager.py` — new
+- `backend/app/api/routes/backup.py` — new
+- `backend/app/models/backup_record.py` — new
+- `backend/app/config.py` — backup settings
+- `backend/app/main.py` — backup cron loop, initial backup
 
 ### 2026-03-19 — Terms of Service & Privacy Policy Pages
 

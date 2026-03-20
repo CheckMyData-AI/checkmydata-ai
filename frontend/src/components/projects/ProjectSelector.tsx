@@ -359,7 +359,14 @@ export function ProjectSelector() {
 
   const handleDelete = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
-    if (!(await confirmAction(`Delete project "${project.name}"?`))) return;
+    if (
+      !(await confirmAction(`Delete project "${project.name}"?`, {
+        severity: "critical",
+        detail:
+          "This will permanently delete ALL connections, chat history, rules, knowledge base, and indexed data for this project.",
+        confirmText: project.name,
+      }))
+    ) return;
     try {
       await api.projects.delete(project.id);
       const wasActive = useAppStore.getState().activeProject?.id === project.id;

@@ -29,6 +29,7 @@ class InviteResponse(BaseModel):
     invited_by: str
     created_at: str | None = None
     accepted_at: str | None = None
+    project_name: str | None = None
 
 
 class MemberResponse(BaseModel):
@@ -153,6 +154,7 @@ async def list_pending_invites(
             invited_by=inv.invited_by,
             created_at=inv.created_at.isoformat() if inv.created_at else None,
             accepted_at=None,
+            project_name=inv.project.name if inv.project else None,
         )
         for inv in invites
     ]

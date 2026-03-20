@@ -9,7 +9,8 @@ import { Icon } from "@/components/ui/Icon";
 type View = "menu" | "password" | "delete";
 
 export function AccountMenu() {
-  const { logout } = useAuthStore();
+  const { logout, user } = useAuthStore();
+  const isGoogleOnly = user?.auth_provider === "google";
   const [view, setView] = useState<View>("menu");
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,13 +44,15 @@ export function AccountMenu() {
     <div ref={containerRef} className="absolute bottom-14 left-3 right-3 bg-surface-1 border border-border-subtle rounded-lg shadow-lg z-50 animate-fade-in">
       {view === "menu" && (
         <div className="py-1">
-          <button
-            onClick={() => setView("password")}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
-          >
-            <Icon name="lock" size={12} />
-            Change Password
-          </button>
+          {!isGoogleOnly && (
+            <button
+              onClick={() => setView("password")}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
+            >
+              <Icon name="lock" size={12} />
+              Change Password
+            </button>
+          )}
           <button
             onClick={logout}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"

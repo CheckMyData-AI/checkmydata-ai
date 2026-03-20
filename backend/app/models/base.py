@@ -79,6 +79,7 @@ def _fallback_create_all() -> None:
         saved_note,
         session_note,
         ssh_key,
+        token_usage,
         user,
     )
 
@@ -123,5 +124,6 @@ async def init_db():
         saved_note,
         session_note,
         ssh_key,
+        token_usage,
         user,
     )

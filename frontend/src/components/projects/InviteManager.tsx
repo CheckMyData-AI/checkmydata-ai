@@ -65,6 +65,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   };
 
   const handleRevoke = async (inviteId: string) => {
+    if (!(await confirmAction("Revoke this invite?"))) return;
     try {
       await api.invites.revoke(projectId, inviteId);
       await refresh();

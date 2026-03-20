@@ -26,20 +26,20 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={onSend} />);
     const textarea = screen.getByRole("textbox");
     await userEvent.type(textarea, "test query");
-    await userEvent.click(screen.getByText("Send"));
+    await userEvent.click(screen.getByLabelText("Send message"));
     expect(onSend).toHaveBeenCalledWith("test query");
   });
 
   it("empty input does not submit", async () => {
     render(<ChatInput onSend={onSend} />);
-    await userEvent.click(screen.getByText("Send"));
+    await userEvent.click(screen.getByLabelText("Send message"));
     expect(onSend).not.toHaveBeenCalled();
   });
 
   it("disabled state disables textarea and button", () => {
     render(<ChatInput onSend={onSend} disabled />);
     expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByText("Send")).toBeDisabled();
+    expect(screen.getByLabelText("Send message")).toBeDisabled();
   });
 
   it("shows custom placeholder text", () => {

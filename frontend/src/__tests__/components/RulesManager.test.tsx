@@ -62,7 +62,7 @@ function makeRule(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAppStore.setState({ activeProject: { id: "p1", name: "Test" } as never, rulesVersion: 0 });
+  useAppStore.setState({ activeProject: { id: "p1", name: "Test" } as never, rulesVersion: 0, userRole: "owner" });
   (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 });
 

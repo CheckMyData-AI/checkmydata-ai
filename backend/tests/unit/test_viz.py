@@ -1,6 +1,15 @@
 from app.api.routes.chat import _build_raw_result
 from app.connectors.base import QueryResult
-from app.viz.chart import generate_bar_chart, generate_line_chart, generate_pie_chart
+from app.viz.chart import (
+    _auto_detect_columns,
+    _normalize_config,
+    _resolve_col_idx,
+    _safe_numeric,
+    generate_bar_chart,
+    generate_line_chart,
+    generate_pie_chart,
+    generate_scatter,
+)
 from app.viz.export import export_csv, export_json
 from app.viz.renderer import render
 from app.viz.table import format_table
@@ -194,6 +203,172 @@ class TestBuildRawResult:
         raw = _build_raw_result(result)
         assert raw is not None
         assert raw["rows"][0][0] == "0001"
+
+
+class TestNormalizeConfig:
+    def test_x_y_aliases(self):
+        cfg = _normalize_config({"x": "month", "y": "revenue"})
+        assert cfg["labels_column"] == "month"
+        assert cfg["data_columns"] == ["revenue"]
+
+    def test_x_axis_y_axis_aliases(self):
+        cfg = _normalize_config({"x_axis": "date", "y_axis": ["sales", "cost"]})
+        assert cfg["labels_column"] == "date"
+        assert cfg["data_columns"] == ["sales", "cost"]
+
+    def test_categories_values_aliases(self):
+        cfg = _normalize_config({"categories": "region", "values": "amount"})
+        assert cfg["labels_column"] == "region"
+        assert cfg["data_columns"] == ["amount"]
+
+    def test_value_alias_for_pie(self):
+        cfg = _normalize_config({"label": "category", "value": "total"})
+        assert cfg["labels_column"] == "category"
+        assert cfg["data_column"] == "total"
+
+    def test_data_column_data_columns_sync(self):
+        cfg = _normalize_config({"labels_column": "x", "data_column": "y"})
+        assert cfg["data_columns"] == ["y"]
+
+    def test_data_columns_string_to_list(self):
+        cfg = _normalize_config({"data_columns": "revenue"})
+        assert cfg["data_columns"] == ["revenue"]
+
+    def test_group_by_aliases(self):
+        cfg = _normalize_config({"split_by": "channel"})
+        assert cfg["group_by"] == "channel"
+
+    def test_dimension_metric_aliases(self):
+        cfg = _normalize_config({"dimension": "month", "metric": "revenue"})
+        assert cfg["labels_column"] == "month"
+        assert cfg["data_column"] == "revenue"
+
+
+class TestAutoDetectColumns:
+    def test_numeric_and_categorical(self):
+        result = QueryResult(
+            columns=["name", "count", "total"],
+            rows=[["Alice", 10, 500], ["Bob", 20, 800]],
+            row_count=2,
+        )
+        labels, data = _auto_detect_columns(result, "bar")
+        assert labels == "name"
+        assert "count" in data
+        assert "total" in data
+
+    def test_line_chart_prefers_temporal(self):
+        from datetime import date
+        result = QueryResult(
+            columns=["date_col", "value"],
+            rows=[[date(2024, 1, 1), 100], [date(2024, 2, 1), 200]],
+            row_count=2,
+        )
+        labels, data = _auto_detect_columns(result, "line")
+        assert labels == "date_col"
+        assert data == ["value"]
+
+    def test_scatter_picks_two_numeric(self):
+        result = QueryResult(
+            columns=["age", "income", "label"],
+            rows=[[25, 50000, "A"], [30, 60000, "B"]],
+            row_count=2,
+        )
+        labels, data = _auto_detect_columns(result, "scatter")
+        assert labels == "age"
+        assert data == ["income"]
+
+
+class TestResolveColIdx:
+    def test_exact_match(self):
+        result = QueryResult(columns=["Name", "Count"], rows=[], row_count=0)
+        assert _resolve_col_idx("Count", result) == 1
+
+    def test_case_insensitive(self):
+        result = QueryResult(columns=["Name", "Count"], rows=[], row_count=0)
+        assert _resolve_col_idx("count", result) == 1
+        assert _resolve_col_idx("NAME", result) == 0
+
+    def test_fallback(self):
+        result = QueryResult(columns=["a", "b"], rows=[], row_count=0)
+        assert _resolve_col_idx("missing", result, -1) == -1
+        assert _resolve_col_idx("missing", result, 0) == 0
+
+
+class TestSafeNumeric:
+    def test_none(self):
+        assert _safe_numeric(None) == 0
+
+    def test_int(self):
+        assert _safe_numeric(42) == 42.0
+
+    def test_float(self):
+        assert _safe_numeric(3.14) == 3.14
+
+    def test_string_numeric(self):
+        assert _safe_numeric("123.5") == 123.5
+
+    def test_string_non_numeric(self):
+        assert _safe_numeric("hello") == 0
+
+    def test_decimal(self):
+        from decimal import Decimal
+        assert _safe_numeric(Decimal("99.9")) == 99.9
+
+
+class TestChartNullHandling:
+    def test_bar_chart_with_nulls(self):
+        result = QueryResult(
+            columns=["name", "count"],
+            rows=[["Alice", 10], ["Bob", None], ["Carol", 30]],
+            row_count=3,
+        )
+        config = {"labels_column": "name", "data_columns": ["count"]}
+        chart = generate_bar_chart(result, config)
+        assert chart["data"]["datasets"][0]["data"] == [10.0, 0.0, 30.0]
+
+    def test_scatter_skips_nulls(self):
+        result = QueryResult(
+            columns=["x", "y"],
+            rows=[[1, 10], [2, None], [3, 30]],
+            row_count=3,
+        )
+        config = {"x_column": "x", "y_column": "y"}
+        chart = generate_scatter(result, config)
+        assert len(chart["data"]["datasets"][0]["data"]) == 2
+
+
+class TestChartMissingColumns:
+    def test_bar_chart_auto_detects_when_columns_missing(self):
+        result = QueryResult(
+            columns=["category", "amount"],
+            rows=[["A", 100], ["B", 200]],
+            row_count=2,
+        )
+        config = {"labels_column": "wrong_col", "data_columns": ["nonexistent"]}
+        chart = generate_bar_chart(result, config)
+        assert len(chart["data"]["labels"]) == 2
+        assert len(chart["data"]["datasets"]) > 0
+
+    def test_pie_chart_auto_detects_when_columns_missing(self):
+        result = QueryResult(
+            columns=["name", "value"],
+            rows=[["X", 10], ["Y", 20]],
+            row_count=2,
+        )
+        config = {"labels_column": "missing", "data_column": "also_missing"}
+        chart = generate_pie_chart(result, config)
+        assert len(chart["data"]["labels"]) == 2
+        assert len(chart["data"]["datasets"][0]["data"]) == 2
+
+    def test_empty_config_auto_detects(self):
+        result = QueryResult(
+            columns=["month", "revenue"],
+            rows=[["Jan", 100], ["Feb", 200]],
+            row_count=2,
+        )
+        chart = generate_bar_chart(result, {})
+        assert chart["data"]["labels"] == ["Jan", "Feb"]
+        assert len(chart["data"]["datasets"]) == 1
 
 
 class TestRenderer:

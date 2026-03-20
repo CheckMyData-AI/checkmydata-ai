@@ -357,6 +357,18 @@ class DbIndexService:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        distinct_raw = getattr(entry, "column_distinct_values_json", "{}")
+        if distinct_raw and distinct_raw != "{}":
+            try:
+                distinct_vals = json.loads(distinct_raw)
+                if distinct_vals:
+                    parts.append("\n**Distinct values:**")
+                    for col, vals in distinct_vals.items():
+                        display = " | ".join(str(v) for v in vals[:20])
+                        parts.append(f"- `{col}`: [{display}]")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         if entry.sample_data_json and entry.sample_data_json != "[]":
             try:
                 samples = json.loads(entry.sample_data_json)

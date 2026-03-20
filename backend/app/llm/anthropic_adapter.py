@@ -2,19 +2,81 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
+import anthropic
 from anthropic import AsyncAnthropic
 
 from app.config import settings
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.errors import (
+    LLMAuthError,
+    LLMConnectionError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMTokenLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
 
+def _classify_anthropic_error(exc: Exception) -> Exception:
+    """Map anthropic SDK exceptions to the unified LLM error hierarchy."""
+    if isinstance(exc, anthropic.RateLimitError):
+        retry_after = None
+        if hasattr(exc, "response") and exc.response is not None:
+            raw = exc.response.headers.get("retry-after")
+            if raw:
+                try:
+                    retry_after = float(raw)
+                except (ValueError, TypeError):
+                    pass
+        return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)
+
+    if isinstance(exc, anthropic.AuthenticationError):
+        return LLMAuthError(str(exc), cause=exc)
+
+    if isinstance(exc, anthropic.BadRequestError):
+        msg = str(exc).lower()
+        if "prompt is too long" in msg or "max_tokens" in msg or "token" in msg:
+            return LLMTokenLimitError(str(exc), cause=exc)
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, anthropic.APITimeoutError):
+        return LLMTimeoutError(str(exc), cause=exc)
+
+    if isinstance(exc, anthropic.APIConnectionError):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    if isinstance(exc, anthropic.InternalServerError):
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, anthropic.APIStatusError):
+        status = getattr(exc, "status_code", 0)
+        if status == 429:
+            return LLMRateLimitError(str(exc), cause=exc)
+        if status in (401, 403):
+            return LLMAuthError(str(exc), cause=exc)
+        if 500 <= status < 600:
+            return LLMServerError(str(exc), cause=exc)
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    return exc
+
+
+_REQUEST_TIMEOUT = 90.0
+
+
 class AnthropicAdapter(BaseLLMProvider):
     def __init__(self):
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self._client = AsyncAnthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=_REQUEST_TIMEOUT,
+        )
 
     @property
     def provider_name(self) -> str:
@@ -88,7 +150,10 @@ class AnthropicAdapter(BaseLLMProvider):
         if tools:
             kwargs["tools"] = self._tools_to_anthropic(tools)
 
-        response = await self._client.messages.create(**kwargs)
+        try:
+            response = await self._client.messages.create(**kwargs)
+        except Exception as exc:
+            raise _classify_anthropic_error(exc) from exc
 
         content_parts = []
         tool_calls: list[ToolCall] = []
@@ -143,6 +208,11 @@ class AnthropicAdapter(BaseLLMProvider):
         if tools:
             kwargs["tools"] = self._tools_to_anthropic(tools)
 
-        async with self._client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
+        try:
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+        except GeneratorExit:
+            raise
+        except Exception as exc:
+            raise _classify_anthropic_error(exc) from exc

@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.project_invite import ProjectInvite
 from app.models.project_member import ProjectMember
@@ -133,8 +135,18 @@ class InviteService:
             role=invite.role,
         )
         db.add(member)
-        await db.commit()
-        await db.refresh(member)
+        try:
+            await db.commit()
+            await db.refresh(member)
+        except IntegrityError:
+            await db.rollback()
+            existing = await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == invite.project_id,
+                    ProjectMember.user_id == user_id,
+                )
+            )
+            member = existing.scalar_one()
         return member
 
     async def list_pending_for_email(
@@ -143,7 +155,9 @@ class InviteService:
         email: str,
     ) -> list[ProjectInvite]:
         result = await db.execute(
-            select(ProjectInvite).where(
+            select(ProjectInvite)
+            .options(selectinload(ProjectInvite.project))
+            .where(
                 and_(
                     ProjectInvite.email == email.lower().strip(),
                     ProjectInvite.status == "pending",

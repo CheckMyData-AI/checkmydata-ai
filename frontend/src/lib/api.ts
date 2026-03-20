@@ -3,8 +3,11 @@ import { useAuthStore } from "@/stores/auth-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+let sessionExpiredHandled = false;
+
 export function handleSessionExpired(): void {
-  if (typeof window === "undefined") return;
+  if (sessionExpiredHandled || typeof window === "undefined") return;
+  sessionExpiredHandled = true;
   useAuthStore.getState().logout();
   toast("Session expired, please log in again", "error");
   window.location.href = "/";
@@ -103,6 +106,7 @@ export interface ProjectInvite {
   invited_by: string;
   created_at: string | null;
   accepted_at: string | null;
+  project_name: string | null;
 }
 
 export interface ProjectMember {
@@ -186,6 +190,13 @@ export interface ChatResponse {
     options?: string[];
     context?: string;
   } | null;
+}
+
+export interface StreamError {
+  error: string;
+  error_type?: string;
+  is_retryable?: boolean;
+  user_message?: string;
 }
 
 export interface RepoCheckResult {
@@ -357,11 +368,45 @@ export interface AuthUser {
   email: string;
   display_name: string;
   picture_url?: string | null;
+  auth_provider?: string;
 }
 
 export interface AuthResponse {
   token: string;
   user: AuthUser;
+}
+
+export interface UsagePeriod {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number | null;
+  request_count: number;
+}
+
+export interface DailyUsage {
+  date: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number | null;
+  request_count: number;
+}
+
+export interface ChangePercent {
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  estimated_cost_usd: number | null;
+  request_count: number | null;
+}
+
+export interface UsageStatsResponse {
+  current_period: UsagePeriod;
+  previous_period: UsagePeriod;
+  change_percent: ChangePercent;
+  daily_breakdown: DailyUsage[];
+  period_days: number;
 }
 
 export const api = {
@@ -521,7 +566,7 @@ export const api = {
       },
       onStep: (event: Record<string, unknown>) => void,
       onResult: (result: ChatResponse) => void,
-      onError: (error: string) => void,
+      onError: (error: StreamError) => void,
       onToolCall?: (event: Record<string, unknown>) => void,
     ) => {
       const ctrl = new AbortController();
@@ -533,18 +578,16 @@ export const api = {
       }).then(async (res) => {
         if (res.status === 401 && typeof window !== "undefined") {
           handleSessionExpired();
-          onError("Session expired");
+          onError({ error: "Session expired", error_type: "auth", is_retryable: false, user_message: "Session expired, please log in again." });
           throw new Error("Session expired");
         }
         if (res.status === 403) {
-          const msg = "You don't have permission to perform this action.";
-          onError(msg);
-          throw new Error(msg);
+          onError({ error: "Permission denied", error_type: "auth", is_retryable: false, user_message: "You don't have permission to perform this action." });
+          throw new Error("Permission denied");
         }
         if (!res.ok || !res.body) {
-          const msg = `Stream failed: ${res.status}`;
-          onError(msg);
-          throw new Error(msg);
+          onError({ error: `Stream failed: ${res.status}`, error_type: "network", is_retryable: true, user_message: "Connection to the server failed. Please try again." });
+          throw new Error(`Stream failed: ${res.status}`);
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -564,12 +607,12 @@ export const api = {
               if (eventType === "step") onStep(parsed);
               else if (eventType === "tool_call") onToolCall?.(parsed);
               else if (eventType === "result") onResult(parsed as ChatResponse);
-              else if (eventType === "error") onError(parsed.error);
+              else if (eventType === "error") onError(parsed as StreamError);
             } catch { /* skip malformed */ }
           }
         }
       }).catch((err) => {
-        if (err.name !== "AbortError") onError(String(err));
+        if (err.name !== "AbortError") onError({ error: String(err), error_type: "network", is_retryable: true, user_message: "An unexpected error occurred. Please try again." });
         throw err;
       });
       return Object.assign(ctrl, { done: streamPromise });
@@ -800,5 +843,10 @@ export const api = {
         `/data-validation/investigate/${investigationId}/confirm-fix`,
         { method: "POST", body: JSON.stringify(body) },
       ),
+  },
+
+  usage: {
+    getStats: (days: number = 30) =>
+      request<UsageStatsResponse>(`/usage/stats?days=${days}`),
   },
 };

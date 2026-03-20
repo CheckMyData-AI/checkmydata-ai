@@ -360,4 +360,107 @@ class TestVizAgent:
             ),
         )
         assert result.viz_type == "bar_chart"
-        assert result.viz_config == {}
+
+    # 16. preferred_viz generates proper config
+    @pytest.mark.asyncio
+    async def test_preferred_viz_generates_config(self, agent, context):
+        result = await agent.run(
+            context,
+            results=_qr(
+                columns=["month", "revenue"],
+                rows=[["Jan", 100], ["Feb", 200]],
+            ),
+            preferred_viz="bar_chart",
+        )
+        assert result.viz_type == "bar_chart"
+        assert "labels_column" in result.viz_config
+        assert "data_columns" in result.viz_config
+
+    # 17. preferred_viz pie generates data_column (singular)
+    @pytest.mark.asyncio
+    async def test_preferred_viz_pie_config(self, agent, context):
+        result = await agent.run(
+            context,
+            results=_qr(
+                columns=["category", "count"],
+                rows=[["A", 10], ["B", 20], ["C", 30]],
+            ),
+            preferred_viz="pie_chart",
+        )
+        assert result.viz_type == "pie_chart"
+        assert "labels_column" in result.viz_config
+        assert "data_column" in result.viz_config
+
+    # 18. preferred_viz scatter generates x/y columns
+    @pytest.mark.asyncio
+    async def test_preferred_viz_scatter_config(self, agent, context):
+        result = await agent.run(
+            context,
+            results=_qr(
+                columns=["age", "income"],
+                rows=[[25, 50000], [30, 60000]],
+            ),
+            preferred_viz="scatter",
+        )
+        assert result.viz_type == "scatter"
+        assert "x_column" in result.viz_config
+        assert "y_column" in result.viz_config
+
+    # 19. validate_and_fix_config regenerates when columns are wrong
+    def test_validate_and_fix_config_regenerates(self, agent):
+        results = _qr(
+            columns=["month", "revenue"],
+            rows=[["Jan", 100], ["Feb", 200]],
+        )
+        bad_config = {
+            "labels_column": "nonexistent",
+            "data_columns": ["also_missing"],
+        }
+        fixed = agent._validate_and_fix_config(bad_config, "bar_chart", results)
+        assert fixed["labels_column"] in results.columns
+        for dc in fixed.get("data_columns", []):
+            assert dc in results.columns
+
+    # 20. validate_and_fix_config keeps valid config
+    def test_validate_and_fix_config_keeps_valid(self, agent):
+        results = _qr(
+            columns=["month", "revenue"],
+            rows=[["Jan", 100], ["Feb", 200]],
+        )
+        good_config = {
+            "labels_column": "month",
+            "data_columns": ["revenue"],
+        }
+        fixed = agent._validate_and_fix_config(good_config, "bar_chart", results)
+        assert fixed == good_config
+
+    # 21. LLM returns wrong column names → config gets fixed
+    @pytest.mark.asyncio
+    async def test_llm_bad_columns_fixed(self, agent, context, mock_llm):
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-1",
+                        name="recommend_visualization",
+                        arguments={
+                            "viz_type": "bar_chart",
+                            "summary": "Revenue by month",
+                            "config": '{"labels_column": "wrong_name", "data_columns": ["bad_col"]}',
+                        },
+                    ),
+                ],
+                usage={"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40},
+            )
+        )
+
+        results = _qr(
+            columns=["month", "revenue"],
+            rows=[["Jan", 100], ["Feb", 200]],
+        )
+        result = await agent.run(context, results=results)
+        assert result.viz_type == "bar_chart"
+        assert result.viz_config["labels_column"] in results.columns
+        for dc in result.viz_config.get("data_columns", []):
+            assert dc in results.columns

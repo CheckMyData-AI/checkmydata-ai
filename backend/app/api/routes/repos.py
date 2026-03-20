@@ -179,6 +179,19 @@ async def index_repo(
     )
 
 
+async def _regenerate_overview(project_id: str) -> None:
+    """Best-effort regenerate the project knowledge overview."""
+    from app.services.project_overview_service import ProjectOverviewService
+
+    try:
+        async with async_session_factory() as session:
+            svc = ProjectOverviewService()
+            await svc.save_overview(session, project_id)
+        logger.info("Project overview regenerated after repo index: project=%s", project_id[:8])
+    except Exception:
+        logger.debug("Failed to regenerate project overview", exc_info=True)
+
+
 async def _run_index_background(
     project_id: str,
     project,
@@ -219,6 +232,7 @@ async def _run_index_background(
                         checkpoint,
                         live_table_names=live_table_names,
                     )
+                    await _regenerate_overview(project_id)
                 except Exception as exc:
                     logger.exception("Indexing pipeline failed for project %s", project_id)
                     try:
@@ -511,7 +525,7 @@ async def delete_repository(
     repo = await _repo_svc.get(db, repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
-    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "owner")
 
     deleted = await _repo_svc.delete(db, repo_id)
     if not deleted:

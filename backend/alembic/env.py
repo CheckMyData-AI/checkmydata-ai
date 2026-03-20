@@ -20,6 +20,7 @@ import app.models.rag_feedback  # noqa: F401
 import app.models.repository  # noqa: F401
 import app.models.saved_note  # noqa: F401
 import app.models.ssh_key  # noqa: F401
+import app.models.token_usage  # noqa: F401
 import app.models.user  # noqa: F401
 from alembic import context
 from app.config import settings

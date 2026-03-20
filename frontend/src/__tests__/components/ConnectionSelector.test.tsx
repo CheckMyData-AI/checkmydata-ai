@@ -134,6 +134,7 @@ beforeEach(() => {
     activeProject: makeProject(),
     connections: [],
     activeConnection: null,
+    userRole: "owner",
   });
 });
 

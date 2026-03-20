@@ -5,6 +5,7 @@ import { api, type AgentLearningDTO } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
+import { usePermission } from "@/hooks/usePermission";
 
 const CATEGORY_LABELS: Record<string, string> = {
   table_preference: "Table Preferences",
@@ -33,6 +34,7 @@ interface LearningsPanelProps {
 }
 
 export function LearningsPanel({ connectionId, onClose, onCountChange }: LearningsPanelProps) {
+  const { canDelete } = usePermission();
   const [learnings, setLearnings] = useState<AgentLearningDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -101,7 +103,14 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
   };
 
   const handleClearAll = async () => {
-    if (!(await confirmAction("Clear ALL learnings for this connection? This cannot be undone."))) return;
+    if (
+      !(await confirmAction("Clear ALL learnings for this connection?", {
+        severity: "critical",
+        detail:
+          "The agent will lose all accumulated knowledge about your database patterns. This cannot be undone.",
+        confirmText: "DELETE",
+      }))
+    ) return;
     try {
       const result = await api.connections.clearLearnings(connectionId);
       setLearnings([]);
@@ -170,12 +179,14 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
               >
                 <Icon name="refresh-cw" size={11} />
               </button>
-              <button
-                onClick={handleClearAll}
-                className="text-[10px] px-2 py-0.5 rounded text-red-400 hover:bg-red-900/20 transition-colors"
-              >
-                Clear all
-              </button>
+              {canDelete && (
+                <button
+                  onClick={handleClearAll}
+                  className="text-[10px] px-2 py-0.5 rounded text-red-400 hover:bg-red-900/20 transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
             </>
           )}
           <button
@@ -315,13 +326,15 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                               >
                                 <Icon name={l.is_active ? "x" : "check"} size={11} />
                               </button>
-                              <button
-                                onClick={() => handleDelete(l.id)}
-                                className="p-0.5 rounded hover:bg-red-900/30 text-text-muted hover:text-red-400"
-                                title="Delete"
-                              >
-                                <Icon name="trash" size={11} />
-                              </button>
+                              {canDelete && (
+                                <button
+                                  onClick={() => handleDelete(l.id)}
+                                  className="p-0.5 rounded hover:bg-red-900/30 text-text-muted hover:text-red-400"
+                                  title="Delete"
+                                >
+                                  <Icon name="trash" size={11} />
+                                </button>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 mt-1 text-[9px] text-text-muted">

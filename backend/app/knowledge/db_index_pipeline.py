@@ -102,31 +102,14 @@ def _sample_to_json(result: QueryResult) -> str:
 
 
 CANDIDATE_ENUM_PATTERNS = {
-    "status",
-    "state",
-    "type",
-    "kind",
-    "category",
-    "role",
-    "level",
-    "priority",
-    "severity",
-    "gender",
-    "country",
-    "currency",
-    "lang",
-    "language",
-    "plan",
-    "tier",
-    "phase",
-    "mode",
-    "source",
-    "channel",
-    "platform",
-    "provider",
-    "method",
-    "payment_method",
-    "billing_type",
+    "status", "state", "type", "kind", "category", "role", "level",
+    "priority", "severity", "gender", "country", "currency", "lang",
+    "language", "plan", "tier", "phase", "mode", "source", "channel",
+    "platform", "provider", "method", "payment_method", "billing_type",
+    "region", "locale", "stage", "grade", "class", "group", "reason",
+    "action", "event", "origin", "target", "scope", "visibility",
+    "access", "permission", "frequency", "interval", "direction",
+    "protocol", "format", "encoding", "scheme", "variant",
 }
 
 MAX_DISTINCT_VALUES = 30
@@ -140,14 +123,48 @@ def _is_enum_candidate(col_name: str, data_type: str, row_count: int | None) -> 
 
     if any(p in name_lower for p in CANDIDATE_ENUM_PATTERNS):
         return True
-    if name_lower.endswith(("_flag", "_bool", "_yn")):
+    if name_lower.endswith(("_flag", "_bool", "_yn", "_code")):
+        return True
+    if name_lower.startswith(("is_", "has_", "can_", "allow_")):
         return True
     if "bool" in type_lower:
         return True
     if "enum" in type_lower:
         return True
+    if type_lower in ("tinyint", "smallint", "int2"):
+        return True
+    if "tinyint" in type_lower or "smallint" in type_lower:
+        return True
 
     return False
+
+
+def _detect_low_cardinality_columns(
+    sample_result: QueryResult,
+    table: TableInfo,
+    already_flagged: set[str],
+) -> list[str]:
+    """Detect columns with very low cardinality from sample data."""
+    if not sample_result.rows or len(sample_result.rows) < 2:
+        return []
+
+    extra_cols: list[str] = []
+    for i, col_name in enumerate(sample_result.columns):
+        if col_name in already_flagged:
+            continue
+        col_info = next((c for c in table.columns if c.name == col_name), None)
+        if not col_info:
+            continue
+        dt = col_info.data_type.lower()
+        if any(skip in dt for skip in ("text", "json", "blob", "bytea", "binary")):
+            continue
+        try:
+            values = {str(row[i]) for row in sample_result.rows if row[i] is not None}
+        except (IndexError, TypeError):
+            continue
+        if 1 <= len(values) <= 3:
+            extra_cols.append(col_name)
+    return extra_cols
 
 
 def _build_distinct_query(
@@ -277,21 +294,29 @@ class DbIndexPipeline:
                         ordering_col = None
 
                     tbl_distinct: dict[str, list[str]] = {}
+                    heuristic_cols: set[str] = set()
                     for col in table.columns:
-                        if not _is_enum_candidate(col.name, col.data_type, table.row_count):
-                            continue
+                        if _is_enum_candidate(col.name, col.data_type, table.row_count):
+                            heuristic_cols.add(col.name)
+
+                    sample_extra = _detect_low_cardinality_columns(
+                        result, table, heuristic_cols,
+                    )
+                    all_distinct_cols = heuristic_cols | set(sample_extra)
+
+                    for col_name in all_distinct_cols:
                         try:
-                            dq = _build_distinct_query(table, col.name, connection_config.db_type)
+                            dq = _build_distinct_query(table, col_name, connection_config.db_type)
                             dr = await connector.execute_query(dq)
                             if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
                                 vals = [str(r[0]) for r in dr.rows if r[0] is not None]
                                 if vals:
-                                    tbl_distinct[col.name] = vals[:MAX_DISTINCT_VALUES]
+                                    tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
                         except Exception:
                             logger.debug(
                                 "Distinct query failed for %s.%s",
                                 table.name,
-                                col.name,
+                                col_name,
                                 exc_info=True,
                             )
 

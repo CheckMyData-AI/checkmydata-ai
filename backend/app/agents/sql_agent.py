@@ -436,6 +436,21 @@ class SQLAgent(BaseAgent):
             cid = cfg.connection_id
             if not cid:
                 return "Database index not available. Run 'Index DB' first."
+
+            if scope == "project_overview":
+                from sqlalchemy import select
+
+                from app.models.project_cache import ProjectCache
+
+                async with async_session_factory() as session:
+                    result = await session.execute(
+                        select(ProjectCache.overview_text).where(
+                            ProjectCache.project_id == ctx.project_id
+                        )
+                    )
+                    text = result.scalar_one_or_none()
+                    return text or "Project overview not yet generated."
+
             async with async_session_factory() as session:
                 if scope == "table_detail":
                     if not table_name:

@@ -15,6 +15,7 @@ def build_orchestrator_system_prompt(
     has_knowledge_base: bool = False,
     table_map: str = "",
     current_datetime: str | None = None,
+    project_overview: str | None = None,
 ) -> str:
     project_label = f' for the project "{project_name}"' if project_name else ""
     sections: list[str] = [
@@ -54,6 +55,16 @@ def build_orchestrator_system_prompt(
     if table_map:
         sections.append("")
         sections.append(f"DATABASE TABLES (for routing context): {table_map}")
+
+    if project_overview:
+        sections.append("")
+        sections.append("PROJECT KNOWLEDGE OVERVIEW:")
+        sections.append(project_overview)
+        sections.append(
+            "\nUse this overview to understand what data is available and how it "
+            "should be queried. Route questions to the appropriate sub-agent "
+            "based on this context."
+        )
 
     sections.append("")
     sections.append("GUIDELINES:")

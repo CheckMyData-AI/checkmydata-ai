@@ -20,6 +20,7 @@ import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 import { useLogStore } from "@/stores/log-store";
 import { AccountMenu } from "./auth/AccountMenu";
+import { UsageStatsPanel } from "./usage/UsageStatsPanel";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -168,6 +169,7 @@ export function Sidebar() {
   const chatCollapse = useSectionCollapse("chat-history");
   const rulesCollapse = useSectionCollapse("rules", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
+  const usageCollapse = useSectionCollapse("usage", false);
 
   const projectsRef = useRef<HTMLDivElement>(null);
   const repoRef = useRef<HTMLDivElement>(null);
@@ -516,6 +518,16 @@ export function Sidebar() {
               collapsed={collapsed}
             >
               <KnowledgeDocs />
+            </SidebarSection>
+
+            <SidebarSection
+              icon="activity"
+              title="Usage"
+              open={usageCollapse.open}
+              onToggle={usageCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <UsageStatsPanel />
             </SidebarSection>
           </>
         )}

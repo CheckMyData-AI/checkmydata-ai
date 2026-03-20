@@ -173,7 +173,14 @@ export function SshKeyManager() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!(await confirmAction("Delete this SSH key?"))) return;
+    const key = useAppStore.getState().sshKeys.find((k) => k.id === id);
+    const name = key?.name || "this SSH key";
+    if (
+      !(await confirmAction(`Delete SSH key "${name}"?`, {
+        severity: "warning",
+        detail: "Connections using this key will lose SSH tunnel access.",
+      }))
+    ) return;
     try {
       await api.sshKeys.delete(id);
       useAppStore.setState((state) => ({

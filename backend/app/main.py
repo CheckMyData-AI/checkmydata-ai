@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+import asyncio
 import logging
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import (
     auth,
+    backup,
     chat,
     connections,
     data_validation,
@@ -24,6 +29,7 @@ from app.api.routes import (
     rules,
     ssh_keys,
     tasks,
+    usage,
     visualizations,
     workflows,
 )
@@ -41,9 +47,12 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
+_backup_task: asyncio.Task | None = None  # type: ignore[type-arg]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import asyncio
+    global _backup_task  # noqa: PLW0603
 
     await asyncio.to_thread(run_migrations)
     await init_db()
@@ -51,7 +60,19 @@ async def lifespan(app: FastAPI):
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
     await _decay_stale_learnings()
+
+    if settings.backup_enabled:
+        _backup_task = asyncio.create_task(_backup_cron_loop())
+        await _maybe_initial_backup()
+
     yield
+
+    if _backup_task and not _backup_task.done():
+        _backup_task.cancel()
+        try:
+            await _backup_task
+        except asyncio.CancelledError:
+            pass
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
         sql_agent = chat._agent._orchestrator._sql
@@ -166,6 +187,8 @@ app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
+app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 
 
 async def _cleanup_stale_checkpoints() -> None:
@@ -267,6 +290,76 @@ async def _decay_stale_learnings() -> None:
                 logger.info("Startup: decayed confidence for %d stale learnings", affected)
     except Exception:
         logger.warning("Failed to decay stale learnings at startup", exc_info=True)
+
+
+async def _backup_cron_loop() -> None:
+    """Run backup daily at the configured hour (default 00:00 UTC)."""
+    from datetime import timedelta
+
+    from app.core.backup_manager import BackupManager
+    from app.models.backup_record import BackupRecord
+
+    mgr = BackupManager()
+    while True:
+        try:
+            now = datetime.now(UTC)
+            target_hour = settings.backup_hour
+            next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+            if next_run <= now:
+                next_run += timedelta(days=1)
+            wait_seconds = (next_run - now).total_seconds()
+            logger.info(
+                "Next scheduled backup in %.0f seconds (at %s)",
+                wait_seconds,
+                next_run.isoformat(),
+            )
+            await asyncio.sleep(wait_seconds)
+            manifest = await mgr.run_backup("scheduled")
+            async with async_session_factory() as session:
+                session.add(
+                    BackupRecord(
+                        reason="scheduled",
+                        status="success",
+                        size_bytes=manifest.get("total_size_bytes", 0),
+                        manifest_json=manifest,
+                    )
+                )
+                await session.commit()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Scheduled backup failed, will retry next cycle")
+            try:
+                async with async_session_factory() as session:
+                    session.add(
+                        BackupRecord(reason="scheduled", status="failed")
+                    )
+                    await session.commit()
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+
+
+async def _maybe_initial_backup() -> None:
+    """Run a one-time backup on first startup if no backups exist yet."""
+    from pathlib import Path
+
+    backup_path = Path(settings.backup_dir)
+    if backup_path.exists() and any(backup_path.iterdir()):
+        return
+    logger.info("No existing backups found — running initial backup")
+    await trigger_initial_backup()
+
+
+async def trigger_initial_backup() -> None:
+    """Trigger a one-time backup after initial project sync."""
+    from app.core.backup_manager import BackupManager
+
+    try:
+        mgr = BackupManager()
+        await mgr.run_backup("initial_sync")
+    except Exception:
+        logger.exception("Initial sync backup failed")
 
 
 @app.get("/api/health")

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
-import { api, type ChatResponse } from "@/lib/api";
+import { api, type ChatResponse, type StreamError } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
@@ -149,13 +149,15 @@ export function ChatPanel() {
           setStreamSteps([]);
           clearToolCalls();
         },
-        (error: string) => {
+        (streamErr: StreamError) => {
+          const displayMsg = streamErr.user_message || streamErr.error || "An unexpected error occurred.";
           addMessage({
             id: crypto.randomUUID(),
             role: "assistant",
-            content: `Error: ${error}`,
-            error,
+            content: displayMsg,
+            error: streamErr.error,
             responseType: "error",
+            isRetryable: streamErr.is_retryable !== false,
             timestamp: Date.now(),
           });
           setThinking(false);
@@ -275,6 +277,7 @@ export function ChatPanel() {
         {messages.map((msg, idx) => {
           const canRetry =
             msg.responseType === "error" &&
+            msg.isRetryable !== false &&
             idx === messages.length - 1 &&
             !isThinking;
           const prevUserMsg = canRetry

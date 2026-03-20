@@ -24,6 +24,10 @@ class ProjectCache(Base):
     )
     knowledge_json: Mapped[str] = mapped_column(Text, default="{}")
     profile_json: Mapped[str] = mapped_column(Text, default="{}")
+    overview_text: Mapped[str] = mapped_column(Text, default="")
+    overview_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

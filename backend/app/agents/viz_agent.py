@@ -19,6 +19,7 @@ from app.agents.tools.viz_tools import RECOMMEND_VISUALIZATION_TOOL
 from app.config import settings
 from app.connectors.base import QueryResult
 from app.llm.base import Message
+from app.viz.chart import _auto_detect_columns, _resolve_col_idx
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,30 @@ class VizAgent(BaseAgent):
         ):
             if preferred_viz == "pie_chart" and len(rows) > settings.max_pie_categories:
                 preferred_viz = "bar_chart"
-            return VizResult(viz_type=preferred_viz)
+            config = self._generate_config(results, preferred_viz)
+            return VizResult(viz_type=preferred_viz, viz_config=config)
 
         return None
+
+    @staticmethod
+    def _generate_config(results: QueryResult, viz_type: str) -> dict[str, Any]:
+        """Auto-generate viz_config based on column type detection."""
+        if viz_type in ("table", "text", "number"):
+            return {}
+        labels_col, data_cols = _auto_detect_columns(results, viz_type)
+        if viz_type in ("bar_chart", "line_chart"):
+            return {"labels_column": labels_col, "data_columns": data_cols}
+        if viz_type == "pie_chart":
+            return {
+                "labels_column": labels_col,
+                "data_column": data_cols[0] if data_cols else results.columns[1],
+            }
+        if viz_type == "scatter":
+            return {
+                "x_column": labels_col,
+                "y_column": data_cols[0] if data_cols else results.columns[1],
+            }
+        return {}
 
     # ------------------------------------------------------------------
     # LLM-based pick
@@ -144,11 +166,13 @@ class VizAgent(BaseAgent):
                     viz_type = tc.arguments.get("viz_type", "table")
                     summary = tc.arguments.get("summary", llm_resp.content or "")
 
-                    viz_type = self._post_validate(viz_type, results)
+                    viz_type = self._post_validate(viz_type, results, config if isinstance(config, dict) else None)
+                    config = config if isinstance(config, dict) else {}
+                    config = self._validate_and_fix_config(config, viz_type, results)
 
                     return VizResult(
                         viz_type=viz_type,
-                        viz_config=config if isinstance(config, dict) else {},
+                        viz_config=config,
                         summary=summary,
                         token_usage=total_usage,
                     )
@@ -163,12 +187,65 @@ class VizAgent(BaseAgent):
     # Post-validation
     # ------------------------------------------------------------------
 
-    def _post_validate(self, viz_type: str, results: QueryResult) -> str:
+    def _post_validate(
+        self,
+        viz_type: str,
+        results: QueryResult,
+        viz_config: dict | None = None,
+    ) -> str:
         if viz_type == "pie_chart" and len(results.rows) > settings.max_pie_categories:
             return "bar_chart"
         if viz_type in ("line_chart", "bar_chart", "scatter") and len(results.columns) < 2:
             return "table"
         return viz_type
+
+    @staticmethod
+    def _validate_and_fix_config(
+        viz_config: dict,
+        viz_type: str,
+        results: QueryResult,
+    ) -> dict:
+        """Verify column references exist in results; regenerate if broken."""
+        if viz_type in ("table", "text", "number") or not viz_config:
+            return viz_config
+
+        col_keys = ("labels_column", "data_column", "x_column", "y_column", "group_by")
+        list_keys = ("data_columns",)
+
+        has_invalid = False
+        for key in col_keys:
+            val = viz_config.get(key)
+            if val and _resolve_col_idx(val, results, -1) == -1:
+                logger.debug("viz_config key '%s' references missing column '%s'", key, val)
+                has_invalid = True
+                break
+
+        if not has_invalid:
+            for key in list_keys:
+                vals = viz_config.get(key, [])
+                if isinstance(vals, list):
+                    for v in vals:
+                        if v and _resolve_col_idx(v, results, -1) == -1:
+                            logger.debug("viz_config key '%s' references missing column '%s'", key, v)
+                            has_invalid = True
+                            break
+
+        if has_invalid:
+            labels_col, data_cols = _auto_detect_columns(results, viz_type)
+            if viz_type in ("bar_chart", "line_chart"):
+                return {"labels_column": labels_col, "data_columns": data_cols}
+            if viz_type == "pie_chart":
+                return {
+                    "labels_column": labels_col,
+                    "data_column": data_cols[0] if data_cols else results.columns[1],
+                }
+            if viz_type == "scatter":
+                return {
+                    "x_column": labels_col,
+                    "y_column": data_cols[0] if data_cols else results.columns[1],
+                }
+
+        return viz_config
 
     # ------------------------------------------------------------------
     # Helpers

@@ -439,6 +439,20 @@ async def delete_db_index(
     return {"ok": True}
 
 
+async def _regenerate_overview(project_id: str, connection_id: str | None = None) -> None:
+    """Best-effort regenerate the project knowledge overview."""
+    from app.models.base import async_session_factory
+    from app.services.project_overview_service import ProjectOverviewService
+
+    try:
+        async with async_session_factory() as session:
+            svc = ProjectOverviewService()
+            await svc.save_overview(session, project_id, connection_id)
+        logger.info("Project overview regenerated: project=%s", project_id[:8])
+    except Exception:
+        logger.debug("Failed to regenerate project overview", exc_info=True)
+
+
 async def _run_db_index_background(
     connection_id: str,
     connection_config: ConnectionConfig,
@@ -469,6 +483,7 @@ async def _run_db_index_background(
         else:
             logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
             final_status = "completed"
+            await _regenerate_overview(project_id, connection_id)
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
     finally:
@@ -639,6 +654,7 @@ async def _run_sync_background(
                 result,
             )
             final_status = "completed"
+            await _regenerate_overview(project_id, connection_id)
     except Exception:
         logger.exception("Code-DB sync background task failed: connection=%s", connection_id[:8])
     finally:
@@ -770,7 +786,7 @@ async def delete_learning(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
 
     from app.models.agent_learning import AgentLearning
 

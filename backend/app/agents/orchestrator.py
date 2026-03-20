@@ -9,6 +9,7 @@ Replaces the monolithic ``ConversationalAgent``.  The orchestrator:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,9 +37,17 @@ from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.vector_store import VectorStore
 from app.llm.base import LLMResponse, Message, ToolCall
+from app.llm.errors import (
+    RETRYABLE_LLM_ERRORS,
+    LLMAllProvidersFailedError,
+    LLMError,
+)
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
+
+_LLM_CALL_MAX_RETRIES = 2
+_LLM_CALL_BASE_BACKOFF = 3.0
 
 MAX_SUB_AGENT_RETRIES = 2
 
@@ -65,6 +74,8 @@ class AgentResponse:
     error: str | None = None
     workflow_id: str | None = None
     token_usage: dict = field(default_factory=dict)
+    llm_provider: str = ""
+    llm_model: str = ""
     staleness_warning: str | None = None
     response_type: str = "text"  # text | sql_result | knowledge | error
     tool_call_log: list[dict] = field(default_factory=list)
@@ -118,7 +129,7 @@ class OrchestratorAgent(BaseAgent):
         question = context.user_question
 
         try:
-            staleness_warning = await self._check_staleness(context.project_id)
+            staleness_warning = await self._check_staleness(context.project_id, wf_id)
 
             if context.chat_history:
                 from app.config import settings as app_settings
@@ -133,7 +144,7 @@ class OrchestratorAgent(BaseAgent):
 
             has_connection = context.connection_config is not None
             has_kb = self._has_knowledge_base(context.project_id)
-            has_mcp = await self._has_mcp_sources(context.project_id)
+            has_mcp = await self._has_mcp_sources(context.project_id, wf_id)
             db_type = context.connection_config.db_type if context.connection_config else None
 
             table_map = ""
@@ -147,7 +158,9 @@ class OrchestratorAgent(BaseAgent):
                     if cid and context.connection_config:
                         context.connection_config.connection_id = cid
                 if cid:
-                    table_map = await self._build_table_map(cid)
+                    table_map = await self._build_table_map(cid, wf_id)
+
+            project_overview = await self._load_project_overview(context.project_id)
 
             system_prompt = build_orchestrator_system_prompt(
                 project_name=context.project_name,
@@ -156,6 +169,7 @@ class OrchestratorAgent(BaseAgent):
                 has_knowledge_base=has_kb,
                 table_map=table_map,
                 current_datetime=get_current_datetime_str(),
+                project_overview=project_overview,
             )
 
             tools = get_orchestrator_tools(
@@ -180,6 +194,8 @@ class OrchestratorAgent(BaseAgent):
             last_sql_result: SQLAgentResult | None = None
             last_viz_result: VizResult | None = None
             knowledge_sources: list[RAGSource] = []
+            used_provider = ""
+            used_model = ""
 
             for iteration in range(settings.max_orchestrator_iterations):
                 async with self._tracker.step(
@@ -187,13 +203,17 @@ class OrchestratorAgent(BaseAgent):
                     "orchestrator:llm_call",
                     f"Orchestrator LLM ({iteration + 1}/{settings.max_orchestrator_iterations})",
                 ):
-                    llm_resp: LLMResponse = await self._llm.complete(
+                    llm_resp = await self._llm_call_with_retry(
                         messages=messages,
                         tools=tools if tools else None,
                         preferred_provider=context.preferred_provider,
                         model=context.model,
+                        wf_id=wf_id,
                     )
 
+                if not used_provider:
+                    used_provider = llm_resp.provider or ""
+                    used_model = llm_resp.model or ""
                 self.accum_usage(total_usage, llm_resp.usage)
 
                 if not llm_resp.tool_calls:
@@ -291,6 +311,8 @@ class OrchestratorAgent(BaseAgent):
                 knowledge_sources=knowledge_sources,
                 workflow_id=wf_id,
                 token_usage=total_usage,
+                llm_provider=used_provider,
+                llm_model=used_model,
                 staleness_warning=staleness_warning,
                 response_type=response_type,
                 tool_call_log=tool_call_log,
@@ -300,7 +322,10 @@ class OrchestratorAgent(BaseAgent):
             import json as _json
 
             payload = _json.loads(cr.payload_json)
-            await self._tracker.end(wf_id, "orchestrator", "clarification", "ask_user")
+            try:
+                await self._tracker.end(wf_id, "orchestrator", "clarification", "ask_user")
+            except Exception:
+                logger.warning("Failed to emit pipeline_end for clarification", exc_info=True)
             return AgentResponse(
                 answer=payload.get("question", ""),
                 workflow_id=wf_id,
@@ -308,15 +333,108 @@ class OrchestratorAgent(BaseAgent):
                 viz_config=payload,
             )
 
+        except LLMError as llm_exc:
+            user_msg = llm_exc.user_message
+            logger.error(
+                "Orchestrator LLM error [%s]: %s",
+                type(llm_exc).__name__, llm_exc,
+            )
+            try:
+                await self._tracker.end(wf_id, "orchestrator", "failed", type(llm_exc).__name__)
+            except Exception:
+                logger.warning("Failed to emit pipeline_end for LLM error", exc_info=True)
+            return AgentResponse(
+                answer=user_msg,
+                error=type(llm_exc).__name__,
+                workflow_id=wf_id,
+                response_type="error",
+            )
+
         except Exception as exc:
             logger.exception("Orchestrator error processing question")
-            await self._tracker.end(wf_id, "orchestrator", "failed", str(exc))
+            try:
+                await self._tracker.end(wf_id, "orchestrator", "failed", str(exc))
+            except Exception:
+                logger.warning("Failed to emit pipeline_end for error", exc_info=True)
+            user_msg = self._friendly_error(exc)
             return AgentResponse(
-                answer=f"An error occurred: {exc}",
+                answer=user_msg,
                 error=str(exc),
                 workflow_id=wf_id,
                 response_type="error",
             )
+
+    async def _llm_call_with_retry(
+        self,
+        messages: list[Message],
+        tools: list | None,
+        preferred_provider: str | None,
+        model: str | None,
+        wf_id: str,
+    ) -> LLMResponse:
+        """Wrapper that retries the LLM router call on transient failures."""
+        delay = _LLM_CALL_BASE_BACKOFF
+        last_exc: Exception | None = None
+
+        for attempt in range(1, _LLM_CALL_MAX_RETRIES + 1):
+            try:
+                return await self._llm.complete(
+                    messages=messages,
+                    tools=tools,
+                    preferred_provider=preferred_provider,
+                    model=model,
+                )
+            except RETRYABLE_LLM_ERRORS as exc:
+                last_exc = exc
+                if attempt >= _LLM_CALL_MAX_RETRIES:
+                    break
+                wait = exc.retry_after_seconds or delay
+                logger.warning(
+                    "Orchestrator LLM retryable error (attempt %d/%d), "
+                    "retrying in %.1fs: [%s] %s",
+                    attempt, _LLM_CALL_MAX_RETRIES, wait,
+                    type(exc).__name__, exc,
+                )
+                await self._tracker.emit(
+                    wf_id, "orchestrator:llm_retry",
+                    "retrying", f"Attempt {attempt} failed, retrying…",
+                )
+                await asyncio.sleep(wait)
+                delay *= 2.0
+            except LLMAllProvidersFailedError as exc:
+                last_exc = exc
+                if attempt >= _LLM_CALL_MAX_RETRIES:
+                    break
+                logger.warning(
+                    "All providers failed (attempt %d/%d), retrying whole chain in %.1fs",
+                    attempt, _LLM_CALL_MAX_RETRIES, delay,
+                )
+                await self._tracker.emit(
+                    wf_id, "orchestrator:llm_retry",
+                    "retrying", "All providers failed, retrying…",
+                )
+                await asyncio.sleep(delay)
+                delay *= 2.0
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("LLM call failed without exception")
+
+    @staticmethod
+    def _friendly_error(exc: Exception) -> str:
+        """Convert arbitrary exceptions to user-friendly messages."""
+        msg = str(exc).lower()
+        if "connection" in msg and ("refused" in msg or "reset" in msg or "timeout" in msg):
+            return (
+                "Database connection error. "
+                "Please check your connection settings and try again."
+            )
+        if "permission" in msg or "access denied" in msg:
+            return (
+                "Permission error. "
+                "Please check your database credentials and permissions."
+            )
+        return "An unexpected error occurred. Please try again shortly."
 
     # ------------------------------------------------------------------
     # Meta-tool dispatch
@@ -405,29 +523,41 @@ class OrchestratorAgent(BaseAgent):
         args = tc.arguments or {}
         sub_question: str = args.get("question", context.user_question)
 
-        try:
-            async with self._tracker.step(
-                wf_id,
-                "orchestrator:knowledge_agent",
-                "Knowledge Agent",
-            ):
-                knowledge_result = await self._knowledge.run(context, question=sub_question)
+        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
+            try:
+                async with self._tracker.step(
+                    wf_id,
+                    "orchestrator:knowledge_agent",
+                    f"Knowledge Agent (attempt {attempt + 1})",
+                ):
+                    knowledge_result = await self._knowledge.run(context, question=sub_question)
 
-            self.accum_usage(total_usage, knowledge_result.token_usage)
+                self.accum_usage(total_usage, knowledge_result.token_usage)
 
-            vr = self._validator.validate_knowledge_result(knowledge_result)
-            if not vr.passed:
-                return f"Knowledge search issue: {'; '.join(vr.errors)}", knowledge_result
+                vr = self._validator.validate_knowledge_result(knowledge_result)
+                if not vr.passed:
+                    return f"Knowledge search issue: {'; '.join(vr.errors)}", knowledge_result
 
-            text = knowledge_result.answer
-            if vr.warnings:
-                text += "\n\nNote: " + "; ".join(vr.warnings)
-            return text, knowledge_result
+                text = knowledge_result.answer
+                if vr.warnings:
+                    text += "\n\nNote: " + "; ".join(vr.warnings)
+                return text, knowledge_result
 
-        except AgentFatalError as e:
-            return f"Knowledge search failed: {e}", None
-        except AgentError as e:
-            return f"Knowledge agent error: {e}", None
+            except AgentRetryableError as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Knowledge agent retryable error (attempt %d): %s", attempt + 1, e)
+                    continue
+                return f"Knowledge search failed after retries: {e}", None
+            except (AgentFatalError, AgentError) as e:
+                return f"Knowledge search failed: {e}", None
+            except RETRYABLE_LLM_ERRORS as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Knowledge agent LLM error (attempt %d): %s", attempt + 1, e)
+                    await asyncio.sleep(e.retry_after_seconds or 2.0)
+                    continue
+                return f"Knowledge search failed: {e.user_message}", None
+
+        return "Knowledge search failed after maximum retries.", None
 
     async def _handle_manage_rules(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
         action: str = args.get("action", "")
@@ -456,57 +586,61 @@ class OrchestratorAgent(BaseAgent):
         membership_svc = MembershipService()
         rule_svc = RuleService()
 
-        async with self._tracker.step(
-            wf_id,
-            "orchestrator:manage_rules",
-            f"Managing rule ({action})",
-        ):
-            async with async_session_factory() as session:
-                if ctx.user_id:
-                    role = await membership_svc.get_role(session, ctx.project_id, ctx.user_id)
-                    if role != "owner":
-                        return (
-                            "Permission denied: only project owners can manage rules. "
-                            "Ask the project owner to create this rule, or use the sidebar."
+        try:
+            async with self._tracker.step(
+                wf_id,
+                "orchestrator:manage_rules",
+                f"Managing rule ({action})",
+            ):
+                async with async_session_factory() as session:
+                    if ctx.user_id:
+                        role = await membership_svc.get_role(session, ctx.project_id, ctx.user_id)
+                        if role != "owner":
+                            return (
+                                "Permission denied: only project owners can manage rules. "
+                                "Ask the project owner to create this rule, or use the sidebar."
+                            )
+                    else:
+                        return "Error: user identity not available for permission check."
+
+                    if action == "create":
+                        rule = await rule_svc.create(
+                            session,
+                            project_id=ctx.project_id,
+                            name=name,
+                            content=content,
+                            format="markdown",
                         )
-                else:
-                    return "Error: user identity not available for permission check."
+                        return (
+                            f"Rule created successfully.\n"
+                            f"- **Name:** {rule.name}\n"
+                            f"- **ID:** {rule.id}\n"
+                            f"- **Content:** {rule.content[:200]}"
+                        )
 
-                if action == "create":
-                    rule = await rule_svc.create(
-                        session,
-                        project_id=ctx.project_id,
-                        name=name,
-                        content=content,
-                        format="markdown",
-                    )
-                    return (
-                        f"Rule created successfully.\n"
-                        f"- **Name:** {rule.name}\n"
-                        f"- **ID:** {rule.id}\n"
-                        f"- **Content:** {rule.content[:200]}"
-                    )
+                    if action == "update":
+                        update_kwargs: dict = {}
+                        if name:
+                            update_kwargs["name"] = name
+                        if content:
+                            update_kwargs["content"] = content
+                        updated_rule = await rule_svc.update(session, rule_id, **update_kwargs)
+                        if not updated_rule:
+                            return f"Error: rule with id '{rule_id}' not found."
+                        return (
+                            f"Rule updated successfully.\n"
+                            f"- **Name:** {updated_rule.name}\n"
+                            f"- **ID:** {updated_rule.id}\n"
+                            f"- **Content:** {updated_rule.content[:200]}"
+                        )
 
-                if action == "update":
-                    update_kwargs: dict = {}
-                    if name:
-                        update_kwargs["name"] = name
-                    if content:
-                        update_kwargs["content"] = content
-                    updated_rule = await rule_svc.update(session, rule_id, **update_kwargs)
-                    if not updated_rule:
+                    deleted = await rule_svc.delete(session, rule_id)
+                    if not deleted:
                         return f"Error: rule with id '{rule_id}' not found."
-                    return (
-                        f"Rule updated successfully.\n"
-                        f"- **Name:** {updated_rule.name}\n"
-                        f"- **ID:** {updated_rule.id}\n"
-                        f"- **Content:** {updated_rule.content[:200]}"
-                    )
-
-                deleted = await rule_svc.delete(session, rule_id)
-                if not deleted:
-                    return f"Error: rule with id '{rule_id}' not found."
-                return f"Rule deleted successfully (id: {rule_id})."
+                    return f"Rule deleted successfully (id: {rule_id})."
+        except Exception as e:
+            logger.exception("Rule management failed (%s)", action)
+            return f"Error managing rule: {e}"
 
     async def _handle_ask_user(
         self,
@@ -553,58 +687,75 @@ class OrchestratorAgent(BaseAgent):
         sub_question: str = args.get("question", context.user_question)
         connection_id: str = args.get("connection_id", "")
 
-        try:
-            from app.connectors.mcp_client import MCPClientAdapter
-            from app.models.base import async_session_factory
-            from app.services.connection_service import ConnectionService
-
-            conn_svc = ConnectionService()
-
-            async with async_session_factory() as session:
-                if connection_id:
-                    conn = await conn_svc.get(session, connection_id)
-                    if not conn or conn.source_type != "mcp":
-                        return f"Error: MCP connection '{connection_id}' not found", None
-                    config = await conn_svc.to_config(session, conn)
-                else:
-                    connections = await conn_svc.list_by_project(session, context.project_id)
-                    mcp_conns = [c for c in connections if c.source_type == "mcp"]
-                    if not mcp_conns:
-                        return "Error: no MCP connections configured for this project", None
-                    conn = mcp_conns[0]
-                    config = await conn_svc.to_config(session, conn)
-
-            adapter = MCPClientAdapter()
+        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
             try:
-                await adapter.connect(config)
-                self._mcp_source.set_adapter(adapter)
+                from app.connectors.mcp_client import MCPClientAdapter
+                from app.models.base import async_session_factory
+                from app.services.connection_service import ConnectionService
 
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:mcp_source_agent",
-                    "MCP Source Agent",
-                ):
-                    result = await self._mcp_source.run(
-                        context,
-                        question=sub_question,
-                        source_name=conn.name,
-                    )
+                conn_svc = ConnectionService()
 
-                self.accum_usage(total_usage, result.token_usage)
+                async with async_session_factory() as session:
+                    if connection_id:
+                        conn = await conn_svc.get(session, connection_id)
+                        if not conn or conn.source_type != "mcp":
+                            return f"Error: MCP connection '{connection_id}' not found", None
+                        config = await conn_svc.to_config(session, conn)
+                    else:
+                        connections = await conn_svc.list_by_project(
+                            session, context.project_id,
+                        )
+                        mcp_conns = [c for c in connections if c.source_type == "mcp"]
+                        if not mcp_conns:
+                            return (
+                                "Error: no MCP connections configured for this project",
+                                None,
+                            )
+                        conn = mcp_conns[0]
+                        config = await conn_svc.to_config(session, conn)
 
-                if result.status == "error":
-                    return f"MCP source error: {result.error}", result
-
-                return result.answer, result
-            finally:
+                adapter = MCPClientAdapter()
                 try:
-                    await adapter.disconnect()
-                except Exception:
-                    logger.warning("Failed to disconnect MCP adapter", exc_info=True)
+                    await adapter.connect(config)
+                    self._mcp_source.set_adapter(adapter)
 
-        except Exception as e:
-            logger.exception("MCP source query failed")
-            return f"MCP source query failed: {e}", None
+                    async with self._tracker.step(
+                        wf_id,
+                        "orchestrator:mcp_source_agent",
+                        f"MCP Source Agent (attempt {attempt + 1})",
+                    ):
+                        result = await self._mcp_source.run(
+                            context,
+                            question=sub_question,
+                            source_name=conn.name,
+                        )
+
+                    self.accum_usage(total_usage, result.token_usage)
+
+                    if result.status == "error":
+                        return f"MCP source error: {result.error}", result
+
+                    return result.answer, result
+                finally:
+                    try:
+                        await adapter.disconnect()
+                    except Exception:
+                        logger.warning("Failed to disconnect MCP adapter", exc_info=True)
+
+            except RETRYABLE_LLM_ERRORS as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("MCP agent LLM error (attempt %d): %s", attempt + 1, e)
+                    await asyncio.sleep(e.retry_after_seconds or 2.0)
+                    continue
+                return f"MCP source query failed: {e.user_message}", None
+            except Exception as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("MCP source query error (attempt %d): %s", attempt + 1, e)
+                    continue
+                logger.exception("MCP source query failed")
+                return f"MCP source query failed: {e}", None
+
+        return "MCP source query failed after maximum retries.", None
 
     # ------------------------------------------------------------------
     # Formatting for LLM
@@ -663,7 +814,7 @@ class OrchestratorAgent(BaseAgent):
     # Context helpers (migrated from ConversationalAgent)
     # ------------------------------------------------------------------
 
-    async def _has_mcp_sources(self, project_id: str) -> bool:
+    async def _has_mcp_sources(self, project_id: str, wf_id: str = "") -> bool:
         """Check if the project has any MCP-type connections."""
         try:
             from app.models.base import async_session_factory
@@ -675,6 +826,14 @@ class OrchestratorAgent(BaseAgent):
                 return any(c.source_type == "mcp" for c in connections)
         except Exception:
             logger.debug("Failed to check MCP sources", exc_info=True)
+            if wf_id:
+                try:
+                    await self._tracker.emit(
+                        wf_id, "orchestrator:warning", "degraded",
+                        "MCP source check failed; MCP tools unavailable this request",
+                    )
+                except Exception:
+                    pass
             return False
 
     def _has_knowledge_base(self, project_id: str) -> bool:
@@ -684,7 +843,7 @@ class OrchestratorAgent(BaseAgent):
         except Exception:
             return False
 
-    async def _build_table_map(self, connection_id: str) -> str:
+    async def _build_table_map(self, connection_id: str, wf_id: str = "") -> str:
         try:
             from app.models.base import async_session_factory
             from app.services.db_index_service import DbIndexService
@@ -695,6 +854,14 @@ class OrchestratorAgent(BaseAgent):
             return svc.build_table_map(entries)
         except Exception:
             logger.debug("Failed to build table map", exc_info=True)
+            if wf_id:
+                try:
+                    await self._tracker.emit(
+                        wf_id, "orchestrator:warning", "degraded",
+                        "Schema map unavailable; SQL quality may be reduced",
+                    )
+                except Exception:
+                    pass
             return ""
 
     async def _resolve_connection_id(
@@ -715,7 +882,29 @@ class OrchestratorAgent(BaseAgent):
                     return c.id
         return None
 
-    async def _check_staleness(self, project_id: str) -> str | None:
+    async def _load_project_overview(self, project_id: str) -> str | None:
+        """Load the pre-generated project knowledge overview."""
+        try:
+            from sqlalchemy import select
+
+            from app.models.base import async_session_factory
+            from app.models.project_cache import ProjectCache
+
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(ProjectCache.overview_text).where(
+                        ProjectCache.project_id == project_id
+                    )
+                )
+                text = result.scalar_one_or_none()
+                if isinstance(text, str) and text:
+                    return text
+                return None
+        except Exception:
+            logger.debug("Failed to load project overview", exc_info=True)
+            return None
+
+    async def _check_staleness(self, project_id: str, wf_id: str = "") -> str | None:
         try:
             from pathlib import Path
 
@@ -746,4 +935,12 @@ class OrchestratorAgent(BaseAgent):
             return "Knowledge base may be out of date."
         except Exception:
             logger.debug("Staleness check failed", exc_info=True)
+            if wf_id:
+                try:
+                    await self._tracker.emit(
+                        wf_id, "orchestrator:warning", "degraded",
+                        "Staleness check failed; unable to verify knowledge base freshness",
+                    )
+                except Exception:
+                    pass
             return None

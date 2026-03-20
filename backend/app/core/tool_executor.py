@@ -409,6 +409,9 @@ class ToolExecutor:
             if not connection_id:
                 return "Database index not available. Run 'Index DB' first."
 
+            if scope == "project_overview":
+                return await self._get_project_overview()
+
             async with async_session_factory() as session:
                 if scope == "table_detail":
                     if not table_name:
@@ -428,6 +431,28 @@ class ToolExecutor:
                     return "Database index not available. Run 'Index DB' first."
 
                 return db_index_svc.index_to_prompt_context(entries, summary)
+
+    async def _get_project_overview(self) -> str:
+        """Return the pre-generated project knowledge overview."""
+        from sqlalchemy import select
+
+        from app.models.base import async_session_factory
+        from app.models.project_cache import ProjectCache
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(ProjectCache.overview_text).where(
+                        ProjectCache.project_id == self._project_id
+                    )
+                )
+                text = result.scalar_one_or_none()
+                if text:
+                    return text
+                return "Project overview not yet generated. Run DB indexing or repo indexing first."
+        except Exception:
+            logger.debug("Failed to load project overview", exc_info=True)
+            return "Project overview not available."
 
     async def _get_sync_context(self, args: dict, wf_id: str) -> str:
         scope: str = args.get("scope", "overview")

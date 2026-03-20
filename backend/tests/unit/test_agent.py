@@ -9,10 +9,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agents.errors import AgentFatalError, AgentRetryableError
 from app.connectors.base import ConnectionConfig
 from app.core.agent import ConversationalAgent
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import LLMResponse, ToolCall
+from app.llm.errors import (
+    LLMAllProvidersFailedError,
+    LLMAuthError,
+    LLMConnectionError,
+    LLMContentFilterError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMTokenLimitError,
+)
 
 
 @pytest.fixture
@@ -261,7 +272,23 @@ class TestErrorHandling:
             project_id="proj-1",
         )
         assert resp.response_type == "error"
-        assert "error" in resp.answer.lower()
+        assert resp.error is not None
+        assert "unexpected" in resp.answer.lower() or "error" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_error_returns_friendly_message(self, agent, mock_llm):
+        from app.llm.errors import LLMAllProvidersFailedError
+
+        mock_llm.complete = AsyncMock(
+            side_effect=LLMAllProvidersFailedError("all providers down"),
+        )
+
+        resp = await agent.run(
+            question="Tell me something",
+            project_id="proj-1",
+        )
+        assert resp.response_type == "error"
+        assert "temporarily unavailable" in resp.answer.lower()
 
 
 class TestTokenUsageAccumulation:
@@ -348,3 +375,377 @@ class TestAgentResponseStructure:
 
         resp = await agent.run(question="Hi", project_id="proj-1")
         assert isinstance(resp.tool_call_log, list)
+
+
+class TestOrchestratorErrorResilience:
+    """Every LLM error type returns a friendly error response."""
+
+    @pytest.mark.asyncio
+    async def test_llm_rate_limit_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMRateLimitError("rate limited"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "overloaded" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_auth_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMAuthError("bad key"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "configuration" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_token_limit_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMTokenLimitError("too many tokens"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "too large" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_content_filter_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMContentFilterError("blocked"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "content policy" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_timeout_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMTimeoutError("timed out"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "too long" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_llm_connection_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMConnectionError("unreachable"))
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "could not reach" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_connection_refused_returns_db_error(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            side_effect=RuntimeError("connection refused by host")
+        )
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "database connection error" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_permission_denied_returns_permission_message(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            side_effect=RuntimeError("access denied for user")
+        )
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "permission" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_tracker_end_failure_does_not_crash(self, agent, mock_llm, mock_tracker):
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_tracker.end = AsyncMock(side_effect=RuntimeError("tracker broken"))
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert resp.answer  # should still have a friendly message
+
+
+class TestSubAgentErrorHandling:
+    """Sub-agent handlers surface errors as tool results for the LLM."""
+
+    @pytest.mark.asyncio
+    async def test_sql_agent_retryable_error_retries(self, agent, mock_llm, config):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-1", name="query_database", arguments={"question": "test"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Query failed after retries.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        sql_call_count = 0
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        async def sql_side_effect(*a, **kw):
+            nonlocal sql_call_count
+            sql_call_count += 1
+            if sql_call_count == 1:
+                raise AgentRetryableError("temporary issue")
+            return SQLAgentResult(status="success", query="SELECT 1")
+
+        with (
+            patch.object(agent._orchestrator._sql, "run", new_callable=AsyncMock, side_effect=sql_side_effect),
+            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
+            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+        ):
+            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+        assert sql_call_count >= 2
+        assert resp.response_type != "error"
+
+    @pytest.mark.asyncio
+    async def test_sql_agent_fatal_error_returns_error_string(self, agent, mock_llm, config):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-1", name="query_database", arguments={"question": "test"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="The query failed.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        with (
+            patch.object(
+                agent._orchestrator._sql, "run",
+                new_callable=AsyncMock,
+                side_effect=AgentFatalError("schema not found"),
+            ),
+            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
+            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+        ):
+            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+        assert "The query failed" in resp.answer or "failed" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_sql_agent_max_retries_exhausted(self, agent, mock_llm, config):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-1", name="query_database", arguments={"question": "test"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="SQL query failed after retries.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        with (
+            patch.object(
+                agent._orchestrator._sql, "run",
+                new_callable=AsyncMock,
+                side_effect=AgentRetryableError("still failing"),
+            ),
+            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
+            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+        ):
+            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+        assert "failed" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_manage_rules_db_error_returns_error_string(self, agent, mock_llm):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-1",
+                            name="manage_rules",
+                            arguments={"action": "create", "name": "r1", "content": "rule text"},
+                        ),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Failed to manage rules.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        with patch("app.models.base.async_session_factory") as mock_sf:
+            mock_sf.return_value.__aenter__ = AsyncMock(
+                side_effect=RuntimeError("DB connection lost")
+            )
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            resp = await agent.run(
+                question="create a rule", project_id="proj-1", user_id="user-1"
+            )
+
+        assert resp.response_type != "error" or "error" in resp.answer.lower()
+
+
+class TestLLMCallWithRetry:
+    """_llm_call_with_retry retries transient errors and re-raises on final failure."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_rate_limit_then_succeeds(self, agent, mock_llm):
+        calls = []
+
+        async def side_effect(**kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise LLMRateLimitError("rate limited", retry_after=0.01)
+            return LLMResponse(
+                content="Success after retry",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=side_effect)
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "text"
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_on_server_error_then_succeeds(self, agent, mock_llm):
+        calls = []
+
+        async def side_effect(**kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise LLMServerError("500 error", retry_after=0.01)
+            return LLMResponse(
+                content="Recovered",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=side_effect)
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "text"
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_all_retries_exhausted_raises(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            side_effect=LLMRateLimitError("rate limited forever", retry_after=0.01)
+        )
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert "overloaded" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_error_not_retried(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(side_effect=LLMAuthError("bad key"))
+
+        resp = await agent.run(question="test", project_id="proj-1")
+        assert resp.response_type == "error"
+        assert mock_llm.complete.call_count == 1
+
+
+class TestClarificationFlow:
+    """LLM calling ask_user returns a clarification_request response."""
+
+    @pytest.mark.asyncio
+    async def test_ask_user_tool_returns_clarification_response(self, agent, mock_llm):
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-ask",
+                        name="ask_user",
+                        arguments={
+                            "question": "Which table?",
+                            "question_type": "free_text",
+                        },
+                    ),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        resp = await agent.run(question="show me data", project_id="proj-1")
+        assert resp.response_type == "clarification_request"
+        assert "Which table?" in resp.answer
+
+
+class TestVizFallback:
+    """Viz agent failure falls back to table visualization."""
+
+    @pytest.mark.asyncio
+    async def test_viz_failure_falls_back_to_table(self, agent, mock_llm, config):
+        from app.agents.sql_agent import SQLAgentResult
+        from app.connectors.base import QueryResult
+
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-1", name="query_database", arguments={"question": "test"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Here are the results.",
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        qr = QueryResult(
+            columns=["id", "name"],
+            rows=[[1, "Alice"], [2, "Bob"]],
+            row_count=2,
+            execution_time_ms=10.0,
+        )
+
+        with (
+            patch.object(
+                agent._orchestrator._sql, "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="success", query="SELECT 1", results=qr),
+            ),
+            patch.object(
+                agent._orchestrator._viz, "run",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("viz exploded"),
+            ),
+            patch.object(agent._orchestrator, "_resolve_connection_id", new_callable=AsyncMock, return_value=None),
+            patch.object(agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""),
+        ):
+            resp = await agent.run(question="test", project_id="proj-1", connection_config=config)
+
+        assert resp.viz_type == "table"
+        assert resp.response_type == "sql_result"

@@ -42,6 +42,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
     model: str = ""
+    provider: str = ""
     finish_reason: str = ""
 
 

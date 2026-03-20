@@ -48,6 +48,7 @@ class UserResponse(BaseModel):
     email: str
     display_name: str
     picture_url: str | None = None
+    auth_provider: str = "email"
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -68,6 +69,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
             "email": user.email,
             "display_name": user.display_name,
             "picture_url": user.picture_url,
+            "auth_provider": user.auth_provider,
         },
     )
 
@@ -86,6 +88,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
             "email": user.email,
             "display_name": user.display_name,
             "picture_url": user.picture_url,
+            "auth_provider": user.auth_provider,
         },
     )
 
@@ -126,6 +129,7 @@ async def google_login(
             "email": user.email,
             "display_name": user.display_name,
             "picture_url": user.picture_url,
+            "auth_provider": user.auth_provider,
         },
     )
 
@@ -167,6 +171,7 @@ async def refresh_token(
             "email": user.email,
             "display_name": user.display_name,
             "picture_url": user.picture_url,
+            "auth_provider": user.auth_provider,
         },
     )
 
@@ -185,6 +190,7 @@ async def me(
         email=user.email,
         display_name=user.display_name,
         picture_url=user.picture_url,
+        auth_provider=user.auth_provider,
     )
 
 

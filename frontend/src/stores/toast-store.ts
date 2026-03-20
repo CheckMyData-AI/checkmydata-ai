@@ -12,6 +12,12 @@ interface ToastStore {
   removeToast: (id: string) => void;
 }
 
+const TOAST_DURATION_MS: Record<Toast["type"], number> = {
+  success: 4000,
+  info: 4000,
+  error: 10000,
+};
+
 let _nextId = 0;
 
 export const useToastStore = create<ToastStore>((set) => ({
@@ -21,7 +27,7 @@ export const useToastStore = create<ToastStore>((set) => ({
     set((s) => ({ toasts: [...s.toasts, { id, message, type }] }));
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 4000);
+    }, TOAST_DURATION_MS[type]);
   },
   removeToast: (id) =>
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

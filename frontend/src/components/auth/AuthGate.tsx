@@ -38,8 +38,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const nonceRef = useRef<string>(generateRandomToken());
 
   useEffect(() => {
-    restore();
-    setRestoring(false);
+    restore().finally(() => setRestoring(false));
   }, [restore]);
 
   const handleGoogleResponse = useCallback(

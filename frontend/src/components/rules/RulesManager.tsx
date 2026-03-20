@@ -8,6 +8,7 @@ import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { usePermission } from "@/hooks/usePermission";
 
 interface Rule {
   id: string;
@@ -31,6 +32,7 @@ function sortRules(rules: Rule[]): Rule[] {
 
 export function RulesManager() {
   const { activeProject, rulesVersion } = useAppStore();
+  const { canDelete, canEdit } = usePermission();
   const [rules, setRules] = useState<Rule[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -122,28 +124,30 @@ export function RulesManager() {
   return (
     <div className="px-1">
       <div className="flex justify-end px-1 mb-1">
-        <button
-          onClick={() => {
-            if (showCreate) {
-              setShowCreate(false);
-            } else {
-              setEditingId(null);
-              setName("");
-              setContent("");
-              setShowCreate(true);
-            }
-          }}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
-        >
-          {showCreate ? (
-            "Cancel"
-          ) : (
-            <>
+        {canEdit && (
+          <button
+            onClick={() => {
+              if (showCreate) {
+                setShowCreate(false);
+              } else {
+                setEditingId(null);
+                setName("");
+                setContent("");
+                setShowCreate(true);
+              }
+            }}
+            className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
+          >
+            {showCreate ? (
+              "Cancel"
+            ) : (
+              <>
               <Icon name="plus" size={12} />
               New
             </>
-          )}
-        </button>
+            )}
+          </button>
+        )}
       </div>
 
       {isFormOpen && (
@@ -222,19 +226,23 @@ export function RulesManager() {
               </div>
             </div>
             <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
-              <ActionButton
-                icon="pencil"
-                title="Edit rule"
-                onClick={() => handleEdit(rule)}
-                size="xs"
-              />
-              <ActionButton
-                icon="trash"
-                title="Delete rule"
-                onClick={() => handleDelete(rule)}
-                variant="danger"
-                size="xs"
-              />
+              {canEdit && (
+                <ActionButton
+                  icon="pencil"
+                  title="Edit rule"
+                  onClick={() => handleEdit(rule)}
+                  size="xs"
+                />
+              )}
+              {canDelete && (
+                <ActionButton
+                  icon="trash"
+                  title="Delete rule"
+                  onClick={() => handleDelete(rule)}
+                  variant="danger"
+                  size="xs"
+                />
+              )}
             </div>
           </div>
         ))}

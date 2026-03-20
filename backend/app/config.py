@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
 
+    # Backup settings
+    backup_enabled: bool = True
+    backup_hour: int = 0
+    backup_retention_days: int = 7
+    backup_dir: str = "./data/backups"
+
     # Request limits
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
 

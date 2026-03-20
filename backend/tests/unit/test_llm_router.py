@@ -4,6 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.llm.base import LLMResponse, Message, ToolCall
+from app.llm.errors import (
+    LLMAllProvidersFailedError,
+    LLMAuthError,
+    LLMRateLimitError,
+    LLMServerError,
+)
 from app.llm.router import LLMRouter
 
 
@@ -33,7 +39,7 @@ class TestLLMRouterFallback:
         router = LLMRouter()
 
         failing = MagicMock()
-        failing.complete = AsyncMock(side_effect=RuntimeError("API down"))
+        failing.complete = AsyncMock(side_effect=LLMServerError("API down"))
         router._instances["openai"] = failing
 
         working = MagicMock()
@@ -51,8 +57,6 @@ class TestLLMRouterFallback:
             )
 
         assert result.content == "fallback"
-        failing.complete.assert_called_once()
-        working.complete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_all_providers_fail(self):
@@ -60,7 +64,9 @@ class TestLLMRouterFallback:
 
         for name in ["openai", "anthropic", "openrouter"]:
             provider = MagicMock()
-            provider.complete = AsyncMock(side_effect=RuntimeError(f"{name} down"))
+            provider.complete = AsyncMock(
+                side_effect=LLMServerError(f"{name} down"),
+            )
             router._instances[name] = provider
 
         with patch("app.llm.router.settings") as mock_settings:
@@ -68,10 +74,63 @@ class TestLLMRouterFallback:
             mock_settings.openai_api_key = "sk-openai"
             mock_settings.anthropic_api_key = "sk-anthropic"
             mock_settings.openrouter_api_key = "sk-openrouter"
-            with pytest.raises(RuntimeError, match="All LLM providers failed"):
+            with pytest.raises(LLMAllProvidersFailedError):
                 await router.complete(
                     messages=[Message(role="user", content="hi")],
                 )
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_error_stops_chain(self):
+        """An LLMAuthError should stop trying other providers."""
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(
+            side_effect=LLMAuthError("bad key"),
+        )
+        router._instances["openai"] = failing
+
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value=LLMResponse(content="ok"))
+        router._instances["anthropic"] = fallback
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = "sk-anthropic"
+            mock_settings.openrouter_api_key = ""
+            with pytest.raises(LLMAllProvidersFailedError):
+                await router.complete(
+                    messages=[Message(role="user", content="hi")],
+                    preferred_provider="openai",
+                )
+        fallback.complete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retries_within_provider(self):
+        """Retryable errors should be retried before falling through."""
+        router = LLMRouter()
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(
+            side_effect=[
+                LLMRateLimitError("rate limited", retry_after=0.01),
+                LLMResponse(content="ok after retry"),
+            ],
+        )
+        router._instances["openai"] = mock_provider
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openai"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = ""
+            mock_settings.openrouter_api_key = ""
+            result = await router.complete(
+                messages=[Message(role="user", content="hi")],
+                preferred_provider="openai",
+            )
+
+        assert result.content == "ok after retry"
+        assert mock_provider.complete.call_count == 2
 
     def test_get_fallback_chain(self):
         router = LLMRouter()
@@ -123,7 +182,7 @@ class TestLLMRouterFallback:
             mock_settings.openai_api_key = ""
             mock_settings.anthropic_api_key = ""
             mock_settings.openrouter_api_key = ""
-            with pytest.raises(RuntimeError, match="All LLM providers failed"):
+            with pytest.raises(LLMAllProvidersFailedError):
                 await router.complete(
                     messages=[Message(role="user", content="hi")],
                     preferred_provider="nonexistent_provider",
@@ -137,7 +196,7 @@ class TestLLMRouterFallback:
             mock_settings.openai_api_key = ""
             mock_settings.anthropic_api_key = ""
             mock_settings.openrouter_api_key = ""
-            with pytest.raises(RuntimeError, match="All LLM providers failed"):
+            with pytest.raises(LLMAllProvidersFailedError):
                 await router.complete(
                     messages=[Message(role="user", content="hi")],
                 )

@@ -6,6 +6,7 @@ import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { useAppStore } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
 import { VizToolbar } from "@/components/viz/VizToolbar";
+import { DataTable } from "@/components/viz/DataTable";
 import { rerenderViz, type VizTypeKey } from "@/lib/viz-utils";
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
@@ -82,7 +83,7 @@ interface MessageMetadata {
   total_attempts?: number;
   rag_sources?: RAGSourceInfo[];
   response_type?: string;
-  token_usage?: Record<string, number>;
+  token_usage?: Record<string, number | string | null>;
 }
 
 interface ChatMessageProps {
@@ -234,7 +235,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] rounded-xl px-4 py-3 ${
+        className={`max-w-[80%] min-w-0 overflow-hidden rounded-xl px-4 py-3 ${
           isUser ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-100"
         }`}
       >
@@ -336,6 +337,23 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {isSqlResult && hasViz && viewMode === "viz" && (
           <div className="mt-2">
             <VizRenderer data={overrideViz ?? message.visualization!} />
+          </div>
+        )}
+
+        {/* Data table fallback — for sql_result responses in text mode */}
+        {isSqlResult && hasViz && viewMode === "text" && hasRawResult && (
+          <div className="mt-2">
+            <DataTable
+              data={{
+                columns: message.rawResult!.columns,
+                rows: message.rawResult!.rows.map((row) =>
+                  Object.fromEntries(
+                    message.rawResult!.columns.map((col, i) => [col, row[i]]),
+                  ),
+                ),
+                total_rows: message.rawResult!.total_rows,
+              }}
+            />
           </div>
         )}
 
@@ -500,9 +518,16 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
-            {metadata.token_usage?.total_tokens != null && metadata.token_usage.total_tokens > 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
-                {metadata.token_usage.total_tokens.toLocaleString()} tokens
+            {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
+                {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} in / {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()} out
+              </span>
+            )}
+            {metadata.token_usage?.estimated_cost_usd != null && Number(metadata.token_usage.estimated_cost_usd) > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400">
+                ${Number(metadata.token_usage.estimated_cost_usd) < 0.01
+                  ? Number(metadata.token_usage.estimated_cost_usd).toFixed(4)
+                  : Number(metadata.token_usage.estimated_cost_usd).toFixed(2)}
               </span>
             )}
             <button
@@ -526,12 +551,21 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             {metadata.viz_type && <div>Visualization: {metadata.viz_type}</div>}
             {metadata.error && <div className="text-red-400">Error: {metadata.error}</div>}
 
-            {metadata.token_usage?.total_tokens != null && metadata.token_usage.total_tokens > 0 && (
+            {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
               <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
                 <div className="font-medium text-zinc-400 mb-1">Token Usage</div>
-                <div>Prompt: {metadata.token_usage.prompt_tokens?.toLocaleString() ?? 0}</div>
-                <div>Completion: {metadata.token_usage.completion_tokens?.toLocaleString() ?? 0}</div>
-                <div>Total: {metadata.token_usage.total_tokens.toLocaleString()}</div>
+                <div>Prompt: {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()}</div>
+                <div>Completion: {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}</div>
+                <div>Total: {Number(metadata.token_usage.total_tokens).toLocaleString()}</div>
+                {metadata.token_usage.provider && (
+                  <div>Provider: {String(metadata.token_usage.provider)}</div>
+                )}
+                {metadata.token_usage.model && (
+                  <div>Model: {String(metadata.token_usage.model)}</div>
+                )}
+                {metadata.token_usage.estimated_cost_usd != null && Number(metadata.token_usage.estimated_cost_usd) > 0 && (
+                  <div>Cost: ${Number(metadata.token_usage.estimated_cost_usd).toFixed(4)}</div>
+                )}
               </div>
             )}
 

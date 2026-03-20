@@ -67,16 +67,18 @@ GET_DB_INDEX_TOOL = Tool(
     description=(
         "Get the pre-analyzed database index with business descriptions, "
         "data patterns, relevance scores, and query hints for every table. "
-        "Use scope='overview' for a summary of all tables, or "
+        "Use scope='overview' for a summary of all tables, "
         "scope='table_detail' with a table_name for deep per-table analysis "
-        "including sample data and column notes."
+        "including sample data and column notes, or "
+        "scope='project_overview' for the unified project knowledge briefing "
+        "(DB structure, data conventions, rules, learnings, and repo profile)."
     ),
     parameters=[
         ToolParameter(
             name="scope",
             type="string",
             description="Level of detail to return",
-            enum=["overview", "table_detail"],
+            enum=["overview", "table_detail", "project_overview"],
         ),
         ToolParameter(
             name="table_name",

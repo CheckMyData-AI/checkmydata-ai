@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,9 +9,27 @@ from app.core.audit import audit_log
 from app.services.membership_service import MembershipService
 from app.services.rule_service import RuleService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 _svc = RuleService()
 _membership_svc = MembershipService()
+
+
+async def _regenerate_overview_for_project(project_id: str | None) -> None:
+    """Best-effort regenerate the project knowledge overview after rules change."""
+    if not project_id:
+        return
+    from app.models.base import async_session_factory
+    from app.services.project_overview_service import ProjectOverviewService
+
+    try:
+        async with async_session_factory() as session:
+            svc = ProjectOverviewService()
+            await svc.save_overview(session, project_id)
+        logger.info("Project overview regenerated after rules change: project=%s", project_id[:8])
+    except Exception:
+        logger.debug("Failed to regenerate project overview after rules change", exc_info=True)
 
 
 class RuleCreate(BaseModel):
@@ -43,7 +63,7 @@ async def create_rule(
     user: dict = Depends(get_current_user),
 ):
     if body.project_id:
-        await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
+        await _membership_svc.require_role(db, body.project_id, user["user_id"], "editor")
     rule = await _svc.create(db, **body.model_dump())
     audit_log(
         "rule.create",
@@ -52,6 +72,7 @@ async def create_rule(
         resource_type="rule",
         resource_id=rule.id,
     )
+    await _regenerate_overview_for_project(rule.project_id)
     return rule
 
 
@@ -91,7 +112,7 @@ async def update_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule.project_id:
-        await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
+        await _membership_svc.require_role(db, rule.project_id, user["user_id"], "editor")
     updates = body.model_dump(exclude_unset=True)
     updated_rule = await _svc.update(db, rule_id, **updates)
     if not updated_rule:
@@ -103,6 +124,7 @@ async def update_rule(
         resource_type="rule",
         resource_id=rule_id,
     )
+    await _regenerate_overview_for_project(updated_rule.project_id)
     return updated_rule
 
 
@@ -117,12 +139,14 @@ async def delete_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule.project_id:
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
+    project_id = rule.project_id
     await _svc.delete(db, rule_id)
     audit_log(
         "rule.delete",
         user_id=user["user_id"],
-        project_id=rule.project_id,
+        project_id=project_id,
         resource_type="rule",
         resource_id=rule_id,
     )
+    await _regenerate_overview_for_project(project_id)
     return {"ok": True}

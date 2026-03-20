@@ -29,6 +29,12 @@ vi.mock("@/components/viz/VizToolbar", () => ({
   VizToolbar: () => <div data-testid="viz-toolbar" />,
 }));
 
+vi.mock("@/components/viz/DataTable", () => ({
+  DataTable: ({ data }: { data: Record<string, unknown> }) => (
+    <div data-testid="data-table">{JSON.stringify(data)}</div>
+  ),
+}));
+
 vi.mock("@/lib/viz-utils", () => ({
   rerenderViz: vi.fn(),
 }));
@@ -131,5 +137,68 @@ describe("ChatMessage", () => {
     });
     const boldEl = screen.getByText("bold text");
     expect(boldEl.tagName).toBe("STRONG");
+  });
+
+  it("shows Visual/Text toggle for sql_result with visualization", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Here is the chart",
+      visualization: {
+        type: "chart",
+        data: { type: "bar", labels: ["a"], datasets: [{ data: [1] }] },
+      },
+      responseType: "sql_result",
+      rawResult: { columns: ["x"], rows: [[1]], total_rows: 1 },
+    });
+    expect(screen.getByText("Visual")).toBeInTheDocument();
+    expect(screen.getByText("Text")).toBeInTheDocument();
+  });
+
+  it("defaults to Visual mode and shows viz-renderer", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Chart result",
+      visualization: {
+        type: "chart",
+        data: { type: "bar", labels: ["a"], datasets: [{ data: [1] }] },
+      },
+      responseType: "sql_result",
+      rawResult: { columns: ["x"], rows: [[1]], total_rows: 1 },
+    });
+    expect(screen.getByTestId("viz-renderer")).toBeInTheDocument();
+    expect(screen.queryByTestId("data-table")).not.toBeInTheDocument();
+  });
+
+  it("switches to Text mode and shows DataTable instead of chart", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Chart result",
+      visualization: {
+        type: "chart",
+        data: { type: "bar", labels: ["a"], datasets: [{ data: [1] }] },
+      },
+      responseType: "sql_result",
+      rawResult: { columns: ["name", "count"], rows: [["Alice", 10]], total_rows: 1 },
+    });
+
+    await userEvent.click(screen.getByText("Text"));
+    expect(screen.queryByTestId("viz-renderer")).not.toBeInTheDocument();
+    expect(screen.getByTestId("data-table")).toBeInTheDocument();
+  });
+
+  it("Text mode shows nothing if no rawResult", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Chart result",
+      visualization: {
+        type: "chart",
+        data: { type: "bar", labels: ["a"], datasets: [{ data: [1] }] },
+      },
+      responseType: "sql_result",
+    });
+
+    await userEvent.click(screen.getByText("Text"));
+    expect(screen.queryByTestId("viz-renderer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("data-table")).not.toBeInTheDocument();
   });
 });

@@ -11,6 +11,7 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
+import { usePermission } from "@/hooks/usePermission";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"];
 
@@ -121,6 +122,7 @@ export function ConnectionSelector() {
     setActiveConnection,
     sshKeys,
   } = useAppStore();
+  const { canDelete } = usePermission();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
@@ -612,7 +614,16 @@ export function ConnectionSelector() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!(await confirmAction("Delete this connection?"))) return;
+    const conn = connections.find((c) => c.id === id);
+    const name = conn?.db_name || conn?.id || "this connection";
+    if (
+      !(await confirmAction(`Delete connection "${name}"?`, {
+        severity: "critical",
+        detail:
+          "This will permanently remove all DB indexes, sync data, learnings, benchmarks, and session notes associated with this connection.",
+        confirmText: "DELETE",
+      }))
+    ) return;
     try {
       await api.connections.delete(id);
       useAppStore.setState((state) => ({
@@ -1265,13 +1276,15 @@ export function ConnectionSelector() {
                       size="xs"
                     />
                   )}
-                  <ActionButton
-                    icon="trash"
-                    title="Delete connection"
-                    onClick={(e) => handleDelete(e, c.id)}
-                    variant="danger"
-                    size="xs"
-                  />
+                  {canDelete && (
+                    <ActionButton
+                      icon="trash"
+                      title="Delete connection"
+                      onClick={(e) => handleDelete(e, c.id)}
+                      variant="danger"
+                      size="xs"
+                    />
+                  )}
                 </div>
               </div>
               {showLearnings === c.id && (

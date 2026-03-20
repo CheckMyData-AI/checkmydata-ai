@@ -59,7 +59,7 @@ export function PendingInvites() {
         >
           <div className="flex-1 min-w-0">
             <span className="text-text-primary truncate block">
-              Project invite ({inv.role})
+              {inv.project_name ?? "Project"} ({inv.role})
             </span>
           </div>
           <button

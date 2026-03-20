@@ -31,6 +31,7 @@ interface ChatMessage {
     context?: string;
   } | null;
   verificationStatus?: "verified" | "unverified" | "flagged" | null;
+  isRetryable?: boolean;
 }
 
 interface ToolCallEvent {

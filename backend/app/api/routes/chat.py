@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 
 from fastapi import (
@@ -20,11 +21,13 @@ from app.api.deps import get_current_user, get_db
 from app.core.agent import ConversationalAgent
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
+from app.llm.errors import LLMError
 from app.services.chat_service import ChatService
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rag_feedback_service import RAGFeedbackService
+from app.services.usage_service import UsageService
 from app.viz.renderer import render
 
 logger = logging.getLogger(__name__)
@@ -35,7 +38,32 @@ _conn_svc = ConnectionService()
 _project_svc = ProjectService()
 _agent = ConversationalAgent()
 _rag_feedback_svc = RAGFeedbackService()
+_usage_svc = UsageService()
 _membership_svc = MembershipService()
+
+
+def _estimate_cost(
+    model: str | None, prompt_tokens: int, completion_tokens: int
+) -> float | None:
+    """Estimate USD cost using cached OpenRouter pricing data when available."""
+    if not model:
+        return None
+    try:
+        from app.api.routes.models import _cache
+
+        cached = _cache.get("openrouter")
+        if not cached:
+            return None
+        _, models_list = cached
+        for m in models_list:
+            if m["id"] == model:
+                pricing = m.get("pricing", {})
+                prompt_price = float(pricing.get("prompt", "0"))
+                completion_price = float(pricing.get("completion", "0"))
+                return round(prompt_tokens * prompt_price + completion_tokens * completion_price, 8)
+    except Exception:
+        pass
+    return None
 
 
 class ChatRequest(BaseModel):
@@ -345,6 +373,23 @@ def _has_rules_changed(tool_call_log: list[dict] | None) -> bool:
     return any(tc.get("tool") in ("manage_custom_rules", "manage_rules") for tc in tool_call_log)
 
 
+def _build_structured_error(exc: Exception) -> dict:
+    """Build a structured error payload for SSE error events."""
+    if isinstance(exc, LLMError):
+        return {
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "is_retryable": exc.is_retryable,
+            "user_message": exc.user_message,
+        }
+    return {
+        "error": str(exc),
+        "error_type": "internal",
+        "is_retryable": True,
+        "user_message": "An unexpected error occurred. Please try again.",
+    }
+
+
 def _build_raw_result(results) -> dict | None:
     """Extract raw tabular data from query results, capped at 500 rows."""
     if not results:
@@ -441,6 +486,17 @@ async def ask(
 
     tool_calls_str = json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
 
+    ask_usage = result.token_usage or {}
+    ask_cost = _estimate_cost(
+        result.llm_model, ask_usage.get("prompt_tokens", 0), ask_usage.get("completion_tokens", 0)
+    )
+    enriched_token_usage = {
+        **(result.token_usage or {}),
+        "provider": result.llm_provider or "unknown",
+        "model": result.llm_model or "unknown",
+        "estimated_cost_usd": ask_cost,
+    } if result.token_usage else None
+
     assistant_msg = await _chat_svc.add_message(
         db,
         session_id,
@@ -458,7 +514,7 @@ async def ask(
             "row_count": (result.results.row_count if result.results else None),
             "execution_time_ms": (result.results.execution_time_ms if result.results else None),
             "rag_sources": rag_source_dicts,
-            "token_usage": result.token_usage or None,
+            "token_usage": enriched_token_usage,
             "response_type": result.response_type,
             "staleness_warning": result.staleness_warning,
         },
@@ -485,6 +541,25 @@ async def ask(
         or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
         bool(result.error),
     )
+
+    try:
+        await _usage_svc.record_usage(
+            db,
+            user_id=user["user_id"],
+            project_id=body.project_id,
+            session_id=session_id,
+            message_id=assistant_msg.id,
+            provider=result.llm_provider or "unknown",
+            model=result.llm_model or "unknown",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            estimated_cost_usd=_estimate_cost(
+                result.llm_model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+            ),
+        )
+    except Exception:
+        logger.warning("Failed to record token usage", exc_info=True)
 
     return ChatResponse(
         session_id=session_id,
@@ -550,6 +625,8 @@ async def ask_stream(
     sql_model = (project.sql_llm_model if project else None) or agent_model
     project_name = project.name if project else None
 
+    _STREAM_TIMEOUT_SECONDS = 120
+
     async def _generate():
         result_holder: list = []
         queue = tracker.subscribe()
@@ -572,7 +649,11 @@ async def ask_stream(
         task = asyncio.create_task(_process())
 
         wf_id = None
+        loop_deadline = time.monotonic() + _STREAM_TIMEOUT_SECONDS + 30
         while not task.done() or not queue.empty():
+            if time.monotonic() > loop_deadline:
+                logger.warning("SSE event loop exceeded safety timeout, breaking")
+                break
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=0.5)
             except TimeoutError:
@@ -608,15 +689,36 @@ async def ask_stream(
                 break
 
         try:
-            await task
+            await asyncio.wait_for(asyncio.shield(task), timeout=_STREAM_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            task.cancel()
+            tracker.unsubscribe(queue)
+            error_payload = {
+                "error": "Request timed out",
+                "error_type": "timeout",
+                "is_retryable": True,
+                "user_message": (
+                    "The request took too long to complete. "
+                    "Please try again with a simpler question."
+                ),
+            }
+            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+            return
         except Exception as exc:
             tracker.unsubscribe(queue)
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)}, default=str)}\n\n"
+            error_payload = _build_structured_error(exc)
+            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
             return
         tracker.unsubscribe(queue)
         result = result_holder[0] if result_holder else None
         if not result:
-            yield f"event: error\ndata: {json.dumps({'error': 'No result'}, default=str)}\n\n"
+            error_payload = {
+                "error": "No result",
+                "error_type": "internal",
+                "is_retryable": True,
+                "user_message": "An unexpected error occurred. Please try again.",
+            }
+            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
             return
 
         viz_data = None
@@ -645,6 +747,19 @@ async def ask_stream(
 
         from app.models.base import async_session_factory as _stream_session_factory
 
+        s_usage = result.token_usage or {}
+        s_cost = _estimate_cost(
+            result.llm_model,
+            s_usage.get("prompt_tokens", 0),
+            s_usage.get("completion_tokens", 0),
+        )
+        s_enriched_usage = {
+            **(result.token_usage or {}),
+            "provider": result.llm_provider or "unknown",
+            "model": result.llm_model or "unknown",
+            "estimated_cost_usd": s_cost,
+        } if result.token_usage else None
+
         async with _stream_session_factory() as stream_db:
             assistant_msg = await _chat_svc.add_message(
                 stream_db,
@@ -665,7 +780,7 @@ async def ask_stream(
                         result.results.execution_time_ms if result.results else None
                     ),
                     "rag_sources": stream_rag,
-                    "token_usage": result.token_usage or None,
+                    "token_usage": s_enriched_usage,
                     "response_type": result.response_type,
                     "staleness_warning": result.staleness_warning,
                 },
@@ -684,6 +799,28 @@ async def ask_stream(
                 except Exception:
                     logger.warning("Failed to record RAG feedback", exc_info=True)
 
+            stream_usage = result.token_usage or {}
+            try:
+                await _usage_svc.record_usage(
+                    stream_db,
+                    user_id=user["user_id"],
+                    project_id=body.project_id,
+                    session_id=session_id,
+                    message_id=assistant_msg.id,
+                    provider=result.llm_provider or "unknown",
+                    model=result.llm_model or "unknown",
+                    prompt_tokens=stream_usage.get("prompt_tokens", 0),
+                    completion_tokens=stream_usage.get("completion_tokens", 0),
+                    total_tokens=stream_usage.get("total_tokens", 0),
+                    estimated_cost_usd=_estimate_cost(
+                        result.llm_model,
+                        stream_usage.get("prompt_tokens", 0),
+                        stream_usage.get("completion_tokens", 0),
+                    ),
+                )
+            except Exception:
+                logger.warning("Failed to record token usage", exc_info=True)
+
         final = {
             "session_id": session_id,
             "answer": result.answer,
@@ -695,7 +832,7 @@ async def ask_stream(
             "workflow_id": result.workflow_id,
             "rag_sources": stream_rag,
             "staleness_warning": result.staleness_warning,
-            "token_usage": result.token_usage or None,
+            "token_usage": s_enriched_usage,
             "response_type": result.response_type,
             "assistant_message_id": assistant_msg.id,
             "user_message_id": user_message_id,
@@ -795,8 +932,10 @@ async def chat_websocket(
                 await websocket.send_json(payload)
                 if event.step == "pipeline_end":
                     break
-        except (TimeoutError, Exception):
-            pass
+        except TimeoutError:
+            logger.debug("WebSocket relay timed out (no events for 60s)")
+        except Exception:
+            logger.warning("WebSocket relay error", exc_info=True)
 
     try:
         async with async_session_factory() as db:

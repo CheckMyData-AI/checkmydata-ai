@@ -6,11 +6,61 @@ import httpx
 
 from app.config import settings
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.errors import (
+    LLMAuthError,
+    LLMConnectionError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMTokenLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "openai/gpt-4o"
+
+
+def _classify_openrouter_error(exc: Exception) -> Exception:
+    """Map httpx / OpenRouter errors to the unified LLM error hierarchy."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        retry_after = None
+        raw_ra = exc.response.headers.get("retry-after")
+        if raw_ra:
+            try:
+                retry_after = float(raw_ra)
+            except (ValueError, TypeError):
+                pass
+
+        body = ""
+        try:
+            body = exc.response.text.lower()
+        except Exception:
+            pass
+
+        if status == 429:
+            return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)
+        if status in (401, 403):
+            return LLMAuthError(str(exc), cause=exc)
+        if status == 400:
+            if "context length" in body or "max_tokens" in body or "too many tokens" in body:
+                return LLMTokenLimitError(str(exc), cause=exc)
+            return LLMServerError(str(exc), cause=exc)
+        if 500 <= status < 600:
+            return LLMServerError(str(exc), cause=exc)
+        return LLMServerError(str(exc), cause=exc)
+
+    if isinstance(exc, httpx.TimeoutException):
+        return LLMTimeoutError(str(exc), cause=exc)
+
+    if isinstance(exc, (httpx.ConnectError, httpx.NetworkError)):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return LLMConnectionError(str(exc), cause=exc)
+
+    return exc
 
 
 class OpenRouterAdapter(BaseLLMProvider):
@@ -70,8 +120,12 @@ class OpenRouterAdapter(BaseLLMProvider):
         if tools:
             payload["tools"] = self._tools_to_schema(tools)
 
-        resp = await self._client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
+        try:
+            resp = await self._client.post("/chat/completions", json=payload)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise _classify_openrouter_error(exc) from exc
+
         data = resp.json()
 
         choice = data["choices"][0]
@@ -123,21 +177,26 @@ class OpenRouterAdapter(BaseLLMProvider):
         if tools:
             payload["tools"] = self._tools_to_schema(tools)
 
-        async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                raw = line[6:]
-                if raw == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(raw)
-                    delta = chunk["choices"][0].get("delta", {})
-                    if content := delta.get("content"):
-                        yield content
-                except (json.JSONDecodeError, KeyError, IndexError):
-                    continue
+        try:
+            async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    raw = line[6:]
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(raw)
+                        delta = chunk["choices"][0].get("delta", {})
+                        if content := delta.get("content"):
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+        except GeneratorExit:
+            raise
+        except Exception as exc:
+            raise _classify_openrouter_error(exc) from exc
 
     async def close(self):
         await self._client.aclose()
