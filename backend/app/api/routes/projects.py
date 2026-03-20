@@ -275,7 +275,9 @@ async def project_readiness(
         repo_analyzer = RepoAnalyzer(settings.repo_clone_base_dir)
         try:
             record = await git_tracker.get_last_indexed_record(
-                db, project_id, branch=project.repo_branch,
+                db,
+                project_id,
+                branch=project.repo_branch,
             )
             if record and record.created_at:
                 last_indexed_at = record.created_at.isoformat()
@@ -284,11 +286,13 @@ async def project_readiness(
                 if repo_dir.exists() and record.commit_sha:
                     try:
                         head_sha = await asyncio.to_thread(
-                            git_tracker.get_head_sha, repo_dir,
+                            git_tracker.get_head_sha,
+                            repo_dir,
                         )
                         if head_sha != record.commit_sha:
                             commits_behind = await git_tracker.count_commits_ahead(
-                                repo_dir, record.commit_sha,
+                                repo_dir,
+                                record.commit_sha,
                             )
                     except Exception:
                         pass

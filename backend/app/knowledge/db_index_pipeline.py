@@ -239,12 +239,16 @@ class DbIndexPipeline:
                 )
                 await connector.connect(connection_config)
                 await self._tracker.emit(
-                    wf_id, "introspect_schema", "started",
+                    wf_id,
+                    "introspect_schema",
+                    "started",
                     f"Connected to {connection_config.db_type}",
                 )
                 schema = await connector.introspect_schema()
                 await self._tracker.emit(
-                    wf_id, "introspect_schema", "started",
+                    wf_id,
+                    "introspect_schema",
+                    "started",
                     f"Found {len(schema.tables)} tables",
                 )
 
@@ -296,7 +300,9 @@ class DbIndexPipeline:
                     enum_info = f"{len(tbl_distinct)} enum cols" if tbl_distinct else ""
                     detail_parts = [row_info] + ([enum_info] if enum_info else [])
                     await self._tracker.emit(
-                        wf_id, "fetch_samples", "started",
+                        wf_id,
+                        "fetch_samples",
+                        "started",
                         f"Sampled {_sampled_count[0]}/{total_tables}: "
                         f"{table.name} ({', '.join(detail_parts)})",
                     )
@@ -326,14 +332,19 @@ class DbIndexPipeline:
             ):
                 code_context, code_tables = await self._load_code_context(project_id)
                 await self._tracker.emit(
-                    wf_id, "load_context", "started",
+                    wf_id,
+                    "load_context",
+                    "started",
                     f"Loaded {len(code_tables)} code entities",
                 )
                 rules_context = await self._load_rules_context(project_id)
                 await self._tracker.emit(
-                    wf_id, "load_context", "started",
+                    wf_id,
+                    "load_context",
+                    "started",
                     f"Loaded rules context ({len(rules_context)} chars)"
-                    if rules_context else "No custom rules found",
+                    if rules_context
+                    else "No custom rules found",
                 )
 
             # Step 4: LLM validation per table
@@ -358,7 +369,9 @@ class DbIndexPipeline:
                         small_tables.append(table)
 
                 await self._tracker.emit(
-                    wf_id, "validate_tables", "started",
+                    wf_id,
+                    "validate_tables",
+                    "started",
                     f"Classified: {len(large_tables)} large tables (individual), "
                     f"{len(small_tables)} small tables (batched)",
                 )
@@ -380,7 +393,9 @@ class DbIndexPipeline:
                         )
                         _large_done[0] += 1
                         await self._tracker.emit(
-                            wf_id, "validate_tables", "started",
+                            wf_id,
+                            "validate_tables",
+                            "started",
                             f"Analyzed [{_large_done[0]}/{len(large_tables)}]: "
                             f"{table.name} (relevance={result.relevance_score})",
                         )
@@ -393,7 +408,8 @@ class DbIndexPipeline:
 
                 total_small_batches = (
                     (len(small_tables) + self._batch_size - 1) // self._batch_size
-                    if small_tables else 0
+                    if small_tables
+                    else 0
                 )
                 for batch_start in range(0, len(small_tables), self._batch_size):
                     batch = small_tables[batch_start : batch_start + self._batch_size]
@@ -419,7 +435,9 @@ class DbIndexPipeline:
                     batch_num = batch_start // self._batch_size + 1
                     batch_names = ", ".join(t.name for t in batch)
                     await self._tracker.emit(
-                        wf_id, "validate_tables", "started",
+                        wf_id,
+                        "validate_tables",
+                        "started",
                         f"Batch {batch_num}/{total_small_batches} done "
                         f"({len(batch)} small tables): {batch_names}",
                     )
@@ -438,7 +456,9 @@ class DbIndexPipeline:
                     if deleted:
                         logger.info("Removed %d stale table index entries", deleted)
                         await self._tracker.emit(
-                            wf_id, "store_results", "started",
+                            wf_id,
+                            "store_results",
+                            "started",
                             f"Removed {deleted} stale table index entries",
                         )
 
@@ -474,7 +494,9 @@ class DbIndexPipeline:
                         await self._svc.upsert_table(session, connection_id, table_data)
 
                     await self._tracker.emit(
-                        wf_id, "store_results", "started",
+                        wf_id,
+                        "store_results",
+                        "started",
                         f"Stored {len(analyses)} table entries",
                     )
                     await session.commit()
@@ -486,7 +508,9 @@ class DbIndexPipeline:
                 "Generating database summary",
             ):
                 await self._tracker.emit(
-                    wf_id, "generate_summary", "started",
+                    wf_id,
+                    "generate_summary",
+                    "started",
                     f"Generating LLM summary for {len(analyses)} tables",
                 )
                 summary_result = await self._validator.generate_summary(
@@ -505,7 +529,9 @@ class DbIndexPipeline:
                 empty_count = sum(1 for a in analyses if not a.is_active)
 
                 await self._tracker.emit(
-                    wf_id, "generate_summary", "started",
+                    wf_id,
+                    "generate_summary",
+                    "started",
                     f"Summary: {active_count} active, {empty_count} empty, "
                     f"{orphan_count} orphan, {phantom_count} phantom tables",
                 )

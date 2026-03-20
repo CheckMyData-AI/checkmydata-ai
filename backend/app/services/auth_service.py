@@ -116,18 +116,14 @@ class AuthService:
         email = google_payload["email"].lower().strip()
         name = google_payload.get("name", "") or email.split("@")[0]
 
-        gid_result = await session.execute(
-            select(User).where(User.google_id == google_id)
-        )
+        gid_result = await session.execute(select(User).where(User.google_id == google_id))
         user = gid_result.scalar_one_or_none()
 
         if user:
             logger.info("User logged in: %s (provider=google)", email)
             return user
 
-        email_result = await session.execute(
-            select(User).where(User.email == email)
-        )
+        email_result = await session.execute(select(User).where(User.email == email))
         user = email_result.scalar_one_or_none()
 
         if user:

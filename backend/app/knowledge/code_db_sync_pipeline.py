@@ -88,7 +88,9 @@ class CodeDbSyncPipeline:
                     await session.commit()
                 return {"status": "failed", "error": "No code knowledge — index repository first"}
             await self._tracker.emit(
-                wf_id, "load_code_knowledge", "started",
+                wf_id,
+                "load_code_knowledge",
+                "started",
                 f"Loaded {len(knowledge.entities)} entities, "
                 f"{len(knowledge.table_usage)} table usages, "
                 f"{len(knowledge.enums)} enums",
@@ -115,7 +117,9 @@ class CodeDbSyncPipeline:
                     await session.commit()
                 return {"status": "failed", "error": "No DB index — index database first"}
             await self._tracker.emit(
-                wf_id, "load_db_index", "started",
+                wf_id,
+                "load_db_index",
+                "started",
                 f"Loaded {len(db_entries)} DB index entries",
             )
 
@@ -134,7 +138,9 @@ class CodeDbSyncPipeline:
             code_info_count = sum(1 for m in matched_tables if m.has_code_info)
             db_only_match = len(matched_tables) - code_info_count
             await self._tracker.emit(
-                wf_id, "match_tables", "started",
+                wf_id,
+                "match_tables",
+                "started",
                 f"Matched {len(matched_tables)} tables "
                 f"({code_info_count} with code info, {db_only_match} DB-only)",
             )
@@ -150,7 +156,9 @@ class CodeDbSyncPipeline:
                 small_tables = [m for m in matched_tables if not m.has_code_info]
 
                 await self._tracker.emit(
-                    wf_id, "analyze_sync", "started",
+                    wf_id,
+                    "analyze_sync",
+                    "started",
                     f"Analyzing {len(large_tables)} tables individually, "
                     f"{len(small_tables)} in batches of {BATCH_SIZE}",
                 )
@@ -165,14 +173,15 @@ class CodeDbSyncPipeline:
                     )
                     analyses.append(analysis)
                     await self._tracker.emit(
-                        wf_id, "analyze_sync", "started",
+                        wf_id,
+                        "analyze_sync",
+                        "started",
                         f"[{i}/{len(large_tables)}] {mt.table_name} -> "
                         f"{analysis.sync_status} (confidence={analysis.confidence_score})",
                     )
 
                 total_small_batches = (
-                    (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE
-                    if small_tables else 0
+                    (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE if small_tables else 0
                 )
                 for batch_start in range(0, len(small_tables), BATCH_SIZE):
                     batch = small_tables[batch_start : batch_start + BATCH_SIZE]
@@ -186,7 +195,9 @@ class CodeDbSyncPipeline:
                     batch_num = batch_start // BATCH_SIZE + 1
                     batch_names = ", ".join(m.table_name for m in batch)
                     await self._tracker.emit(
-                        wf_id, "analyze_sync", "started",
+                        wf_id,
+                        "analyze_sync",
+                        "started",
                         f"Batch {batch_num}/{total_small_batches} done "
                         f"({len(batch)} tables): {batch_names}",
                     )
@@ -204,7 +215,9 @@ class CodeDbSyncPipeline:
                     )
                     if deleted:
                         await self._tracker.emit(
-                            wf_id, "store_sync", "started",
+                            wf_id,
+                            "store_sync",
+                            "started",
                             f"Removed {deleted} stale sync entries",
                         )
 
@@ -230,7 +243,9 @@ class CodeDbSyncPipeline:
                         await self._sync_svc.upsert_table_sync(session, connection_id, sync_data)
 
                     await self._tracker.emit(
-                        wf_id, "store_sync", "started",
+                        wf_id,
+                        "store_sync",
+                        "started",
                         f"Stored {len(analyses)} sync entries",
                     )
                     await session.commit()
@@ -247,14 +262,18 @@ class CodeDbSyncPipeline:
                 "Generating sync summary",
             ):
                 await self._tracker.emit(
-                    wf_id, "generate_sync_summary", "started",
+                    wf_id,
+                    "generate_sync_summary",
+                    "started",
                     f"Stats: {synced_count} matched, {code_only_count} code-only, "
                     f"{db_only_count} DB-only, {mismatch_count} mismatch",
                 )
                 project_ctx = self._build_project_context(knowledge)
                 fk_ctx = self._build_fk_context(knowledge, db_entries)
                 await self._tracker.emit(
-                    wf_id, "generate_sync_summary", "started",
+                    wf_id,
+                    "generate_sync_summary",
+                    "started",
                     "Generating LLM summary with FK relationships",
                 )
                 summary_result = await self._analyzer.generate_summary(

@@ -430,8 +430,11 @@ class IndexingPipelineRunner:
                     "started",
                     f"Running {'incremental' if is_incremental else 'full'} analysis "
                     f"on {len(state.schemas)} schemas"
-                    + (f" (cached: {len(cached_knowledge.entities)} entities)"
-                       if cached_knowledge else ""),
+                    + (
+                        f" (cached: {len(cached_knowledge.entities)} entities)"
+                        if cached_knowledge
+                        else ""
+                    ),
                 )
                 state.knowledge = await asyncio.to_thread(
                     run_pass2_3_knowledge,
@@ -748,7 +751,9 @@ class IndexingPipelineRunner:
         """Record the index commit, save caches, cleanup checkpoint, and emit completion."""
         async with tracker.step(wf_id, "record_index", "Recording commit index"):
             await tracker.emit(
-                wf_id, "record_index", "started",
+                wf_id,
+                "record_index",
+                "started",
                 f"Recording commit {state.head_sha[:8]}",
             )
             repo = await asyncio.to_thread(Repo, str(state.repo_dir))
@@ -764,7 +769,9 @@ class IndexingPipelineRunner:
             await self._git_tracker.cleanup_old_records(db, project_id, keep=10)
 
             await tracker.emit(
-                wf_id, "record_index", "started",
+                wf_id,
+                "record_index",
+                "started",
                 "Saving knowledge caches",
             )
             await self._cache_svc.save(
@@ -776,7 +783,9 @@ class IndexingPipelineRunner:
 
             if state.changed_files:
                 await tracker.emit(
-                    wf_id, "record_index", "started",
+                    wf_id,
+                    "record_index",
+                    "started",
                     "Marking DB index and sync as stale",
                 )
                 await self._mark_db_index_code_stale(db, project_id)
