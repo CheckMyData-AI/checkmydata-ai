@@ -1,7 +1,5 @@
 """Unit tests for InsightGenerator."""
 
-import pytest
-
 from app.core.insight_generator import InsightGenerator
 
 

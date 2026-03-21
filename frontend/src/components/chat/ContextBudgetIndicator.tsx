@@ -1,0 +1,52 @@
+"use client";
+
+import { useState } from "react";
+import type { CostEstimateBreakdown } from "@/lib/api";
+
+interface ContextBudgetIndicatorProps {
+  breakdown: CostEstimateBreakdown;
+}
+
+const SEGMENTS: { key: keyof CostEstimateBreakdown; label: string; color: string }[] = [
+  { key: "schema", label: "Schema", color: "bg-blue-500" },
+  { key: "rules", label: "Rules", color: "bg-purple-500" },
+  { key: "learnings", label: "Learnings", color: "bg-amber-500" },
+  { key: "overview", label: "Overview", color: "bg-teal-500" },
+  { key: "history_budget_remaining", label: "History remaining", color: "bg-zinc-600" },
+];
+
+export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
+  const total = SEGMENTS.reduce((sum, seg) => sum + (breakdown[seg.key] || 0), 0);
+  if (total === 0) return null;
+
+  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+
+  return (
+    <div className="relative">
+      <div className="flex h-1 rounded-full overflow-hidden bg-zinc-800">
+        {SEGMENTS.map((seg, i) => {
+          const value = breakdown[seg.key] || 0;
+          if (value === 0) return null;
+          const pct = (value / total) * 100;
+          return (
+            <div
+              key={seg.key}
+              className={`${seg.color} transition-opacity ${hoveredIdx !== null && hoveredIdx !== i ? "opacity-40" : ""}`}
+              style={{ width: `${pct}%` }}
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            />
+          );
+        })}
+      </div>
+
+      {hoveredIdx !== null && (
+        <div className="absolute bottom-full left-0 mb-1 z-50 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-300 shadow-lg whitespace-nowrap">
+          {SEGMENTS[hoveredIdx].label}: {fmt(breakdown[SEGMENTS[hoveredIdx].key] || 0)} tokens
+        </div>
+      )}
+    </div>
+  );
+}

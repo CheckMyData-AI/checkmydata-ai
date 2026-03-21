@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import (
     APIRouter,
@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.agent import ConversationalAgent
 from app.core.agent_limiter import agent_limiter
+from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.llm.errors import LLMError
@@ -90,6 +91,147 @@ def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int
     except Exception:
         pass
     return None
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(0, len(text) // CHARS_PER_TOKEN) if text else 0
+
+
+class CostEstimateBreakdown(BaseModel):
+    schema: int = 0
+    rules: int = 0
+    learnings: int = 0
+    overview: int = 0
+    history_budget_remaining: int = 0
+
+
+class CostEstimateResponse(BaseModel):
+    estimated_prompt_tokens: int = 0
+    estimated_completion_tokens: int = 0
+    estimated_total_tokens: int = 0
+    estimated_cost_usd: float | None = None
+    context_utilization_pct: float = 0.0
+    breakdown: CostEstimateBreakdown = CostEstimateBreakdown()
+
+
+@router.get("/estimate", response_model=CostEstimateResponse)
+@limiter.limit("30/minute")
+async def estimate_cost(
+    request: Request,
+    project_id: str = Query(...),
+    connection_id: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    from sqlalchemy import func, select
+
+    from app.config import settings as app_settings
+    from app.knowledge.custom_rules import CustomRulesEngine
+    from app.models.token_usage import TokenUsage
+
+    rules_engine = CustomRulesEngine()
+
+    schema_tokens = 0
+    if connection_id:
+        try:
+            from app.services.db_index_service import DbIndexService
+
+            svc = DbIndexService()
+            entries = await svc.get_index(db, connection_id)
+            table_map = svc.build_table_map(entries)
+            schema_tokens = _estimate_tokens(table_map)
+        except Exception:
+            pass
+
+    rules_text = ""
+    try:
+        file_rules = rules_engine.load_rules(
+            project_rules_dir=f"{app_settings.custom_rules_dir}/{project_id}",
+        )
+        db_rules = await rules_engine.load_db_rules(project_id=project_id)
+        rules_text = rules_engine.rules_to_context(file_rules + db_rules)
+    except Exception:
+        pass
+    rules_tokens = _estimate_tokens(rules_text)
+
+    learnings_tokens = 0
+    if connection_id:
+        try:
+            from app.services.agent_learning_service import AgentLearningService
+
+            learn_svc = AgentLearningService()
+            learnings = await learn_svc.get_learnings(
+                db, connection_id, min_confidence=0.6, active_only=True
+            )
+            if learnings:
+                top = sorted(
+                    learnings,
+                    key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
+                    reverse=True,
+                )[:15]
+                text = "\n".join(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}" for lrn in top)
+                learnings_tokens = _estimate_tokens(text)
+        except Exception:
+            pass
+
+    overview_tokens = 0
+    try:
+        from app.models.project_cache import ProjectCache
+
+        result = await db.execute(
+            select(ProjectCache.overview_text).where(ProjectCache.project_id == project_id)
+        )
+        overview = result.scalar_one_or_none()
+        if isinstance(overview, str) and overview:
+            overview_tokens = _estimate_tokens(overview)
+    except Exception:
+        pass
+
+    max_budget = app_settings.max_history_tokens
+    used_context = schema_tokens + rules_tokens + learnings_tokens + overview_tokens
+    history_remaining = max(0, max_budget - used_context)
+
+    total_prompt = used_context + history_remaining
+
+    avg_completion = 500
+    try:
+        cutoff = datetime.now(UTC) - timedelta(days=30)
+        stmt = select(
+            func.avg(TokenUsage.completion_tokens).label("avg_comp"),
+        ).where(
+            TokenUsage.user_id == user["user_id"],
+            TokenUsage.created_at >= cutoff,
+            TokenUsage.completion_tokens > 0,
+        )
+        row = (await db.execute(stmt)).one()
+        if row.avg_comp:
+            avg_completion = int(row.avg_comp)
+    except Exception:
+        pass
+
+    total_tokens = total_prompt + avg_completion
+    utilization = round((used_context / max_budget * 100) if max_budget > 0 else 0, 1)
+
+    project = await _project_svc.get(db, project_id)
+    model = (project.agent_llm_model if project else None) or None
+    cost = _estimate_cost(model, total_prompt, avg_completion)
+
+    return CostEstimateResponse(
+        estimated_prompt_tokens=total_prompt,
+        estimated_completion_tokens=avg_completion,
+        estimated_total_tokens=total_tokens,
+        estimated_cost_usd=cost,
+        context_utilization_pct=utilization,
+        breakdown=CostEstimateBreakdown(
+            schema=schema_tokens,
+            rules=rules_tokens,
+            learnings=learnings_tokens,
+            overview=overview_tokens,
+            history_budget_remaining=history_remaining,
+        ),
+    )
 
 
 class ChatSearchResult(BaseModel):

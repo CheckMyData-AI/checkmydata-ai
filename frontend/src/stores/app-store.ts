@@ -75,6 +75,8 @@ interface AppState {
   focusSidebarSection: string | null;
   triggerProjectEdit: boolean;
   readinessCache: Record<string, ReadinessCacheEntry>;
+  sessionTokens: number;
+  sessionCost: number;
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -99,6 +101,8 @@ interface AppState {
   setTriggerProjectEdit: (v: boolean) => void;
   setReadinessCache: (projectId: string, entry: ReadinessCacheEntry) => void;
   clearReadinessCache: (projectId: string) => void;
+  addSessionUsage: (tokens: number, cost: number) => void;
+  resetSessionUsage: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -120,6 +124,8 @@ export const useAppStore = create<AppState>((set) => ({
   focusSidebarSection: null,
   triggerProjectEdit: false,
   readinessCache: {},
+  sessionTokens: 0,
+  sessionCost: 0,
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
@@ -171,6 +177,12 @@ export const useAppStore = create<AppState>((set) => ({
       const { [projectId]: _, ...rest } = state.readinessCache;
       return { readinessCache: rest };
     }),
+  addSessionUsage: (tokens, cost) =>
+    set((state) => ({
+      sessionTokens: state.sessionTokens + tokens,
+      sessionCost: state.sessionCost + cost,
+    })),
+  resetSessionUsage: () => set({ sessionTokens: 0, sessionCost: 0 }),
 }));
 
 export type { ChatMessage, ChatMode, ToolCallEvent };

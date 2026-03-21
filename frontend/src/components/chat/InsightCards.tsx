@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 
 export interface Insight {
   type: string;
@@ -15,7 +15,7 @@ interface InsightCardsProps {
   onDrillDown?: (question: string) => void;
 }
 
-const TYPE_CONFIG: Record<string, { color: string; bg: string; border: string; icon: JSX.Element }> = {
+const TYPE_CONFIG: Record<string, { color: string; bg: string; border: string; icon: React.ReactNode }> = {
   trend_up: {
     color: "text-blue-400",
     bg: "bg-blue-950/30",

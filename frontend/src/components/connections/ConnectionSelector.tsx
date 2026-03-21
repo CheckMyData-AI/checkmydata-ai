@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 import { usePermission } from "@/hooks/usePermission";
@@ -148,6 +149,7 @@ export function ConnectionSelector() {
   const [learningsCount, setLearningsCount] = useState<Record<string, number>>({});
   const [learningsCategories, setLearningsCategories] = useState<Record<string, Record<string, number>>>({});
   const [showLearnings, setShowLearnings] = useState<string | null>(null);
+  const [healthStatuses, setHealthStatuses] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<
     Record<
@@ -1111,12 +1113,19 @@ export function ConnectionSelector() {
                 {isActive && (
                   <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
                 )}
-                <StatusDot
-                  status={getConnStatus(c.id)}
-                  title={getConnStatusTitle(c.id)}
-                  size="md"
-                  className="mt-1"
-                />
+                <span className="flex items-center gap-0.5 mt-1">
+                  <StatusDot
+                    status={getConnStatus(c.id)}
+                    title={getConnStatusTitle(c.id)}
+                    size="md"
+                  />
+                  <ConnectionHealth
+                    connectionId={c.id}
+                    onStatusChange={(s) =>
+                      setHealthStatuses((prev) => ({ ...prev, [c.id]: s }))
+                    }
+                  />
+                </span>
                 <div className="flex-1 min-w-0 py-0.5">
                   <span
                     className={`text-xs font-medium truncate block ${
@@ -1287,6 +1296,12 @@ export function ConnectionSelector() {
                   )}
                 </div>
               </div>
+              {healthStatuses[c.id] === "down" && (
+                <div className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-[10px] flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+                  Connection is unreachable
+                </div>
+              )}
               {showLearnings === c.id && (
                 <div className="px-2 pb-1.5">
                   <LearningsPanel

@@ -57,7 +57,7 @@ The system has **five main flows**:
 
 1. **Onboarding flow**: New users see a guided 5-step wizard (connect database -> test connection -> index schema -> connect code repo -> ask first question). Users can skip any step or try a demo project with sample data via `POST /api/demo/setup`. The `is_onboarded` flag on the User model tracks completion (`POST /api/auth/complete-onboarding`).
 2. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips.
+3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips. A cost/performance preview below the chat input shows estimated token usage, context budget utilization, and session running totals.
 4. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
 5. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
 
@@ -466,6 +466,33 @@ Each insight includes a `type`, `title`, `description`, and `confidence` score (
 - `frontend/src/components/chat/ChatPanel.tsx` — Passes insights through metadata to ChatMessage
 - `frontend/src/lib/api.ts` — Added `chat.summarize()` API method
 
+### 8b. Query Cost and Performance Preview
+
+Before sending a query, the chat interface shows an estimated token cost and context budget utilization so users can understand resource usage.
+
+**How it works:**
+- `GET /api/chat/estimate?project_id=X&connection_id=Y` computes approximate prompt token counts by measuring the size of each context component: schema/table map, custom rules, agent learnings, and project overview. It uses the user's 30-day average completion tokens for the completion estimate. If OpenRouter pricing data is cached, it returns an estimated USD cost.
+- The response includes a `context_utilization_pct` showing what percentage of the `MAX_HISTORY_TOKENS` budget is consumed by fixed context (schema + rules + learnings + overview), and a `breakdown` with per-component token counts.
+
+**Frontend components:**
+- `CostEstimator` — Displays "~{tokens} tokens" with a tooltip showing the full breakdown, a cost badge (when pricing is available), and a thin utilization bar (green < 60%, amber 60-80%, red > 80%). Fetches the estimate once when project/connection changes.
+- `ContextBudgetIndicator` — A thin stacked horizontal bar showing color-coded segments: schema (blue), rules (purple), learnings (amber), overview (teal), history remaining (gray). Each segment shows a tooltip with its token count on hover.
+- **Session cost tracking** — The Zustand store tracks cumulative `sessionTokens` and `sessionCost` for the active session. These are incremented from each assistant message's `token_usage` metadata and displayed next to the cost estimator. Values reset on session change.
+- **Heavy query warning** — When context utilization exceeds 80%, a brief toast notification informs the user before the query is sent.
+
+**New files:**
+- `frontend/src/components/chat/CostEstimator.tsx` — Token/cost estimate display with tooltip breakdown
+- `frontend/src/components/chat/ContextBudgetIndicator.tsx` — Stacked bar visualization of context budget allocation
+
+**API endpoint:**
+- `GET /api/chat/estimate?project_id=X&connection_id=Y` — Returns estimated token counts, cost, utilization percentage, and per-component breakdown
+
+**Modified files:**
+- `backend/app/api/routes/chat.py` — Added `/estimate` endpoint with `CostEstimateResponse` model
+- `frontend/src/lib/api.ts` — Added `CostEstimate`, `CostEstimateBreakdown` types and `chat.estimate()` method
+- `frontend/src/stores/app-store.ts` — Added `sessionTokens`, `sessionCost`, `addSessionUsage()`, `resetSessionUsage()` to the store
+- `frontend/src/components/chat/ChatPanel.tsx` — Integrated CostEstimator, ContextBudgetIndicator, session usage display, and heavy query warning toast
+
 ### 9. Index the Repository (Knowledge Base)
 
 If your project has a Git repo URL configured:
@@ -721,6 +748,80 @@ The **Notes** panel lets you save SQL queries from agent responses for quick ref
    - `answer_text` and `visualization_json` columns store the complete agent context
 
 **API endpoints**: `POST /api/notes`, `GET /api/notes?project_id=X`, `GET /api/notes/{id}`, `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`, `POST /api/notes/{id}/execute`
+
+### 17. Scheduled Queries and Data Alerts
+
+The **Schedules** sidebar section lets you set up recurring SQL queries that run automatically on a cron schedule. When configured with alert conditions, the system evaluates results and fires in-app notifications.
+
+**Creating a schedule:**
+1. Click "New Schedule" in the Schedules sidebar section
+2. Enter a title and SQL query
+3. Choose a cron preset (every hour, daily at 9 AM, every Monday, etc.) or enter a custom cron expression
+4. Optionally add alert conditions: pick a column name, comparison operator (`>`, `<`, `=`, `>=`, `<=`, `% change`), and threshold value
+5. The schedule runs automatically; you can also click "Run Now" for manual execution
+
+**Alert conditions** support:
+- Standard comparisons: `gt`, `lt`, `eq`, `gte`, `lte` — compare any numeric column against a threshold
+- Percentage change: `pct_change` — triggers when the value changes by more than X% between the last two rows
+
+**Notification system:**
+- A notification bell icon in the sidebar header shows the unread count
+- Clicking it opens a dropdown listing recent notifications with timestamps
+- Alerts from scheduled queries appear as "alert" type notifications with the triggered condition message
+- "Mark all read" clears the unread counter
+
+**Schedule management:**
+- Toggle active/inactive with the pause/play button
+- View run history (last 50 runs) with status, duration, and timestamps
+- Edit any schedule's title, SQL, cron expression, or alert conditions
+- Delete schedules with confirmation
+
+**Background scheduler loop:**
+- Runs every 60 seconds as a background task in the FastAPI lifespan
+- Picks up all active schedules where `next_run_at <= now`
+- Connects to the configured database, executes the SQL, evaluates alert conditions
+- Records each run with status (`success`, `failed`, `alert_triggered`) and timing
+- Automatically computes the next run time after each execution
+
+**Technical details:**
+- Cron parsing via `croniter` library
+- Models: `ScheduledQuery` (schedule config + state), `ScheduleRun` (execution history), `Notification` (in-app alerts)
+- All tables use `ON DELETE CASCADE` from their parent foreign keys
+- Frontend: `ScheduleManager` component in sidebar, `NotificationBell` in header
+
+**API endpoints**: `POST /api/schedules`, `GET /api/schedules?project_id=X`, `GET /api/schedules/{id}`, `PATCH /api/schedules/{id}`, `DELETE /api/schedules/{id}`, `POST /api/schedules/{id}/run-now`, `GET /api/schedules/{id}/history`, `GET /api/notifications`, `GET /api/notifications/count`, `PATCH /api/notifications/{id}/read`, `POST /api/notifications/read-all`
+
+### 18. Smart Connection Health Monitoring and Auto-Reconnect
+
+The system continuously monitors database connection health in the background and automatically recovers from failures.
+
+**How it works:**
+- A background task (`_health_check_loop`) runs every 5 minutes, checking all active connectors via lightweight `test_connection()` calls
+- Each connection is assigned a health status: **healthy** (responding normally), **degraded** (high latency >3s or single failure), or **down** (2+ consecutive failures)
+- Health state tracks: latency in ms, last check timestamp, consecutive failure count, and last error message
+- Status changes are broadcast as `connection_health` SSE events via WorkflowTracker, enabling real-time frontend updates
+
+**SSH tunnel auto-reconnect:**
+- When `SSHTunnelManager.get_or_create()` detects a dead tunnel via `is_alive()`, it automatically attempts reconnection
+- Up to 3 retry attempts with exponential backoff (2s, 4s, 6s) before raising an error
+- Each reconnection attempt is logged for debugging
+
+**Frontend indicators:**
+- **ConnectionSelector**: Each connection shows a small health dot next to the test-status dot. Green = healthy, amber = degraded, red = down. A "RECONNECT" button appears when a connection is down. A warning banner shows below unreachable connections.
+- **ChatPanel**: An amber bar ("Connection may be slow") appears when the active connection is degraded. A red bar ("Connection is down. Attempting reconnect...") with a retry button appears when the connection is down.
+- All health indicators update in real-time via SSE events without polling.
+
+**Manual reconnect:**
+- Users can trigger a manual reconnection attempt via `POST /api/connections/{id}/reconnect`
+- This creates a fresh connector, tests the connection, and returns the updated health state
+
+**Technical details:**
+- `ConnectionHealthMonitor` class in `backend/app/core/health_monitor.py` manages all health state in-memory
+- Health checks use `asyncio.wait_for` with a 10-second timeout to avoid blocking
+- The monitor only checks connectors that are currently in the active connector pool (recently used connections)
+- `ConnectionHealth.tsx` component subscribes to SSE events for live updates and renders inline health status
+
+**API endpoints**: `GET /api/connections/{id}/health`, `GET /api/connections/health?project_id=X`, `POST /api/connections/{id}/reconnect`
 
 ---
 
@@ -1574,6 +1675,7 @@ app/
 │   ├── agent_learning_service.py ← CRUD, dedup, confidence management for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
 │   ├── note_service.py ← CRUD for saved notes (create, list, update, delete, update_result)
+│   ├── scheduler_service.py ← CRUD + cron logic for scheduled queries and run history
 │   ├── session_notes_service.py ← CRUD, fuzzy dedup, prompt compilation for agent notes
 │   ├── data_validation_service.py ← CRUD + accuracy stats for validation feedback
 │   ├── benchmark_service.py ← Create/confirm/flag benchmarks for verified metrics
@@ -1972,12 +2074,15 @@ data_validation_feedback — id, connection_id, session_id, message_id, query, m
 data_benchmarks  — id, connection_id (FK→connections CASCADE), metric_key, metric_description, value, value_numeric, unit, confidence, source (agent_derived|user_confirmed|cross_validated), times_confirmed, last_confirmed_at, created_at  [UNIQUE(connection_id, metric_key)]
 data_investigations — id, validation_feedback_id (FK→data_validation_feedback), connection_id, session_id, trigger_message_id, status (active|completed|failed|cancelled), phase, user_complaint_type, user_complaint_detail, user_expected_value, problematic_column, investigation_log_json, original_query, original_result_summary, corrected_query, corrected_result_json, root_cause, root_cause_category, learnings_created_json, notes_created_json, benchmarks_updated_json, created_at, completed_at
 code_db_sync     — ... + required_filters_json, column_value_mappings_json (new columns)
-backup_records   — id, created_at, reason (scheduled|initial_sync|manual), status (success|failed), size_bytes, manifest_json, backup_path, error_message
+backup_records      — id, created_at, reason (scheduled|initial_sync|manual), status (success|failed), size_bytes, manifest_json, backup_path, error_message
+scheduled_queries   — id, user_id (FK→users), project_id (FK→projects), connection_id (FK→connections), title, sql_query, cron_expression, alert_conditions (JSON), notification_channels (JSON), is_active, last_run_at, last_result_json, next_run_at, created_at, updated_at
+schedule_runs       — id, schedule_id (FK→scheduled_queries), status (success|failed|alert_triggered), result_summary, alerts_fired (JSON), executed_at, duration_ms
+notifications       — id, user_id (FK→users), project_id (FK→projects), title, body, type (alert|info|system), is_read, created_at
 ```
 
 Managed via **Alembic migrations** (36 revisions: initial → custom_rules → users → branch_and_rag_feedback → project_cache_and_rag_commit_sha → user_rating → project_members_invites_ownership → google_oauth_fields → tool_calls_json → ssh_exec_mode → indexing_checkpoint → cascade_delete_project_fks → add_user_id_to_ssh_keys → per_purpose_llm_models → add_connection_id_to_chat_sessions → add_default_rule_fields → add_db_index_tables → add_indexing_status_to_summary → add_code_db_sync_tables → add_column_distinct_values → add_agent_learning_tables → ... → hardening_indexes_fk_constraints → add_saved_notes_table → ... → add_self_improvement_tables → add_picture_url_to_users → add_backup_records_table → add_overview_to_project_cache).
 
-All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints, saved notes).
+All child tables referencing `projects.id` use `ON DELETE CASCADE` so deleting a project automatically removes all related rows (connections, chat sessions, knowledge docs, commit indices, project cache, RAG feedback, members, invites, indexing checkpoints, saved notes, scheduled queries, notifications).
 
 ---
 

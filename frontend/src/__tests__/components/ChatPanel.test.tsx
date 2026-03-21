@@ -13,6 +13,14 @@ vi.mock("@/lib/api", () => ({
       listSessions: vi.fn().mockResolvedValue([]),
       generateTitle: vi.fn().mockResolvedValue({ id: "s1", title: "Title" }),
       suggestions: vi.fn().mockResolvedValue([]),
+      estimate: vi.fn().mockResolvedValue({
+        estimated_prompt_tokens: 1000,
+        estimated_completion_tokens: 500,
+        estimated_total_tokens: 1500,
+        estimated_cost_usd: null,
+        context_utilization_pct: 25,
+        breakdown: { schema: 400, rules: 100, learnings: 50, overview: 50, history_budget_remaining: 400 },
+      }),
     },
   },
 }));
@@ -89,6 +97,14 @@ vi.mock("@/components/chat/SuggestionChips", () => ({
         ))}
       </div>
     ) : null,
+}));
+
+vi.mock("@/components/chat/CostEstimator", () => ({
+  CostEstimator: () => <div data-testid="cost-estimator" />,
+}));
+
+vi.mock("@/components/chat/ContextBudgetIndicator", () => ({
+  ContextBudgetIndicator: () => <div data-testid="context-budget" />,
 }));
 
 vi.mock("@/lib/sse", () => ({}));

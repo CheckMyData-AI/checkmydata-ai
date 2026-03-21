@@ -23,6 +23,8 @@ import { useLogStore } from "@/stores/log-store";
 import { AccountMenu } from "./auth/AccountMenu";
 import { UsageStatsPanel } from "./usage/UsageStatsPanel";
 import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
+import { ScheduleManager } from "./schedules/ScheduleManager";
+import { NotificationBell } from "./ui/NotificationBell";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -170,6 +172,7 @@ export function Sidebar() {
   const connCollapse = useSectionCollapse("connections");
   const chatCollapse = useSectionCollapse("chat-history");
   const rulesCollapse = useSectionCollapse("rules", false);
+  const schedulesCollapse = useSectionCollapse("schedules", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
   const usageCollapse = useSectionCollapse("usage", false);
   const analyticsCollapse = useSectionCollapse("analytics", false);
@@ -336,6 +339,7 @@ export function Sidebar() {
             </p>
           </div>
         )}
+        {!collapsed && <NotificationBell />}
         <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"} position="bottom">
           <button
             onClick={toggleCollapsed}
@@ -514,6 +518,16 @@ export function Sidebar() {
               collapsed={collapsed}
             >
               <RulesManager />
+            </SidebarSection>
+
+            <SidebarSection
+              icon="clock"
+              title="Schedules"
+              open={schedulesCollapse.open}
+              onToggle={schedulesCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <ScheduleManager />
             </SidebarSection>
 
             <SidebarSection

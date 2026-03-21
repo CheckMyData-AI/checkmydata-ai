@@ -314,6 +314,14 @@ export interface SyncResponse {
   } | null;
 }
 
+export interface ConnectionHealthState {
+  status: string;
+  latency_ms: number;
+  last_check: string | null;
+  consecutive_failures: number;
+  last_error: string | null;
+}
+
 export interface LearningsStatus {
   has_learnings: boolean;
   total_active: number;
@@ -379,6 +387,45 @@ export interface ExecuteNoteResponse {
   error: string | null;
 }
 
+export interface ScheduledQuery {
+  id: string;
+  user_id: string;
+  project_id: string;
+  connection_id: string;
+  title: string;
+  sql_query: string;
+  cron_expression: string;
+  alert_conditions: string | null;
+  notification_channels: string | null;
+  is_active: boolean;
+  last_run_at: string | null;
+  last_result_json: string | null;
+  next_run_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ScheduleRun {
+  id: string;
+  schedule_id: string;
+  status: string;
+  result_summary: string | null;
+  alerts_fired: string | null;
+  executed_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  project_id: string | null;
+  title: string;
+  body: string | null;
+  type: string;
+  is_read: boolean;
+  created_at: string | null;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -424,6 +471,23 @@ export interface UsageStatsResponse {
   change_percent: ChangePercent;
   daily_breakdown: DailyUsage[];
   period_days: number;
+}
+
+export interface CostEstimateBreakdown {
+  schema: number;
+  rules: number;
+  learnings: number;
+  overview: number;
+  history_budget_remaining: number;
+}
+
+export interface CostEstimate {
+  estimated_prompt_tokens: number;
+  estimated_completion_tokens: number;
+  estimated_total_tokens: number;
+  estimated_cost_usd: number | null;
+  context_utilization_pct: number;
+  breakdown: CostEstimateBreakdown;
 }
 
 export const api = {
@@ -535,6 +599,14 @@ export const api = {
       request<{ ok: boolean; deleted: number }>(`/connections/${connId}/learnings`, { method: "DELETE" }),
     recompileLearnings: (connId: string) =>
       request<{ ok: boolean; compiled_prompt: string }>(`/connections/${connId}/learnings/recompile`, { method: "POST" }),
+    health: (id: string) =>
+      request<ConnectionHealthState>(`/connections/${id}/health`),
+    healthAll: (projectId: string) =>
+      request<Record<string, ConnectionHealthState>>(`/connections/health?project_id=${projectId}`),
+    reconnect: (id: string) =>
+      request<{ success: boolean; health?: ConnectionHealthState; error?: string }>(`/connections/${id}/reconnect`, {
+        method: "POST",
+      }),
   },
 
   chat: {
@@ -576,14 +648,13 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ sql, project_id: projectId, db_type: dbType }),
       }),
-    summarize: (messageId: string, projectId: string) =>
-      request<{ summary: string }>("/chat/summarize", {
-        method: "POST",
-        body: JSON.stringify({ message_id: messageId, project_id: projectId }),
-      }),
     suggestions: (projectId: string, connectionId: string, limit?: number) =>
       request<QuerySuggestion[]>(
         `/chat/suggestions?project_id=${projectId}&connection_id=${connectionId}&limit=${limit || 5}`,
+      ),
+    estimate: (projectId: string, connectionId?: string) =>
+      request<CostEstimate>(
+        `/chat/estimate?project_id=${projectId}${connectionId ? `&connection_id=${connectionId}` : ""}`,
       ),
     ask: (data: {
       project_id: string;
@@ -925,6 +996,42 @@ export const api = {
   usage: {
     getStats: (days: number = 30) =>
       request<UsageStatsResponse>(`/usage/stats?days=${days}`),
+  },
+
+  schedules: {
+    list: (projectId: string) =>
+      request<ScheduledQuery[]>(`/schedules?project_id=${projectId}`),
+    get: (id: string) =>
+      request<ScheduledQuery>(`/schedules/${id}`),
+    create: (data: {
+      project_id: string;
+      connection_id: string;
+      title: string;
+      sql_query: string;
+      cron_expression: string;
+      alert_conditions?: string | null;
+      notification_channels?: string | null;
+    }) =>
+      request<ScheduledQuery>("/schedules", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, unknown>) =>
+      request<ScheduledQuery>(`/schedules/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/schedules/${id}`, { method: "DELETE" }),
+    runNow: (id: string) =>
+      request<ScheduleRun>(`/schedules/${id}/run-now`, { method: "POST", timeoutMs: 120_000 }),
+    history: (id: string) =>
+      request<ScheduleRun[]>(`/schedules/${id}/history`),
+  },
+
+  notifications: {
+    list: (unreadOnly = true) =>
+      request<AppNotification[]>(`/notifications?unread_only=${unreadOnly}`),
+    count: () =>
+      request<{ count: number }>("/notifications/count"),
+    markRead: (id: string) =>
+      request<{ ok: boolean }>(`/notifications/${id}/read`, { method: "PATCH" }),
+    markAllRead: () =>
+      request<{ ok: boolean }>("/notifications/read-all", { method: "POST" }),
   },
 
   demo: {

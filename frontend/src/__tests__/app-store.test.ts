@@ -179,4 +179,23 @@ describe("app store", () => {
     useAppStore.getState().bumpRulesVersion();
     expect(useAppStore.getState().rulesVersion).toBe(2);
   });
+
+  it("addSessionUsage accumulates tokens and cost", () => {
+    expect(useAppStore.getState().sessionTokens).toBe(0);
+    expect(useAppStore.getState().sessionCost).toBe(0);
+    useAppStore.getState().addSessionUsage(1000, 0.05);
+    expect(useAppStore.getState().sessionTokens).toBe(1000);
+    expect(useAppStore.getState().sessionCost).toBe(0.05);
+    useAppStore.getState().addSessionUsage(500, 0.02);
+    expect(useAppStore.getState().sessionTokens).toBe(1500);
+    expect(useAppStore.getState().sessionCost).toBeCloseTo(0.07);
+  });
+
+  it("resetSessionUsage clears session tokens and cost", () => {
+    useAppStore.getState().addSessionUsage(2000, 0.1);
+    expect(useAppStore.getState().sessionTokens).toBe(2000);
+    useAppStore.getState().resetSessionUsage();
+    expect(useAppStore.getState().sessionTokens).toBe(0);
+    expect(useAppStore.getState().sessionCost).toBe(0);
+  });
 });

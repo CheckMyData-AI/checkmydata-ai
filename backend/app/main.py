@@ -21,13 +21,16 @@ from app.api.routes import (
     connections,
     data_validation,
     demo,
+    health_monitor,
     invites,
     metrics,
     models,
     notes,
+    notifications,
     projects,
     repos,
     rules,
+    schedules,
     ssh_keys,
     tasks,
     usage,
@@ -49,11 +52,13 @@ logger = logging.getLogger(__name__)
 
 
 _backup_task: asyncio.Task[None] | None = None
+_scheduler_task: asyncio.Task[None] | None = None
+_health_check_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backup_task  # noqa: PLW0603
+    global _backup_task, _scheduler_task, _health_check_task  # noqa: PLW0603
 
     await asyncio.to_thread(run_migrations)
     await init_db()
@@ -68,14 +73,18 @@ async def lifespan(app: FastAPI):
         _backup_task = asyncio.create_task(_backup_cron_loop())
         await _maybe_initial_backup()
 
+    _scheduler_task = asyncio.create_task(_scheduler_loop())
+    _health_check_task = asyncio.create_task(_health_check_loop())
+
     yield
 
-    if _backup_task and not _backup_task.done():
-        _backup_task.cancel()
-        try:
-            await _backup_task
-        except asyncio.CancelledError:
-            pass
+    for task in (_backup_task, _scheduler_task, _health_check_task):
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
         sql_agent = chat._agent._orchestrator._sql
@@ -192,6 +201,9 @@ app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
+app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(health_monitor.router, prefix="/api/connections", tags=["health-monitor"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 
 
@@ -387,6 +399,126 @@ async def _cleanup_pipeline_runs() -> None:
         logger.warning("Failed to clean expired pipeline_runs at startup", exc_info=True)
 
 
+async def _scheduler_loop() -> None:
+    """Check for due scheduled queries every 60 seconds and execute them."""
+    import json
+    import time as _time
+
+    from app.core.alert_evaluator import AlertEvaluator
+    from app.models.notification import Notification
+    from app.services.connection_service import ConnectionService
+    from app.services.scheduler_service import SchedulerService
+
+    svc = SchedulerService()
+    conn_svc = ConnectionService()
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+            async with async_session_factory() as session:
+                due = await svc.get_due_schedules(session)
+                if not due:
+                    continue
+                logger.info("Scheduler: %d due schedule(s) to execute", len(due))
+                for schedule in due:
+                    try:
+                        conn_model = await conn_svc.get(session, schedule.connection_id)
+                        if not conn_model:
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps({"error": "Connection not found"}),
+                            )
+                            continue
+
+                        config = await conn_svc.to_config(session, conn_model)
+
+                        from app.connectors.registry import get_connector
+                        from app.viz.utils import serialize_value
+
+                        connector = get_connector(
+                            conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode
+                        )
+                        start = _time.monotonic()
+                        try:
+                            await connector.connect(config)
+                            try:
+                                result = await connector.execute_query(schedule.sql_query)
+                            finally:
+                                await connector.disconnect()
+                        except Exception as e:
+                            duration_ms = int((_time.monotonic() - start) * 1000)
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps({"error": str(e)}),
+                                duration_ms=duration_ms,
+                            )
+                            logger.warning(
+                                "Scheduler: query failed for schedule %s: %s",
+                                schedule.id[:8],
+                                e,
+                            )
+                            continue
+
+                        duration_ms = int((_time.monotonic() - start) * 1000)
+                        cols = list(getattr(result, "columns", []))
+                        rows = getattr(result, "rows", []) or []
+                        serialized = [[serialize_value(v) for v in row] for row in rows[:500]]
+                        summary = json.dumps(
+                            {
+                                "columns": cols,
+                                "rows": serialized,
+                                "total_rows": getattr(result, "row_count", len(rows)),
+                            },
+                            default=str,
+                        )
+
+                        alerts = AlertEvaluator.evaluate(
+                            serialized, cols, schedule.alert_conditions
+                        )
+                        status = "alert_triggered" if alerts else "success"
+                        alerts_json = json.dumps(alerts) if alerts else None
+
+                        if alerts:
+                            for alert in alerts:
+                                session.add(
+                                    Notification(
+                                        user_id=schedule.user_id,
+                                        project_id=schedule.project_id,
+                                        title=f"Alert: {schedule.title}",
+                                        body=alert.get("message", ""),
+                                        type="alert",
+                                    )
+                                )
+
+                        await svc.record_run(
+                            session,
+                            schedule.id,
+                            status=status,
+                            result_summary=summary,
+                            alerts_fired=alerts_json,
+                            duration_ms=duration_ms,
+                        )
+                        logger.info(
+                            "Scheduler: executed schedule %s — %s (%.1fs)",
+                            schedule.id[:8],
+                            status,
+                            duration_ms / 1000,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Scheduler: unhandled error for schedule %s", schedule.id[:8]
+                        )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Scheduler loop error, will retry next cycle")
+            await asyncio.sleep(60)
+
+
 async def _backup_cron_loop() -> None:
     """Run backup daily at the configured hour (default 00:00 UTC)."""
     from datetime import timedelta
@@ -454,6 +586,48 @@ async def trigger_initial_backup() -> None:
         await mgr.run_backup("initial_sync")
     except Exception:
         logger.exception("Initial sync backup failed")
+
+
+HEALTH_CHECK_INTERVAL_SECONDS = 300
+
+
+async def _health_check_loop() -> None:
+    """Periodically check health of recently-used database connections."""
+    from app.core.health_monitor import health_monitor
+    from app.core.workflow_tracker import tracker
+
+    await asyncio.sleep(30)
+    while True:
+        try:
+            agent = getattr(chat, "_agent", None)
+            orch = getattr(agent, "_orchestrator", None) if agent else None
+            sql = getattr(orch, "_sql", None) if orch else None
+            connectors = getattr(sql, "_connectors", {}) if sql else {}
+
+            if connectors:
+                wf_id = await tracker.begin("health_check")
+                for key, connector in list(connectors.items()):
+                    conn_id = key.split(":")[0] if ":" in key else key
+                    try:
+                        result = await health_monitor.check_connection(conn_id, connector)
+                        await tracker.emit(
+                            wf_id,
+                            "connection_health",
+                            result["status"],
+                            detail=conn_id,
+                            connection_id=conn_id,
+                            latency_ms=result["latency_ms"],
+                            last_error=result.get("last_error"),
+                        )
+                    except Exception:
+                        logger.debug("Health check error for %s", key, exc_info=True)
+                await tracker.end(wf_id, "health_check")
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.warning("Health check loop error", exc_info=True)
+
+        await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
 
 
 @app.get("/api/health")

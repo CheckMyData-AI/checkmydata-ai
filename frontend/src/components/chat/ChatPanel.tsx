@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
-import { api, type ChatResponse, type StreamError, type QuerySuggestion } from "@/lib/api";
+import { api, type ChatResponse, type StreamError, type QuerySuggestion, type CostEstimate } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
+import { toast } from "@/stores/toast-store";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 import { SuggestionChips } from "./SuggestionChips";
@@ -11,6 +12,9 @@ import { ToolCallIndicator } from "./ToolCallIndicator";
 import { ThinkingLog } from "./ThinkingLog";
 import { StageProgress, type PipelineStage } from "./StageProgress";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
+import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
+import { CostEstimator } from "./CostEstimator";
+import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
 
 export function ChatPanel() {
   const {
@@ -22,6 +26,8 @@ export function ChatPanel() {
     chatMode,
     activeToolCalls,
     restoringState,
+    sessionTokens,
+    sessionCost,
     setActiveSession,
     addMessage,
     updateMessageId,
@@ -30,6 +36,8 @@ export function ChatPanel() {
     addToolCall,
     clearToolCalls,
     bumpRulesVersion,
+    addSessionUsage,
+    resetSessionUsage,
   } = useAppStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -42,12 +50,15 @@ export function ChatPanel() {
   const [thinkingStartTime, setThinkingStartTime] = useState<number>(0);
   const [suggestions, setSuggestions] = useState<QuerySuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null);
   const suggestionsRequested = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const estimateFetched = useRef("");
   const cachedReady = useAppStore((s) =>
     activeProject ? s.readinessCache[activeProject.id]?.ready : false
   );
   const [readinessBypassed, setReadinessBypassed] = useState(false);
+  const [connHealthStatus, setConnHealthStatus] = useState<string>("unknown");
 
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
@@ -262,13 +273,33 @@ export function ChatPanel() {
   useEffect(() => {
     suggestionsRequested.current = false;
     setSuggestions([]);
+    setConnHealthStatus("unknown");
   }, [activeConnection?.id]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    const key = `${activeProject.id}:${activeConnection?.id ?? ""}`;
+    if (key === estimateFetched.current) return;
+    estimateFetched.current = key;
+    api.chat
+      .estimate(activeProject.id, activeConnection?.id)
+      .then(setCostEstimate)
+      .catch(() => setCostEstimate(null));
+  }, [activeProject, activeConnection]);
+
+  useEffect(() => {
+    resetSessionUsage();
+  }, [activeSession?.id, resetSessionUsage]);
 
   const canChat = activeProject && (activeConnection || chatMode === "knowledge_only");
 
   const handleSend = useCallback(
     async (content: string) => {
       if (!activeProject) return;
+
+      if (costEstimate && costEstimate.context_utilization_pct > 80) {
+        toast("Context budget is nearly full. Large schemas may affect query quality.", "info");
+      }
 
       const userMsg = {
         id: crypto.randomUUID(),
@@ -383,6 +414,13 @@ export function ChatPanel() {
             bumpRulesVersion();
           }
 
+          if (result.token_usage) {
+            const tu = result.token_usage;
+            const totalTk = tu.total_tokens ?? ((tu.prompt_tokens ?? 0) + (tu.completion_tokens ?? 0));
+            const costUsd = (tu as Record<string, unknown>).estimated_cost_usd as number | undefined;
+            addSessionUsage(totalTk, costUsd ?? 0);
+          }
+
           const vizConfig = (result as unknown as Record<string, unknown>).viz_config as Record<string, unknown> | undefined;
           if (vizConfig?.pipeline_run_id) {
             setPipelineRunId(vizConfig.pipeline_run_id as string);
@@ -434,7 +472,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, handlePipelineEvent, handleThinkingEvent, handleToken],
+    [activeProject, activeConnection, activeSession, costEstimate, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
   const handleStop = useCallback(() => {
@@ -533,6 +571,38 @@ export function ChatPanel() {
       )}
       {readinessBypassed && activeProject && (
         <ReadinessBanner projectId={activeProject.id} />
+      )}
+      {activeConnection && (
+        <div className="hidden">
+          <ConnectionHealth
+            connectionId={activeConnection.id}
+            onStatusChange={setConnHealthStatus}
+          />
+        </div>
+      )}
+      {connHealthStatus === "degraded" && activeConnection && (
+        <div className="flex items-center gap-2 px-6 py-1.5 bg-warning/10 border-b border-warning/20">
+          <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
+          <span className="text-xs text-warning">Connection may be slow</span>
+        </div>
+      )}
+      {connHealthStatus === "down" && activeConnection && (
+        <div className="flex items-center justify-between px-6 py-1.5 bg-error/10 border-b border-error/20">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+            <span className="text-xs text-error">Connection is down. Attempting reconnect...</span>
+          </div>
+          <button
+            onClick={() => {
+              api.connections.reconnect(activeConnection.id).then((r) => {
+                if (r.health) setConnHealthStatus(r.health.status);
+              }).catch(() => {});
+            }}
+            className="text-[10px] text-error hover:text-error/80 underline"
+          >
+            Retry
+          </button>
+        </div>
       )}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 ? (
@@ -643,6 +713,24 @@ export function ChatPanel() {
         />
       )}
       <ChatInput onSend={handleSend} disabled={isThinking} />
+      {activeConnection && (
+        <div className="px-6 pb-2 flex flex-col gap-1 max-w-2xl mx-auto w-full">
+          <div className="flex items-center gap-3">
+            <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} />
+            {sessionTokens > 0 && (
+              <span className="text-[11px] text-zinc-600 ml-auto">
+                Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens
+                {sessionCost > 0 && (
+                  <> / ${sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(2)}</>
+                )}
+              </span>
+            )}
+          </div>
+          {costEstimate && (
+            <ContextBudgetIndicator breakdown={costEstimate.breakdown} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
