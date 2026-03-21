@@ -1,7 +1,7 @@
 import logging
 from datetime import UTC, datetime
 
-from croniter import croniter
+from croniter import croniter  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

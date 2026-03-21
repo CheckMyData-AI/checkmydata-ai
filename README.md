@@ -27,7 +27,7 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · data-validation │   │
-│  │  dashboards · usage · demo · health                           │   │
+│  │  batch · dashboards · usage · demo · health                   │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -855,6 +855,49 @@ The system continuously monitors database connection health in the background an
 - `ConnectionHealth.tsx` component subscribes to SSE events for live updates and renders inline health status
 
 **API endpoints**: `GET /api/connections/{id}/health`, `GET /api/connections/health?project_id=X`, `POST /api/connections/{id}/reconnect`
+
+### 19. Bulk Operations and Batch Query Execution
+
+The **Batch Query Runner** lets you execute multiple SQL queries in sequence against a single database connection, collect all results, and export them as a multi-sheet XLSX workbook.
+
+**Opening the batch runner:**
+- Click the **layers icon** in the chat area header to open an empty batch runner
+- Click the **"Batch"** button in the Saved Queries panel header to pre-populate the batch with all saved notes
+
+**Creating a batch:**
+1. Enter a batch title and select a connection from the dropdown
+2. Add queries manually: click "Add Query", enter a title and SQL for each
+3. Add from saved notes: click "From Saved Notes", select notes from a checklist picker
+4. Reorder queries with up/down arrow buttons, remove with the trash button
+5. Click "Run All" to execute
+
+**Execution behavior:**
+- Queries run sequentially (not in parallel) to avoid overloading the database
+- A progress bar shows X/N completed in real-time (polled every 1.5s)
+- If a query fails, the error is recorded and execution continues with the next query
+- Final batch status: `completed` (all succeeded), `partially_failed` (some failed), `failed` (all failed)
+- SSE progress events are emitted via WorkflowTracker for each query
+
+**Viewing results:**
+- After execution completes, the **BatchResults** modal opens automatically
+- Tabbed view: each tab shows a query's title, status dot (green/red), and row count
+- Each tab displays a sortable data table with the query results
+- Failed queries show the error message and the SQL that was attempted
+- **Report View** toggle shows all results vertically in a printable layout
+- **Export All as XLSX** creates a multi-sheet Excel file (one sheet per query, sheet names truncated to 31 chars)
+
+**Batch history:**
+- Previous batches are stored in the `batch_queries` table and can be listed/retrieved via API
+- Each batch records: user, project, connection, queries, results, status, and timestamps
+
+**Technical details:**
+- Model: `BatchQuery` with JSON fields for queries and results
+- Service: `BatchService` handles creation, execution (with SSE events), and XLSX export
+- XLSX export uses `openpyxl` (same dependency as single-query export)
+- Frontend: `BatchRunner` (modal for creating/running), `BatchResults` (tabbed results viewer)
+- API returns `202 Accepted` immediately; execution happens in a background `asyncio.create_task`
+
+**API endpoints**: `POST /api/batch/execute`, `GET /api/batch/{id}`, `GET /api/batch?project_id=X`, `DELETE /api/batch/{id}`, `POST /api/batch/{id}/export`
 
 ---
 
@@ -2640,6 +2683,31 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-21 — Bulk Operations and Batch Query Execution
+
+**Backend:**
+
+- **BatchQuery model** (`backend/app/models/batch_query.py`) — Stores batch execution metadata: user, project, connection, queries (JSON array), note IDs, status (pending/running/completed/partially_failed/failed), results (JSON), and timestamps.
+- **Alembic migration** (`z4a5b6c7d8e9`) — Creates `batch_queries` table with indexed user_id and project_id columns. Uses `batch_alter_table` for SQLite compatibility.
+- **BatchService** (`backend/app/services/batch_service.py`) — Service layer with methods: `create_batch()` (resolves note IDs to SQL), `execute_batch()` (runs queries sequentially through connectors, emits SSE progress events, handles partial failures), `get_batch()`, `list_batches()`, `delete_batch()`.
+- **Batch API routes** (`backend/app/api/routes/batch.py`) — Five endpoints:
+  - `POST /api/batch/execute` — Creates batch and starts async execution (202 Accepted)
+  - `GET /api/batch/{id}` — Retrieve batch with results
+  - `GET /api/batch?project_id=X` — List user's batches for a project
+  - `DELETE /api/batch/{id}` — Delete a batch
+  - `POST /api/batch/{id}/export` — Export all results as multi-sheet XLSX (one sheet per query, names truncated to 31 chars for Excel limit)
+- All endpoints require auth + project membership. Execute endpoint is rate-limited to 10/min.
+
+**Frontend:**
+
+- **BatchRunner** (`frontend/src/components/batch/BatchRunner.tsx`) — Modal component for creating and running batch queries. Features: add queries manually (title + SQL textarea), add from saved notes (checkbox picker), reorder with up/down arrows, remove individual queries, connection selector, progress bar during execution (polls every 1.5s), auto-opens results on completion.
+- **BatchResults** (`frontend/src/components/batch/BatchResults.tsx`) — Tabbed results viewer. Each tab shows query title, status dot, row count. Tab content displays a data table. Failed queries show error messages. "Report View" toggle shows all results vertically. "Export All as XLSX" downloads the multi-sheet Excel file.
+- **API client** — Added `BatchQueryDTO` interface and `api.batch` namespace with `execute()`, `get()`, `list()`, `delete()`, `export()` methods.
+- **Integration points**:
+  - Layers icon button in the chat header opens an empty batch runner
+  - "Batch" button in the Saved Queries panel header pre-populates the runner with all saved notes
+- **Icon additions** — Added `download`, `layers`, `chevron-up`, `file-spreadsheet`, `arrow-up`, `arrow-down` icons to the Icon component.
 
 ### 2026-03-21 — Smart Query Suggestions and Auto-Complete
 

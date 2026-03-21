@@ -149,6 +149,48 @@ describe("api.dashboards", () => {
   });
 });
 
+describe("api.batch", () => {
+  it("execute calls POST /batch/execute and returns batch_id", async () => {
+    mockOk({ batch_id: "b1", status: "pending" });
+    const result = await api.batch.execute({
+      project_id: "p1",
+      connection_id: "c1",
+      title: "Test Batch",
+      queries: [{ sql: "SELECT 1", title: "Q1" }],
+    });
+    expect(result.batch_id).toBe("b1");
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain("/batch/execute");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body);
+    expect(body.queries).toHaveLength(1);
+    expect(body.title).toBe("Test Batch");
+  });
+
+  it("get calls GET /batch/:id", async () => {
+    mockOk({ id: "b1", status: "completed" });
+    const result = await api.batch.get("b1");
+    expect(result.id).toBe("b1");
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/batch/b1");
+  });
+
+  it("list calls GET /batch with project_id", async () => {
+    mockOk([]);
+    await api.batch.list("p1");
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/batch?project_id=p1");
+  });
+
+  it("delete calls DELETE /batch/:id", async () => {
+    mockOk({ ok: true });
+    await api.batch.delete("b1");
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain("/batch/b1");
+    expect(opts.method).toBe("DELETE");
+  });
+});
+
 describe("api auth headers", () => {
   it("sends Authorization header when token is stored", async () => {
     localStorage.setItem("auth_token", "test-jwt");
