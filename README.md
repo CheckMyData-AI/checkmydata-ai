@@ -389,7 +389,28 @@ During DB indexing, DISTINCT values are now collected more broadly:
 - **Sample-data-driven** — Columns with <= 3 distinct values in sample rows (catches unlabeled flag columns like `processed: 0, 1`)
 - DISTINCT values are included in `table_index_to_detail` output for the SQL agent
 
-**Frontend components:** `ClarificationCard`, `DataValidationCard`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`)
+**Self-Improvement System Enhancements (v2):**
+
+- **InvestigationAgent wired up** — The "Wrong Data" button now launches `InvestigationAgent.run()` as a background task; the agent diagnoses issues, updates investigation status in real time, and records findings
+- **Benchmark comparison active** — `DataSanityChecker.check_against_benchmark()` now runs after every SQL query, comparing results against stored verified metrics and flagging deviations
+- **Periodic learning decay** — `decay_stale_learnings()` and `decay_stale_notes()` run daily via the backup cron loop, preventing outdated advice from persisting indefinitely
+- **Live learning injection** — The orchestrator prompt now includes a "RECENT AGENT LEARNINGS" section with the top 15 high-confidence learnings, updated per-query
+- **Expanded sanity checks** — DataSanityChecker now detects: negative values in positive-metric columns, duplicate GROUP BY keys, single-row results for breakdown questions, date range mismatches vs. question intent
+- **Learning prioritization** — `compile_prompt()` sorts learnings by composite score (confidence × 0.4 + log(confirmed) × 0.4 + log(applied) × 0.2), caps at 30 learnings, marks ★CRITICAL for 5+ confirmations
+- **Cross-connection learning transfer** — `schema_gotcha` and `performance_hint` learnings from sibling connections in the same project are included in the prompt (deduplicated, marked as `[from sibling]`)
+- **Proactive data probes** — After DB indexing, `ProbeService` runs sample queries on the top 5 tables by row count, checking for NULL rates, empty tables, and sanity anomalies. Creates session notes for findings
+- **Learning conflict detection** — When creating a new learning, the system detects conflicting lessons (same category/subject with negation flips) and deactivates the weaker one
+- **Investigation → sync enrichment** — When a user confirms an investigation fix with `missing_filter` or `column_format` root cause, the findings are pushed into `CodeDbSync` via `add_runtime_enrichment()`
+- **Feedback analytics API** — `GET /data-validation/analytics/{project_id}` returns aggregated stats: accuracy rate, verdict breakdown, top error patterns, learnings by category, benchmark count, investigation status counts
+- **Feedback analytics dashboard** — `FeedbackAnalyticsPanel` frontend component displays data quality metrics with stat cards, verdict badges, error pattern lists, and learning/investigation breakdowns
+- **Incremental overview updates** — `ProjectOverviewService.save_overview()` now hashes each section (DB, sync, rules, learnings, notes, profile) and only regenerates changed sections, with section hashes persisted in `project_cache.section_hashes_json`
+
+**New files:**
+- `backend/app/services/probe_service.py` — Data health probe runner
+- `backend/alembic/versions/c5d6e7f8g9h0_add_section_hashes_to_project_cache.py` — Migration for `section_hashes_json`
+- `frontend/src/components/analytics/FeedbackAnalyticsPanel.tsx` — Feedback analytics dashboard component
+
+**Frontend components:** `ClarificationCard`, `DataValidationCard`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`), `FeedbackAnalyticsPanel` (in `frontend/src/components/analytics/`)
 
 **API endpoints** (prefix `/api/data-validation/`):
 - `POST /validate-data` — Record user validation feedback
@@ -2089,7 +2110,7 @@ make test-frontend    # frontend vitest
 | Note Service | 10 (create, get, list_by_project, update, delete, update_result, filtering, ordering) | — |
 | Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
 | SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
-| DataSanityChecker | 9 (all null, all zero, future dates, percentage sums, benchmark deviations, format warnings) | — |
+| DataSanityChecker | 9 (all null, all zero, future dates, percentage sums, benchmark deviations, format warnings, negative values, duplicate keys, single-row anomaly, date range mismatch) | — |
 | SessionNotesService | 10 (create, invalid category, duplicate, similar merge, context filtering, prompt compilation, verify, deactivate, delete all) | — |
 | DataValidationService | 7 (record basic, record with rejection, get by id/message, unresolved filter, resolve, accuracy stats) | — |
 | BenchmarkService | 6 (normalize key, create new, user confirmed, confirm existing, find, flag stale, get all) | — |

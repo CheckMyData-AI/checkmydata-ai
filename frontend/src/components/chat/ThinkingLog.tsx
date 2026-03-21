@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef } from "react";
 
 interface ThinkingLogProps {
   entries: string[];
@@ -9,18 +9,19 @@ interface ThinkingLogProps {
 
 export function ThinkingLog({ entries, startTime }: ThinkingLogProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const entryCount = entries.length;
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [entries.length]);
+  }, [entryCount]);
 
-  const elapsed = useMemo(() => {
-    if (!startTime) return null;
+  const elapsed = (() => {
+    if (!startTime || entryCount === 0) return null;
     const secs = Math.round((Date.now() - startTime) / 1000);
     if (secs < 2) return null;
     return `${secs}s`;
-  }, [startTime, entries.length]);
+  })();
 
   if (entries.length === 0) return null;
 

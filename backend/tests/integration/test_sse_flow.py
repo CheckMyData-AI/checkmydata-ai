@@ -5,11 +5,9 @@ with a mocked LLM, exercising the real SSE routing code.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-from tests.integration.conftest import auth_headers, register_user
 
 
 def _make_llm_response(content="Hello", tool_calls=None, provider="openai", model="gpt-4o"):
