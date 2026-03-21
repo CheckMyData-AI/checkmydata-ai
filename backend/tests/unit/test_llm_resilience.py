@@ -41,12 +41,24 @@ def router():
     return r
 
 
+def _patch_chain(router, chain=None):
+    """Patch _get_fallback_chain to bypass API-key checks in CI."""
+    return patch.object(
+        router,
+        "_get_fallback_chain",
+        return_value=chain or ["openai", "anthropic", "openrouter"],
+    )
+
+
 class TestFallbackChain:
     @pytest.mark.asyncio
     async def test_primary_succeeds_no_fallback(self, router):
         mock_provider = AsyncMock()
         mock_provider.complete = AsyncMock(return_value=_ok_response())
-        with patch.object(router, "_get_provider", return_value=mock_provider):
+        with (
+            _patch_chain(router, ["openai"]),
+            patch.object(router, "_get_provider", return_value=mock_provider),
+        ):
             resp = await router.complete(_msg())
         assert resp.content == "ok"
 
@@ -63,6 +75,7 @@ class TestFallbackChain:
             return fallback_mock
 
         with (
+            _patch_chain(router, ["openai", "anthropic"]),
             patch.object(router, "_get_provider", side_effect=_get),
             patch("app.llm.router._MAX_RETRIES_PER_PROVIDER", 1),
             patch("app.llm.router._BASE_BACKOFF_SECONDS", 0.01),
@@ -75,6 +88,7 @@ class TestFallbackChain:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=LLMServerError("down"))
         with (
+            _patch_chain(router),
             patch.object(router, "_get_provider", return_value=mock),
             patch("app.llm.router._MAX_RETRIES_PER_PROVIDER", 1),
             patch("app.llm.router._BASE_BACKOFF_SECONDS", 0.01),
@@ -87,6 +101,7 @@ class TestFallbackChain:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=LLMAuthError("bad key"))
         with (
+            _patch_chain(router),
             patch.object(router, "_get_provider", return_value=mock),
             pytest.raises(LLMAllProvidersFailedError),
         ):
@@ -98,6 +113,7 @@ class TestFallbackChain:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=LLMTokenLimitError("too big"))
         with (
+            _patch_chain(router),
             patch.object(router, "_get_provider", return_value=mock),
             pytest.raises(LLMAllProvidersFailedError),
         ):
@@ -111,6 +127,7 @@ class TestRetryBehavior:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=[LLMRateLimitError("429"), _ok_response()])
         with (
+            _patch_chain(router, ["openai"]),
             patch.object(router, "_get_provider", return_value=mock),
             patch("app.llm.router._BASE_BACKOFF_SECONDS", 0.01),
         ):
@@ -123,6 +140,7 @@ class TestRetryBehavior:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=[LLMTimeoutError("slow"), _ok_response()])
         with (
+            _patch_chain(router, ["openai"]),
             patch.object(router, "_get_provider", return_value=mock),
             patch("app.llm.router._BASE_BACKOFF_SECONDS", 0.01),
         ):
@@ -134,6 +152,7 @@ class TestRetryBehavior:
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=[LLMConnectionError("network"), _ok_response()])
         with (
+            _patch_chain(router, ["openai"]),
             patch.object(router, "_get_provider", return_value=mock),
             patch("app.llm.router._BASE_BACKOFF_SECONDS", 0.01),
         ):
