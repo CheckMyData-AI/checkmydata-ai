@@ -573,6 +573,7 @@ export const api = {
       onToolCall?: (event: Record<string, unknown>) => void,
       onPipelineEvent?: (eventType: string, event: Record<string, unknown>) => void,
       onThinking?: (event: Record<string, unknown>) => void,
+      onToken?: (chunk: string) => void,
     ) => {
       const ctrl = new AbortController();
       const streamPromise = fetch(`${API_BASE}/chat/ask/stream`, {
@@ -613,7 +614,8 @@ export const api = {
                 "plan", "stage_start", "stage_result", "stage_validation",
                 "stage_complete", "checkpoint", "stage_retry",
               ]);
-              if (eventType === "thinking") onThinking?.(parsed);
+              if (eventType === "token") onToken?.((parsed as { chunk: string }).chunk ?? "");
+              else if (eventType === "thinking") onThinking?.(parsed);
               else if (eventType === "step") onStep(parsed);
               else if (eventType === "tool_call") onToolCall?.(parsed);
               else if (eventType === "result") onResult(parsed as ChatResponse);
@@ -623,8 +625,8 @@ export const api = {
           }
         }
       }).catch((err) => {
-        if (err.name !== "AbortError") onError({ error: String(err), error_type: "network", is_retryable: true, user_message: "An unexpected error occurred. Please try again." });
-        throw err;
+        if (err.name === "AbortError" || (err instanceof DOMException && err.name === "AbortError")) return;
+        onError({ error: String(err), error_type: "network", is_retryable: true, user_message: "An unexpected error occurred. Please try again." });
       });
       return Object.assign(ctrl, { done: streamPromise });
     },
@@ -830,6 +832,23 @@ export const api = {
         times_confirmed: number;
         last_confirmed_at: string | null;
       }>>(`/data-validation/benchmarks/${connectionId}?project_id=${projectId}`),
+
+    getFeedbackAnalytics: (projectId: string) =>
+      request<{
+        connections: number;
+        validations: {
+          total: number;
+          by_verdict: Record<string, number>;
+          accuracy_rate: number | null;
+          top_error_patterns: Array<{ reason: string; count: number }>;
+        };
+        learnings: {
+          total_active: number;
+          by_category: Record<string, number>;
+        };
+        benchmarks: { total: number };
+        investigations: Record<string, number>;
+      }>(`/data-validation/analytics/${projectId}`),
 
     startInvestigation: (body: {
       project_id: string;

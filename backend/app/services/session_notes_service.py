@@ -271,12 +271,40 @@ class SessionNotesService:
         connection_id: str,
     ) -> int:
         result = await session.execute(
-            select(func.count(SessionNote.id)).where(SessionNote.connection_id == connection_id)
+            select(func.count(SessionNote.id)).where(
+                SessionNote.connection_id == connection_id
+            )
         )
         count = result.scalar_one()
         if count:
             await session.execute(
-                delete(SessionNote).where(SessionNote.connection_id == connection_id)
+                delete(SessionNote).where(
+                    SessionNote.connection_id == connection_id
+                )
             )
             await session.flush()
         return count
+
+    async def decay_stale_notes(
+        self,
+        session: AsyncSession,
+        days_threshold: int = 60,
+        decay_amount: float = 0.1,
+    ) -> int:
+        """Reduce confidence of unverified notes inactive for *days_threshold*+ days."""
+        from datetime import timedelta
+
+        from sqlalchemy import update
+
+        cutoff = datetime.now(UTC) - timedelta(days=days_threshold)
+        result = await session.execute(
+            update(SessionNote)
+            .where(
+                SessionNote.is_active.is_(True),
+                SessionNote.is_verified.is_(False),
+                SessionNote.updated_at < cutoff,
+                SessionNote.confidence > 0.1,
+            )
+            .values(confidence=func.greatest(0.1, SessionNote.confidence - decay_amount))
+        )
+        return result.rowcount  # type: ignore[return-value]

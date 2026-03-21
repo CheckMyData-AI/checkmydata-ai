@@ -471,6 +471,25 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
           </div>
         )}
 
+        {/* Quick exploration actions for SQL results */}
+        {isSqlResult && hasRawResult && onSendMessage && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {[
+              { label: "Top 10", prompt: `Show me only the top 10 rows from the previous result` },
+              { label: "Group by", prompt: `Group the previous result by the first text column and show counts` },
+              { label: "Sort desc", prompt: `Sort the previous result by the first numeric column in descending order` },
+            ].map((action) => (
+              <button
+                key={action.label}
+                onClick={() => onSendMessage(action.prompt)}
+                className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Data validation card for sql_result messages */}
         {isSqlResult && message.query && sessionId && (
           <DataValidationCard

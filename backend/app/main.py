@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
 
     await asyncio.to_thread(run_migrations)
     await init_db()
+    await _check_alembic_head()
     await _cleanup_stale_checkpoints()
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
@@ -192,6 +193,42 @@ app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 
 
+async def _check_alembic_head() -> None:
+    """Warn if the database schema is behind the latest Alembic migration."""
+    try:
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        from app.models.base import engine
+
+        alembic_cfg = Config("alembic.ini")
+        script = ScriptDirectory.from_config(alembic_cfg)
+        head_rev = script.get_current_head()
+
+        async with engine.connect() as conn:
+            current_rev = await conn.run_sync(
+                lambda sync_conn: MigrationContext.configure(sync_conn).get_current_revision()
+            )
+
+        if current_rev != head_rev:
+            logger.warning(
+                "Database migration mismatch: current=%s, head=%s. "
+                "Run 'alembic upgrade head' to apply pending migrations.",
+                current_rev,
+                head_rev,
+            )
+            if settings.environment.lower() in ("development", "dev"):
+                logger.info("Dev mode: auto-migrating to head")
+                from alembic import command
+
+                await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+        else:
+            logger.info("Database schema is up to date (revision=%s)", current_rev)
+    except Exception:
+        logger.debug("Alembic head check skipped (not available)", exc_info=True)
+
+
 async def _cleanup_stale_checkpoints() -> None:
     """Mark orphaned 'running' checkpoints as interrupted and remove stale ones."""
     try:
@@ -293,6 +330,39 @@ async def _decay_stale_learnings() -> None:
         logger.warning("Failed to decay stale learnings at startup", exc_info=True)
 
 
+async def _periodic_learning_decay() -> None:
+    """Daily decay of stale learnings and unverified session notes."""
+    try:
+        from app.services.agent_learning_service import AgentLearningService
+
+        svc = AgentLearningService()
+        async with async_session_factory() as session:
+            affected = await svc.decay_stale_learnings(session)
+            await session.commit()
+            if affected:
+                logger.info(
+                    "Cron: decayed confidence for %d stale learnings",
+                    affected,
+                )
+    except Exception:
+        logger.warning("Periodic learning decay failed", exc_info=True)
+
+    try:
+        from app.services.session_notes_service import SessionNotesService
+
+        notes_svc = SessionNotesService()
+        async with async_session_factory() as session:
+            decayed = await notes_svc.decay_stale_notes(session)
+            await session.commit()
+            if decayed:
+                logger.info(
+                    "Cron: decayed %d stale session notes",
+                    decayed,
+                )
+    except Exception:
+        logger.warning("Periodic note decay failed", exc_info=True)
+
+
 async def _cleanup_pipeline_runs() -> None:
     """Delete pipeline_runs older than PIPELINE_RUN_TTL_DAYS."""
     try:
@@ -348,6 +418,7 @@ async def _backup_cron_loop() -> None:
                     )
                 )
                 await session.commit()
+            await _periodic_learning_decay()
         except asyncio.CancelledError:
             break
         except Exception:

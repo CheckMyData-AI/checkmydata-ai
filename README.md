@@ -2407,6 +2407,40 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 | Serialization | 5 | plan, result roundtrips |
 | ValidationOutcome | 3 | fail/warn/to_dict |
 
+### 2026-03-20 — Orchestrator Architecture Improvements (20-Task Plan)
+
+**Token streaming & UX:**
+
+- Orchestrator emits progressive `token` SSE events for the final answer, enabling a real-time typing effect in the frontend (`ChatPanel.tsx`). New `onToken` callback in `api.ts`.
+- "Stop generating" button in ChatPanel. Triggers `AbortController.abort()`, captures partial streaming text as a visible message with a "(Generation stopped by user)" note.
+- Elapsed-time indicator in `ThinkingLog` — shows seconds elapsed since request start.
+- Interactive data exploration: quick-action buttons ("Top 10", "Group by", "Sort desc") appear below SQL results in `ChatMessage.tsx` for one-click follow-up queries.
+- `streamSteps` state capped at 100 entries to prevent unbounded memory growth.
+
+**Performance:**
+
+- Parallel independent tool calls via `asyncio.gather()` when the LLM returns multiple tool_calls in a single response.
+- Parallel context loading at orchestrator start: `_check_staleness` and `_has_mcp_sources` run concurrently.
+- Parallel RAG lookups in `ContextEnricher._lookup_docs` — multiple `vector_store.query` calls via `asyncio.gather()`.
+- Smart query result cache (`QueryCache`) now keyed on `(connection, question_hash, schema_version)` with `invalidate_schema()` method.
+
+**Intelligence & reliability:**
+
+- Adaptive complexity detection: borderline heuristic scores trigger a fast LLM classifier fallback (`detect_complexity_adaptive` in `query_planner.py`).
+- Context Window Budget Manager (`context_budget.py`): priority-based token allocation across system prompt, history, schema, rules, learnings, and project overview.
+- Graceful degradation: on sub-agent failure or max-iterations, the orchestrator composes a helpful partial answer from any gathered SQL data or knowledge sources.
+- Prompt versioning: `PROMPT_VERSION` constant in orchestrator, `prompt_version` field in `AgentResponse`, logged to `TokenUsage` for A/B analysis.
+
+**Infrastructure & ops:**
+
+- `history_summary_model` config wired through `trim_history()` for cheap summarization.
+- `stream_timeout_seconds` and `stream_safety_margin_seconds` moved to `config.py`, removing hardcoded values.
+- Alembic migration validation on startup (`_check_alembic_head` in `main.py`): warns if DB is behind, auto-migrates in dev mode.
+- Per-user rate limiting (`AgentLimiter` in `agent_limiter.py`): concurrent and hourly caps, enforced in chat route with proper `acquire`/`release` lifecycle.
+- Refactored MCP agent adapter injection: `run()` accepts adapter as parameter instead of external `set_adapter()`.
+- LLM provider health checks: background ping loop marks unhealthy providers, `_get_fallback_chain` skips them automatically.
+- Full SSE flow integration test (`test_sse_flow.py`): verifies event sequences, error events, and session ID presence with mocked LLM.
+
 ### 2026-03-20 — Agent Thinking Stream
 
 **Real-time narration of agent reasoning in the chat UI:**

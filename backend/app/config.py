@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
 
+    # Streaming settings
+    stream_timeout_seconds: int = 120
+    stream_safety_margin_seconds: int = 30
+
     # Backup settings
     backup_enabled: bool = True
     backup_hour: int = 0
@@ -100,6 +104,8 @@ class Settings(BaseSettings):
 
     # Request limits
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
+    max_concurrent_agent_calls: int = 3
+    max_agent_calls_per_hour: int = 100
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":

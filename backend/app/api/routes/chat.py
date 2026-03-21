@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.agent import ConversationalAgent
+from app.core.agent_limiter import agent_limiter
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.llm.errors import LLMError
@@ -506,6 +507,7 @@ async def ask(
             "provider": result.llm_provider or "unknown",
             "model": result.llm_model or "unknown",
             "estimated_cost_usd": ask_cost,
+            "prompt_version": result.prompt_version,
         }
         if result.token_usage
         else None
@@ -639,7 +641,13 @@ async def ask_stream(
     sql_model = (project.sql_llm_model if project else None) or agent_model
     project_name = project.name if project else None
 
-    stream_timeout_seconds = 120
+    from app.config import settings as app_settings
+
+    limit_err = agent_limiter.acquire(user["user_id"])
+    if limit_err:
+        raise HTTPException(status_code=429, detail=limit_err)
+
+    stream_timeout_seconds = app_settings.stream_timeout_seconds
 
     async def _generate():
         result_holder: list = []
@@ -672,7 +680,8 @@ async def ask_stream(
         task = asyncio.create_task(_process())
 
         wf_id = None
-        loop_deadline = time.monotonic() + stream_timeout_seconds + 30
+        safety = app_settings.stream_safety_margin_seconds
+        loop_deadline = time.monotonic() + stream_timeout_seconds + safety
         while not task.done() or not queue.empty():
             if time.monotonic() > loop_deadline:
                 logger.warning("SSE event loop exceeded safety timeout, breaking")
@@ -706,6 +715,11 @@ async def ask_stream(
                 }
             )
 
+            if event.step == "token":
+                yield (
+                    f"event: token\ndata: {json.dumps({'chunk': event.detail}, default=str)}\n\n"
+                )
+                continue
             if event.step == "thinking":
                 yield (f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n")
             elif event.step in pipeline_events:
@@ -743,11 +757,13 @@ async def ask_stream(
                 ),
             }
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+            agent_limiter.release(user["user_id"])
             return
         except Exception as exc:
             tracker.unsubscribe(queue)
             error_payload = _build_structured_error(exc)
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+            agent_limiter.release(user["user_id"])
             return
         tracker.unsubscribe(queue)
         result = result_holder[0] if result_holder else None
@@ -759,6 +775,7 @@ async def ask_stream(
                 "user_message": "An unexpected error occurred. Please try again.",
             }
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+            agent_limiter.release(user["user_id"])
             return
 
         viz_data = None
@@ -799,6 +816,7 @@ async def ask_stream(
                 "provider": result.llm_provider or "unknown",
                 "model": result.llm_model or "unknown",
                 "estimated_cost_usd": s_cost,
+                "prompt_version": result.prompt_version,
             }
             if result.token_usage
             else None
@@ -883,6 +901,7 @@ async def ask_stream(
             "rules_changed": _has_rules_changed(result.tool_call_log),
         }
         yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
+        agent_limiter.release(user["user_id"])
 
     return StreamingResponse(
         _generate(),

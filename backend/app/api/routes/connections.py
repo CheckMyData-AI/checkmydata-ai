@@ -481,9 +481,15 @@ async def _run_db_index_background(
             )
             final_status = "failed"
         else:
-            logger.info("DB index completed: connection=%s result=%s", connection_id[:8], result)
+            logger.info(
+                "DB index completed: connection=%s result=%s",
+                connection_id[:8], result,
+            )
             final_status = "completed"
             await _regenerate_overview(project_id, connection_id)
+            await _run_data_probes(
+                connection_id, connection_config, project_id,
+            )
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
     finally:
@@ -494,6 +500,48 @@ async def _run_db_index_background(
                 await session.commit()
         except Exception:
             logger.debug("Failed to update indexing_status", exc_info=True)
+
+
+async def _run_data_probes(
+    connection_id: str,
+    connection_config: ConnectionConfig,
+    project_id: str,
+) -> None:
+    """Best-effort run probes on top tables after indexing."""
+    from app.models.base import async_session_factory
+    from app.services.db_index_service import DbIndexService
+    from app.services.probe_service import ProbeService
+
+    try:
+        idx_svc = DbIndexService()
+        async with async_session_factory() as session:
+            entries = await idx_svc.get_index(session, connection_id)
+            table_names = sorted(
+                [(e.table_name, e.row_count or 0) for e in entries],
+                key=lambda t: t[1],
+                reverse=True,
+            )
+            top_tables = [t[0] for t in table_names[:5]]
+            if not top_tables:
+                return
+
+            probe_svc = ProbeService()
+            report = await probe_svc.run_probes(
+                session, connection_id, project_id,
+                connection_config, top_tables,
+            )
+            await session.commit()
+
+            total_findings = sum(
+                len(e.get("findings", [])) for e in report
+            )
+            if total_findings:
+                logger.info(
+                    "Data probes complete: connection=%s findings=%d",
+                    connection_id[:8], total_findings,
+                )
+    except Exception:
+        logger.debug("Data probes failed (non-critical)", exc_info=True)
 
 
 # ------------------------------------------------------------------

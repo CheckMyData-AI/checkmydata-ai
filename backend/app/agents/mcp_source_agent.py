@@ -103,8 +103,12 @@ class MCPSourceAgent(BaseAgent):
         *,
         question: str | None = None,
         source_name: str = "MCP Source",
+        adapter: MCPClientAdapter | None = None,
         **_kwargs: Any,
     ) -> MCPSourceResult:
+        effective_adapter = adapter or self._adapter
+        if effective_adapter and not self._adapter:
+            self._adapter = effective_adapter
         if not self._adapter:
             return MCPSourceResult(
                 status="error",

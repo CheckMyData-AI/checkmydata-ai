@@ -56,6 +56,51 @@ def detect_complexity(question: str, chat_history: list[Message] | None = None) 
     return sum(indicators) >= 2
 
 
+async def detect_complexity_adaptive(
+    question: str,
+    llm_router: LLMRouter,
+    chat_history: list[Message] | None = None,
+    preferred_provider: str | None = None,
+    model: str | None = None,
+) -> bool:
+    """Heuristic first, LLM fallback for borderline scores."""
+    q_lower = question.lower()
+    indicators = [
+        len(question) > 300,
+        any(kw in q_lower for kw in _COMPLEXITY_KEYWORDS),
+        question.count("?") > 1,
+        question.count(",") > 3 and any(v in q_lower for v in ["and", "also", "plus"]),
+    ]
+    score = sum(indicators)
+    if score >= 2:
+        return True
+    if score == 0:
+        return False
+    try:
+        resp = await llm_router.complete(
+            messages=[
+                Message(
+                    role="system",
+                    content=(
+                        "Determine if the user's question requires multiple sequential "
+                        "database queries, cross-referencing, or multi-step analysis. "
+                        'Reply ONLY with JSON: {"complex": true/false, "reason": "..."}'
+                    ),
+                ),
+                Message(role="user", content=question[:500]),
+            ],
+            max_tokens=60,
+            temperature=0.0,
+            preferred_provider=preferred_provider,
+            model=model,
+        )
+        result = json.loads(resp.content.strip())
+        return bool(result.get("complex", False))
+    except Exception:
+        logger.debug("Adaptive complexity classifier failed, defaulting to simple")
+        return False
+
+
 # ------------------------------------------------------------------
 # Plan validation helpers
 # ------------------------------------------------------------------

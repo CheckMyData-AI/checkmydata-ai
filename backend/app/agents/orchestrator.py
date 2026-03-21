@@ -24,7 +24,11 @@ from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
-from app.agents.query_planner import QueryPlanner, detect_complexity
+from app.agents.query_planner import (
+    QueryPlanner,
+    detect_complexity,
+    detect_complexity_adaptive,
+)
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.stage_context import ExecutionPlan, StageContext
 from app.agents.stage_executor import StageExecutor, _StageExecutorResult
@@ -64,6 +68,9 @@ class _ClarificationRequestError(Exception):
         super().__init__(payload_json)
 
 
+PROMPT_VERSION = "v2.1"
+
+
 @dataclass
 class AgentResponse:
     """Final response returned to the caller (chat route)."""
@@ -83,6 +90,7 @@ class AgentResponse:
     staleness_warning: str | None = None
     response_type: str = "text"  # text | sql_result | knowledge | error
     tool_call_log: list[dict] = field(default_factory=list)
+    prompt_version: str = PROMPT_VERSION
 
 
 class OrchestratorAgent(BaseAgent):
@@ -138,7 +146,15 @@ class OrchestratorAgent(BaseAgent):
             if resume_info:
                 return await self._resume_pipeline(resume_info, context)
 
-            staleness_warning = await self._check_staleness(context.project_id, wf_id)
+            has_connection = context.connection_config is not None
+            db_type = context.connection_config.db_type if context.connection_config else None
+
+            # Parallel context loading
+            staleness_coro = self._check_staleness(context.project_id, wf_id)
+            mcp_coro = self._has_mcp_sources(context.project_id, wf_id)
+
+            staleness_warning, has_mcp = await asyncio.gather(staleness_coro, mcp_coro)
+            has_kb = self._has_knowledge_base(context.project_id)
 
             if context.chat_history:
                 from app.config import settings as app_settings
@@ -149,12 +165,8 @@ class OrchestratorAgent(BaseAgent):
                     llm_router=self._llm,
                     preferred_provider=context.preferred_provider,
                     model=context.model,
+                    summary_model=app_settings.history_summary_model or None,
                 )
-
-            has_connection = context.connection_config is not None
-            has_kb = self._has_knowledge_base(context.project_id)
-            has_mcp = await self._has_mcp_sources(context.project_id, wf_id)
-            db_type = context.connection_config.db_type if context.connection_config else None
 
             table_map = ""
             if has_connection and context.connection_config:
@@ -170,17 +182,23 @@ class OrchestratorAgent(BaseAgent):
                     table_map = await self._build_table_map(cid, wf_id)
 
             # Complexity detection — branch to multi-stage pipeline
-            if (
-                has_connection
-                and not context.extra.get("_skip_complexity")
-                and detect_complexity(question, context.chat_history)
-            ):
+            is_complex = detect_complexity(question, context.chat_history)
+            if not is_complex and not context.extra.get("_skip_complexity"):
+                is_complex = await detect_complexity_adaptive(
+                    question,
+                    self._llm,
+                    context.chat_history,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                )
+            if has_connection and not context.extra.get("_skip_complexity") and is_complex:
                 logger.info("Complex query detected — using multi-stage pipeline")
                 return await self._run_complex_pipeline(
                     context, wf_id, table_map, db_type, staleness_warning
                 )
 
             project_overview = await self._load_project_overview(context.project_id)
+            recent_learnings = await self._load_recent_learnings(context)
 
             system_prompt = build_orchestrator_system_prompt(
                 project_name=context.project_name,
@@ -190,6 +208,7 @@ class OrchestratorAgent(BaseAgent):
                 table_map=table_map,
                 current_datetime=get_current_datetime_str(),
                 project_overview=project_overview,
+                recent_learnings=recent_learnings,
             )
 
             tools = get_orchestrator_tools(
@@ -251,6 +270,7 @@ class OrchestratorAgent(BaseAgent):
                         "Composing final answer…",
                     )
                     final_text = llm_resp.content or ""
+                    await self._stream_tokens(wf_id, final_text)
                     break
 
                 tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
@@ -273,14 +293,33 @@ class OrchestratorAgent(BaseAgent):
                     )
                 )
 
-                for tc in llm_resp.tool_calls:
-                    result_text, sub_result = await self._handle_meta_tool(
-                        tc,
-                        context,
-                        wf_id,
-                        total_usage,
+                if len(llm_resp.tool_calls) > 1:
+                    gather_results = await asyncio.gather(
+                        *(
+                            self._handle_meta_tool(tc, context, wf_id, total_usage)
+                            for tc in llm_resp.tool_calls
+                        ),
+                        return_exceptions=True,
                     )
+                    tool_pairs: list[tuple[str, Any]] = []
+                    for i, res in enumerate(gather_results):
+                        if isinstance(res, Exception):
+                            logger.warning(
+                                "Parallel tool call %s failed: %s",
+                                llm_resp.tool_calls[i].name,
+                                res,
+                            )
+                            tool_pairs.append((f"Error: {res}", None))
+                        else:
+                            tool_pairs.append(res)  # type: ignore[arg-type]
+                else:
+                    tool_pairs = [
+                        await self._handle_meta_tool(
+                            llm_resp.tool_calls[0], context, wf_id, total_usage
+                        )
+                    ]
 
+                for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
                     tool_call_log.append(
                         {
                             "tool": tc.name,
@@ -307,12 +346,19 @@ class OrchestratorAgent(BaseAgent):
                     wf_id,
                     "thinking",
                     "in_progress",
-                    "Reached maximum iterations, wrapping up…",
+                    "Reached maximum iterations, composing from partial data…",
                 )
-                final_text = (
-                    "I reached the maximum number of tool calls. "
-                    "Here is what I found so far based on the tools I used."
-                )
+                partial_parts: list[str] = ["I reached the maximum number of analysis steps."]
+                if last_sql_result and last_sql_result.results:
+                    rc = last_sql_result.results.row_count
+                    partial_parts.append(f"I found {rc} rows of data from the database.")
+                if knowledge_sources:
+                    partial_parts.append(
+                        f"I found {len(knowledge_sources)} relevant document(s) "
+                        "from the knowledge base."
+                    )
+                partial_parts.append("Here is what I found so far based on the tools I used.")
+                final_text = " ".join(partial_parts)
 
             response_type = self._determine_response_type(last_sql_result, knowledge_sources)
 
@@ -799,6 +845,19 @@ class OrchestratorAgent(BaseAgent):
             raise last_exc
         raise RuntimeError("LLM call failed without exception")
 
+    async def _stream_tokens(
+        self,
+        wf_id: str,
+        text: str,
+        chunk_size: int = 12,
+    ) -> None:
+        """Emit final answer text as progressive token events for frontend typing effect."""
+        if not text:
+            return
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i : i + chunk_size]
+            await self._tracker.emit(wf_id, "token", "streaming", chunk)
+
     def _emit_tool_result_thinking(
         self,
         wf_id: str,
@@ -936,13 +995,19 @@ class OrchestratorAgent(BaseAgent):
                 if attempt < MAX_SUB_AGENT_RETRIES:
                     logger.info("SQL agent retryable error (attempt %d): %s", attempt + 1, e)
                     continue
-                return f"SQL query failed after retries: {e}", None
+                return (
+                    f"SQL query failed after retries: {e}. "
+                    "Partial information may be available from other tools."
+                ), None
             except AgentFatalError as e:
                 return f"SQL query failed: {e}", None
             except AgentError as e:
                 return f"SQL agent error: {e}", None
 
-        return "SQL query failed after maximum retries.", None
+        return (
+            "SQL query failed after maximum retries. "
+            "Partial information may be available from other tools."
+        ), None
 
     async def _handle_search_codebase(
         self,
@@ -1149,7 +1214,6 @@ class OrchestratorAgent(BaseAgent):
                 adapter = MCPClientAdapter()
                 try:
                     await adapter.connect(config)
-                    self._mcp_source.set_adapter(adapter)
 
                     async with self._tracker.step(
                         wf_id,
@@ -1160,6 +1224,7 @@ class OrchestratorAgent(BaseAgent):
                             context,
                             question=sub_question,
                             source_name=conn.name,
+                            adapter=adapter,
                         )
 
                     self.accum_usage(total_usage, result.token_usage)
@@ -1336,6 +1401,47 @@ class OrchestratorAgent(BaseAgent):
                 return None
         except Exception:
             logger.debug("Failed to load project overview", exc_info=True)
+            return None
+
+    async def _load_recent_learnings(
+        self,
+        context: AgentContext,
+    ) -> str | None:
+        """Load high-confidence / recent learnings for orchestrator context."""
+        cfg = context.connection_config
+        if not cfg or not cfg.connection_id:
+            return None
+        try:
+            from app.models.base import async_session_factory
+            from app.services.agent_learning_service import AgentLearningService
+
+            svc = AgentLearningService()
+            async with async_session_factory() as session:
+                learnings = await svc.get_learnings(
+                    session,
+                    cfg.connection_id,
+                    min_confidence=0.6,
+                    active_only=True,
+                )
+            if not learnings:
+                return None
+
+            top = sorted(
+                learnings,
+                key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
+                reverse=True,
+            )[:15]
+
+            lines = ["RECENT AGENT LEARNINGS (verified insights):"]
+            for lrn in top:
+                conf = int(lrn.confidence * 100)
+                lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson} ({conf}%)")
+            return "\n".join(lines)
+        except Exception:
+            logger.debug(
+                "Failed to load recent learnings for orchestrator",
+                exc_info=True,
+            )
             return None
 
     async def _check_staleness(self, project_id: str, wf_id: str = "") -> str | None:

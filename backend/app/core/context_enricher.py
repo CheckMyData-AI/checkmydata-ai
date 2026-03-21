@@ -204,24 +204,31 @@ class ContextEnricher:
         if not search_terms:
             search_terms.append(error.message[:100])
 
-        all_docs: list[str] = []
-        for term in search_terms[:3]:
+        vs = self._vector_store
+
+        async def _search_one(term: str) -> list[dict]:
             try:
-                results = await asyncio.to_thread(
-                    self._vector_store.query,
+                return await asyncio.to_thread(
+                    vs.query,
                     project_id,
                     term,
                     n_results=2,
                 )
-                for r in results:
-                    distance = r.get("distance")
-                    if distance is not None and distance > self.RAG_RELEVANCE_THRESHOLD:
-                        continue
-                    doc = r.get("document", "")
-                    if doc and doc not in all_docs:
-                        all_docs.append(doc)
             except Exception:
                 logger.debug("RAG lookup failed for term: %s", term)
+                return []
+
+        results_lists = await asyncio.gather(*(_search_one(t) for t in search_terms[:3]))
+
+        all_docs: list[str] = []
+        for results in results_lists:
+            for r in results:
+                distance = r.get("distance")
+                if distance is not None and distance > self.RAG_RELEVANCE_THRESHOLD:
+                    continue
+                doc = r.get("document", "")
+                if doc and doc not in all_docs:
+                    all_docs.append(doc)
 
         if all_docs:
             return "\n---\n".join(all_docs[:4])

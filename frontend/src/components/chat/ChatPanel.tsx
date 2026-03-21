@@ -37,6 +37,8 @@ export function ChatPanel() {
   const [pipelineRunId, setPipelineRunId] = useState<string | undefined>();
   const [checkpointStageId, setCheckpointStageId] = useState<string | undefined>();
   const [thinkingLog, setThinkingLog] = useState<string[]>([]);
+  const [streamingText, setStreamingText] = useState("");
+  const [thinkingStartTime, setThinkingStartTime] = useState<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const cachedReady = useAppStore((s) =>
     activeProject ? s.readinessCache[activeProject.id]?.ready : false
@@ -142,6 +144,10 @@ export function ChatPanel() {
     [],
   );
 
+  const handleToken = useCallback((chunk: string) => {
+    setStreamingText((prev) => prev + chunk);
+  }, []);
+
   const sendPipelineAction = useCallback(
     (action: string, modification?: string) => {
       if (!activeProject || !pipelineRunId || !activeSession) return;
@@ -149,6 +155,7 @@ export function ChatPanel() {
       setThinking(true);
       setLoading(true);
       setThinkingLog([]);
+      setStreamingText("");
 
       const ctrl = api.chat.askStream(
         {
@@ -160,7 +167,10 @@ export function ChatPanel() {
           pipeline_run_id: pipelineRunId,
           modification,
         },
-        (step) => setStreamSteps((prev) => [...prev, step as unknown as WorkflowEvent]),
+        (step) => setStreamSteps((prev) => {
+          const next = [...prev, step as unknown as WorkflowEvent];
+          return next.length > 100 ? next.slice(-100) : next;
+        }),
         (result: ChatResponse) => {
           const vizConfig = (result as unknown as Record<string, unknown>).viz_config as Record<string, unknown> | undefined;
           if (vizConfig?.pipeline_run_id) {
@@ -183,6 +193,7 @@ export function ChatPanel() {
           setStreamSteps([]);
           clearToolCalls();
           setThinkingLog([]);
+          setStreamingText("");
           if (result.response_type !== "stage_checkpoint" && result.response_type !== "stage_failed") {
             setPipelineStages([]);
             setPipelineRunId(undefined);
@@ -202,6 +213,7 @@ export function ChatPanel() {
           setStreamSteps([]);
           clearToolCalls();
           setThinkingLog([]);
+          setStreamingText("");
         },
         (toolEvent) => {
           addToolCall({
@@ -212,10 +224,11 @@ export function ChatPanel() {
         },
         handlePipelineEvent,
         handleThinkingEvent,
+        handleToken,
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, pipelineRunId, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent],
+    [activeProject, activeConnection, activeSession, pipelineRunId, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
   useEffect(() => {
@@ -240,6 +253,8 @@ export function ChatPanel() {
       setStreamSteps([]);
       clearToolCalls();
       setThinkingLog([]);
+      setStreamingText("");
+      setThinkingStartTime(Date.now());
       setPipelineStages([]);
       setPipelineRunId(undefined);
       setCheckpointStageId(undefined);
@@ -252,7 +267,10 @@ export function ChatPanel() {
           session_id: activeSession?.id,
         },
         (step) => {
-          setStreamSteps((prev) => [...prev, step as unknown as WorkflowEvent]);
+          setStreamSteps((prev) => {
+            const next = [...prev, step as unknown as WorkflowEvent];
+            return next.length > 100 ? next.slice(-100) : next;
+          });
         },
         (result: ChatResponse) => {
           if (!activeSession) {
@@ -338,6 +356,7 @@ export function ChatPanel() {
           setStreamSteps([]);
           clearToolCalls();
           setThinkingLog([]);
+          setStreamingText("");
 
           if (
             result.response_type !== "stage_checkpoint" &&
@@ -363,6 +382,7 @@ export function ChatPanel() {
           setStreamSteps([]);
           clearToolCalls();
           setThinkingLog([]);
+          setStreamingText("");
         },
         (toolEvent) => {
           addToolCall({
@@ -373,11 +393,31 @@ export function ChatPanel() {
         },
         handlePipelineEvent,
         handleThinkingEvent,
+        handleToken,
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, handlePipelineEvent, handleThinkingEvent],
+    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    setThinking(false);
+    setLoading(false);
+    clearToolCalls();
+    setThinkingLog([]);
+    setStreamingText((prev) => {
+      if (prev) {
+        addMessage({
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: prev + "\n\n*(Generation stopped by user)*",
+          timestamp: Date.now(),
+        });
+      }
+      return "";
+    });
+  }, [setThinking, setLoading, clearToolCalls, addMessage]);
 
   useEffect(() => {
     return () => {
@@ -520,20 +560,40 @@ export function ChatPanel() {
         )}
         {isThinking && (
           <div className="flex gap-3">
-            <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-lg">
-              {thinkingLog.length > 0 ? (
-                <ThinkingLog entries={thinkingLog} />
-              ) : (
-                <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
-                  <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
-                  <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                </div>
-              )}
-              {activeToolCalls.length > 0 && (
-                <ToolCallIndicator events={activeToolCalls} />
-              )}
-            </div>
+            {streamingText ? (
+              <div className="bg-zinc-800 rounded-xl px-4 py-3 max-w-3xl">
+                <p className="text-zinc-200 text-sm whitespace-pre-wrap">{streamingText}<span className="inline-block w-1.5 h-4 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" /></p>
+                <button
+                  onClick={handleStop}
+                  className="mt-2 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  aria-label="Stop generating"
+                >
+                  ■ Stop generating
+                </button>
+              </div>
+            ) : (
+              <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-lg">
+                {thinkingLog.length > 0 ? (
+                  <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
+                ) : (
+                  <div className="flex gap-1">
+                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
+                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
+                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                  </div>
+                )}
+                {activeToolCalls.length > 0 && (
+                  <ToolCallIndicator events={activeToolCalls} />
+                )}
+                <button
+                  onClick={handleStop}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  aria-label="Stop generating"
+                >
+                  ■ Stop generating
+                </button>
+              </div>
+            )}
           </div>
         )}
         <div ref={messagesEndRef} />

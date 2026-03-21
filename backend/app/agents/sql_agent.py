@@ -727,7 +727,9 @@ class SQLAgent(BaseAgent):
 
         checker = DataSanityChecker()
 
-        rows_as_dicts = [dict(zip(results.columns, row)) for row in results.rows]
+        rows_as_dicts = [
+            dict(zip(results.columns, row)) for row in results.rows
+        ]
 
         warnings = checker.check(
             rows=rows_as_dicts,
@@ -736,7 +738,65 @@ class SQLAgent(BaseAgent):
             question=ctx.user_question or "",
         )
 
-        return checker.format_warnings(warnings)
+        benchmark_text = await self._check_benchmarks(
+            checker, rows_as_dicts, results.columns, ctx,
+        )
+
+        text = checker.format_warnings(warnings)
+        if benchmark_text:
+            text += benchmark_text
+        return text
+
+    async def _check_benchmarks(
+        self,
+        checker: Any,
+        rows: list[dict[str, Any]],
+        columns: list[str],
+        ctx: AgentContext,
+    ) -> str:
+        """Compare query results against stored benchmarks."""
+        cfg = ctx.connection_config
+        if not cfg or not cfg.connection_id:
+            return ""
+        try:
+            from app.models.base import async_session_factory
+            from app.services.benchmark_service import BenchmarkService
+
+            svc = BenchmarkService()
+            async with async_session_factory() as session:
+                benchmarks = await svc.get_all_for_connection(
+                    session, cfg.connection_id,
+                )
+
+            if not benchmarks:
+                return ""
+
+            lines: list[str] = []
+            for bm in benchmarks:
+                if bm.value_numeric is None:
+                    continue
+                comp = checker.check_against_benchmark(
+                    rows, columns, bm.value_numeric, bm.metric_key,
+                )
+                if comp and comp.level != "ok":
+                    icon = "🔴" if comp.level == "critical" else "🟡"
+                    lines.append(
+                        f"  {icon} [benchmark] Metric '{comp.metric_key}' "
+                        f"expected ~{comp.benchmark_value:,.2f} "
+                        f"but got {comp.actual_value:,.2f} "
+                        f"({comp.deviation_pct}% deviation)"
+                    )
+
+            if not lines:
+                return ""
+            return "\n\n⚠️ BENCHMARK DEVIATIONS:\n" + "\n".join(lines)
+
+        except Exception:
+            logger.debug(
+                "Benchmark comparison failed (non-critical)",
+                exc_info=True,
+            )
+            return ""
 
     # ------------------------------------------------------------------
     # Query context builder (mirrors ToolExecutor._build_query_context)

@@ -55,6 +55,7 @@ async def trim_history(
     llm_router=None,
     preferred_provider: str | None = None,
     model: str | None = None,
+    summary_model: str | None = None,
 ) -> list[Message]:
     """Return a token-budget-aware version of *messages*.
 
@@ -96,7 +97,7 @@ async def trim_history(
             older,
             llm_router,
             preferred_provider,
-            model,
+            summary_model or model,
         )
     else:
         summary = _fallback_summary(older)

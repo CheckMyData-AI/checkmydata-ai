@@ -28,6 +28,9 @@ class ProjectCache(Base):
     overview_generated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    section_hashes_json: Mapped[str] = mapped_column(
+        Text, default="{}", server_default="{}",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -16,6 +16,7 @@ def build_orchestrator_system_prompt(
     table_map: str = "",
     current_datetime: str | None = None,
     project_overview: str | None = None,
+    recent_learnings: str | None = None,
 ) -> str:
     project_label = f' for the project "{project_name}"' if project_name else ""
     sections: list[str] = [
@@ -64,6 +65,14 @@ def build_orchestrator_system_prompt(
             "\nUse this overview to understand what data is available and how it "
             "should be queried. Route questions to the appropriate sub-agent "
             "based on this context."
+        )
+
+    if recent_learnings:
+        sections.append("")
+        sections.append(recent_learnings)
+        sections.append(
+            "\nThese learnings reflect verified patterns and corrections from "
+            "previous interactions. Use them to improve routing accuracy."
         )
 
     sections.append("")

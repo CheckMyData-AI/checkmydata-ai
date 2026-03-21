@@ -1,5 +1,6 @@
 """Data validation and investigation API endpoints."""
 
+import asyncio
 import json
 import logging
 
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models.chat_session import ChatMessage as ChatMessageModel
+from app.models.data_validation import DataInvestigation
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,130 @@ async def get_benchmarks(
     ]
 
 
+@router.get("/analytics/{project_id}")
+async def get_feedback_analytics(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Aggregate feedback analytics across all connections in a project."""
+    await _membership_svc.require_role(
+        db, project_id, user["user_id"], "viewer",
+    )
+
+    from sqlalchemy import func as sa_func
+
+    from app.models.agent_learning import AgentLearning
+    from app.models.benchmark import DataBenchmark
+    from app.models.connection import Connection
+    from app.models.data_validation import (
+        DataInvestigation,
+        DataValidationFeedback,
+    )
+
+    conn_result = await db.execute(
+        select(Connection.id).where(
+            Connection.project_id == project_id
+        )
+    )
+    conn_ids = [r[0] for r in conn_result.all()]
+    if not conn_ids:
+        return {
+            "connections": 0, "validations": {},
+            "learnings": {}, "benchmarks": {},
+            "investigations": {},
+        }
+
+    val_result = await db.execute(
+        select(
+            DataValidationFeedback.verdict,
+            sa_func.count(DataValidationFeedback.id),
+        )
+        .where(DataValidationFeedback.connection_id.in_(conn_ids))
+        .group_by(DataValidationFeedback.verdict)
+    )
+    verdict_counts = {str(r[0]): int(r[1]) for r in val_result.all()}
+    total_validations = sum(verdict_counts.values())
+    confirmed = verdict_counts.get("confirmed", 0)
+    accuracy_rate = (
+        round(confirmed / total_validations * 100, 1)
+        if total_validations > 0 else None
+    )
+
+    top_rejections = await db.execute(
+        select(
+            DataValidationFeedback.rejection_reason,
+            sa_func.count(DataValidationFeedback.id),
+        )
+        .where(
+            DataValidationFeedback.connection_id.in_(conn_ids),
+            DataValidationFeedback.verdict == "rejected",
+            DataValidationFeedback.rejection_reason.isnot(None),
+        )
+        .group_by(DataValidationFeedback.rejection_reason)
+        .order_by(sa_func.count(DataValidationFeedback.id).desc())
+        .limit(10)
+    )
+    error_patterns = [
+        {"reason": str(r[0]), "count": int(r[1])}
+        for r in top_rejections.all()
+    ]
+
+    learning_result = await db.execute(
+        select(
+            AgentLearning.category,
+            sa_func.count(AgentLearning.id),
+        )
+        .where(
+            AgentLearning.connection_id.in_(conn_ids),
+            AgentLearning.is_active.is_(True),
+        )
+        .group_by(AgentLearning.category)
+    )
+    learning_by_cat = {
+        str(r[0]): int(r[1]) for r in learning_result.all()
+    }
+    total_learnings = sum(learning_by_cat.values())
+
+    bm_count = await db.execute(
+        select(sa_func.count(DataBenchmark.id)).where(
+            DataBenchmark.connection_id.in_(conn_ids),
+            DataBenchmark.confidence >= 0.3,
+        )
+    )
+    total_benchmarks = bm_count.scalar_one()
+
+    inv_result = await db.execute(
+        select(
+            DataInvestigation.status,
+            sa_func.count(DataInvestigation.id),
+        )
+        .where(DataInvestigation.connection_id.in_(conn_ids))
+        .group_by(DataInvestigation.status)
+    )
+    inv_by_status = {
+        str(r[0]): int(r[1]) for r in inv_result.all()
+    }
+
+    return {
+        "connections": len(conn_ids),
+        "validations": {
+            "total": total_validations,
+            "by_verdict": verdict_counts,
+            "accuracy_rate": accuracy_rate,
+            "top_error_patterns": error_patterns,
+        },
+        "learnings": {
+            "total_active": total_learnings,
+            "by_category": learning_by_cat,
+        },
+        "benchmarks": {
+            "total": total_benchmarks,
+        },
+        "investigations": inv_by_status,
+    }
+
+
 # ------------------------------------------------------------------
 # Investigation endpoints
 # ------------------------------------------------------------------
@@ -184,6 +310,20 @@ async def start_investigation(
         problematic_column=body.problematic_column,
     )
     await db.commit()
+
+    asyncio.create_task(
+        _run_investigation_background(
+            investigation_id=investigation.id,
+            project_id=body.project_id,
+            connection_id=body.connection_id,
+            original_query=original_query,
+            original_result_summary=original_result_summary,
+            user_complaint_type=body.complaint_type,
+            user_complaint_detail=body.complaint_detail or "",
+            user_expected_value=body.expected_value or "",
+            problematic_column=body.problematic_column or "",
+        )
+    )
 
     return {
         "ok": True,
@@ -291,6 +431,9 @@ async def confirm_investigation_fix(
         )
         notes_created.append(note.id)
 
+    if inv.root_cause_category in ("missing_filter", "column_format"):
+        await _enrich_sync_from_investigation(db, inv)
+
     await inv_svc.complete_investigation(
         db,
         investigation_id,
@@ -305,6 +448,149 @@ async def confirm_investigation_fix(
         "learnings_created": learnings_created,
         "notes_created": notes_created,
     }
+
+
+async def _enrich_sync_from_investigation(
+    db: AsyncSession,
+    inv: DataInvestigation,
+) -> None:
+    """Push investigation findings into Code-DB sync filters/mappings."""
+    from app.services.code_db_sync_service import CodeDbSyncService
+
+    try:
+        sync_svc = CodeDbSyncService()
+        table = _extract_table_from_query(inv.original_query)
+        if table == "unknown_table":
+            return
+
+        if inv.root_cause_category == "missing_filter":
+            await sync_svc.add_runtime_enrichment(
+                db,
+                connection_id=inv.connection_id,
+                table_name=table,
+                field="required_filters_json",
+                value=json.dumps({"source": "investigation", "filter": inv.root_cause}),
+            )
+        elif inv.root_cause_category == "column_format":
+            await sync_svc.add_runtime_enrichment(
+                db,
+                connection_id=inv.connection_id,
+                table_name=table,
+                field="conversion_warnings",
+                value=inv.root_cause or "",
+            )
+    except Exception:
+        logger.debug(
+            "Failed to enrich sync from investigation (non-critical)",
+            exc_info=True,
+        )
+
+
+async def _run_investigation_background(
+    *,
+    investigation_id: str,
+    project_id: str,
+    connection_id: str,
+    original_query: str,
+    original_result_summary: str,
+    user_complaint_type: str,
+    user_complaint_detail: str,
+    user_expected_value: str,
+    problematic_column: str,
+) -> None:
+    """Launch InvestigationAgent in the background and update status as it runs."""
+    from app.agents.base import AgentContext
+    from app.agents.investigation_agent import InvestigationAgent
+    from app.core.workflow_tracker import WorkflowTracker
+    from app.llm.router import LLMRouter
+    from app.models.base import async_session_factory
+    from app.services.connection_service import ConnectionService
+    from app.services.investigation_service import InvestigationService
+
+    inv_svc = InvestigationService()
+
+    try:
+        async with async_session_factory() as session:
+            await inv_svc.update_phase(
+                session, investigation_id,
+                "investigating", "investigate",
+                log_entry="Agent started investigation.",
+            )
+            await session.commit()
+
+        from app.models.connection import Connection
+
+        conn_svc = ConnectionService()
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Connection).where(Connection.id == connection_id)
+            )
+            conn = result.scalar_one_or_none()
+            if not conn:
+                raise RuntimeError(f"Connection {connection_id} not found")
+            cfg = await conn_svc.to_config(session, conn)
+
+        tracker = WorkflowTracker()
+        wf_id = tracker.create(f"investigation:{investigation_id}")
+
+        ctx = AgentContext(
+            project_id=project_id,
+            connection_config=cfg,
+            user_question="",
+            chat_history=[],
+            llm_router=LLMRouter(),
+            tracker=tracker,
+            workflow_id=wf_id,
+        )
+
+        agent = InvestigationAgent()
+        result = await agent.run(
+            ctx,
+            investigation_id=investigation_id,
+            original_query=original_query,
+            original_result_summary=original_result_summary,
+            user_complaint_type=user_complaint_type,
+            user_complaint_detail=user_complaint_detail,
+            user_expected_value=user_expected_value,
+            problematic_column=problematic_column,
+        )
+
+        if result.status == "success" and result.corrected_query:
+            corrected_json = (
+                json.dumps(result.corrected_result)
+                if result.corrected_result else None
+            )
+            async with async_session_factory() as session:
+                await inv_svc.record_finding(
+                    session,
+                    investigation_id=investigation_id,
+                    corrected_query=result.corrected_query,
+                    corrected_result_json=corrected_json,
+                    root_cause=result.root_cause,
+                    root_cause_category=result.root_cause_category,
+                )
+                await session.commit()
+            logger.info("Investigation %s: fix found", investigation_id)
+        else:
+            async with async_session_factory() as session:
+                await inv_svc.fail_investigation(
+                    session, investigation_id,
+                    reason=result.root_cause or "Agent could not identify a fix.",
+                )
+                await session.commit()
+            logger.info("Investigation %s: no fix found", investigation_id)
+
+    except Exception:
+        logger.exception("Investigation %s failed", investigation_id)
+        try:
+            async with async_session_factory() as session:
+                await inv_svc.fail_investigation(
+                    session, investigation_id,
+                    reason="Internal error during investigation.",
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to mark investigation %s as failed", investigation_id)
 
 
 def _map_root_cause_to_learning_category(root_cause_category: str) -> str:

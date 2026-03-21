@@ -33,12 +33,18 @@ _NON_RETRYABLE_PER_PROVIDER: tuple[type[LLMError], ...] = (
 )
 
 
+_HEALTH_CHECK_INTERVAL = 60.0
+_HEALTH_UNHEALTHY_TTL = 120.0
+
+
 class LLMRouter:
     """Selects LLM provider with automatic retry + fallback on failure."""
 
     def __init__(self):
         self._instances: dict[str, BaseLLMProvider] = {}
         self._fallback_order = ["openai", "anthropic", "openrouter"]
+        self._unhealthy: dict[str, float] = {}
+        self._health_task: asyncio.Task | None = None
 
     def _get_provider(self, name: str) -> BaseLLMProvider:
         if name not in self._instances:
@@ -49,6 +55,8 @@ class LLMRouter:
         return self._instances[name]
 
     def _get_fallback_chain(self, preferred: str | None) -> list[str]:
+        import time as _time
+
         primary = preferred or settings.default_llm_provider
         chain = [primary]
         for p in self._fallback_order:
@@ -59,7 +67,60 @@ class LLMRouter:
             "anthropic": settings.anthropic_api_key,
             "openrouter": settings.openrouter_api_key,
         }
-        return [p for p in chain if key_map.get(p)]
+        now = _time.monotonic()
+        healthy = [
+            p
+            for p in chain
+            if key_map.get(p)
+            and (p not in self._unhealthy or now - self._unhealthy[p] > _HEALTH_UNHEALTHY_TTL)
+        ]
+        if not healthy:
+            return [p for p in chain if key_map.get(p)]
+        return healthy
+
+    def mark_unhealthy(self, provider: str) -> None:
+        import time as _time
+
+        self._unhealthy[provider] = _time.monotonic()
+        logger.warning("Provider %s marked unhealthy", provider)
+
+    def mark_healthy(self, provider: str) -> None:
+        self._unhealthy.pop(provider, None)
+
+    async def start_health_checks(self) -> None:
+        """Start background health check loop (called from app lifespan)."""
+        if self._health_task and not self._health_task.done():
+            return
+        self._health_task = asyncio.create_task(self._health_loop())
+
+    async def stop_health_checks(self) -> None:
+        if self._health_task and not self._health_task.done():
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _health_loop(self) -> None:
+        """Ping each provider periodically."""
+        while True:
+            try:
+                await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
+                for name in list(self._unhealthy.keys()):
+                    try:
+                        provider = self._get_provider(name)
+                        await provider.complete(
+                            messages=[Message(role="user", content="hi")],
+                            max_tokens=1,
+                        )
+                        self.mark_healthy(name)
+                        logger.info("Provider %s recovered", name)
+                    except Exception:
+                        logger.debug("Provider %s still unhealthy", name)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.debug("Health check loop error", exc_info=True)
 
     async def _call_with_retry(
         self,

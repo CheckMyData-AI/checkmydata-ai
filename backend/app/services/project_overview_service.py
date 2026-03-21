@@ -1,7 +1,12 @@
-"""Generates a unified Project Knowledge Overview for the orchestrator agent."""
+"""Generates a unified Project Knowledge Overview for the orchestrator agent.
+
+Supports incremental updates: each section is hashed and only rebuilt
+when the underlying data changes.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -27,6 +32,14 @@ MAX_TOP_LEARNINGS = 5
 MAX_BENCHMARKS = 10
 MAX_OVERVIEW_CHARS = 6000
 
+SECTION_KEYS = (
+    "db", "sync", "rules", "learnings", "notes", "profile",
+)
+
+
+def _hash_section(text: str) -> str:
+    return hashlib.md5(text.encode()).hexdigest()
+
 
 class ProjectOverviewService:
     """Builds a compact markdown overview combining all knowledge sources."""
@@ -39,7 +52,9 @@ class ProjectOverviewService:
     ) -> str:
         sections: list[str] = []
 
-        connection_ids = await self._get_connection_ids(db, project_id, connection_id)
+        connection_ids = await self._get_connection_ids(
+            db, project_id, connection_id,
+        )
         if not connection_ids:
             return ""
 
@@ -55,15 +70,21 @@ class ProjectOverviewService:
         if rules_section:
             sections.append(rules_section)
 
-        learnings_section = await self._build_learnings_section(db, connection_ids)
+        learnings_section = await self._build_learnings_section(
+            db, connection_ids,
+        )
         if learnings_section:
             sections.append(learnings_section)
 
-        notes_section = await self._build_notes_section(db, project_id, connection_ids)
+        notes_section = await self._build_notes_section(
+            db, project_id, connection_ids,
+        )
         if notes_section:
             sections.append(notes_section)
 
-        profile_section = await self._build_profile_section(db, project_id)
+        profile_section = await self._build_profile_section(
+            db, project_id,
+        )
         if profile_section:
             sections.append(profile_section)
 
@@ -78,21 +99,127 @@ class ProjectOverviewService:
         project_id: str,
         connection_id: str | None = None,
     ) -> str:
-        overview = await self.generate_overview(db, project_id, connection_id)
-        row = await db.execute(select(ProjectCache).where(ProjectCache.project_id == project_id))
+        row = await db.execute(
+            select(ProjectCache).where(
+                ProjectCache.project_id == project_id
+            )
+        )
         cache = row.scalar_one_or_none()
+
+        old_hashes: dict[str, str] = {}
+        if cache:
+            try:
+                old_hashes = json.loads(
+                    cache.section_hashes_json or "{}"
+                )
+            except (json.JSONDecodeError, TypeError):
+                old_hashes = {}
+
+        connection_ids = await self._get_connection_ids(
+            db, project_id, connection_id,
+        )
+        if not connection_ids:
+            if cache:
+                cache.overview_text = ""
+                cache.overview_generated_at = datetime.now(UTC)
+                cache.section_hashes_json = "{}"
+            await db.commit()
+            return ""
+
+        builders = {
+            "db": lambda: self._build_db_section(db, connection_ids),
+            "sync": lambda: self._build_sync_section(db, connection_ids),
+            "rules": lambda: self._build_rules_section(db, project_id),
+            "learnings": lambda: self._build_learnings_section(
+                db, connection_ids,
+            ),
+            "notes": lambda: self._build_notes_section(
+                db, project_id, connection_ids,
+            ),
+            "profile": lambda: self._build_profile_section(db, project_id),
+        }
+
+        old_overview = (cache.overview_text or "") if cache else ""
+        old_sections = self._split_overview_sections(old_overview)
+
+        new_hashes: dict[str, str] = {}
+        final_sections: list[str] = []
+        regenerated_count = 0
+
+        for key in SECTION_KEYS:
+            builder = builders[key]
+            new_text = await builder()
+            if not new_text:
+                continue
+
+            new_hash = _hash_section(new_text)
+            new_hashes[key] = new_hash
+
+            if new_hash == old_hashes.get(key) and key in old_sections:
+                final_sections.append(old_sections[key])
+            else:
+                final_sections.append(new_text)
+                regenerated_count += 1
+
+        overview = "\n\n".join(final_sections)
+        if len(overview) > MAX_OVERVIEW_CHARS:
+            overview = overview[:MAX_OVERVIEW_CHARS] + "\n...(truncated)"
+
         if cache:
             cache.overview_text = overview
             cache.overview_generated_at = datetime.now(UTC)
+            cache.section_hashes_json = json.dumps(new_hashes)
         else:
             cache = ProjectCache(
                 project_id=project_id,
                 overview_text=overview,
                 overview_generated_at=datetime.now(UTC),
+                section_hashes_json=json.dumps(new_hashes),
             )
             db.add(cache)
+
         await db.commit()
+
+        if regenerated_count < len(final_sections):
+            logger.info(
+                "Incremental overview: %d/%d sections regenerated",
+                regenerated_count, len(final_sections),
+            )
+
         return overview
+
+    @staticmethod
+    def _split_overview_sections(overview: str) -> dict[str, str]:
+        """Parse a previously generated overview back into section map."""
+        sections: dict[str, str] = {}
+        header_map = {
+            "## Database Structure": "db",
+            "## Data Conventions": "sync",
+            "## Custom Rules": "rules",
+            "## Agent Learnings": "learnings",
+            "## Session Notes": "notes",
+            "## Repository Profile": "profile",
+        }
+        current_key: str | None = None
+        current_lines: list[str] = []
+
+        for line in overview.split("\n"):
+            matched = False
+            for header, key in header_map.items():
+                if line.startswith(header):
+                    if current_key and current_lines:
+                        sections[current_key] = "\n".join(current_lines)
+                    current_key = key
+                    current_lines = [line]
+                    matched = True
+                    break
+            if not matched and current_key is not None:
+                current_lines.append(line)
+
+        if current_key and current_lines:
+            sections[current_key] = "\n".join(current_lines)
+
+        return sections
 
     # ------------------------------------------------------------------
     # Internal helpers
