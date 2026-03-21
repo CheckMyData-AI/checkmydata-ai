@@ -91,6 +91,8 @@ class AgentResponse:
     response_type: str = "text"  # text | sql_result | knowledge | error
     tool_call_log: list[dict] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
+    suggested_followups: list[str] = field(default_factory=list)
+    insights: list[dict] = field(default_factory=list)
 
 
 class OrchestratorAgent(BaseAgent):
@@ -410,6 +412,24 @@ class OrchestratorAgent(BaseAgent):
 
             await self._tracker.end(wf_id, "orchestrator", "completed", f"type={response_type}")
 
+            followups: list[str] = []
+            if (
+                response_type == "sql_result"
+                and last_sql_result
+                and last_sql_result.results
+                and last_sql_result.query
+            ):
+                try:
+                    from app.services.suggestion_engine import SuggestionEngine
+
+                    followups = SuggestionEngine.generate_followups(
+                        query=last_sql_result.query,
+                        columns=list(last_sql_result.results.columns),
+                        row_count=last_sql_result.results.row_count,
+                    )
+                except Exception:
+                    logger.debug("Failed to generate follow-up suggestions", exc_info=True)
+
             return AgentResponse(
                 answer=final_text,
                 query=last_sql_result.query if last_sql_result else None,
@@ -425,6 +445,8 @@ class OrchestratorAgent(BaseAgent):
                 staleness_warning=staleness_warning,
                 response_type=response_type,
                 tool_call_log=tool_call_log,
+                insights=last_sql_result.insights if last_sql_result else [],
+                suggested_followups=followups,
             )
 
         except _ClarificationRequestError as cr:

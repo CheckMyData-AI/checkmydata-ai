@@ -14,6 +14,9 @@ import { useNotesStore } from "@/stores/notes-store";
 import { Icon } from "@/components/ui/Icon";
 import { ClarificationCard } from "./ClarificationCard";
 import { DataValidationCard } from "./DataValidationCard";
+import { FollowupChips } from "./SuggestionChips";
+import { InsightCards, type Insight } from "./InsightCards";
+import { SQLExplainer } from "./SQLExplainer";
 import { VerificationBadge } from "./VerificationBadge";
 import { WrongDataModal } from "./WrongDataModal";
 
@@ -84,6 +87,8 @@ interface MessageMetadata {
   rag_sources?: RAGSourceInfo[];
   response_type?: string;
   token_usage?: Record<string, number | string | null>;
+  insights?: Insight[];
+  suggested_followups?: string[];
 }
 
 interface ChatMessageProps {
@@ -111,6 +116,29 @@ function resolveOriginalVizType(
   }
   return "table";
 }
+
+function computeSqlComplexity(sql: string): string {
+  const upper = sql.toUpperCase();
+  const hasRecursive = /\bWITH\s+RECURSIVE\b/.test(upper);
+  const hasCte = /\bWITH\b\s+\w+\s+AS\s*\(/.test(upper);
+  const hasWindow = /\bOVER\s*\(/.test(upper);
+  const joinCount = (upper.match(/\bJOIN\b/g) || []).length;
+  const fromIdx = upper.indexOf("FROM");
+  const hasSubquery = fromIdx >= 0 && upper.indexOf("SELECT", fromIdx + 1) >= 0;
+
+  if (hasRecursive) return "expert";
+  if (hasCte && (hasWindow || joinCount > 2)) return "expert";
+  if (hasCte || hasWindow || hasSubquery || joinCount > 2) return "complex";
+  if (joinCount >= 1) return "moderate";
+  return "simple";
+}
+
+const complexityBadgeColors: Record<string, string> = {
+  simple: "bg-emerald-900/30 text-emerald-400",
+  moderate: "bg-blue-900/30 text-blue-400",
+  complex: "bg-amber-900/30 text-amber-400",
+  expert: "bg-red-900/30 text-red-400",
+};
 
 export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, sessionId }: ChatMessageProps) {
   const isUser = message.role === "user";
@@ -222,6 +250,33 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     }
   };
 
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  const sqlComplexity = message.query && isSqlResult ? computeSqlComplexity(message.query) : null;
+
+  const handleSummarize = async () => {
+    if (summaryLoading) return;
+    if (summaryText) {
+      setSummaryOpen((v) => !v);
+      return;
+    }
+    const { activeProject } = useAppStore.getState();
+    if (!activeProject) return;
+    setSummaryLoading(true);
+    setSummaryOpen(true);
+    try {
+      const res = await api.chat.summarize(message.id, activeProject.id);
+      setSummaryText(res.summary);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to generate summary", "error");
+      setSummaryOpen(false);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   let toolCalls: Array<{ tool?: string; arguments?: Record<string, unknown>; result_preview?: string }> = [];
   if (message.toolCallsJson) {
     try {
@@ -284,8 +339,13 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {/* SQL Query — only for sql_result responses */}
         {message.query && isSqlResult && (
           <details className="mt-3 text-xs">
-            <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300">
+            <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300 flex items-center gap-2">
               View SQL Query
+              {sqlComplexity && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
+                  {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
+                </span>
+              )}
             </summary>
             <pre className="mt-2 p-3 bg-zinc-900 rounded-lg overflow-x-auto text-zinc-300">
               {message.query}
@@ -293,6 +353,10 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             {message.queryExplanation && (
               <p className="mt-1 text-zinc-400">{message.queryExplanation}</p>
             )}
+            <SQLExplainer
+              sql={message.query}
+              projectId={useAppStore.getState().activeProject?.id ?? ""}
+            />
           </details>
         )}
 
@@ -354,6 +418,31 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                 total_rows: message.rawResult!.total_rows,
               }}
             />
+          </div>
+        )}
+
+        {/* Insight cards — below visualization for sql_result */}
+        {isSqlResult && metadata?.insights && metadata.insights.length > 0 && (
+          <InsightCards insights={metadata.insights} onDrillDown={onSendMessage} />
+        )}
+
+        {/* Executive summary button + inline summary */}
+        {isSqlResult && message.query && (
+          <div className="mt-1.5">
+            {!summaryText && (
+              <button
+                onClick={handleSummarize}
+                disabled={summaryLoading}
+                className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors disabled:opacity-50"
+              >
+                {summaryLoading ? "Generating..." : "Summary"}
+              </button>
+            )}
+            {summaryText && (
+              <div className="mt-1 p-2 rounded bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-300 leading-relaxed">
+                {summaryText}
+              </div>
+            )}
           </div>
         )}
 
@@ -457,6 +546,21 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   <Icon name="bookmark" size={14} className={noteSaving ? "animate-pulse" : ""} />
                 </button>
                 <button
+                  onClick={handleSummarize}
+                  aria-label="Generate summary"
+                  disabled={summaryLoading}
+                  className={`p-1 rounded transition-colors disabled:opacity-50 ml-0.5 ${
+                    summaryText
+                      ? "text-violet-400 bg-violet-900/20"
+                      : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
+                  }`}
+                  title="Executive summary"
+                >
+                  <svg className={`w-3.5 h-3.5 ${summaryLoading ? "animate-pulse" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </button>
+                <button
                   onClick={() => setWrongDataOpen(true)}
                   aria-label="Report wrong data"
                   className="p-1 rounded transition-colors text-zinc-600 hover:text-amber-400 hover:bg-amber-900/20 ml-0.5"
@@ -468,6 +572,39 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* Executive summary */}
+        {summaryOpen && isSqlResult && (
+          <div className="mt-2 p-3 bg-violet-950/20 border border-violet-800/30 rounded-lg text-xs">
+            {summaryLoading ? (
+              <div className="flex items-center gap-2 text-zinc-400">
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Generating summary...
+              </div>
+            ) : summaryText ? (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-medium text-violet-400">Executive Summary</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(summaryText).then(
+                        () => toast("Copied to clipboard", "info"),
+                        () => toast("Failed to copy", "error"),
+                      );
+                    }}
+                    className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-zinc-300 leading-relaxed">{summaryText}</p>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -488,6 +625,13 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               </button>
             ))}
           </div>
+        )}
+
+        {!isUser && metadata?.suggested_followups && metadata.suggested_followups.length > 0 && onSendMessage && (
+          <FollowupChips
+            followups={metadata.suggested_followups}
+            onSelect={onSendMessage}
+          />
         )}
 
         {/* Data validation card for sql_result messages */}

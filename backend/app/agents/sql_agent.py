@@ -87,6 +87,7 @@ class SQLAgentResult(AgentResult):
     attempts: list[Any] = field(default_factory=list)
     rag_sources: list[RAGSource] = field(default_factory=list)
     tool_call_log: list[dict[str, Any]] = field(default_factory=list)
+    insights: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SQLAgent(BaseAgent):
@@ -289,6 +290,19 @@ class SQLAgent(BaseAgent):
             result.status = "success" if has_result else "error"
             if result.status == "error" and self._last_result:
                 result.error = self._last_result.error
+
+            if has_result and self._last_result and self._last_result.rows:
+                try:
+                    from app.core.insight_generator import InsightGenerator
+
+                    result.insights = InsightGenerator.analyze(
+                        rows=self._last_result.rows,
+                        columns=self._last_result.columns,
+                        query=self._last_query,
+                        question=question,
+                    )
+                except Exception:
+                    logger.debug("Insight generation failed (non-critical)", exc_info=True)
         else:
             result.status = "no_result"
 

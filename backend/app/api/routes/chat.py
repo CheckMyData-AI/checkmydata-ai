@@ -1,7 +1,10 @@
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import time
+from collections import OrderedDict
 from datetime import datetime
 
 from fastapi import (
@@ -28,6 +31,7 @@ from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rag_feedback_service import RAGFeedbackService
+from app.services.suggestion_engine import SuggestionEngine
 from app.services.usage_service import UsageService
 from app.viz.renderer import render
 
@@ -41,6 +45,29 @@ _agent = ConversationalAgent()
 _rag_feedback_svc = RAGFeedbackService()
 _usage_svc = UsageService()
 _membership_svc = MembershipService()
+_suggestion_engine = SuggestionEngine()
+
+_SQL_EXPLAIN_CACHE: OrderedDict[str, dict] = OrderedDict()
+_SQL_EXPLAIN_CACHE_MAX = 100
+
+
+def _compute_sql_complexity(sql: str) -> str:
+    upper = sql.upper()
+    has_recursive = bool(re.search(r"\bWITH\s+RECURSIVE\b", upper))
+    has_cte = bool(re.search(r"\bWITH\b\s+\w+\s+AS\s*\(", upper))
+    has_window = bool(re.search(r"\bOVER\s*\(", upper))
+    join_count = len(re.findall(r"\bJOIN\b", upper))
+    has_subquery = "SELECT" in upper[upper.find("FROM") + 1 :] if "FROM" in upper else False
+
+    if has_recursive:
+        return "expert"
+    if has_cte and (has_window or join_count > 2):
+        return "expert"
+    if has_cte or has_window or has_subquery or join_count > 2:
+        return "complex"
+    if join_count >= 1:
+        return "moderate"
+    return "simple"
 
 
 def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
@@ -159,6 +186,33 @@ def _build_snippet(text: str, query: str, max_len: int = 200) -> str:
     if end < len(text):
         snippet = snippet + "..."
     return snippet
+
+
+class QuerySuggestion(BaseModel):
+    text: str
+    source: str
+    table: str | None = None
+
+
+@router.get("/suggestions", response_model=list[QuerySuggestion])
+@limiter.limit("30/minute")
+async def get_suggestions(
+    request: Request,
+    project_id: str = Query(...),
+    connection_id: str = Query(...),
+    limit: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    suggestions = await _suggestion_engine.get_suggestions(
+        db,
+        user_id=user["user_id"],
+        project_id=project_id,
+        connection_id=connection_id,
+        limit=limit,
+    )
+    return [QuerySuggestion(**s) for s in suggestions]
 
 
 class ChatRequest(BaseModel):
@@ -629,6 +683,8 @@ async def ask(
             "token_usage": enriched_token_usage,
             "response_type": result.response_type,
             "staleness_warning": result.staleness_warning,
+            "insights": result.insights or [],
+            "suggested_followups": result.suggested_followups or [],
         },
         tool_calls_json=tool_calls_str,
     )
@@ -941,6 +997,8 @@ async def ask_stream(
                     "token_usage": s_enriched_usage,
                     "response_type": result.response_type,
                     "staleness_warning": result.staleness_warning,
+                    "insights": result.insights or [],
+                    "suggested_followups": result.suggested_followups or [],
                 },
                 tool_calls_json=tool_calls_str,
             )
@@ -995,6 +1053,8 @@ async def ask_stream(
             "assistant_message_id": assistant_msg.id,
             "user_message_id": user_message_id,
             "rules_changed": _has_rules_changed(result.tool_call_log),
+            "insights": result.insights or [],
+            "suggested_followups": result.suggested_followups or [],
         }
         yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
         agent_limiter.release(user["user_id"])
@@ -1215,6 +1275,7 @@ async def chat_websocket(
                             "token_usage": result.token_usage or None,
                             "response_type": result.response_type,
                             "staleness_warning": result.staleness_warning,
+                            "suggested_followups": result.suggested_followups or [],
                         },
                         tool_calls_json=ws_tool_calls_str,
                     )
@@ -1234,6 +1295,7 @@ async def chat_websocket(
                         "staleness_warning": result.staleness_warning,
                         "assistant_message_id": ws_assistant_msg.id,
                         "rules_changed": _has_rules_changed(result.tool_call_log),
+                        "suggested_followups": result.suggested_followups or [],
                     }
                 )
             finally:
@@ -1253,3 +1315,169 @@ async def chat_websocket(
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:
             pass
+
+
+class ExplainSqlRequest(BaseModel):
+    sql: str = Field(max_length=20000)
+    db_type: str | None = None
+    project_id: str
+
+
+class ExplainSqlResponse(BaseModel):
+    explanation: str
+    complexity: str
+
+
+@router.post("/explain-sql", response_model=ExplainSqlResponse)
+@limiter.limit("30/minute")
+async def explain_sql(
+    request: Request,
+    body: ExplainSqlRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+
+    complexity = _compute_sql_complexity(body.sql)
+    cache_key = hashlib.sha256(body.sql.strip().encode()).hexdigest()
+
+    if cache_key in _SQL_EXPLAIN_CACHE:
+        _SQL_EXPLAIN_CACHE.move_to_end(cache_key)
+        return _SQL_EXPLAIN_CACHE[cache_key]
+
+    project = await _project_svc.get(db, body.project_id)
+    provider = (project.agent_llm_provider if project else None) or None
+    model = (project.agent_llm_model if project else None) or None
+
+    from app.llm.base import Message as LLMMessage
+    from app.llm.router import LLMRouter
+
+    db_hint = f" (Database: {body.db_type})" if body.db_type else ""
+    llm_router = LLMRouter()
+    try:
+        resp = await llm_router.complete(
+            messages=[
+                LLMMessage(
+                    role="system",
+                    content=(
+                        "Explain this SQL query in plain English. "
+                        "For each clause, explain what it does and why. "
+                        "Be concise." + db_hint
+                    ),
+                ),
+                LLMMessage(role="user", content=body.sql),
+            ],
+            max_tokens=1024,
+            temperature=0.2,
+            preferred_provider=provider,
+            model=model,
+        )
+        explanation = resp.content.strip()
+    except Exception as exc:
+        logger.warning("SQL explanation LLM call failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to generate explanation") from exc
+
+    result = {"explanation": explanation, "complexity": complexity}
+
+    _SQL_EXPLAIN_CACHE[cache_key] = result
+    if len(_SQL_EXPLAIN_CACHE) > _SQL_EXPLAIN_CACHE_MAX:
+        _SQL_EXPLAIN_CACHE.popitem(last=False)
+
+    return result
+
+
+class SummarizeRequest(BaseModel):
+    message_id: str
+    project_id: str
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
+
+
+@router.post("/summarize", response_model=SummarizeResponse)
+@limiter.limit("20/minute")
+async def summarize_message(
+    request: Request,
+    body: SummarizeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import joinedload
+
+    from app.models.chat_session import ChatMessage as ChatMessageModel
+
+    result = await db.execute(
+        select(ChatMessageModel)
+        .options(joinedload(ChatMessageModel.session))
+        .where(ChatMessageModel.id == body.message_id)
+    )
+    msg = result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.role != "assistant":
+        raise HTTPException(status_code=400, detail="Can only summarize assistant messages")
+
+    if msg.session and msg.session.project_id != body.project_id:
+        raise HTTPException(status_code=403, detail="Message does not belong to this project")
+
+    question = ""
+    answer = msg.content or ""
+    data_preview = ""
+
+    if msg.metadata_json:
+        try:
+            meta = json.loads(msg.metadata_json)
+            question = meta.get("question", "")
+            raw = meta.get("raw_result")
+            if raw and isinstance(raw, dict):
+                cols = raw.get("columns", [])
+                rows = raw.get("rows", [])[:20]
+                if cols and rows:
+                    header = " | ".join(str(c) for c in cols)
+                    lines = [header]
+                    for row in rows:
+                        lines.append(" | ".join(str(v) for v in row))
+                    data_preview = "\n".join(lines)
+        except Exception:
+            pass
+
+    from app.llm.base import Message as LLMMessage
+    from app.llm.router import LLMRouter
+
+    project = await _project_svc.get(db, body.project_id)
+    provider = (project.agent_llm_provider if project else None) or None
+    model = (project.agent_llm_model if project else None) or None
+
+    prompt_parts = [
+        "Write a one-paragraph executive summary of these query results "
+        "suitable for sharing in Slack or email. Be specific with numbers.",
+    ]
+    if question:
+        prompt_parts.append(f"\nQuestion: {question}")
+    if answer:
+        prompt_parts.append(f"\nAnswer: {answer[:2000]}")
+    if data_preview:
+        prompt_parts.append(f"\nData:\n{data_preview[:3000]}")
+
+    llm_router = LLMRouter()
+    try:
+        resp = await llm_router.complete(
+            messages=[
+                LLMMessage(role="system", content="\n".join(prompt_parts)),
+                LLMMessage(role="user", content="Summarize."),
+            ],
+            max_tokens=512,
+            temperature=0.3,
+            preferred_provider=provider,
+            model=model,
+        )
+        summary = resp.content.strip()
+    except Exception as exc:
+        logger.warning("Summarize LLM call failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to generate summary") from exc
+
+    return {"summary": summary}

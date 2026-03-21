@@ -168,6 +168,12 @@ export interface ChatSearchResult {
   role: string;
 }
 
+export interface QuerySuggestion {
+  text: string;
+  source: string;
+  table?: string;
+}
+
 export interface ChatMessageDTO {
   id: string;
   role: string;
@@ -559,6 +565,25 @@ export const api = {
     search: (projectId: string, query: string, limit?: number) =>
       request<ChatSearchResult[]>(
         `/chat/search?project_id=${projectId}&q=${encodeURIComponent(query)}&limit=${limit || 20}`,
+      ),
+    summarize: (messageId: string, projectId: string) =>
+      request<{ summary: string; message_id: string }>("/chat/summarize", {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId, project_id: projectId }),
+      }),
+    explainSql: (sql: string, projectId: string, dbType?: string) =>
+      request<{ explanation: string; complexity: string }>("/chat/explain-sql", {
+        method: "POST",
+        body: JSON.stringify({ sql, project_id: projectId, db_type: dbType }),
+      }),
+    summarize: (messageId: string, projectId: string) =>
+      request<{ summary: string }>("/chat/summarize", {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId, project_id: projectId }),
+      }),
+    suggestions: (projectId: string, connectionId: string, limit?: number) =>
+      request<QuerySuggestion[]>(
+        `/chat/suggestions?project_id=${projectId}&connection_id=${connectionId}&limit=${limit || 5}`,
       ),
     ask: (data: {
       project_id: string;

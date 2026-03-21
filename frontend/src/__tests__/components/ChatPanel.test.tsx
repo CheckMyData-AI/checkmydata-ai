@@ -12,6 +12,7 @@ vi.mock("@/lib/api", () => ({
       askStream: vi.fn(() => new AbortController()),
       listSessions: vi.fn().mockResolvedValue([]),
       generateTitle: vi.fn().mockResolvedValue({ id: "s1", title: "Title" }),
+      suggestions: vi.fn().mockResolvedValue([]),
     },
   },
 }));
@@ -68,6 +69,26 @@ vi.mock("@/components/chat/ReadinessGate", () => ({
     </div>
   ),
   ReadinessBanner: () => <div data-testid="readiness-banner" />,
+}));
+
+vi.mock("@/components/chat/SuggestionChips", () => ({
+  SuggestionChips: ({
+    suggestions,
+    onSelect,
+  }: {
+    suggestions: Array<{ text: string }>;
+    loading?: boolean;
+    onSelect: (t: string) => void;
+  }) =>
+    suggestions.length > 0 ? (
+      <div data-testid="suggestion-chips">
+        {suggestions.map((s: { text: string }, i: number) => (
+          <button key={i} data-testid="chip" onClick={() => onSelect(s.text)}>
+            {s.text}
+          </button>
+        ))}
+      </div>
+    ) : null,
 }));
 
 vi.mock("@/lib/sse", () => ({}));
@@ -266,6 +287,27 @@ describe("ChatPanel", () => {
     await waitFor(() => {
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
     });
+  });
+
+  it("shows suggestion chips when suggestions load for empty session", async () => {
+    const { api } = await import("@/lib/api");
+    (api.chat.suggestions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { text: "How many orders?", source: "schema", table: "orders" },
+      { text: "Show me users", source: "schema", table: "users" },
+    ]);
+
+    useAppStore.setState({
+      activeProject: makeProject(),
+      activeConnection: makeConnection(),
+      messages: [],
+    });
+
+    await renderPanel();
+    await userEvent.click(screen.getByText("Bypass"));
+    await waitFor(() => {
+      expect(screen.getByTestId("suggestion-chips")).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId("chip")).toHaveLength(2);
   });
 
   it("shows bouncing dots when thinking with no thinking log", async () => {

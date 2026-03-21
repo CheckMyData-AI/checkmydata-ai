@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
-import { api, type ChatResponse, type StreamError } from "@/lib/api";
+import { api, type ChatResponse, type StreamError, type QuerySuggestion } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
+import { SuggestionChips } from "./SuggestionChips";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { ThinkingLog } from "./ThinkingLog";
 import { StageProgress, type PipelineStage } from "./StageProgress";
@@ -39,6 +40,9 @@ export function ChatPanel() {
   const [thinkingLog, setThinkingLog] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [thinkingStartTime, setThinkingStartTime] = useState<number>(0);
+  const [suggestions, setSuggestions] = useState<QuerySuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const suggestionsRequested = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const cachedReady = useAppStore((s) =>
     activeProject ? s.readinessCache[activeProject.id]?.ready : false
@@ -235,6 +239,31 @@ export function ChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (
+      messages.length === 0 &&
+      activeProject &&
+      activeConnection &&
+      !suggestionsRequested.current
+    ) {
+      suggestionsRequested.current = true;
+      setSuggestionsLoading(true);
+      api.chat
+        .suggestions(activeProject.id, activeConnection.id)
+        .then(setSuggestions)
+        .catch(() => setSuggestions([]))
+        .finally(() => setSuggestionsLoading(false));
+    }
+    if (messages.length > 0) {
+      setSuggestions([]);
+    }
+  }, [messages.length, activeProject, activeConnection]);
+
+  useEffect(() => {
+    suggestionsRequested.current = false;
+    setSuggestions([]);
+  }, [activeConnection?.id]);
+
   const canChat = activeProject && (activeConnection || chatMode === "knowledge_only");
 
   const handleSend = useCallback(
@@ -307,6 +336,12 @@ export function ChatPanel() {
           const ragSources = result.rag_sources ?? undefined;
           const tokenUsage = result.token_usage ?? undefined;
 
+          const suggestedFollowups = (result as unknown as Record<string, unknown>)
+            .suggested_followups as string[] | undefined;
+
+          const insights = (result as unknown as Record<string, unknown>)
+            .insights as Array<{ type: string; title: string; description: string; confidence: number }> | undefined;
+
           const metadataObj: Record<string, unknown> = {
             query: result.query,
             query_explanation: result.query_explanation,
@@ -318,6 +353,8 @@ export function ChatPanel() {
             token_usage: tokenUsage,
             response_type: result.response_type,
             staleness_warning: result.staleness_warning,
+            suggested_followups: suggestedFollowups,
+            insights: insights ?? [],
           };
 
           const rawResult = (result as unknown as Record<string, unknown>)
@@ -598,6 +635,13 @@ export function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
+      {messages.length === 0 && (suggestions.length > 0 || suggestionsLoading) && (
+        <SuggestionChips
+          suggestions={suggestions}
+          loading={suggestionsLoading}
+          onSelect={handleSend}
+        />
+      )}
       <ChatInput onSend={handleSend} disabled={isThinking} />
     </div>
   );

@@ -57,7 +57,7 @@ The system has **five main flows**:
 
 1. **Onboarding flow**: New users see a guided 5-step wizard (connect database -> test connection -> index schema -> connect code repo -> ask first question). Users can skip any step or try a demo project with sample data via `POST /api/demo/setup`. The `is_onboarded` flag on the User model tracks completion (`POST /api/auth/complete-onboarding`).
 2. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-3. **Chat flow**: Ask a question in natural language -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits.
+3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips.
 4. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
 5. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
 
@@ -425,7 +425,7 @@ During DB indexing, DISTINCT values are now collected more broadly:
 - `backend/alembic/versions/c5d6e7f8g9h0_add_section_hashes_to_project_cache.py` — Migration for `section_hashes_json`
 - `frontend/src/components/analytics/FeedbackAnalyticsPanel.tsx` — Feedback analytics dashboard component
 
-**Frontend components:** `ClarificationCard`, `DataValidationCard`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`), `FeedbackAnalyticsPanel` (in `frontend/src/components/analytics/`)
+**Frontend components:** `ClarificationCard`, `DataValidationCard`, `InsightCards`, `VerificationBadge`, `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` (all in `frontend/src/components/chat/`), `FeedbackAnalyticsPanel` (in `frontend/src/components/analytics/`)
 
 **API endpoints** (prefix `/api/data-validation/`):
 - `POST /validate-data` — Record user validation feedback
@@ -435,6 +435,36 @@ During DB indexing, DISTINCT values are now collected more broadly:
 - `POST /investigate` — Start "Wrong Data" investigation
 - `GET /investigate/{id}` — Poll investigation progress
 - `POST /investigate/{id}/confirm-fix` — Accept or reject investigation fix
+
+### 8c. Natural Language Data Insights and Trend Narration
+
+Every SQL query result is automatically analyzed for patterns using pure Python computation (no LLM calls). The `InsightGenerator` (`backend/app/core/insight_generator.py`) detects:
+
+1. **Trends** — When a temporal column is present (date, month, year, etc.), checks if numeric columns show >10% change from first to last value. Reports upward/downward trends with percentage change.
+2. **Outliers** — For numeric columns with 5+ values, flags rows where values are >2 standard deviations from the mean. Reports the outlier value, direction, and average.
+3. **Concentration** — Checks if the top 3 entries account for >50% of the total in the first numeric column. Reports the concentration percentage.
+4. **Totals summary** — For single-row results, describes each numeric value in context.
+
+Each insight includes a `type`, `title`, `description`, and `confidence` score (0.0-1.0). Insights are generated after query execution in the SQL agent pipeline and passed through the orchestrator to the SSE stream.
+
+**Frontend: InsightCards** (`frontend/src/components/chat/InsightCards.tsx`) renders insights as a compact card strip below the visualization. Cards are color-coded by type (blue for trends, amber for outliers, purple for concentration). Each card expands on click to show the full description and a "Drill down" button that sends a contextual follow-up question.
+
+**Executive Summary** — A "Summary" button appears on SQL result messages. Clicking it calls `POST /api/chat/summarize` which generates a one-paragraph executive summary using a lightweight LLM call, displayed inline below the button.
+
+**New files:**
+- `backend/app/core/insight_generator.py` — Pure-Python insight detection (trends, outliers, concentration, totals)
+- `frontend/src/components/chat/InsightCards.tsx` — Compact insight card strip component
+
+**API endpoint:**
+- `POST /api/chat/summarize` — Generate executive summary for a SQL result message (requires `message_id` and `project_id`)
+
+**Modified files:**
+- `backend/app/agents/sql_agent.py` — Added `insights` field to `SQLAgentResult`, calls `InsightGenerator.analyze()` after successful query execution
+- `backend/app/agents/orchestrator.py` — Added `insights` field to `AgentResponse`, passes insights from SQL results
+- `backend/app/api/routes/chat.py` — Includes insights in message metadata and SSE stream payload, added `/summarize` endpoint
+- `frontend/src/components/chat/ChatMessage.tsx` — Renders `InsightCards` below visualization, adds "Summary" button with inline display
+- `frontend/src/components/chat/ChatPanel.tsx` — Passes insights through metadata to ChatMessage
+- `frontend/src/lib/api.ts` — Added `chat.summarize()` API method
 
 ### 9. Index the Repository (Knowledge Base)
 
@@ -593,6 +623,12 @@ Your question
     - Clicking a result loads that session and its full message history
 
     The search uses SQL LIKE queries against `chat_messages.content` and `metadata_json` (which stores the SQL query). It is rate-limited to 30 requests/minute. The input is debounced (300ms) to avoid excessive API calls while typing.
+
+11. **SQL Explanation and Learning Mode** — every SQL result message includes tools to help you understand the generated queries:
+    - **Complexity badge** — a small color-coded pill (Simple/Moderate/Complex/Expert) shown next to the "View SQL Query" toggle, computed client-side via regex (counts JOINs, detects CTEs, window functions, recursive queries)
+    - **"Explain SQL" link** — click to request an LLM-powered plain-English explanation of the query. The explanation panel shows the complexity badge and a markdown-rendered breakdown of each clause. Explanations are cached server-side per SQL hash (up to 100 entries) so repeated clicks are instant.
+    - **"Executive Summary" button** — generates a one-paragraph summary of the query results suitable for sharing in Slack or email. Uses the question, answer text, and first 20 rows of data as context. The summary appears in a collapsible violet panel with a copy button.
+    - Both features use the project's configured LLM model and are rate-limited (30/min for explain, 20/min for summarize).
 
 ### 13. Custom Rules
 
@@ -1435,6 +1471,7 @@ app/
 ├── api/routes/         ← HTTP endpoints (FastAPI routers)
 ├── core/               ← Utilities + backward-compatible wrappers
 │   ├── data_sanity_checker.py ← Automated anomaly detection on query results
+│   ├── insight_generator.py ← Pure-Python trend/outlier/concentration detection
 │   ├── agent.py        ← ConversationalAgent wrapper → delegates to OrchestratorAgent
 │   ├── tools.py        ← Deprecated: re-exports from agents/tools/
 │   ├── prompt_builder.py ← Deprecated: delegates to agents/prompts/
@@ -1832,6 +1869,8 @@ src/
 | `GET` | `/api/chat/analytics/feedback/{project_id}` | Aggregated feedback stats |
 | `POST` | `/api/chat/ask` | Send question (blocking) |
 | `POST` | `/api/chat/ask/stream` | Send question (SSE streaming) |
+| `POST` | `/api/chat/explain-sql` | LLM-powered SQL explanation with complexity rating |
+| `POST` | `/api/chat/summarize` | Generate executive summary of a message's query results |
 | `WS` | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat |
 | `POST` | `/api/repos/check-access` | Verify repo access + list branches (no project needed) |
 | `POST` | `/api/repos/{project_id}/index` | Trigger repo indexing (returns 202, runs in background) |
@@ -2137,6 +2176,7 @@ make test-frontend    # frontend vitest
 | Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
 | SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
 | DataSanityChecker | 9 (all null, all zero, future dates, percentage sums, benchmark deviations, format warnings, negative values, duplicate keys, single-row anomaly, date range mismatch) | — |
+| InsightGenerator | 4 (trend detection, outlier detection, concentration detection, totals summary) | — |
 | SessionNotesService | 10 (create, invalid category, duplicate, similar merge, context filtering, prompt compilation, verify, deactivate, delete all) | — |
 | DataValidationService | 7 (record basic, record with rejection, get by id/message, unresolved filter, resolve, accuracy stats) | — |
 | BenchmarkService | 6 (normalize key, create new, user confirmed, confirm existing, find, flag stale, get all) | — |
@@ -2404,6 +2444,49 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-21 — Smart Query Suggestions and Auto-Complete
+
+**Backend:**
+
+- **SuggestionEngine** (`backend/app/services/suggestion_engine.py`) — Template-based query suggestion engine (no LLM calls). Three methods:
+  - `schema_based_suggestions()` — Queries `db_index` for active tables with relevance >= 3, generates template questions using table names and interesting columns (detected from `column_distinct_values_json` and `column_notes_json`).
+  - `history_based_suggestions()` — Scans recent successful assistant messages containing SQL queries, extracts the original question and suggests variations.
+  - `get_suggestions()` — Combines schema + history suggestions, deduplicates, returns top N.
+  - `generate_followups()` — Static method that generates 2-3 follow-up suggestions based on the SQL query type (aggregate vs. select) and result shape. Used after successful `query_database` responses.
+
+- **Suggestion endpoint** (`GET /api/chat/suggestions?project_id=X&connection_id=Y&limit=5`) — Returns `[{ text, source, table? }]`. Requires auth and project membership. Rate-limited to 30/min.
+
+- **AgentResponse** now includes `suggested_followups: list[str]` field. The OrchestratorAgent populates this after successful SQL results using `SuggestionEngine.generate_followups()`.
+
+- Follow-up suggestions are stored in assistant message metadata (`suggested_followups` key) and passed through SSE stream, REST, and WebSocket responses.
+
+**Frontend:**
+
+- **SuggestionChips** (`frontend/src/components/chat/SuggestionChips.tsx`) — Two components:
+  - `SuggestionChips` — Horizontal scrollable row of pill buttons shown above `ChatInput` when a session is empty. Has a lightbulb icon, loading skeleton state, fade-in animation, and truncation at 60 chars.
+  - `FollowupChips` — Compact pill buttons shown below assistant messages that have `suggested_followups` in metadata.
+
+- **ChatPanel** integration — Fetches suggestions via `api.chat.suggestions()` when `messages` is empty and `activeConnection` exists. Hides suggestions once the user sends their first message. Resets on connection change. Clicking a chip auto-sends the suggestion.
+
+- **ChatMessage** integration — Parses `suggested_followups` from metadata and renders `FollowupChips` below SQL result messages. Clicking sends the follow-up as a new user message.
+
+- **API client** — Added `QuerySuggestion` interface and `api.chat.suggestions()` method.
+
+**Tests:**
+
+- 10 backend tests in `backend/tests/unit/test_suggestion_engine.py`: schema suggestions, history suggestions, deduplication, follow-up generation, column picking.
+- 2 new frontend tests: suggestion chips rendering in ChatPanel, follow-up chips rendering in ChatMessage.
+
+| Component | File | Type |
+|---|---|---|
+| SuggestionEngine | `backend/app/services/suggestion_engine.py` | New |
+| Suggestion endpoint | `backend/app/api/routes/chat.py` | Modified |
+| AgentResponse.suggested_followups | `backend/app/agents/orchestrator.py` | Modified |
+| SuggestionChips / FollowupChips | `frontend/src/components/chat/SuggestionChips.tsx` | New |
+| ChatPanel (suggestions) | `frontend/src/components/chat/ChatPanel.tsx` | Modified |
+| ChatMessage (followups) | `frontend/src/components/chat/ChatMessage.tsx` | Modified |
+| API client (suggestions) | `frontend/src/lib/api.ts` | Modified |
 
 ### 2026-03-21 — Chat History Search (Cmd+K)
 

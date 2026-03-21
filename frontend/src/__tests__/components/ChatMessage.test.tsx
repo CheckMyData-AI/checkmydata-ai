@@ -7,6 +7,7 @@ vi.mock("@/lib/api", () => ({
   api: {
     chat: {
       submitFeedback: vi.fn().mockResolvedValue({ ok: true }),
+      summarize: vi.fn().mockResolvedValue({ summary: "Test summary", message_id: "msg1" }),
     },
     viz: {
       render: vi.fn(),
@@ -39,6 +40,24 @@ vi.mock("@/lib/viz-utils", () => ({
   rerenderViz: vi.fn(),
 }));
 
+vi.mock("@/components/chat/SuggestionChips", () => ({
+  FollowupChips: ({
+    followups,
+    onSelect,
+  }: {
+    followups: string[];
+    onSelect: (t: string) => void;
+  }) => (
+    <div data-testid="followup-chips">
+      {followups.map((f: string, i: number) => (
+        <button key={i} data-testid="followup" onClick={() => onSelect(f)}>
+          {f}
+        </button>
+      ))}
+    </div>
+  ),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -57,11 +76,12 @@ async function renderMessage(
   msgOverrides: Partial<ChatMessageType> = {},
   metadataJson?: string | null,
   onRetry?: () => void,
+  onSendMessage?: (text: string) => void,
 ) {
   const { ChatMessage } = await import("@/components/chat/ChatMessage");
   const msg = makeMessage(msgOverrides);
   return render(
-    <ChatMessage message={msg} metadataJson={metadataJson} onRetry={onRetry} />,
+    <ChatMessage message={msg} metadataJson={metadataJson} onRetry={onRetry} onSendMessage={onSendMessage} />,
   );
 }
 
@@ -200,5 +220,85 @@ describe("ChatMessage", () => {
     await userEvent.click(screen.getByText("Text"));
     expect(screen.queryByTestId("viz-renderer")).not.toBeInTheDocument();
     expect(screen.queryByTestId("data-table")).not.toBeInTheDocument();
+  });
+
+  it("renders follow-up suggestion chips when metadata has suggested_followups", async () => {
+    const onSend = vi.fn();
+    const meta = JSON.stringify({
+      suggested_followups: ["Show as pie chart", "Break down by month"],
+    });
+
+    await renderMessage(
+      { role: "assistant", content: "Query results" },
+      meta,
+      undefined,
+      onSend,
+    );
+
+    expect(screen.getByTestId("followup-chips")).toBeInTheDocument();
+    const chips = screen.getAllByTestId("followup");
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent("Show as pie chart");
+
+    await userEvent.click(chips[0]);
+    expect(onSend).toHaveBeenCalledWith("Show as pie chart");
+  });
+
+  it("does not render followup chips when no onSendMessage", async () => {
+    const meta = JSON.stringify({
+      suggested_followups: ["Show as pie chart"],
+    });
+
+    await renderMessage(
+      { role: "assistant", content: "Query results" },
+      meta,
+    );
+
+    expect(screen.queryByTestId("followup-chips")).not.toBeInTheDocument();
+  });
+
+  it("renders insight cards when metadata has insights", async () => {
+    const meta = JSON.stringify({
+      response_type: "sql_result",
+      insights: [
+        { type: "trend_up", title: "Upward trend in revenue", description: "Revenue increased by 25%", confidence: 0.8 },
+        { type: "outlier", title: "Outlier in sales", description: "Row 3 is 3x the average", confidence: 0.7 },
+      ],
+    });
+
+    await renderMessage(
+      { role: "assistant", content: "Result", query: "SELECT 1", responseType: "sql_result" },
+      meta,
+      undefined,
+      vi.fn(),
+    );
+
+    expect(screen.getByText("Upward trend in revenue")).toBeInTheDocument();
+    expect(screen.getByText("Outlier in sales")).toBeInTheDocument();
+  });
+
+  it("does not render insight cards when insights array is empty", async () => {
+    const meta = JSON.stringify({
+      response_type: "sql_result",
+      insights: [],
+    });
+
+    await renderMessage(
+      { role: "assistant", content: "Result", query: "SELECT 1", responseType: "sql_result" },
+      meta,
+    );
+
+    expect(screen.queryByText("Drill down")).not.toBeInTheDocument();
+  });
+
+  it("shows Summary button for sql_result messages", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Result",
+      query: "SELECT * FROM users",
+      responseType: "sql_result",
+    });
+
+    expect(screen.getByText("Summary")).toBeInTheDocument();
   });
 });

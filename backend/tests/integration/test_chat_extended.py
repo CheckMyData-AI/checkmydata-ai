@@ -177,3 +177,54 @@ class TestChatAuth:
             json={"message_id": "x", "rating": 1},
         )
         assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestExplainSql:
+    async def _create_project(self, auth_client) -> str:
+        resp = await auth_client.post("/api/projects", json={"name": "Explain Proj"})
+        return resp.json()["id"]
+
+    async def test_explain_sql_requires_auth(self, client):
+        resp = await client.post(
+            "/api/chat/explain-sql",
+            json={"sql": "SELECT 1", "project_id": "fake"},
+        )
+        assert resp.status_code == 401
+
+    async def test_explain_sql_missing_fields(self, auth_client):
+        resp = await auth_client.post("/api/chat/explain-sql", json={})
+        assert resp.status_code == 422
+
+    async def test_explain_sql_requires_project_access(self, auth_client):
+        resp = await auth_client.post(
+            "/api/chat/explain-sql",
+            json={"sql": "SELECT 1", "project_id": "nonexistent"},
+        )
+        assert resp.status_code in (403, 404)
+
+
+@pytest.mark.asyncio
+class TestSummarize:
+    async def _create_project(self, auth_client) -> str:
+        resp = await auth_client.post("/api/projects", json={"name": "Summarize Proj"})
+        return resp.json()["id"]
+
+    async def test_summarize_requires_auth(self, client):
+        resp = await client.post(
+            "/api/chat/summarize",
+            json={"message_id": "fake", "project_id": "fake"},
+        )
+        assert resp.status_code == 401
+
+    async def test_summarize_missing_fields(self, auth_client):
+        resp = await auth_client.post("/api/chat/summarize", json={})
+        assert resp.status_code == 422
+
+    async def test_summarize_message_not_found(self, auth_client):
+        pid = await self._create_project(auth_client)
+        resp = await auth_client.post(
+            "/api/chat/summarize",
+            json={"message_id": "nonexistent", "project_id": pid},
+        )
+        assert resp.status_code == 404

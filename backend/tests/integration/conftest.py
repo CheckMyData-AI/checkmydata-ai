@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import (  # noqa: F401
     agent_learning,
+    backup_record,
     chat_session,
     code_db_sync,
     commit_index,
@@ -23,13 +24,16 @@ from app.models import (  # noqa: F401
     db_index,
     indexing_checkpoint,
     knowledge_doc,
+    pipeline_run,
     project,
     project_cache,
     project_invite,
     project_member,
     rag_feedback,
+    repository,
     saved_note,
     ssh_key,
+    token_usage,
     user,
 )
 from app.models.base import Base
@@ -60,8 +64,9 @@ async def db_session(engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture()
-async def client(db_session: AsyncSession):
+async def client(engine, db_session: AsyncSession):
     """Unauthenticated client — use for auth endpoints only."""
+    import app.models.base as base_mod
     from app.api.deps import get_db
     from app.core.rate_limit import limiter
     from app.main import app
@@ -69,12 +74,17 @@ async def client(db_session: AsyncSession):
     async def _override():
         yield db_session
 
+    test_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    orig_factory = base_mod.async_session_factory
+
     app.dependency_overrides[get_db] = _override
+    base_mod.async_session_factory = test_factory
     limiter.enabled = False
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+    base_mod.async_session_factory = orig_factory
     limiter.enabled = True
 
 
