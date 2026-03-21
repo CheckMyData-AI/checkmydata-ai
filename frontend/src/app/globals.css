@@ -118,6 +118,24 @@ select:focus-visible {
   }
 }
 
+@keyframes onboarding-slide-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes onboarding-slide-left {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-onboarding-forward {
+  animation: onboarding-slide-right 0.2s ease-out;
+}
+
+.animate-onboarding-back {
+  animation: onboarding-slide-left 0.2s ease-out;
+}
+
 .chat-markdown > *:first-child {
   margin-top: 0;
 }

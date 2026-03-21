@@ -499,7 +499,10 @@ export function Sidebar() {
                   ))}
                 </div>
               ) : (
-                <ChatSessionList />
+                <>
+                  {!collapsed && activeProject && <ChatSearch />}
+                  <ChatSessionList />
+                </>
               )}
             </SidebarSection>
 

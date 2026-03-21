@@ -63,6 +63,10 @@ vi.mock("@/components/connections/SyncStatusIndicator", () => ({
   SyncStatusIndicator: () => <div data-testid="sync-status" />,
 }));
 
+vi.mock("@/components/analytics/FeedbackAnalyticsPanel", () => ({
+  FeedbackAnalyticsPanel: () => <div data-testid="feedback-analytics" />,
+}));
+
 vi.mock("./InviteManager", () => ({
   InviteManager: () => <div data-testid="invite-manager" />,
 }));

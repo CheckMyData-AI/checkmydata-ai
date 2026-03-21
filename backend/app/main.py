@@ -20,6 +20,7 @@ from app.api.routes import (
     chat,
     connections,
     data_validation,
+    demo,
     invites,
     metrics,
     models,
@@ -191,6 +192,7 @@ app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
+app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 
 
 async def _check_alembic_head() -> None:

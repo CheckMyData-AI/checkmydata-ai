@@ -1,11 +1,13 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { LogPanel, PersistentLogToggle } from "@/components/log/LogPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
 import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
@@ -15,16 +17,25 @@ import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 
 export default function Home() {
-  const { activeProject, activeConnection } = useAppStore();
+  const { activeProject, activeConnection, projects } = useAppStore();
   const { user } = useAuthStore();
   const { isOpen: notesOpen, toggleOpen: toggleNotes } = useNotesStore();
   const notesCount = useNotesStore((s) => s.notes.length);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
   useGlobalEvents(!!user);
   useRestoreState(!!user);
 
+  const showOnboarding =
+    !!user && !user.is_onboarded && projects.length === 0 && !onboardingDismissed;
+
+  const handleOnboardingComplete = useCallback(() => {
+    setOnboardingDismissed(true);
+  }, []);
+
   return (
     <AuthGate>
+      {showOnboarding && <OnboardingWizard onComplete={handleOnboardingComplete} />}
       <main className="min-h-screen bg-surface-0 text-text-primary">
         <div className="flex h-screen flex-col">
           <div className="flex flex-1 min-h-0">

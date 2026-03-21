@@ -379,6 +379,7 @@ export interface AuthUser {
   display_name: string;
   picture_url?: string | null;
   auth_provider?: string;
+  is_onboarded?: boolean;
 }
 
 export interface AuthResponse {
@@ -447,6 +448,8 @@ export const api = {
       request<AuthUser>("/auth/me"),
     deleteAccount: () =>
       request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
+    completeOnboarding: () =>
+      request<{ ok: boolean }>("/auth/complete-onboarding", { method: "POST" }),
   },
 
   projects: {
@@ -897,5 +900,10 @@ export const api = {
   usage: {
     getStats: (days: number = 30) =>
       request<UsageStatsResponse>(`/usage/stats?days=${days}`),
+  },
+
+  demo: {
+    setup: () =>
+      request<{ project_id: string; connection_id: string }>("/demo/setup", { method: "POST" }),
   },
 };

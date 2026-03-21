@@ -27,7 +27,7 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · data-validation │   │
-│  │  usage · health                                               │   │
+│  │  usage · demo · health                                        │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -53,12 +53,13 @@ AI-powered database query agent that analyzes Git repositories, understands data
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-The system has **four main flows**:
+The system has **five main flows**:
 
-1. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-2. **Chat flow**: Ask a question in natural language -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits.
-3. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
-4. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
+1. **Onboarding flow**: New users see a guided 5-step wizard (connect database -> test connection -> index schema -> connect code repo -> ask first question). Users can skip any step or try a demo project with sample data via `POST /api/demo/setup`. The `is_onboarded` flag on the User model tracks completion (`POST /api/auth/complete-onboarding`).
+2. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
+3. **Chat flow**: Ask a question in natural language -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits.
+4. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
+5. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
 
 ---
 
@@ -83,6 +84,20 @@ When you first open the app, you see the **AuthGate** — a login/registration f
 - Enter email + password + display name to **create an account**
 - Or click **"Sign in with Google"** to authenticate via your Google account (no password needed)
 - Emails are normalized (lowercased, trimmed) on registration and login for case-insensitive matching
+
+### 2a. Guided Onboarding Wizard
+
+First-time users (before `is_onboarded` is set) see a 5-step onboarding wizard:
+
+1. **Connect your database** — select db type (PostgreSQL, MySQL, ClickHouse, MongoDB), enter host/port/credentials, optionally configure SSH tunnel
+2. **Test connection** — auto-runs on mount, shows animated status (spinner -> checkmark/error), auto-advances on success
+3. **Index your database** — kicks off schema analysis so the AI understands your tables; can be skipped
+4. **Connect your code (Optional)** — link a Git repo for deeper codebase understanding
+5. **Ask your first question** — pre-populated example question to try the chat immediately
+
+Additional options:
+- **"Try demo instead"** button on step 1 calls `POST /api/demo/setup` to create a sample project
+- **"Skip setup entirely"** link at the bottom marks onboarding complete without any setup
 - JWT token is stored in `localStorage`, so you stay logged in across page refreshes
 - Tokens include `iat` (issued-at) timestamps and are automatically refreshed before expiry (30 minutes before)
 - On page load, the session is validated server-side via `GET /api/auth/me`
@@ -401,8 +416,8 @@ During DB indexing, DISTINCT values are now collected more broadly:
 - **Proactive data probes** — After DB indexing, `ProbeService` runs sample queries on the top 5 tables by row count, checking for NULL rates, empty tables, and sanity anomalies. Creates session notes for findings
 - **Learning conflict detection** — When creating a new learning, the system detects conflicting lessons (same category/subject with negation flips) and deactivates the weaker one
 - **Investigation → sync enrichment** — When a user confirms an investigation fix with `missing_filter` or `column_format` root cause, the findings are pushed into `CodeDbSync` via `add_runtime_enrichment()`
-- **Feedback analytics API** — `GET /data-validation/analytics/{project_id}` returns aggregated stats: accuracy rate, verdict breakdown, top error patterns, learnings by category, benchmark count, investigation status counts
-- **Feedback analytics dashboard** — `FeedbackAnalyticsPanel` frontend component displays data quality metrics with stat cards, verdict badges, error pattern lists, and learning/investigation breakdowns
+- **Feedback analytics API** — `GET /data-validation/analytics/{project_id}` returns aggregated stats: accuracy rate, verdict breakdown, top error patterns, learnings by category, benchmark count, investigation status counts. Lightweight `GET /data-validation/summary/{project_id}` returns just accuracy_rate, total_validations, active_learnings, benchmark_count
+- **Data Quality Dashboard** — `FeedbackAnalyticsPanel` integrated into the sidebar Analytics section. Shows Data Confidence Score (color-coded progress bar), first-try success rate, total learnings/validations/benchmarks, horizontal verdict breakdown bar (confirmed/approximate/rejected/unknown), top error patterns, and empty state guidance
 - **Incremental overview updates** — `ProjectOverviewService.save_overview()` now hashes each section (DB, sync, rules, learnings, notes, profile) and only regenerates changed sections, with section hashes persisted in `project_cache.section_hashes_json`
 
 **New files:**
@@ -416,6 +431,7 @@ During DB indexing, DISTINCT values are now collected more broadly:
 - `POST /validate-data` — Record user validation feedback
 - `GET /validation-stats/{connection_id}` — Aggregated accuracy statistics
 - `GET /benchmarks/{connection_id}` — All verified benchmarks
+- `GET /summary/{project_id}` — Compact analytics summary (accuracy_rate, total_validations, active_learnings, benchmark_count)
 - `POST /investigate` — Start "Wrong Data" investigation
 - `GET /investigate/{id}` — Poll investigation progress
 - `POST /investigate/{id}/confirm-fix` — Accept or reject investigation fix
@@ -569,6 +585,14 @@ Your question
    - _"Update the cents rule to say divide by 1000 instead"_
    
    The agent uses the `manage_custom_rules` tool to create, update, or delete project rules. After a rule is created/modified, the sidebar Rules section refreshes automatically. Only project **owners** can manage rules via chat (consistent with the sidebar RBAC). The `rules_changed` flag in the chat response triggers the frontend refresh.
+10. **Chat History Search** — press **Cmd+K** (Mac) or **Ctrl+K** (Windows/Linux) to open the search bar in the Chat History sidebar section. Type at least 2 characters to search across all your chat messages and SQL queries in the current project. Results appear in a dropdown with:
+    - Session title and relative timestamp
+    - Content snippet with the matching text highlighted
+    - SQL query preview (if the message contained a query)
+    - Keyboard navigation (Arrow Up/Down, Enter to select, Escape to close)
+    - Clicking a result loads that session and its full message history
+
+    The search uses SQL LIKE queries against `chat_messages.content` and `metadata_json` (which stores the SQL query). It is rate-limited to 30 requests/minute. The input is debounced (300ms) to avoid excessive API calls while typing.
 
 ### 13. Custom Rules
 
@@ -1739,6 +1763,7 @@ src/
     ├── chat/
     │   ├── ChatPanel.tsx   ← Message list + knowledge-only mode toggle + error retry
     │   ├── ChatMessage.tsx ← Individual message with response_type-aware rendering + retry button
+    │   ├── ChatSearch.tsx  ← Cmd+K searchable chat history with debounced LIKE search, highlighted snippets, SQL query preview
     │   ├── ChatSessionList.tsx ← Session switcher with active left bar, "Show all N" cap, inline hover delete
     │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
@@ -1802,6 +1827,7 @@ src/
 | `POST` | `/api/chat/sessions/{id}/generate-title` | Auto-generate session title via LLM |
 | `DELETE` | `/api/chat/sessions/{id}` | Delete session |
 | `GET` | `/api/chat/sessions/{id}/messages` | Get session messages |
+| `GET` | `/api/chat/search?project_id=X&q=term&limit=20` | Search chat messages and SQL queries across project sessions |
 | `POST` | `/api/chat/feedback` | Submit thumbs up/down feedback on a message |
 | `GET` | `/api/chat/analytics/feedback/{project_id}` | Aggregated feedback stats |
 | `POST` | `/api/chat/ask` | Send question (blocking) |
@@ -2378,6 +2404,13 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-21 — Chat History Search (Cmd+K)
+
+- **Backend:** Added `GET /api/chat/search` endpoint that searches `chat_messages.content` and `metadata_json` using SQL LIKE with % wildcards. Returns message_id, session_id, session_title, content_snippet (truncated around match), sql_query, created_at, and role. Scoped to the current user's sessions within a project. Rate-limited to 30/min.
+- **Frontend:** New `ChatSearch.tsx` component in the sidebar Chat History section with debounced input (300ms), highlighted match snippets, SQL query previews, keyboard navigation (Arrow keys, Enter, Escape), and a global **Cmd+K / Ctrl+K** shortcut to focus the search input.
+- **Frontend:** Added `ChatSearchResult` interface and `api.chat.search()` method to the API client.
+- **Sidebar:** ChatSearch appears above ChatSessionList when the sidebar is expanded and a project is active. Clicking a search result navigates to that session and loads its messages.
 
 ### 2026-03-21 — Multi-Stage Query Pipeline
 

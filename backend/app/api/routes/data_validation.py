@@ -583,7 +583,7 @@ async def _run_investigation_background(
             cfg = await conn_svc.to_config(session, conn)
 
         tracker = WorkflowTracker()
-        wf_id = tracker.create(f"investigation:{investigation_id}")
+        wf_id = f"investigation:{investigation_id}"
 
         ctx = AgentContext(
             project_id=project_id,
@@ -596,7 +596,7 @@ async def _run_investigation_background(
         )
 
         agent = InvestigationAgent()
-        result = await agent.run(
+        inv_result = await agent.run(
             ctx,
             investigation_id=investigation_id,
             original_query=original_query,
@@ -607,18 +607,18 @@ async def _run_investigation_background(
             problematic_column=problematic_column,
         )
 
-        if result.status == "success" and result.corrected_query:
+        if inv_result.status == "success" and inv_result.corrected_query:
             corrected_json = (
-                json.dumps(result.corrected_result) if result.corrected_result else None
+                json.dumps(inv_result.corrected_result) if inv_result.corrected_result else None
             )
             async with async_session_factory() as session:
                 await inv_svc.record_finding(
                     session,
                     investigation_id=investigation_id,
-                    corrected_query=result.corrected_query,
+                    corrected_query=inv_result.corrected_query,
                     corrected_result_json=corrected_json,
-                    root_cause=result.root_cause,
-                    root_cause_category=result.root_cause_category,
+                    root_cause=inv_result.root_cause,
+                    root_cause_category=inv_result.root_cause_category,
                 )
                 await session.commit()
             logger.info("Investigation %s: fix found", investigation_id)
@@ -627,7 +627,7 @@ async def _run_investigation_background(
                 await inv_svc.fail_investigation(
                     session,
                     investigation_id,
-                    reason=result.root_cause or "Agent could not identify a fix.",
+                    reason=inv_result.root_cause or "Agent could not identify a fix.",
                 )
                 await session.commit()
             logger.info("Investigation %s: no fix found", investigation_id)

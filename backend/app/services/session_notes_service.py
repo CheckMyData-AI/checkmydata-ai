@@ -303,4 +303,4 @@ class SessionNotesService:
             )
             .values(confidence=func.greatest(0.1, SessionNote.confidence - decay_amount))
         )
-        return result.rowcount  # type: ignore[return-value]
+        return result.rowcount  # type: ignore[attr-defined]
