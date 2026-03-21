@@ -44,14 +44,17 @@ class ProbeService:
         tables_to_probe = table_names[:MAX_PROBE_TABLES]
 
         connector = get_connector(
-            cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode,
+            cfg.db_type,
+            ssh_exec_mode=cfg.ssh_exec_mode,
         )
         await connector.connect(cfg)
 
         try:
             for table in tables_to_probe:
                 entry = await self._probe_table(
-                    connector, table, checker,
+                    connector,
+                    table,
+                    checker,
                 )
                 report.append(entry)
 
@@ -86,20 +89,14 @@ class ProbeService:
         }
 
         try:
-            count_result = await connector.execute_query(
-                f"SELECT COUNT(*) AS cnt FROM {table}"
-            )
+            count_result = await connector.execute_query(f"SELECT COUNT(*) AS cnt FROM {table}")
             if count_result.rows:
                 entry["row_count"] = count_result.rows[0][0]
                 if entry["row_count"] == 0:
-                    entry["findings"].append(
-                        f"Table '{table}' is empty (0 rows)."
-                    )
+                    entry["findings"].append(f"Table '{table}' is empty (0 rows).")
                     return entry
         except Exception as exc:
-            entry["findings"].append(
-                f"Could not count rows in '{table}': {exc}"
-            )
+            entry["findings"].append(f"Could not count rows in '{table}': {exc}")
             return entry
 
         try:
@@ -109,16 +106,11 @@ class ProbeService:
             if not sample_result.rows:
                 return entry
 
-            rows_as_dicts = [
-                dict(zip(sample_result.columns, row))
-                for row in sample_result.rows
-            ]
+            rows_as_dicts = [dict(zip(sample_result.columns, row)) for row in sample_result.rows]
 
             for col in sample_result.columns:
                 total = len(rows_as_dicts)
-                nulls = sum(
-                    1 for r in rows_as_dicts if r.get(col) is None
-                )
+                nulls = sum(1 for r in rows_as_dicts if r.get(col) is None)
                 if total > 0:
                     rate = nulls / total
                     entry["null_rates"][col] = round(rate, 2)
@@ -134,13 +126,9 @@ class ProbeService:
                 columns=sample_result.columns,
             )
             for w in warnings:
-                entry["findings"].append(
-                    f"[{w.check_type}] {w.message}"
-                )
+                entry["findings"].append(f"[{w.check_type}] {w.message}")
 
         except Exception as exc:
-            entry["findings"].append(
-                f"Probe query failed for '{table}': {exc}"
-            )
+            entry["findings"].append(f"Probe query failed for '{table}': {exc}")
 
         return entry

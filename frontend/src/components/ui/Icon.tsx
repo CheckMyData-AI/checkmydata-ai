@@ -36,7 +36,8 @@ type IconName =
   | "bookmark"
   | "play"
   | "sidebar-right"
-  | "clipboard";
+  | "clipboard"
+  | "bar-chart-2";
 
 const PATHS: Record<IconName, string> = {
   key: "M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4",
@@ -94,6 +95,7 @@ const PATHS: Record<IconName, string> = {
   play: "M5 3l14 9-14 9V3z",
   "sidebar-right": "M3 3h18v18H3zM15 3v18",
   clipboard: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
+  "bar-chart-2": "M18 20V10M12 20V4M6 20v-6",
 };
 
 interface IconProps extends SVGProps<SVGSVGElement> {

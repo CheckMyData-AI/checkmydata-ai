@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -19,6 +19,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     auth_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="email")
     google_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     picture_url: Mapped[str | None] = mapped_column(String(512), nullable=True)

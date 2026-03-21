@@ -158,6 +158,16 @@ export interface ChatSession {
   created_at?: string | null;
 }
 
+export interface ChatSearchResult {
+  message_id: string;
+  session_id: string;
+  session_title: string;
+  content_snippet: string;
+  sql_query: string | null;
+  created_at: string;
+  role: string;
+}
+
 export interface ChatMessageDTO {
   id: string;
   role: string;
@@ -543,6 +553,10 @@ export const api = {
       ),
     getMessages: (sessionId: string) =>
       request<ChatMessageDTO[]>(`/chat/sessions/${sessionId}/messages`),
+    search: (projectId: string, query: string, limit?: number) =>
+      request<ChatSearchResult[]>(
+        `/chat/search?project_id=${projectId}&q=${encodeURIComponent(query)}&limit=${limit || 20}`,
+      ),
     ask: (data: {
       project_id: string;
       connection_id?: string;
@@ -832,6 +846,11 @@ export const api = {
         times_confirmed: number;
         last_confirmed_at: string | null;
       }>>(`/data-validation/benchmarks/${connectionId}?project_id=${projectId}`),
+
+    getAnalyticsSummary: (projectId: string) =>
+      request<{ accuracy_rate: number | null; total_validations: number; active_learnings: number; benchmark_count: number }>(
+        `/data-validation/summary/${projectId}`,
+      ),
 
     getFeedbackAnalytics: (projectId: string) =>
       request<{

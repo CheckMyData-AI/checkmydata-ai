@@ -483,12 +483,15 @@ async def _run_db_index_background(
         else:
             logger.info(
                 "DB index completed: connection=%s result=%s",
-                connection_id[:8], result,
+                connection_id[:8],
+                result,
             )
             final_status = "completed"
             await _regenerate_overview(project_id, connection_id)
             await _run_data_probes(
-                connection_id, connection_config, project_id,
+                connection_id,
+                connection_config,
+                project_id,
             )
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
@@ -527,18 +530,20 @@ async def _run_data_probes(
 
             probe_svc = ProbeService()
             report = await probe_svc.run_probes(
-                session, connection_id, project_id,
-                connection_config, top_tables,
+                session,
+                connection_id,
+                project_id,
+                connection_config,
+                top_tables,
             )
             await session.commit()
 
-            total_findings = sum(
-                len(e.get("findings", [])) for e in report
-            )
+            total_findings = sum(len(e.get("findings", [])) for e in report)
             if total_findings:
                 logger.info(
                     "Data probes complete: connection=%s findings=%d",
-                    connection_id[:8], total_findings,
+                    connection_id[:8],
+                    total_findings,
                 )
     except Exception:
         logger.debug("Data probes failed (non-critical)", exc_info=True)

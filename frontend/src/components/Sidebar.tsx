@@ -6,6 +6,7 @@ import { ProjectSelector } from "./projects/ProjectSelector";
 import { ConnectionSelector } from "./connections/ConnectionSelector";
 import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
 import { ChatSessionList } from "./chat/ChatSessionList";
+import { ChatSearch } from "./chat/ChatSearch";
 import { RulesManager } from "./rules/RulesManager";
 import { KnowledgeDocs } from "./knowledge/KnowledgeDocs";
 import { WorkflowProgress } from "./workflow/WorkflowProgress";
@@ -21,6 +22,7 @@ import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 import { useLogStore } from "@/stores/log-store";
 import { AccountMenu } from "./auth/AccountMenu";
 import { UsageStatsPanel } from "./usage/UsageStatsPanel";
+import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -170,6 +172,7 @@ export function Sidebar() {
   const rulesCollapse = useSectionCollapse("rules", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
   const usageCollapse = useSectionCollapse("usage", false);
+  const analyticsCollapse = useSectionCollapse("analytics", false);
 
   const projectsRef = useRef<HTMLDivElement>(null);
   const repoRef = useRef<HTMLDivElement>(null);
@@ -528,6 +531,16 @@ export function Sidebar() {
               collapsed={collapsed}
             >
               <UsageStatsPanel />
+            </SidebarSection>
+
+            <SidebarSection
+              icon="bar-chart-2"
+              title="Analytics"
+              open={analyticsCollapse.open}
+              onToggle={analyticsCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <FeedbackAnalyticsPanel projectId={activeProject.id} />
             </SidebarSection>
           </>
         )}

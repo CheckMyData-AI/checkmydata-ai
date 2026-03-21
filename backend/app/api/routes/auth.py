@@ -49,6 +49,7 @@ class UserResponse(BaseModel):
     display_name: str
     picture_url: str | None = None
     auth_provider: str = "email"
+    is_onboarded: bool = False
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -70,6 +71,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
             "display_name": user.display_name,
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
+            "is_onboarded": user.is_onboarded,
         },
     )
 
@@ -89,6 +91,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
             "display_name": user.display_name,
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
+            "is_onboarded": user.is_onboarded,
         },
     )
 
@@ -130,6 +133,7 @@ async def google_login(
             "display_name": user.display_name,
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
+            "is_onboarded": user.is_onboarded,
         },
     )
 
@@ -172,6 +176,7 @@ async def refresh_token(
             "display_name": user.display_name,
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
+            "is_onboarded": user.is_onboarded,
         },
     )
 
@@ -191,7 +196,21 @@ async def me(
         display_name=user.display_name,
         picture_url=user.picture_url,
         auth_provider=user.auth_provider,
+        is_onboarded=user.is_onboarded,
     )
+
+
+@router.post("/complete-onboarding")
+async def complete_onboarding(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await _auth.get_by_id(db, current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    user.is_onboarded = True
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/account")

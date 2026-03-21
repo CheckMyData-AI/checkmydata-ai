@@ -65,6 +65,102 @@ def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int
     return None
 
 
+class ChatSearchResult(BaseModel):
+    message_id: str
+    session_id: str
+    session_title: str
+    content_snippet: str
+    sql_query: str | None = None
+    created_at: str
+    role: str
+
+
+@router.get("/search", response_model=list[ChatSearchResult])
+@limiter.limit("30/minute")
+async def search_messages(
+    request: Request,
+    project_id: str = Query(...),
+    q: str = Query(..., min_length=1, max_length=500),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    from sqlalchemy import and_, or_, select
+
+    from app.models.chat_session import ChatMessage as ChatMessageModel
+    from app.models.chat_session import ChatSession
+
+    term = f"%{q}%"
+    stmt = (
+        select(
+            ChatMessageModel.id,
+            ChatMessageModel.session_id,
+            ChatSession.title,
+            ChatMessageModel.content,
+            ChatMessageModel.metadata_json,
+            ChatMessageModel.created_at,
+            ChatMessageModel.role,
+        )
+        .join(ChatSession, ChatMessageModel.session_id == ChatSession.id)
+        .where(
+            and_(
+                ChatSession.project_id == project_id,
+                ChatSession.user_id == user["user_id"],
+                or_(
+                    ChatMessageModel.content.ilike(term),
+                    ChatMessageModel.metadata_json.ilike(term),
+                ),
+            ),
+        )
+        .order_by(ChatMessageModel.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    results: list[ChatSearchResult] = []
+    for row in rows:
+        content = row.content or ""
+        snippet = _build_snippet(content, q, 200)
+
+        sql_query = None
+        if row.metadata_json:
+            try:
+                meta = json.loads(row.metadata_json)
+                sql_query = meta.get("query")
+            except Exception:
+                pass
+
+        results.append(
+            ChatSearchResult(
+                message_id=row.id,
+                session_id=row.session_id,
+                session_title=row.title or "Untitled",
+                content_snippet=snippet,
+                sql_query=sql_query,
+                created_at=row.created_at.isoformat() if row.created_at else "",
+                role=row.role,
+            )
+        )
+    return results
+
+
+def _build_snippet(text: str, query: str, max_len: int = 200) -> str:
+    lower = text.lower()
+    idx = lower.find(query.lower())
+    if idx == -1:
+        return text[:max_len] + ("..." if len(text) > max_len else "")
+    start = max(0, idx - max_len // 3)
+    end = min(len(text), idx + len(query) + max_len * 2 // 3)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return snippet
+
+
 class ChatRequest(BaseModel):
     session_id: str | None = None
     project_id: str

@@ -19,13 +19,11 @@ interface AnalyticsData {
   investigations: Record<string, number>;
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  table_preference: "Table Preferences",
-  column_usage: "Column Usage",
-  data_format: "Data Formats",
-  query_pattern: "Query Patterns",
-  schema_gotcha: "Schema Gotchas",
-  performance_hint: "Performance Hints",
+const VERDICT_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  confirmed: { label: "Confirmed", color: "bg-emerald-400", bg: "text-emerald-400" },
+  approximate: { label: "Approximate", color: "bg-amber-400", bg: "text-amber-400" },
+  rejected: { label: "Rejected", color: "bg-red-400", bg: "text-red-400" },
+  unknown: { label: "Unknown", color: "bg-zinc-500", bg: "text-zinc-500" },
 };
 
 interface FeedbackAnalyticsPanelProps {
@@ -59,7 +57,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (loading) {
     return (
-      <div className="p-6 text-center text-zinc-400">
+      <div className="px-2 py-1 text-[10px] text-zinc-500 animate-pulse">
         Loading analytics...
       </div>
     );
@@ -67,165 +65,163 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (error) {
     return (
-      <div className="p-6 text-center text-red-400">
-        Failed to load analytics: {error}
+      <div className="px-2 py-1 text-[10px] text-red-400">
+        Failed to load analytics
       </div>
     );
   }
 
-  if (!data) return null;
+  if (!data || data.validations.total === 0) {
+    return (
+      <div className="px-2 py-2">
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          No validation data yet. Rate query results with thumbs up/down to start tracking data quality.
+        </p>
+      </div>
+    );
+  }
 
-  const { validations, learnings, benchmarks, investigations } = data;
+  const { validations, learnings } = data;
+  const accuracy = validations.accuracy_rate;
+  const confirmed = validations.by_verdict.confirmed ?? 0;
+  const total = validations.total;
 
   return (
-    <div className="space-y-6 p-4">
-      <h2 className="text-lg font-semibold text-zinc-100">
-        Data Quality Analytics
-      </h2>
+    <div className="px-2 py-2 space-y-3">
+      <ConfidenceScore accuracy={accuracy} />
 
-      {/* Accuracy overview */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard
-          label="Total Validations"
-          value={validations.total}
+      <div className="grid grid-cols-2 gap-2">
+        <MiniStat
+          label="First-try success"
+          value={total > 0 ? `${Math.round((confirmed / total) * 100)}%` : "N/A"}
         />
-        <StatCard
-          label="Accuracy Rate"
-          value={
-            validations.accuracy_rate != null
-              ? `${validations.accuracy_rate}%`
-              : "N/A"
-          }
-          highlight={
-            validations.accuracy_rate != null && validations.accuracy_rate >= 80
-          }
-        />
-        <StatCard
-          label="Active Learnings"
+        <MiniStat
+          label="Total learnings"
           value={learnings.total_active}
         />
-        <StatCard
+        <MiniStat
+          label="Validations"
+          value={total}
+        />
+        <MiniStat
           label="Benchmarks"
-          value={benchmarks.total}
+          value={data.benchmarks.total}
         />
       </div>
 
-      {/* Verdict breakdown */}
-      {validations.total > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-zinc-300">
-            Validation Verdicts
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(validations.by_verdict).map(([verdict, count]) => (
-              <span
-                key={verdict}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  verdict === "confirmed"
-                    ? "bg-emerald-900/30 text-emerald-400"
-                    : verdict === "rejected"
-                      ? "bg-red-900/30 text-red-400"
-                      : "bg-zinc-800 text-zinc-400"
-                }`}
-              >
-                {verdict}: {count}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
+      <VerdictBar verdicts={validations.by_verdict} total={total} />
 
-      {/* Error patterns */}
       {validations.top_error_patterns.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-zinc-300">
-            Top Error Patterns
-          </h3>
-          <ul className="space-y-1">
-            {validations.top_error_patterns.map((pattern, i) => (
-              <li
-                key={i}
-                className="flex items-center justify-between rounded bg-zinc-800/50 px-3 py-1.5 text-sm"
-              >
-                <span className="text-zinc-300">{pattern.reason}</span>
-                <span className="text-zinc-500">{pattern.count}x</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Learning breakdown */}
-      {learnings.total_active > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-zinc-300">
-            Learnings by Category
-          </h3>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {Object.entries(learnings.by_category).map(([cat, count]) => (
-              <div
-                key={cat}
-                className="rounded bg-zinc-800/50 px-3 py-2 text-sm"
-              >
-                <span className="text-zinc-400">
-                  {CATEGORY_LABELS[cat] || cat}
-                </span>
-                <span className="ml-2 font-medium text-zinc-200">
-                  {count}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Investigations */}
-      {Object.keys(investigations).length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-zinc-300">
-            Investigations
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(investigations).map(([status, count]) => (
-              <span
-                key={status}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  status === "resolved"
-                    ? "bg-emerald-900/30 text-emerald-400"
-                    : status === "failed"
-                      ? "bg-red-900/30 text-red-400"
-                      : "bg-amber-900/30 text-amber-400"
-                }`}
-              >
-                {status}: {count}
-              </span>
-            ))}
-          </div>
-        </section>
+        <div className="space-y-1">
+          <div className="text-[10px] text-zinc-500">Top errors</div>
+          {validations.top_error_patterns.slice(0, 3).map((p, i) => (
+            <div key={i} className="flex items-center justify-between text-[10px]">
+              <span className="text-zinc-400 truncate mr-2">{p.reason}</span>
+              <span className="text-zinc-600 tabular-nums shrink-0">{p.count}x</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  highlight = false,
-}: {
-  label: string;
-  value: string | number;
-  highlight?: boolean;
-}) {
+function ConfidenceScore({ accuracy }: { accuracy: number | null }) {
+  if (accuracy == null) {
+    return (
+      <div className="bg-zinc-800/50 rounded-md px-2.5 py-2">
+        <div className="text-[10px] text-zinc-500">Data Confidence</div>
+        <div className="text-[12px] font-medium text-zinc-400 mt-0.5">No data yet</div>
+      </div>
+    );
+  }
+
+  const color =
+    accuracy >= 80 ? "emerald" :
+    accuracy >= 50 ? "amber" :
+    "red";
+
+  const barColor = {
+    emerald: "bg-emerald-400",
+    amber: "bg-amber-400",
+    red: "bg-red-400",
+  }[color];
+
+  const textColor = {
+    emerald: "text-emerald-400",
+    amber: "text-amber-400",
+    red: "text-red-400",
+  }[color];
+
   return (
-    <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/30 px-4 py-3">
-      <p className="text-xs text-zinc-500">{label}</p>
-      <p
-        className={`mt-1 text-xl font-semibold ${
-          highlight ? "text-emerald-400" : "text-zinc-100"
-        }`}
-      >
+    <div className="bg-zinc-800/50 rounded-md px-2.5 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-zinc-500">Data Confidence</span>
+        <span className={`text-[12px] font-semibold tabular-nums ${textColor}`}>
+          {accuracy}%
+        </span>
+      </div>
+      <div className="mt-1.5 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+          style={{ width: `${Math.min(accuracy, 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; total: number }) {
+  if (total === 0) return null;
+
+  const entries = Object.entries(verdicts)
+    .filter(([, count]) => count > 0)
+    .sort(([a], [b]) => {
+      const order = ["confirmed", "approximate", "rejected", "unknown"];
+      return order.indexOf(a) - order.indexOf(b);
+    });
+
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] text-zinc-500">Verdict breakdown</div>
+      <div className="flex h-2 rounded-full overflow-hidden gap-[1px]">
+        {entries.map(([verdict, count]) => {
+          const cfg = VERDICT_CONFIG[verdict];
+          const pct = (count / total) * 100;
+          return (
+            <div
+              key={verdict}
+              className={`${cfg?.color ?? "bg-zinc-600"} transition-all duration-300`}
+              style={{ width: `${pct}%` }}
+              title={`${cfg?.label ?? verdict}: ${count} (${Math.round(pct)}%)`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+        {entries.map(([verdict, count]) => {
+          const cfg = VERDICT_CONFIG[verdict];
+          return (
+            <div key={verdict} className="flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${cfg?.color ?? "bg-zinc-600"}`} />
+              <span className="text-[9px] text-zinc-500">
+                {cfg?.label ?? verdict} {count}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-zinc-800/50 rounded-md px-2 py-1.5">
+      <div className="text-[10px] text-zinc-500">{label}</div>
+      <div className="text-[12px] font-medium text-zinc-200 tabular-nums mt-0.5">
         {value}
-      </p>
+      </div>
     </div>
   );
 }

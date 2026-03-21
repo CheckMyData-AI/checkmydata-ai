@@ -271,16 +271,12 @@ class SessionNotesService:
         connection_id: str,
     ) -> int:
         result = await session.execute(
-            select(func.count(SessionNote.id)).where(
-                SessionNote.connection_id == connection_id
-            )
+            select(func.count(SessionNote.id)).where(SessionNote.connection_id == connection_id)
         )
         count = result.scalar_one()
         if count:
             await session.execute(
-                delete(SessionNote).where(
-                    SessionNote.connection_id == connection_id
-                )
+                delete(SessionNote).where(SessionNote.connection_id == connection_id)
             )
             await session.flush()
         return count

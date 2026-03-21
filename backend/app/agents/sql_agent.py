@@ -727,9 +727,7 @@ class SQLAgent(BaseAgent):
 
         checker = DataSanityChecker()
 
-        rows_as_dicts = [
-            dict(zip(results.columns, row)) for row in results.rows
-        ]
+        rows_as_dicts = [dict(zip(results.columns, row)) for row in results.rows]
 
         warnings = checker.check(
             rows=rows_as_dicts,
@@ -739,7 +737,10 @@ class SQLAgent(BaseAgent):
         )
 
         benchmark_text = await self._check_benchmarks(
-            checker, rows_as_dicts, results.columns, ctx,
+            checker,
+            rows_as_dicts,
+            results.columns,
+            ctx,
         )
 
         text = checker.format_warnings(warnings)
@@ -765,7 +766,8 @@ class SQLAgent(BaseAgent):
             svc = BenchmarkService()
             async with async_session_factory() as session:
                 benchmarks = await svc.get_all_for_connection(
-                    session, cfg.connection_id,
+                    session,
+                    cfg.connection_id,
                 )
 
             if not benchmarks:
@@ -776,7 +778,10 @@ class SQLAgent(BaseAgent):
                 if bm.value_numeric is None:
                     continue
                 comp = checker.check_against_benchmark(
-                    rows, columns, bm.value_numeric, bm.metric_key,
+                    rows,
+                    columns,
+                    bm.value_numeric,
+                    bm.metric_key,
                 )
                 if comp and comp.level != "ok":
                     icon = "🔴" if comp.level == "critical" else "🟡"

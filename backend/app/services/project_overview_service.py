@@ -33,7 +33,12 @@ MAX_BENCHMARKS = 10
 MAX_OVERVIEW_CHARS = 6000
 
 SECTION_KEYS = (
-    "db", "sync", "rules", "learnings", "notes", "profile",
+    "db",
+    "sync",
+    "rules",
+    "learnings",
+    "notes",
+    "profile",
 )
 
 
@@ -53,7 +58,9 @@ class ProjectOverviewService:
         sections: list[str] = []
 
         connection_ids = await self._get_connection_ids(
-            db, project_id, connection_id,
+            db,
+            project_id,
+            connection_id,
         )
         if not connection_ids:
             return ""
@@ -71,19 +78,23 @@ class ProjectOverviewService:
             sections.append(rules_section)
 
         learnings_section = await self._build_learnings_section(
-            db, connection_ids,
+            db,
+            connection_ids,
         )
         if learnings_section:
             sections.append(learnings_section)
 
         notes_section = await self._build_notes_section(
-            db, project_id, connection_ids,
+            db,
+            project_id,
+            connection_ids,
         )
         if notes_section:
             sections.append(notes_section)
 
         profile_section = await self._build_profile_section(
-            db, project_id,
+            db,
+            project_id,
         )
         if profile_section:
             sections.append(profile_section)
@@ -99,24 +110,20 @@ class ProjectOverviewService:
         project_id: str,
         connection_id: str | None = None,
     ) -> str:
-        row = await db.execute(
-            select(ProjectCache).where(
-                ProjectCache.project_id == project_id
-            )
-        )
+        row = await db.execute(select(ProjectCache).where(ProjectCache.project_id == project_id))
         cache = row.scalar_one_or_none()
 
         old_hashes: dict[str, str] = {}
         if cache:
             try:
-                old_hashes = json.loads(
-                    cache.section_hashes_json or "{}"
-                )
+                old_hashes = json.loads(cache.section_hashes_json or "{}")
             except (json.JSONDecodeError, TypeError):
                 old_hashes = {}
 
         connection_ids = await self._get_connection_ids(
-            db, project_id, connection_id,
+            db,
+            project_id,
+            connection_id,
         )
         if not connection_ids:
             if cache:
@@ -131,10 +138,13 @@ class ProjectOverviewService:
             "sync": lambda: self._build_sync_section(db, connection_ids),
             "rules": lambda: self._build_rules_section(db, project_id),
             "learnings": lambda: self._build_learnings_section(
-                db, connection_ids,
+                db,
+                connection_ids,
             ),
             "notes": lambda: self._build_notes_section(
-                db, project_id, connection_ids,
+                db,
+                project_id,
+                connection_ids,
             ),
             "profile": lambda: self._build_profile_section(db, project_id),
         }
@@ -183,7 +193,8 @@ class ProjectOverviewService:
         if regenerated_count < len(final_sections):
             logger.info(
                 "Incremental overview: %d/%d sections regenerated",
-                regenerated_count, len(final_sections),
+                regenerated_count,
+                len(final_sections),
             )
 
         return overview

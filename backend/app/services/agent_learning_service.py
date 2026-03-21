@@ -95,7 +95,12 @@ class AgentLearningService:
             return similar
 
         await self._resolve_conflicts(
-            session, connection_id, category, subject, lesson, confidence,
+            session,
+            connection_id,
+            category,
+            subject,
+            lesson,
+            confidence,
         )
 
         entry = AgentLearning(
@@ -151,10 +156,20 @@ class AgentLearningService:
     # Conflict detection
     # ------------------------------------------------------------------
 
-    _CONFLICT_INDICATORS = frozenset({
-        "use", "prefer", "always", "never", "should",
-        "instead", "not", "avoid", "correct", "wrong",
-    })
+    _CONFLICT_INDICATORS = frozenset(
+        {
+            "use",
+            "prefer",
+            "always",
+            "never",
+            "should",
+            "instead",
+            "not",
+            "avoid",
+            "correct",
+            "wrong",
+        }
+    )
 
     async def _resolve_conflicts(
         self,
@@ -179,26 +194,22 @@ class AgentLearningService:
             return
 
         new_lower = new_lesson.strip().lower()
-        new_keywords = {
-            w for w in new_lower.split()
-            if w in self._CONFLICT_INDICATORS
-        }
+        new_keywords = {w for w in new_lower.split() if w in self._CONFLICT_INDICATORS}
         if not new_keywords:
             return
 
         for old in existing:
             old_lower = old.lesson.strip().lower()
             similarity = SequenceMatcher(
-                None, old_lower, new_lower,
+                None,
+                old_lower,
+                new_lower,
             ).ratio()
 
             if similarity >= SIMILARITY_THRESHOLD:
                 continue
 
-            old_keywords = {
-                w for w in old_lower.split()
-                if w in self._CONFLICT_INDICATORS
-            }
+            old_keywords = {w for w in old_lower.split() if w in self._CONFLICT_INDICATORS}
             shared_action_words = new_keywords & old_keywords
             if not shared_action_words:
                 continue
@@ -452,10 +463,7 @@ class AgentLearningService:
         for lrn in learnings:
             by_category.setdefault(lrn.category, []).append(lrn)
 
-        parts: list[str] = [
-            "AGENT LEARNINGS (from previous interactions "
-            "with this database):\n"
-        ]
+        parts: list[str] = ["AGENT LEARNINGS (from previous interactions with this database):\n"]
 
         for cat in [
             "table_preference",
@@ -473,18 +481,14 @@ class AgentLearningService:
             for lrn in items[:10]:
                 conf_pct = int(lrn.confidence * 100)
                 critical = " ★CRITICAL" if lrn.times_confirmed >= 5 else ""
-                confirmed = (
-                    f", {lrn.times_confirmed}x confirmed"
-                    if lrn.times_confirmed > 1 else ""
-                )
-                parts.append(
-                    f"- {lrn.lesson} "
-                    f"[{conf_pct}% confidence{confirmed}{critical}]"
-                )
+                confirmed = f", {lrn.times_confirmed}x confirmed" if lrn.times_confirmed > 1 else ""
+                parts.append(f"- {lrn.lesson} [{conf_pct}% confidence{confirmed}{critical}]")
             parts.append("")
 
         cross_section = await self._get_cross_connection_learnings(
-            session, connection_id, {lrn.lesson_hash for lrn in learnings},
+            session,
+            connection_id,
+            {lrn.lesson_hash for lrn in learnings},
         )
         if cross_section:
             parts.append("### From Similar Connections (same project)")
@@ -496,9 +500,7 @@ class AgentLearningService:
         category_counts = Counter(lrn.category for lrn in learnings)
 
         summary_result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         summary = summary_result.scalar_one_or_none()
 
@@ -530,9 +532,7 @@ class AgentLearningService:
         from app.models.connection import Connection
 
         conn_result = await session.execute(
-            select(Connection.project_id).where(
-                Connection.id == connection_id
-            )
+            select(Connection.project_id).where(Connection.id == connection_id)
         )
         project_id = conn_result.scalar_one_or_none()
         if not project_id:
@@ -568,10 +568,7 @@ class AgentLearningService:
             if lrn.lesson_hash in exclude_hashes:
                 continue
             conf_pct = int(lrn.confidence * 100)
-            lines.append(
-                f"- [from sibling] {lrn.lesson} "
-                f"[{conf_pct}% confidence]"
-            )
+            lines.append(f"- [from sibling] {lrn.lesson} [{conf_pct}% confidence]")
         return lines[:8]
 
     async def get_or_compile_summary(
@@ -580,9 +577,7 @@ class AgentLearningService:
         connection_id: str,
     ) -> str:
         result = await session.execute(
-            select(AgentLearningSummary).where(
-                AgentLearningSummary.connection_id == connection_id
-            )
+            select(AgentLearningSummary).where(AgentLearningSummary.connection_id == connection_id)
         )
         summary = result.scalar_one_or_none()
 

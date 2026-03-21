@@ -136,7 +136,10 @@ async def get_feedback_analytics(
 ):
     """Aggregate feedback analytics across all connections in a project."""
     await _membership_svc.require_role(
-        db, project_id, user["user_id"], "viewer",
+        db,
+        project_id,
+        user["user_id"],
+        "viewer",
     )
 
     from sqlalchemy import func as sa_func
@@ -149,16 +152,14 @@ async def get_feedback_analytics(
         DataValidationFeedback,
     )
 
-    conn_result = await db.execute(
-        select(Connection.id).where(
-            Connection.project_id == project_id
-        )
-    )
+    conn_result = await db.execute(select(Connection.id).where(Connection.project_id == project_id))
     conn_ids = [r[0] for r in conn_result.all()]
     if not conn_ids:
         return {
-            "connections": 0, "validations": {},
-            "learnings": {}, "benchmarks": {},
+            "connections": 0,
+            "validations": {},
+            "learnings": {},
+            "benchmarks": {},
             "investigations": {},
         }
 
@@ -173,10 +174,7 @@ async def get_feedback_analytics(
     verdict_counts = {str(r[0]): int(r[1]) for r in val_result.all()}
     total_validations = sum(verdict_counts.values())
     confirmed = verdict_counts.get("confirmed", 0)
-    accuracy_rate = (
-        round(confirmed / total_validations * 100, 1)
-        if total_validations > 0 else None
-    )
+    accuracy_rate = round(confirmed / total_validations * 100, 1) if total_validations > 0 else None
 
     top_rejections = await db.execute(
         select(
@@ -192,10 +190,7 @@ async def get_feedback_analytics(
         .order_by(sa_func.count(DataValidationFeedback.id).desc())
         .limit(10)
     )
-    error_patterns = [
-        {"reason": str(r[0]), "count": int(r[1])}
-        for r in top_rejections.all()
-    ]
+    error_patterns = [{"reason": str(r[0]), "count": int(r[1])} for r in top_rejections.all()]
 
     learning_result = await db.execute(
         select(
@@ -208,9 +203,7 @@ async def get_feedback_analytics(
         )
         .group_by(AgentLearning.category)
     )
-    learning_by_cat = {
-        str(r[0]): int(r[1]) for r in learning_result.all()
-    }
+    learning_by_cat = {str(r[0]): int(r[1]) for r in learning_result.all()}
     total_learnings = sum(learning_by_cat.values())
 
     bm_count = await db.execute(
@@ -229,9 +222,7 @@ async def get_feedback_analytics(
         .where(DataInvestigation.connection_id.in_(conn_ids))
         .group_by(DataInvestigation.status)
     )
-    inv_by_status = {
-        str(r[0]): int(r[1]) for r in inv_result.all()
-    }
+    inv_by_status = {str(r[0]): int(r[1]) for r in inv_result.all()}
 
     return {
         "connections": len(conn_ids),
@@ -249,6 +240,67 @@ async def get_feedback_analytics(
             "total": total_benchmarks,
         },
         "investigations": inv_by_status,
+    }
+
+
+@router.get("/summary/{project_id}")
+async def get_analytics_summary(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Lightweight summary: accuracy_rate, total_validations, active_learnings, benchmark_count."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    from sqlalchemy import func as sa_func
+
+    from app.models.agent_learning import AgentLearning
+    from app.models.benchmark import DataBenchmark
+    from app.models.connection import Connection
+    from app.models.data_validation import DataValidationFeedback
+
+    conn_result = await db.execute(select(Connection.id).where(Connection.project_id == project_id))
+    conn_ids = [r[0] for r in conn_result.all()]
+    if not conn_ids:
+        return {
+            "accuracy_rate": None,
+            "total_validations": 0,
+            "active_learnings": 0,
+            "benchmark_count": 0,
+        }
+
+    val_result = await db.execute(
+        select(
+            DataValidationFeedback.verdict,
+            sa_func.count(DataValidationFeedback.id),
+        )
+        .where(DataValidationFeedback.connection_id.in_(conn_ids))
+        .group_by(DataValidationFeedback.verdict)
+    )
+    verdict_counts = {str(r[0]): int(r[1]) for r in val_result.all()}
+    total_validations = sum(verdict_counts.values())
+    confirmed = verdict_counts.get("confirmed", 0)
+    accuracy_rate = round(confirmed / total_validations * 100, 1) if total_validations > 0 else None
+
+    learning_count = await db.execute(
+        select(sa_func.count(AgentLearning.id)).where(
+            AgentLearning.connection_id.in_(conn_ids),
+            AgentLearning.is_active.is_(True),
+        )
+    )
+
+    bm_count = await db.execute(
+        select(sa_func.count(DataBenchmark.id)).where(
+            DataBenchmark.connection_id.in_(conn_ids),
+            DataBenchmark.confidence >= 0.3,
+        )
+    )
+
+    return {
+        "accuracy_rate": accuracy_rate,
+        "total_validations": total_validations,
+        "active_learnings": learning_count.scalar_one(),
+        "benchmark_count": bm_count.scalar_one(),
     }
 
 
@@ -512,8 +564,10 @@ async def _run_investigation_background(
     try:
         async with async_session_factory() as session:
             await inv_svc.update_phase(
-                session, investigation_id,
-                "investigating", "investigate",
+                session,
+                investigation_id,
+                "investigating",
+                "investigate",
                 log_entry="Agent started investigation.",
             )
             await session.commit()
@@ -522,9 +576,7 @@ async def _run_investigation_background(
 
         conn_svc = ConnectionService()
         async with async_session_factory() as session:
-            result = await session.execute(
-                select(Connection).where(Connection.id == connection_id)
-            )
+            result = await session.execute(select(Connection).where(Connection.id == connection_id))
             conn = result.scalar_one_or_none()
             if not conn:
                 raise RuntimeError(f"Connection {connection_id} not found")
@@ -557,8 +609,7 @@ async def _run_investigation_background(
 
         if result.status == "success" and result.corrected_query:
             corrected_json = (
-                json.dumps(result.corrected_result)
-                if result.corrected_result else None
+                json.dumps(result.corrected_result) if result.corrected_result else None
             )
             async with async_session_factory() as session:
                 await inv_svc.record_finding(
@@ -574,7 +625,8 @@ async def _run_investigation_background(
         else:
             async with async_session_factory() as session:
                 await inv_svc.fail_investigation(
-                    session, investigation_id,
+                    session,
+                    investigation_id,
                     reason=result.root_cause or "Agent could not identify a fix.",
                 )
                 await session.commit()
@@ -585,7 +637,8 @@ async def _run_investigation_background(
         try:
             async with async_session_factory() as session:
                 await inv_svc.fail_investigation(
-                    session, investigation_id,
+                    session,
+                    investigation_id,
                     reason="Internal error during investigation.",
                 )
                 await session.commit()

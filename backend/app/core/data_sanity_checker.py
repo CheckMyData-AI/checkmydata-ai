@@ -213,35 +213,48 @@ class DataSanityChecker:
         """Flag negative values in typically-positive columns."""
         warnings: list[SanityWarning] = []
         positive_hints = (
-            "revenue", "sales", "count", "total", "amount", "price",
-            "cost", "quantity", "profit", "sum", "balance", "fee",
+            "revenue",
+            "sales",
+            "count",
+            "total",
+            "amount",
+            "price",
+            "cost",
+            "quantity",
+            "profit",
+            "sum",
+            "balance",
+            "fee",
         )
         for col in columns:
             col_lower = col.lower()
             if not any(h in col_lower for h in positive_hints):
                 continue
             negatives = [
-                r[col] for r in rows
+                r[col]
+                for r in rows
                 if col in r
                 and isinstance(r[col], (int, float))
                 and not math.isnan(r[col])
                 and r[col] < 0
             ]
             if negatives:
-                warnings.append(SanityWarning(
-                    level="warning",
-                    check_type="negative_value",
-                    message=(
-                        f"Column '{col}' has {len(negatives)} negative "
-                        f"value(s) (min={min(negatives)}), which is unusual "
-                        f"for a {col_lower}-type metric."
-                    ),
-                    column=col,
-                    suggestion=(
-                        "Verify the sign convention. Negative values may "
-                        "indicate refunds, corrections, or a filter issue."
-                    ),
-                ))
+                warnings.append(
+                    SanityWarning(
+                        level="warning",
+                        check_type="negative_value",
+                        message=(
+                            f"Column '{col}' has {len(negatives)} negative "
+                            f"value(s) (min={min(negatives)}), which is unusual "
+                            f"for a {col_lower}-type metric."
+                        ),
+                        column=col,
+                        suggestion=(
+                            "Verify the sign convention. Negative values may "
+                            "indicate refunds, corrections, or a filter issue."
+                        ),
+                    )
+                )
         return warnings
 
     def _check_duplicate_keys(
@@ -260,17 +273,19 @@ class DataSanityChecker:
         unique_count = len(set(values))
         if unique_count < len(values):
             dup_count = len(values) - unique_count
-            warnings.append(SanityWarning(
-                level="warning",
-                check_type="duplicate_keys",
-                message=(
-                    f"GROUP BY result has {dup_count} duplicate key(s) "
-                    f"in column '{first_col}' ({len(values)} rows, "
-                    f"{unique_count} unique)."
-                ),
-                column=first_col,
-                suggestion="Check if the GROUP BY clause is correct.",
-            ))
+            warnings.append(
+                SanityWarning(
+                    level="warning",
+                    check_type="duplicate_keys",
+                    message=(
+                        f"GROUP BY result has {dup_count} duplicate key(s) "
+                        f"in column '{first_col}' ({len(values)} rows, "
+                        f"{unique_count} unique)."
+                    ),
+                    column=first_col,
+                    suggestion="Check if the GROUP BY clause is correct.",
+                )
+            )
         return warnings
 
     def _check_single_row_anomaly(
@@ -284,25 +299,39 @@ class DataSanityChecker:
             return warnings
 
         plural_hints = (
-            "breakdown", "by category", "by month", "by year",
-            "by week", "by day", "per ", "each ", "group by",
-            "top ", "compare", "distribution", "by region",
-            "by country", "by type", "by status",
+            "breakdown",
+            "by category",
+            "by month",
+            "by year",
+            "by week",
+            "by day",
+            "per ",
+            "each ",
+            "group by",
+            "top ",
+            "compare",
+            "distribution",
+            "by region",
+            "by country",
+            "by type",
+            "by status",
         )
         q_lower = question.lower()
         if any(h in q_lower for h in plural_hints):
-            warnings.append(SanityWarning(
-                level="info",
-                check_type="single_row_for_breakdown",
-                message=(
-                    "Only 1 row returned, but the question seems to "
-                    "ask for a breakdown or comparison."
-                ),
-                suggestion=(
-                    "The query may be missing a GROUP BY clause or "
-                    "the filter is too restrictive."
-                ),
-            ))
+            warnings.append(
+                SanityWarning(
+                    level="info",
+                    check_type="single_row_for_breakdown",
+                    message=(
+                        "Only 1 row returned, but the question seems to "
+                        "ask for a breakdown or comparison."
+                    ),
+                    suggestion=(
+                        "The query may be missing a GROUP BY clause or "
+                        "the filter is too restrictive."
+                    ),
+                )
+            )
         return warnings
 
     def _check_date_range_mismatch(
@@ -320,11 +349,16 @@ class DataSanityChecker:
 
         q_lower = question.lower()
         period_map = {
-            "last week": 7, "past week": 7,
-            "last month": 31, "past month": 31,
-            "last quarter": 92, "past quarter": 92,
-            "last year": 366, "past year": 366,
-            "yesterday": 1, "today": 1,
+            "last week": 7,
+            "past week": 7,
+            "last month": 31,
+            "past month": 31,
+            "last quarter": 92,
+            "past quarter": 92,
+            "last year": 366,
+            "past year": 366,
+            "yesterday": 1,
+            "today": 1,
         }
 
         expected_days: int | None = None
@@ -346,9 +380,7 @@ class DataSanityChecker:
                     m = re.match(r"\d{4}-\d{2}-\d{2}", val)
                     if m:
                         try:
-                            all_dates.append(
-                                datetime.strptime(m.group(), "%Y-%m-%d")
-                            )
+                            all_dates.append(datetime.strptime(m.group(), "%Y-%m-%d"))
                         except ValueError:
                             continue
 
@@ -357,17 +389,17 @@ class DataSanityChecker:
 
         actual_span = (max(all_dates) - min(all_dates)).days
         if actual_span > expected_days * 3:
-            warnings.append(SanityWarning(
-                level="warning",
-                check_type="date_range_mismatch",
-                message=(
-                    f"Data spans {actual_span} days but the question "
-                    f"implies ~{expected_days} days."
-                ),
-                suggestion=(
-                    "The date filter may be missing or too broad."
-                ),
-            ))
+            warnings.append(
+                SanityWarning(
+                    level="warning",
+                    check_type="date_range_mismatch",
+                    message=(
+                        f"Data spans {actual_span} days but the question "
+                        f"implies ~{expected_days} days."
+                    ),
+                    suggestion=("The date filter may be missing or too broad."),
+                )
+            )
         return warnings
 
     # ------------------------------------------------------------------
