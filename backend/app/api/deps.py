@@ -29,7 +29,7 @@ async def get_current_user(
     token = authorization.removeprefix("Bearer ")
     auth = AuthService()
     payload = auth.decode_token(token)
-    if not payload:
+    if not payload or "sub" not in payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     user = await auth.get_by_id(db, payload["sub"])

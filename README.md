@@ -2266,10 +2266,13 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 918 across 69 test files
-- Backend integration tests: 153 across 19 test files
-- Frontend tests: 135 across 18 test files
-- **Grand total: 1,206 tests**
+- Backend unit tests: 1,402 across 94 test files
+- Backend integration tests: 309 across 31 test files
+- Frontend tests: 211 across 25 test files
+- **Grand total: 1,922 tests**
+- Backend coverage: 65% (enforced minimum: 60%)
+- Zero flaky tests (verified via 3x sequential runs)
+- Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 
 ### Test Coverage by Module
 
@@ -2348,6 +2351,24 @@ make test-frontend    # frontend vitest
 | WebSocket Auth | — | 4 (valid/invalid/empty/tampered token) |
 | Learnings API | — | 11 (list/status/summary/update/toggle/delete/clear/recompile/auth) |
 | Health | — | 2 (basic, modules) |
+| Security: Safety Guard | 41 (SQL injection patterns, CTE bypass, multi-statement, all dialects, MongoDB writes) | — |
+| Security: RBAC | — | 31 (endpoint role matrix, JWT edge cases, encryption, unauthenticated access) |
+| LLM Resilience | 18 (fallback chain, retry, auth/token errors, health marking) | — |
+| Connection Lifecycle | 22 (registry, encryption round-trip, config, connector key) | — |
+| Pipeline Resilience | 19 (binary filtering, checkpoint, pipeline registry, error handling) | — |
+| History Trimmer | 15 (token estimation, condensing, trim with/without LLM, fallback summary) | — |
+| Benchmark Service | — | 12 (normalize key, CRUD, confidence, staleness) |
+| Usage Service | — | 6 (record, period comparison) |
+| Batch Service | — | 6 (CRUD, list, delete) |
+| Data Sanity Checker | 5 (healthy, duplicates, negatives, nulls) | — |
+| Business Logic | — | 11 (schedules, notifications, notes, dashboards) |
+| API Coverage | — | 12 (chat sessions, data validation, batch, usage, models, tasks, legal) |
+| Auth Extended | — | 8 (project lifecycle, connection lifecycle for all 4 DB types, health) |
+| Performance Smoke | — | 9 (health latency, auth latency, CRUD latency, list endpoints) |
+| Frontend (ErrorBoundary) | 3 (render ok, error UI, reload button) | — |
+| Frontend (StatusDot) | 9 (all statuses, sizes, pulse) | — |
+| Frontend (ToastContainer) | 5 (empty, success, error, multiple, dismiss) | — |
+| Frontend (Spinner) | 3 (render, className, styles) | — |
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
 | Frontend (app-store) | 10 (setActiveProject, addMessage, localStorage persistence, updateMessageId, userRating, rawResult) | — |

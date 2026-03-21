@@ -41,6 +41,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "types-croniter>=2.0.0",
 ]
 
 [tool.ruff]
