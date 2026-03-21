@@ -368,6 +368,7 @@ export interface LLMModel {
 export interface SavedNote {
   id: string;
   project_id: string;
+  user_id: string;
   connection_id: string | null;
   title: string;
   comment: string | null;
@@ -375,7 +376,27 @@ export interface SavedNote {
   answer_text: string | null;
   visualization_json: string | null;
   last_result_json: string | null;
+  is_shared: boolean;
+  shared_by: string | null;
   last_executed_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardCard {
+  note_id: string;
+  viz_config?: Record<string, unknown>;
+  refresh_interval?: number;
+}
+
+export interface Dashboard {
+  id: string;
+  project_id: string;
+  creator_id: string;
+  title: string;
+  layout_json: string | null;
+  cards_json: string | null;
+  is_shared: boolean;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -488,6 +509,20 @@ export interface CostEstimate {
   estimated_cost_usd: number | null;
   context_utilization_pct: number;
   breakdown: CostEstimateBreakdown;
+}
+
+export interface BatchQueryDTO {
+  id: string;
+  user_id: string;
+  project_id: string;
+  connection_id: string;
+  title: string;
+  queries_json: string;
+  note_ids_json: string | null;
+  status: string;
+  results_json: string | null;
+  created_at: string | null;
+  completed_at: string | null;
 }
 
 export const api = {
@@ -825,8 +860,8 @@ export const api = {
   },
 
   notes: {
-    list: (projectId: string) =>
-      request<SavedNote[]>(`/notes?project_id=${projectId}`),
+    list: (projectId: string, scope: "mine" | "shared" | "all" = "mine") =>
+      request<SavedNote[]>(`/notes?project_id=${projectId}&scope=${scope}`),
     get: (id: string) =>
       request<SavedNote>(`/notes/${id}`),
     create: (data: {
@@ -840,7 +875,7 @@ export const api = {
       last_result_json?: string | null;
     }) =>
       request<SavedNote>("/notes", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: string, data: { title?: string; comment?: string | null }) =>
+    update: (id: string, data: { title?: string; comment?: string | null; is_shared?: boolean }) =>
       request<SavedNote>(`/notes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<{ ok: boolean }>(`/notes/${id}`, { method: "DELETE" }),
@@ -849,6 +884,25 @@ export const api = {
         method: "POST",
         timeoutMs: 120_000,
       }),
+  },
+
+  dashboards: {
+    list: (projectId: string) =>
+      request<Dashboard[]>(`/dashboards?project_id=${projectId}`),
+    get: (id: string) =>
+      request<Dashboard>(`/dashboards/${id}`),
+    create: (data: {
+      project_id: string;
+      title: string;
+      layout_json?: string | null;
+      cards_json?: string | null;
+      is_shared?: boolean;
+    }) =>
+      request<Dashboard>("/dashboards", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: { title?: string; layout_json?: string | null; cards_json?: string | null; is_shared?: boolean }) =>
+      request<Dashboard>(`/dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/dashboards/${id}`, { method: "DELETE" }),
   },
 
   models: {
@@ -1032,6 +1086,38 @@ export const api = {
       request<{ ok: boolean }>(`/notifications/${id}/read`, { method: "PATCH" }),
     markAllRead: () =>
       request<{ ok: boolean }>("/notifications/read-all", { method: "POST" }),
+  },
+
+  batch: {
+    execute: (data: {
+      project_id: string;
+      connection_id: string;
+      title: string;
+      queries: { sql: string; title: string }[];
+      note_ids?: string[];
+    }) =>
+      request<{ batch_id: string; status: string }>("/batch/execute", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    get: (id: string) =>
+      request<BatchQueryDTO>(`/batch/${id}`),
+    list: (projectId: string) =>
+      request<BatchQueryDTO[]>(`/batch?project_id=${projectId}`),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/batch/${id}`, { method: "DELETE" }),
+    export: async (id: string) => {
+      const res = await fetch(`${API_BASE}/batch/${id}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      if (res.status === 401 && typeof window !== "undefined") {
+        handleSessionExpired();
+        throw new Error("Session expired. Please log in again.");
+      }
+      if (!res.ok) throw new Error("Export failed");
+      return res.blob();
+    },
   },
 
   demo: {

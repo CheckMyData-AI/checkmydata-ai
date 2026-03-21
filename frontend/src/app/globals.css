@@ -156,3 +156,33 @@ select:focus-visible {
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background: #52525b;
 }
+
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  a,
+  input[type="submit"],
+  input[type="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .compact-touch button,
+  .compact-touch [role="button"] {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+@media (max-width: 767px) {
+  .chat-markdown pre {
+    max-width: calc(100vw - 4rem);
+    overflow-x: auto;
+  }
+
+  .chat-markdown table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

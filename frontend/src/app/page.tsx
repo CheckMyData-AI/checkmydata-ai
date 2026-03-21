@@ -8,13 +8,16 @@ import { LogPanel, PersistentLogToggle } from "@/components/log/LogPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
 import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { BatchRunner } from "@/components/batch/BatchRunner";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { useRestoreState } from "@/hooks/useRestoreState";
+import { useMobileLayout } from "@/hooks/useMobileLayout";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { NotificationBell } from "@/components/ui/NotificationBell";
 
 export default function Home() {
   const { activeProject, activeConnection, projects } = useAppStore();
@@ -22,6 +25,8 @@ export default function Home() {
   const { isOpen: notesOpen, toggleOpen: toggleNotes } = useNotesStore();
   const notesCount = useNotesStore((s) => s.notes.length);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isMobile = useMobileLayout();
 
   useGlobalEvents(!!user);
   useRestoreState(!!user);
@@ -38,10 +43,36 @@ export default function Home() {
       {showOnboarding && <OnboardingWizard onComplete={handleOnboardingComplete} />}
       <main className="min-h-screen bg-surface-0 text-text-primary">
         <div className="flex h-screen flex-col">
+          {/* Mobile header bar */}
+          {isMobile && (
+            <div className="sticky top-0 z-40 flex items-center justify-between border-b border-border-subtle bg-surface-0 px-3 py-2.5 md:hidden">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+                className="p-2 -ml-1 rounded-md text-text-secondary hover:bg-surface-2 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              >
+                <Icon name="menu" size={20} />
+              </button>
+              <h1 className="text-sm font-semibold text-text-primary truncate">
+                {activeProject?.name || "CheckMyData"}
+              </h1>
+              <NotificationBell />
+            </div>
+          )}
+
           <div className="flex flex-1 min-h-0">
-            <Sidebar />
+            {isMobile ? (
+              <Sidebar
+                isMobile
+                isOpen={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+              />
+            ) : (
+              <Sidebar />
+            )}
             <div className="flex-1 flex flex-col min-h-0 relative">
-              <header className="border-b border-border-subtle px-6 py-2.5 flex items-center justify-between bg-surface-0">
+              {/* Desktop content header - hidden on mobile */}
+              <header className="hidden md:flex border-b border-border-subtle px-6 py-2.5 items-center justify-between bg-surface-0">
                 <div className="flex items-center gap-3 min-w-0">
                   {activeProject ? (
                     <>
@@ -99,7 +130,7 @@ export default function Home() {
               <ChatPanel />
               <PersistentLogToggle />
             </div>
-            <NotesPanel />
+            {!isMobile && <NotesPanel />}
           </div>
           <LogPanel />
         </div>

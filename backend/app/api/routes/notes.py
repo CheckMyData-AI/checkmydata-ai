@@ -37,6 +37,8 @@ class NoteCreate(BaseModel):
 class NoteUpdate(BaseModel):
     title: str | None = Field(None, max_length=500)
     comment: str | None = Field(None, max_length=10000)
+    is_shared: bool | None = None
+    shared_by: str | None = None
 
 
 class NoteResponse(BaseModel):
@@ -44,6 +46,7 @@ class NoteResponse(BaseModel):
 
     id: str
     project_id: str
+    user_id: str
     connection_id: str | None
     title: str
     comment: str | None
@@ -51,6 +54,8 @@ class NoteResponse(BaseModel):
     answer_text: str | None = None
     visualization_json: str | None = None
     last_result_json: str | None
+    is_shared: bool = False
+    shared_by: str | None = None
     last_executed_at: datetime | None
     created_at: datetime | None
     updated_at: datetime | None
@@ -122,11 +127,14 @@ async def create_note(
 @router.get("", response_model=list[NoteResponse])
 async def list_notes(
     project_id: str,
+    scope: str = "mine",
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    if scope not in ("mine", "shared", "all"):
+        raise HTTPException(status_code=400, detail="scope must be mine, shared, or all")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_by_project(db, project_id, user["user_id"])
+    return await _svc.list_by_project(db, project_id, user["user_id"], scope=scope)
 
 
 @router.get("/{note_id}", response_model=NoteResponse)
@@ -147,6 +155,19 @@ async def update_note(
 ):
     note = await _require_note_owner(db, note_id, user["user_id"])
     updates = body.model_dump(exclude_unset=True)
+
+    if "is_shared" in updates:
+        if updates["is_shared"]:
+            from app.services.auth_service import AuthService
+
+            auth_svc = AuthService()
+            user_obj = await auth_svc.get_by_id(db, user["user_id"])
+            updates["shared_by"] = (
+                user_obj.display_name if user_obj and user_obj.display_name else user["email"]
+            )
+        else:
+            updates["shared_by"] = None
+
     updated = await _svc.update(db, note.id, **updates)
     if not updated:
         raise HTTPException(status_code=404, detail="Note not found after update")

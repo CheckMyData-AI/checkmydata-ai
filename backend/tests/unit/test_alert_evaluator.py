@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from app.core.alert_evaluator import AlertEvaluator
 
 
@@ -108,10 +106,12 @@ class TestEdgeCases:
     def test_multiple_conditions(self):
         rows = [[200, 5]]
         cols = ["orders", "errors"]
-        conds = json.dumps([
-            {"column": "orders", "operator": "gt", "threshold": 100},
-            {"column": "errors", "operator": "gt", "threshold": 10},
-        ])
+        conds = json.dumps(
+            [
+                {"column": "orders", "operator": "gt", "threshold": 100},
+                {"column": "errors", "operator": "gt", "threshold": 10},
+            ]
+        )
         alerts = AlertEvaluator.evaluate(rows, cols, conds)
         assert len(alerts) == 1
         assert alerts[0]["condition"]["column"] == "orders"

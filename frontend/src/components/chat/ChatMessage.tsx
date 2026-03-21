@@ -146,6 +146,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   const [showSources, setShowSources] = useState(false);
   const [userRating, setUserRating] = useState<number | null>(message.userRating ?? null);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [mobileVizExpanded, setMobileVizExpanded] = useState(false);
 
   useEffect(() => {
     setUserRating(message.userRating ?? null);
@@ -290,7 +291,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] min-w-0 overflow-hidden rounded-xl px-4 py-3 ${
+        className={`max-w-[95%] md:max-w-[80%] min-w-0 overflow-hidden rounded-xl px-3 py-2.5 md:px-4 md:py-3 ${
           isUser ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-100"
         }`}
       >
@@ -400,13 +401,35 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {/* Visualization — for sql_result responses in viz mode */}
         {isSqlResult && hasViz && viewMode === "viz" && (
           <div className="mt-2">
-            <VizRenderer data={overrideViz ?? message.visualization!} />
+            <div className="md:hidden">
+              {mobileVizExpanded ? (
+                <>
+                  <VizRenderer data={overrideViz ?? message.visualization!} />
+                  <button
+                    onClick={() => setMobileVizExpanded(false)}
+                    className="mt-1.5 text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors"
+                  >
+                    Collapse chart
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setMobileVizExpanded(true)}
+                  className="w-full py-3 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 rounded-lg border border-zinc-700/30 transition-colors text-center"
+                >
+                  Tap to view chart
+                </button>
+              )}
+            </div>
+            <div className="hidden md:block">
+              <VizRenderer data={overrideViz ?? message.visualization!} />
+            </div>
           </div>
         )}
 
         {/* Data table fallback — for sql_result responses in text mode */}
         {isSqlResult && hasViz && viewMode === "text" && hasRawResult && (
-          <div className="mt-2">
+          <div className="mt-2 overflow-x-auto">
             <DataTable
               data={{
                 columns: message.rawResult!.columns,
@@ -656,7 +679,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
         {/* Metadata badges */}
         {!isUser && metadata && (metadata.row_count != null || metadata.execution_time_ms != null || (metadata.total_attempts && metadata.total_attempts > 0) || metadata.token_usage) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1 md:gap-1.5">
             {metadata.execution_time_ms != null && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
                 {metadata.execution_time_ms < 1000
@@ -670,24 +693,24 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               </span>
             )}
             {metadata.viz_type && metadata.viz_type !== "text" && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
                 {metadata.viz_type}
               </span>
             )}
             {metadata.total_attempts != null && metadata.total_attempts > 1 && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${metadata.error ? "bg-red-900/30 text-red-400" : "bg-emerald-900/30 text-emerald-400"}`}>
+              <span className={`hidden md:inline text-[10px] px-1.5 py-0.5 rounded ${metadata.error ? "bg-red-900/30 text-red-400" : "bg-emerald-900/30 text-emerald-400"}`}>
                 {metadata.error
                   ? `Failed after ${metadata.total_attempts} attempts`
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
             {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
                 {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} in / {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()} out
               </span>
             )}
             {metadata.token_usage?.estimated_cost_usd != null && Number(metadata.token_usage.estimated_cost_usd) > 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400">
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400">
                 ${Number(metadata.token_usage.estimated_cost_usd) < 0.01
                   ? Number(metadata.token_usage.estimated_cost_usd).toFixed(4)
                   : Number(metadata.token_usage.estimated_cost_usd).toFixed(2)}

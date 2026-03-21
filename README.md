@@ -27,7 +27,7 @@ AI-powered database query agent that analyzes Git repositories, understands data
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · data-validation │   │
-│  │  usage · demo · health                                        │   │
+│  │  dashboards · usage · demo · health                           │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -747,7 +747,40 @@ The **Notes** panel lets you save SQL queries from agent responses for quick ref
    - Results are capped at 500 rows to keep storage manageable
    - `answer_text` and `visualization_json` columns store the complete agent context
 
-**API endpoints**: `POST /api/notes`, `GET /api/notes?project_id=X`, `GET /api/notes/{id}`, `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`, `POST /api/notes/{id}/execute`
+6. **Collaborative sharing**:
+   - Each note card has a **Share with team** toggle (users icon). When shared, the note becomes visible to all project members.
+   - Shared notes display a "Shared" badge and the sharer's display name.
+   - The Notes panel has **scope tabs**: **All** (own + shared), **Mine** (own only), **Shared** (only notes shared by others).
+   - `GET /api/notes?project_id=X&scope=mine|shared|all` controls which notes are returned.
+
+**API endpoints**: `POST /api/notes`, `GET /api/notes?project_id=X&scope=mine|shared|all`, `GET /api/notes/{id}`, `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`, `POST /api/notes/{id}/execute`
+
+### 16a. Team Dashboards
+
+The **Dashboards** feature lets you compose saved queries into grid-based dashboard views for team-wide monitoring.
+
+1. **Create a dashboard**: In the Sidebar under "Dashboards", click "New Dashboard". Enter a title, choose a 2-column or 3-column grid layout, and add cards by selecting from your saved queries (including shared ones).
+
+2. **Dashboard cards**: Each card on the dashboard displays:
+   - Note title
+   - Visualization type badge
+   - Last refreshed time
+   - Data table with results (up to 50 rows inline)
+
+3. **Actions**:
+   - **Add Card** — opens a picker to select from available saved notes
+   - **Remove Card** — removes a card from the dashboard
+   - **Refresh All** — re-executes all card queries to get fresh data
+   - **Save Dashboard** — persists the layout and card configuration
+   - **Edit** — opens the dashboard builder for the creator
+
+4. **Viewing**: Click a dashboard in the sidebar to navigate to `/dashboard/{id}` — a full-screen page with the grid layout, header with title and last-updated time, and refresh controls.
+
+5. **Sharing**: Dashboards are shared with the team by default (`is_shared = true`). All project members with at least "viewer" role can see shared dashboards. Only the creator can edit or delete.
+
+6. **Auto-refresh**: Cards can have a `refresh_interval` (seconds) configured per card. The dashboard page sets up intervals to automatically re-execute queries.
+
+**API endpoints**: `POST /api/dashboards`, `GET /api/dashboards?project_id=X`, `GET /api/dashboards/{id}`, `PATCH /api/dashboards/{id}`, `DELETE /api/dashboards/{id}`
 
 ### 17. Scheduled Queries and Data Alerts
 
@@ -1658,7 +1691,8 @@ app/
 │   ├── agent_learning.py ← AgentLearning + AgentLearningSummary
 │   ├── db_index.py     ← DbIndex + DbIndexSummary: per-table LLM analysis results
 │   ├── rag_feedback.py ← RAG chunk quality tracking (version-scoped)
-│   ├── saved_note.py   ← SavedNote: user-scoped saved SQL queries per project
+│   ├── saved_note.py   ← SavedNote: user-scoped saved SQL queries per project (with team sharing)
+│   ├── dashboard.py    ← Dashboard: team dashboard with grid layout of note cards
 │   ├── session_note.py ← SessionNote: agent working memory (per-connection observations)
 │   ├── data_validation.py ← DataValidationFeedback + DataInvestigation models
 │   └── benchmark.py    ← DataBenchmark: verified metric values for sanity-checking
@@ -1674,7 +1708,8 @@ app/
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
 │   ├── agent_learning_service.py ← CRUD, dedup, confidence management for learnings
 │   ├── db_index_service.py  ← CRUD + formatting for database index entries
-│   ├── note_service.py ← CRUD for saved notes (create, list, update, delete, update_result)
+│   ├── note_service.py ← CRUD for saved notes (create, list, update, delete, update_result) with scope filtering
+│   ├── dashboard_service.py ← CRUD for dashboards (create, list_for_project, update, delete)
 │   ├── scheduler_service.py ← CRUD + cron logic for scheduled queries and run history
 │   ├── session_notes_service.py ← CRUD, fuzzy dedup, prompt compilation for agent notes
 │   ├── data_validation_service.py ← CRUD + accuracy stats for validation feedback
@@ -2068,7 +2103,8 @@ db_index         — id, connection_id (FK→connections CASCADE), table_name, t
 db_index_summary — id, connection_id (FK→connections CASCADE, UNIQUE), total_tables, active_tables, empty_tables, orphan_tables, phantom_tables, summary_text, recommendations, indexed_at
 agent_learnings  — id, connection_id (FK→connections CASCADE), category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active  [UNIQUE(connection_id, category, subject, lesson_hash)]
 agent_learning_summaries — id, connection_id (FK→connections CASCADE, UNIQUE), total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
-saved_notes      — id, project_id (FK→projects CASCADE), user_id (FK→users CASCADE), connection_id (FK→connections SET NULL), title, comment, sql_query, last_result_json, last_executed_at, created_at, updated_at  [INDEX(project_id), INDEX(user_id)]
+saved_notes      — id, project_id (FK→projects CASCADE), user_id (FK→users CASCADE), connection_id (FK→connections SET NULL), title, comment, sql_query, last_result_json, is_shared, shared_by, last_executed_at, created_at, updated_at  [INDEX(project_id), INDEX(user_id)]
+dashboards       — id, project_id (FK→projects CASCADE), creator_id (FK→users CASCADE), title, layout_json, cards_json, is_shared, created_at, updated_at  [INDEX(project_id), INDEX(creator_id)]
 session_notes    — id, connection_id (FK→connections CASCADE), project_id, category (data_observation|column_mapping|business_logic|calculation_note|user_preference|verified_benchmark), subject, note, note_hash, confidence, is_verified, source_session_id, created_at, updated_at  [UNIQUE(connection_id, note_hash), INDEX(connection_id, category)]
 data_validation_feedback — id, connection_id, session_id, message_id, query, metric_description, agent_value, user_expected_value, deviation_pct, verdict (confirmed|rejected|approximate|unknown), rejection_reason, resolution, resolved, created_at  [INDEX(connection_id), INDEX(message_id)]
 data_benchmarks  — id, connection_id (FK→connections CASCADE), metric_key, metric_description, value, value_numeric, unit, confidence, source (agent_derived|user_confirmed|cross_validated), times_confirmed, last_confirmed_at, created_at  [UNIQUE(connection_id, metric_key)]
@@ -2276,7 +2312,7 @@ make test-frontend    # frontend vitest
 | Frontend (ProjectSelector) | 8 (render, new button, list items, click selects project, edit form, delete button, create form, empty state) | — |
 | Frontend (ConnectionSelector) | 10 (render, create button, list items, DB type badge, test button, index button, sync button, delete button, form fields, DB type switch) | — |
 | Frontend (ChatPanel) | 9 (render, empty state, user/assistant messages, loading indicator, error display, scroll-to-bottom, input area, thinking log bouncing dots) | — |
-| Frontend (ChatMessage) | 8 (user/assistant content, feedback buttons, no feedback for user, SQL query block, visualization, error+retry, markdown) | — |
+| Frontend (ChatMessage) | 10 (user/assistant content, feedback buttons, no feedback for user, SQL query block, visualization, error+retry, markdown, mobile viz collapse, mobile width) | — |
 | Note Service | 10 (create, get, list_by_project, update, delete, update_result, filtering, ordering) | — |
 | Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
 | SQLAgent | 20 (name, no config raises, text response, execute_query success/failure, get_schema_info overview/detail, custom rules, db_index, sync_context, query_context, learnings get/record, unknown tool, exception, max iterations, token usage, tool_call_log, learning extraction) | — |
@@ -2300,12 +2336,67 @@ make test-frontend    # frontend vitest
 | Pipeline Registry | 6 (get database/mcp/unknown/case-insensitive, registry entries, subclass check) | — |
 | Multi-Stage Pipeline | 36 (complexity detection, plan validation, StageContext, StageValidator, QueryPlanner, StageExecutor, serialization, validation outcome) | — |
 | Frontend (AuthGate) | 8 (login/register form, inputs, submit, google SSO, error, loading, auth passthrough) | — |
-| Frontend (ChatInput) | 6 (render, typing, submit, empty guard, disabled, placeholder) | — |
+| Frontend (ChatInput) | 7 (render, typing, submit, empty guard, disabled, placeholder, touch target) | — |
 | Frontend (RulesManager) | 8 (new button, empty state, rule items, edit/delete buttons, create form, cancel edit) | — |
 | Frontend (SshKeyManager) | 6 (add button, empty state, key items, delete button, create form, submit) | — |
 | Frontend (ReadinessGate) | 8 (status dashboard, bypass button, callback, warning, auto-bypass when ready, green indicators, staleness warning, last indexed time) | — |
-| Frontend (Sidebar) | 5 (render, nav sections, collapse, workspace sections, sign out) | — |
+| Frontend (Sidebar) | 8 (render, nav sections, collapse, workspace sections, sign out, mobile drawer render, mobile drawer hidden, mobile close) | — |
 | Frontend (InviteManager) | 6 (render, email+role inputs, invite button, members list, remove button except owner, pending invites) | — |
+
+---
+
+## Mobile-Responsive Layout and PWA Support
+
+The frontend is fully responsive and supports installation as a Progressive Web App (PWA).
+
+### Responsive Layout
+
+- **Desktop (>= 768px):** Sidebar + main content side-by-side, notes panel on the right
+- **Mobile (< 768px):** Full-width content with a hamburger-triggered slide-over drawer for the sidebar
+- The `useMobileLayout()` hook (in `frontend/src/hooks/useMobileLayout.ts`) uses `matchMedia` to detect viewport width
+- Mobile header bar with hamburger menu, app title, and notification bell is visible only on small screens
+
+### Mobile Sidebar Drawer
+
+- On mobile, `Sidebar` accepts `isMobile`, `isOpen`, and `onClose` props
+- Renders as a fixed overlay with a semi-transparent backdrop and slide-in animation from the left (`translate-x` transition)
+- Close button (X) in the drawer header; tap backdrop to dismiss
+- Focus is trapped inside the drawer when open for accessibility; Escape key closes it
+
+### Touch Optimizations
+
+- All interactive elements meet the 44px minimum touch target on touch devices (`@media (pointer: coarse)`)
+- Chat input uses `text-base` (16px) on mobile to prevent iOS auto-zoom
+- Send button has 44x44px minimum size on mobile
+- Chat messages use wider max-width (95%) on mobile for better readability
+- Metadata badges with lower priority (viz type, token counts, cost) are hidden on mobile to reduce density
+- Visualizations collapse by default on mobile with a "Tap to view chart" button
+- Tables inside chat messages have horizontal scroll on mobile (`overflow-x-auto`)
+
+### PWA Configuration
+
+The app includes a Web App Manifest at `frontend/public/manifest.json`:
+- **Name:** CheckMyData.ai
+- **Display:** standalone (no browser chrome)
+- **Theme color:** #3b82f6 (blue accent)
+- **Background:** #09090b (matches surface-0)
+
+The root layout (`layout.tsx`) includes the manifest link, theme-color meta, and apple-mobile-web-app-capable meta tags.
+
+**Note:** PWA icons (`/icon-192.png` and `/icon-512.png`) are referenced but not yet included. Replace with actual icons before production deployment.
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `frontend/src/hooks/useMobileLayout.ts` | Viewport-width detection hook |
+| `frontend/src/app/page.tsx` | Responsive layout with mobile header and sidebar state |
+| `frontend/src/components/Sidebar.tsx` | Accepts `isMobile`/`isOpen`/`onClose` for drawer mode |
+| `frontend/src/components/chat/ChatInput.tsx` | Touch-optimized input with sticky positioning |
+| `frontend/src/components/chat/ChatMessage.tsx` | Mobile-responsive messages with collapsible viz |
+| `frontend/public/manifest.json` | PWA manifest |
+| `frontend/src/app/layout.tsx` | Manifest link + PWA meta tags |
+| `frontend/src/app/globals.css` | Touch target rules + mobile scroll fixes |
 
 ---
 

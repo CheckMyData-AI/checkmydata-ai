@@ -99,6 +99,56 @@ describe("api.projects", () => {
   });
 });
 
+describe("api.notes", () => {
+  it("list passes scope parameter", async () => {
+    mockOk([]);
+    await api.notes.list("p1", "shared");
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("scope=shared");
+  });
+
+  it("update can send is_shared", async () => {
+    mockOk({ id: "n1", is_shared: true });
+    await api.notes.update("n1", { is_shared: true });
+    const [, opts] = fetchMock.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.is_shared).toBe(true);
+  });
+});
+
+describe("api.dashboards", () => {
+  it("list calls GET /dashboards with project_id", async () => {
+    mockOk([]);
+    await api.dashboards.list("p1");
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/dashboards?project_id=p1");
+  });
+
+  it("create calls POST /dashboards", async () => {
+    mockOk({ id: "d1", title: "My Dashboard" });
+    await api.dashboards.create({ project_id: "p1", title: "My Dashboard" });
+    const [, opts] = fetchMock.mock.calls[0];
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body).title).toBe("My Dashboard");
+  });
+
+  it("update calls PATCH /dashboards/:id", async () => {
+    mockOk({ id: "d1", title: "Updated" });
+    await api.dashboards.update("d1", { title: "Updated" });
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain("/dashboards/d1");
+    expect(opts.method).toBe("PATCH");
+  });
+
+  it("delete calls DELETE /dashboards/:id", async () => {
+    mockOk({ ok: true });
+    await api.dashboards.delete("d1");
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain("/dashboards/d1");
+    expect(opts.method).toBe("DELETE");
+  });
+});
+
 describe("api auth headers", () => {
   it("sends Authorization header when token is stored", async () => {
     localStorage.setItem("auth_token", "test-jwt");

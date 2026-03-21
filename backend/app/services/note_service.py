@@ -1,7 +1,7 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.saved_note import SavedNote
@@ -28,16 +28,30 @@ class NoteService:
         session: AsyncSession,
         project_id: str,
         user_id: str,
+        scope: str = "mine",
     ) -> list[SavedNote]:
-        stmt = (
-            select(SavedNote)
-            .where(SavedNote.project_id == project_id, SavedNote.user_id == user_id)
-            .order_by(SavedNote.updated_at.desc())
-        )
+        base = select(SavedNote).where(SavedNote.project_id == project_id)
+
+        if scope == "shared":
+            base = base.where(
+                SavedNote.is_shared == True,  # noqa: E712
+                SavedNote.user_id != user_id,
+            )
+        elif scope == "all":
+            base = base.where(
+                or_(
+                    SavedNote.user_id == user_id,
+                    SavedNote.is_shared == True,  # noqa: E712
+                )
+            )
+        else:
+            base = base.where(SavedNote.user_id == user_id)
+
+        stmt = base.order_by(SavedNote.updated_at.desc())
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
-    ALLOWED_UPDATE_FIELDS = {"title", "comment"}
+    ALLOWED_UPDATE_FIELDS = {"title", "comment", "is_shared", "shared_by"}
 
     async def update(
         self,

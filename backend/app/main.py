@@ -17,8 +17,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.routes import (
     auth,
     backup,
+    batch,
     chat,
     connections,
+    dashboards,
     data_validation,
     demo,
     health_monitor,
@@ -204,6 +206,8 @@ app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(batch.router, prefix="/api/batch", tags=["batch"])
+app.include_router(dashboards.router, prefix="/api/dashboards", tags=["dashboards"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 
 

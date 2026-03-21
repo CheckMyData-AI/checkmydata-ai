@@ -301,4 +301,25 @@ describe("ChatMessage", () => {
 
     expect(screen.getByText("Summary")).toBeInTheDocument();
   });
+
+  it("shows 'Tap to view chart' button for mobile-collapsed viz", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Chart result",
+      visualization: {
+        type: "chart",
+        data: { type: "bar", labels: ["a"], datasets: [{ data: [1] }] },
+      },
+      responseType: "sql_result",
+      rawResult: { columns: ["x"], rows: [[1]], total_rows: 1 },
+    });
+
+    expect(screen.getByText("Tap to view chart")).toBeInTheDocument();
+  });
+
+  it("uses wider max-width on mobile (95%)", async () => {
+    await renderMessage({ role: "assistant", content: "Hello" });
+    const outer = screen.getByText("Hello").closest("[class*='max-w-']");
+    expect(outer?.className).toContain("max-w-[95%]");
+  });
 });

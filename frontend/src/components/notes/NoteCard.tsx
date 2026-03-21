@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import type { SavedNote } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useNotesStore } from "@/stores/notes-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
@@ -45,11 +46,14 @@ interface NoteCardProps {
 export function NoteCard({ note }: NoteCardProps) {
   const { removeNote, updateNote } = useNotesStore();
   const confirm = useConfirmStore((s) => s.show);
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const isOwner = note.user_id === currentUserId;
 
   const [showSql, setShowSql] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [editingComment, setEditingComment] = useState(false);
   const [commentDraft, setCommentDraft] = useState(note.comment ?? "");
   const commentRef = useRef<HTMLTextAreaElement>(null);
@@ -98,6 +102,20 @@ export function NoteCard({ note }: NoteCardProps) {
     }
   };
 
+  const handleToggleShare = async () => {
+    setSharing(true);
+    try {
+      const newVal = !note.is_shared;
+      const updated = await api.notes.update(note.id, { is_shared: newVal });
+      updateNote(note.id, { is_shared: updated.is_shared, shared_by: updated.shared_by });
+      toast(newVal ? "Shared with team" : "Unshared", "info");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update sharing", "error");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const handleSaveComment = async () => {
     const trimmed = commentDraft.trim();
     try {
@@ -119,10 +137,22 @@ export function NoteCard({ note }: NoteCardProps) {
       {/* Header */}
       <div className="px-3 py-2.5 flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <h4 className="text-xs font-medium text-text-primary truncate" title={note.title}>
-            {note.title}
-          </h4>
+          <div className="flex items-center gap-1.5">
+            <h4 className="text-xs font-medium text-text-primary truncate" title={note.title}>
+              {note.title}
+            </h4>
+            {note.is_shared && (
+              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-accent-muted text-accent font-medium">
+                Shared
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-1.5 mt-0.5">
+            {!isOwner && note.shared_by && (
+              <span className="text-[10px] text-text-tertiary">
+                by {note.shared_by}
+              </span>
+            )}
             {note.last_executed_at && (
               <span className="text-[10px] text-text-muted">
                 {timeAgo(note.last_executed_at)}
@@ -136,22 +166,51 @@ export function NoteCard({ note }: NoteCardProps) {
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            onClick={handleExecute}
-            disabled={executing || !note.connection_id}
-            title={note.connection_id ? "Refresh data" : "No connection"}
-            className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
-          >
-            <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
-            <span>Refresh</span>
-          </button>
-          <button
-            onClick={handleDelete}
-            title="Delete"
-            className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors"
-          >
-            <Icon name="trash" size={12} />
-          </button>
+          {isOwner && (
+            <button
+              onClick={handleToggleShare}
+              disabled={sharing}
+              title={note.is_shared ? "Unshare" : "Share with team"}
+              className={`p-1 rounded transition-colors ${
+                note.is_shared
+                  ? "text-accent hover:text-accent-hover"
+                  : "text-text-muted hover:text-accent hover:bg-accent-muted"
+              }`}
+            >
+              <Icon name="users" size={12} />
+            </button>
+          )}
+          {isOwner && (
+            <>
+              <button
+                onClick={handleExecute}
+                disabled={executing || !note.connection_id}
+                title={note.connection_id ? "Refresh data" : "No connection"}
+                className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
+              >
+                <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
+                <span>Refresh</span>
+              </button>
+              <button
+                onClick={handleDelete}
+                title="Delete"
+                className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors"
+              >
+                <Icon name="trash" size={12} />
+              </button>
+            </>
+          )}
+          {!isOwner && (
+            <button
+              onClick={handleExecute}
+              disabled={executing || !note.connection_id}
+              title={note.connection_id ? "Refresh data" : "No connection"}
+              className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
+            >
+              <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
+              <span>Refresh</span>
+            </button>
+          )}
         </div>
       </div>
 

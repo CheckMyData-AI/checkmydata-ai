@@ -152,12 +152,22 @@ class TestListSchedules:
         c2 = await _make_connection(db, p2.id)
 
         await svc.create_schedule(
-            db, user_id=user.id, project_id=p1.id, connection_id=c1.id,
-            title="P1", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=p1.id,
+            connection_id=c1.id,
+            title="P1",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         await svc.create_schedule(
-            db, user_id=user.id, project_id=p2.id, connection_id=c2.id,
-            title="P2", sql_query="SELECT 2", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=p2.id,
+            connection_id=c2.id,
+            title="P2",
+            sql_query="SELECT 2",
+            cron_expression="0 * * * *",
         )
 
         items = await svc.list_schedules(db, p1.id)
@@ -173,8 +183,13 @@ class TestUpdateSchedule:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="Old", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="Old",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         updated = await svc.update_schedule(db, s.id, title="New")
         assert updated is not None
@@ -187,8 +202,13 @@ class TestUpdateSchedule:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="X", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="X",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         old_next = s.next_run_at
         updated = await svc.update_schedule(db, s.id, cron_expression="0 9 * * 1")
@@ -208,8 +228,13 @@ class TestDeleteSchedule:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="X", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="X",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         assert await svc.delete_schedule(db, s.id) is True
         assert await svc.get_schedule(db, s.id) is None
@@ -227,8 +252,13 @@ class TestGetDueSchedules:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="Due", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="Due",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         s.next_run_at = datetime.now(UTC) - timedelta(minutes=5)
         await db.commit()
@@ -244,8 +274,13 @@ class TestGetDueSchedules:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="Inactive", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="Inactive",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         s.is_active = False
         s.next_run_at = datetime.now(UTC) - timedelta(minutes=5)
@@ -263,11 +298,18 @@ class TestRecordRun:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="X", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="X",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         run = await svc.record_run(
-            db, s.id, status="success",
+            db,
+            s.id,
+            status="success",
             result_summary='{"rows":[]}',
             duration_ms=150,
         )
@@ -285,8 +327,13 @@ class TestRecordRun:
         conn = await _make_connection(db, proj.id)
 
         s = await svc.create_schedule(
-            db, user_id=user.id, project_id=proj.id, connection_id=conn.id,
-            title="X", sql_query="SELECT 1", cron_expression="0 * * * *",
+            db,
+            user_id=user.id,
+            project_id=proj.id,
+            connection_id=conn.id,
+            title="X",
+            sql_query="SELECT 1",
+            cron_expression="0 * * * *",
         )
         await svc.record_run(db, s.id, status="success", duration_ms=100)
         await svc.record_run(db, s.id, status="failed", duration_ms=50)

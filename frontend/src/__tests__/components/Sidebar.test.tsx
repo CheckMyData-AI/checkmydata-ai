@@ -71,6 +71,10 @@ vi.mock("@/components/schedules/ScheduleManager", () => ({
   ScheduleManager: () => <div data-testid="schedule-manager" />,
 }));
 
+vi.mock("@/components/dashboards/DashboardList", () => ({
+  DashboardList: () => <div data-testid="dashboard-list" />,
+}));
+
 vi.mock("@/components/ui/NotificationBell", () => ({
   NotificationBell: () => <div data-testid="notification-bell" />,
 }));
@@ -101,9 +105,9 @@ beforeEach(() => {
   });
 });
 
-async function renderSidebar() {
+async function renderSidebar(props: { isMobile?: boolean; isOpen?: boolean; onClose?: () => void } = {}) {
   const { Sidebar } = await import("@/components/Sidebar");
-  return render(<Sidebar />);
+  return render(<Sidebar {...props} />);
 }
 
 describe("Sidebar", () => {
@@ -157,5 +161,26 @@ describe("Sidebar", () => {
   it("has account settings button", async () => {
     await renderSidebar();
     expect(screen.getByTitle("Account settings")).toBeInTheDocument();
+  });
+
+  it("renders as a drawer overlay when isMobile and isOpen", async () => {
+    const onClose = vi.fn();
+    await renderSidebar({ isMobile: true, isOpen: true, onClose });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Close menu")).toBeInTheDocument();
+  });
+
+  it("mobile drawer is hidden (translated) when isOpen is false", async () => {
+    const onClose = vi.fn();
+    await renderSidebar({ isMobile: true, isOpen: false, onClose });
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("-translate-x-full");
+  });
+
+  it("clicking close button calls onClose in mobile drawer", async () => {
+    const onClose = vi.fn();
+    await renderSidebar({ isMobile: true, isOpen: true, onClose });
+    await userEvent.click(screen.getByLabelText("Close menu"));
+    expect(onClose).toHaveBeenCalled();
   });
 });

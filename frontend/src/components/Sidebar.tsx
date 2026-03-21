@@ -24,6 +24,7 @@ import { AccountMenu } from "./auth/AccountMenu";
 import { UsageStatsPanel } from "./usage/UsageStatsPanel";
 import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
 import { ScheduleManager } from "./schedules/ScheduleManager";
+import { DashboardList } from "./dashboards/DashboardList";
 import { NotificationBell } from "./ui/NotificationBell";
 
 function timeAgo(iso: string): string {
@@ -46,11 +47,18 @@ function getStoredCollapsed(): boolean {
   }
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  isMobile?: boolean;
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarProps) {
   const { activeProject, sshKeys, setSshKeys, projects, connections, restoringState } =
     useAppStore();
   const { user, logout } = useAuthStore();
-  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
+  const [collapsed, setCollapsed] = useState(isMobile ? false : getStoredCollapsed);
+  const drawerRef = useRef<HTMLElement>(null);
 
   const [indexing, setIndexing] = useState(false);
   const [indexResult, setIndexResult] = useState<string | null>(null);
@@ -173,6 +181,7 @@ export function Sidebar() {
   const chatCollapse = useSectionCollapse("chat-history");
   const rulesCollapse = useSectionCollapse("rules", false);
   const schedulesCollapse = useSectionCollapse("schedules", false);
+  const dashboardsCollapse = useSectionCollapse("dashboards", false);
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
   const usageCollapse = useSectionCollapse("usage", false);
   const analyticsCollapse = useSectionCollapse("analytics", false);
@@ -317,6 +326,214 @@ export function Sidebar() {
       )}
     </div>
   ) : null;
+
+  useEffect(() => {
+    if (!isMobile || !isOpen) return;
+    const el = drawerRef.current;
+    if (!el) return;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    first?.focus();
+
+    function trapFocus(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose?.();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", trapFocus);
+    return () => document.removeEventListener("keydown", trapFocus);
+  }, [isMobile, isOpen, onClose]);
+
+  if (isMobile) {
+    return (
+      <>
+        {/* Backdrop */}
+        <div
+          className={`fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 ${
+            isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+          onClick={onClose}
+          aria-hidden="true"
+        />
+        {/* Drawer */}
+        <aside
+          ref={drawerRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation"
+          className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-surface-0 border-r border-border-subtle flex flex-col transition-transform duration-200 ease-out ${
+            isOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          {/* Mobile drawer header with close button */}
+          <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center shrink-0">
+              <Icon name="zap" size={16} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="text-sm font-semibold text-text-primary leading-tight">
+                DB Agent
+              </h1>
+              <p className="text-[10px] text-text-muted leading-tight">
+                AI Query Assistant
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              aria-label="Close menu"
+              className="p-2 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+            >
+              <Icon name="x" size={18} />
+            </button>
+          </div>
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-2 space-y-1">
+            <PendingInvites />
+
+            {showOnboarding && (
+              <div className="mx-3 p-3 bg-accent-muted border border-accent/20 rounded-lg space-y-2.5 animate-slide-in-left">
+                <p className="text-[11px] font-semibold text-accent">Getting Started</p>
+                <div className="space-y-2 text-[11px]">
+                  {[
+                    { done: sshKeys.length > 0, step: 1, label: "Add an SSH key" },
+                    { done: projects.length > 0, step: 2, label: "Create your first project" },
+                    { done: connections.length > 0, step: 3, label: "Add a database connection" },
+                  ].map((item) => (
+                    <div key={item.step} className="flex items-center gap-2.5">
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+                        item.done ? "bg-success-muted text-success" : "bg-surface-2 text-text-muted"
+                      }`}>
+                        {item.done ? <Icon name="check" size={10} /> : item.step}
+                      </span>
+                      <span className={item.done ? "text-text-muted line-through" : "text-text-secondary"}>
+                        {item.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="px-4 pt-3 pb-1">
+              <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">Setup</span>
+            </div>
+
+            <SidebarSection icon="key" title="SSH Keys" open={sshCollapse.open} onToggle={sshCollapse.toggle} count={sshKeys.length} collapsed={false}>
+              <SshKeyManager />
+            </SidebarSection>
+
+            <div ref={projectsRef}>
+              <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false}>
+                <ProjectSelector />
+              </SidebarSection>
+            </div>
+
+            {activeProject && (
+              <>
+                <div className="px-4 pt-3 pb-1">
+                  <div className="border-t border-border-subtle/50 mb-3" />
+                  <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">Workspace</span>
+                </div>
+
+                {activeProject.repo_url && (
+                  <div ref={repoRef}>
+                    <SidebarSection icon="git-branch" title="Repository" open={repoCollapse.open} onToggle={repoCollapse.toggle} collapsed={false}>
+                      {repoSection}
+                    </SidebarSection>
+                  </div>
+                )}
+
+                <div ref={connRef}>
+                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false}>
+                    <ConnectionSelector />
+                    <SyncStatusIndicator />
+                  </SidebarSection>
+                </div>
+
+                <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false}>
+                  {restoringState ? (
+                    <div className="px-3 py-2 space-y-1.5">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      {activeProject && <ChatSearch />}
+                      <ChatSessionList />
+                    </>
+                  )}
+                </SidebarSection>
+
+                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false}>
+                  <RulesManager />
+                </SidebarSection>
+
+                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false}>
+                  <ScheduleManager />
+                </SidebarSection>
+
+                <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
+                  <KnowledgeDocs />
+                </SidebarSection>
+
+                <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
+                  <UsageStatsPanel />
+                </SidebarSection>
+
+                <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
+                  <FeedbackAnalyticsPanel projectId={activeProject.id} />
+                </SidebarSection>
+              </>
+            )}
+          </div>
+
+          {/* Account footer (mobile) */}
+          {user && (
+            <div className="relative shrink-0 px-3 py-2.5 border-t border-border-subtle space-y-2">
+              <div className="flex items-center gap-2.5">
+                {user.picture_url ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={user.picture_url} alt="" referrerPolicy="no-referrer" className="w-7 h-7 rounded-full border border-border-default shrink-0 object-cover" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
+                    <span className="text-[10px] font-semibold text-text-secondary">{userInitials}</span>
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-text-primary truncate leading-tight">{user.display_name || user.email.split("@")[0]}</p>
+                  <p className="text-[10px] text-text-muted truncate leading-tight">{user.email}</p>
+                </div>
+                <AccountMenu />
+              </div>
+              <div className="flex items-center gap-2 px-0.5">
+                <Link href="/terms" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">Terms</Link>
+                <span className="text-text-muted/40 text-[10px]">&middot;</span>
+                <Link href="/privacy" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">Privacy</Link>
+              </div>
+            </div>
+          )}
+        </aside>
+      </>
+    );
+  }
 
   return (
     <aside
@@ -528,6 +745,16 @@ export function Sidebar() {
               collapsed={collapsed}
             >
               <ScheduleManager />
+            </SidebarSection>
+
+            <SidebarSection
+              icon="layout"
+              title="Dashboards"
+              open={dashboardsCollapse.open}
+              onToggle={dashboardsCollapse.toggle}
+              collapsed={collapsed}
+            >
+              <DashboardList />
             </SidebarSection>
 
             <SidebarSection

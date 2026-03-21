@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNotesStore } from "@/stores/notes-store";
 import { useAppStore } from "@/stores/app-store";
 import { NoteCard } from "./NoteCard";
 import { Icon } from "@/components/ui/Icon";
+import { BatchRunner } from "@/components/batch/BatchRunner";
+
+const SCOPE_OPTIONS = [
+  { value: "all" as const, label: "All" },
+  { value: "mine" as const, label: "Mine" },
+  { value: "shared" as const, label: "Shared" },
+] as const;
 
 export function NotesPanel() {
-  const { notes, isOpen, isLoading, setOpen, loadNotes } = useNotesStore();
+  const { notes, isOpen, isLoading, scope, setOpen, setScope, loadNotes } = useNotesStore();
   const activeProject = useAppStore((s) => s.activeProject);
   const projectId = activeProject?.id;
+  const [showBatchRunner, setShowBatchRunner] = useState(false);
 
   useEffect(() => {
     if (projectId) {
@@ -36,13 +44,49 @@ export function NotesPanel() {
             </span>
           )}
         </div>
-        <button
-          onClick={() => setOpen(false)}
-          aria-label="Close notes panel"
-          className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
-        >
-          <Icon name="x" size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          {notes.length >= 2 && (
+            <button
+              onClick={() => setShowBatchRunner(true)}
+              title="Batch run all saved queries"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-text-muted hover:text-accent hover:bg-accent-muted transition-colors"
+            >
+              <Icon name="layers" size={11} />
+              <span>Batch</span>
+            </button>
+          )}
+          <button
+            onClick={() => setOpen(false)}
+            aria-label="Close notes panel"
+            className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      </div>
+
+      {showBatchRunner && (
+        <BatchRunner
+          onClose={() => setShowBatchRunner(false)}
+          preselectedNoteIds={notes.map((n) => n.id)}
+        />
+      )}
+
+      {/* Scope tabs */}
+      <div className="shrink-0 px-3 pt-2 pb-1 flex gap-1">
+        {SCOPE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setScope(opt.value)}
+            className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${
+              scope === opt.value
+                ? "bg-accent-muted text-accent"
+                : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
@@ -57,10 +101,12 @@ export function NotesPanel() {
               <Icon name="bookmark" size={18} className="text-text-muted" />
             </div>
             <p className="text-xs text-text-secondary mb-1">
-              No saved queries yet
+              {scope === "shared" ? "No shared queries yet" : "No saved queries yet"}
             </p>
             <p className="text-[11px] text-text-muted leading-relaxed">
-              When the agent returns SQL results, click the bookmark icon to save them here for quick access.
+              {scope === "shared"
+                ? "When team members share their queries, they will appear here."
+                : "When the agent returns SQL results, click the bookmark icon to save them here for quick access."}
             </p>
           </div>
         ) : (

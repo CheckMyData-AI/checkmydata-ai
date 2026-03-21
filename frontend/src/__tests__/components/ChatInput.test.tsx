@@ -46,4 +46,11 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={onSend} placeholder="Type here..." />);
     expect(screen.getByPlaceholderText("Type here...")).toBeInTheDocument();
   });
+
+  it("send button has minimum 44px touch target", () => {
+    render(<ChatInput onSend={onSend} />);
+    const btn = screen.getByLabelText("Send message");
+    expect(btn.className).toContain("min-h-[44px]");
+    expect(btn.className).toContain("min-w-[44px]");
+  });
 });
