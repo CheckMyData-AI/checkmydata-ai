@@ -98,7 +98,7 @@ def _estimate_tokens(text: str) -> int:
 
 
 class CostEstimateBreakdown(BaseModel):
-    schema: int = 0
+    schema_context: int = 0
     rules: int = 0
     learnings: int = 0
     overview: int = 0
@@ -225,7 +225,7 @@ async def estimate_cost(
         estimated_cost_usd=cost,
         context_utilization_pct=utilization,
         breakdown=CostEstimateBreakdown(
-            schema=schema_tokens,
+            schema_context=schema_tokens,
             rules=rules_tokens,
             learnings=learnings_tokens,
             overview=overview_tokens,

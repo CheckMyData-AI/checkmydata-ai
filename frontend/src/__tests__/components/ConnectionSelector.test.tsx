@@ -18,6 +18,7 @@ vi.mock("@/lib/api", () => ({
       triggerSync: vi.fn(),
       refreshSchema: vi.fn(),
       learningsStatus: vi.fn().mockResolvedValue({ total_active: 0 }),
+      health: vi.fn().mockResolvedValue({ status: "healthy", latency_ms: 10 }),
     },
   },
 }));

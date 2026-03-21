@@ -187,6 +187,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
+app.include_router(health_monitor.router, prefix="/api/connections", tags=["health-monitor"])
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
 app.include_router(repos.router, prefix="/api/repos", tags=["repos"])
 app.include_router(ssh_keys.router, prefix="/api/ssh-keys", tags=["ssh-keys"])
@@ -203,7 +204,6 @@ app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
-app.include_router(health_monitor.router, prefix="/api/connections", tags=["health-monitor"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 
 

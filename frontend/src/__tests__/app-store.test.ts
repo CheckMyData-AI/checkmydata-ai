@@ -27,6 +27,8 @@ beforeEach(() => {
     chatSessions: [],
     activeSession: null,
     messages: [],
+    sessionTokens: 0,
+    sessionCost: 0,
   });
   localStorage.clear();
 });

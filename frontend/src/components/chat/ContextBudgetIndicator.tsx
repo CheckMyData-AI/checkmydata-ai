@@ -8,7 +8,7 @@ interface ContextBudgetIndicatorProps {
 }
 
 const SEGMENTS: { key: keyof CostEstimateBreakdown; label: string; color: string }[] = [
-  { key: "schema", label: "Schema", color: "bg-blue-500" },
+  { key: "schema_context", label: "Schema", color: "bg-blue-500" },
   { key: "rules", label: "Rules", color: "bg-purple-500" },
   { key: "learnings", label: "Learnings", color: "bg-amber-500" },
   { key: "overview", label: "Overview", color: "bg-teal-500" },

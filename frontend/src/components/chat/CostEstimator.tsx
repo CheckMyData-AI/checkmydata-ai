@@ -50,7 +50,7 @@ export function CostEstimator({ projectId, connectionId }: CostEstimatorProps) {
         {showTooltip && (
           <div className="absolute bottom-full left-0 mb-1.5 z-50 w-52 bg-zinc-800 border border-zinc-700 rounded-lg p-2.5 text-[10px] text-zinc-300 shadow-xl">
             <div className="space-y-1">
-              <Row label="Schema" value={breakdown.schema} />
+              <Row label="Schema" value={breakdown.schema_context} />
               <Row label="Rules" value={breakdown.rules} />
               <Row label="Learnings" value={breakdown.learnings} />
               <Row label="Overview" value={breakdown.overview} />

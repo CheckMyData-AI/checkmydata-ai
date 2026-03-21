@@ -19,8 +19,11 @@ vi.mock("@/lib/api", () => ({
         estimated_total_tokens: 1500,
         estimated_cost_usd: null,
         context_utilization_pct: 25,
-        breakdown: { schema: 400, rules: 100, learnings: 50, overview: 50, history_budget_remaining: 400 },
+        breakdown: { schema_context: 400, rules: 100, learnings: 50, overview: 50, history_budget_remaining: 400 },
       }),
+    },
+    connections: {
+      health: vi.fn().mockResolvedValue({ status: "healthy", latency_ms: 10 }),
     },
   },
 }));
@@ -107,7 +110,13 @@ vi.mock("@/components/chat/ContextBudgetIndicator", () => ({
   ContextBudgetIndicator: () => <div data-testid="context-budget" />,
 }));
 
-vi.mock("@/lib/sse", () => ({}));
+vi.mock("@/lib/sse", () => ({
+  subscribeToAllEvents: vi.fn(() => vi.fn()),
+}));
+
+vi.mock("@/components/connections/ConnectionHealth", () => ({
+  ConnectionHealth: () => null,
+}));
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {

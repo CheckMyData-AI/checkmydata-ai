@@ -474,7 +474,7 @@ export interface UsageStatsResponse {
 }
 
 export interface CostEstimateBreakdown {
-  schema: number;
+  schema_context: number;
   rules: number;
   learnings: number;
   overview: number;

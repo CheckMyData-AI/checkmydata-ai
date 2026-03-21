@@ -67,6 +67,14 @@ vi.mock("@/components/analytics/FeedbackAnalyticsPanel", () => ({
   FeedbackAnalyticsPanel: () => <div data-testid="feedback-analytics" />,
 }));
 
+vi.mock("@/components/schedules/ScheduleManager", () => ({
+  ScheduleManager: () => <div data-testid="schedule-manager" />,
+}));
+
+vi.mock("@/components/ui/NotificationBell", () => ({
+  NotificationBell: () => <div data-testid="notification-bell" />,
+}));
+
 vi.mock("./InviteManager", () => ({
   InviteManager: () => <div data-testid="invite-manager" />,
 }));

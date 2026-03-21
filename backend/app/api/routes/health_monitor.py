@@ -27,7 +27,7 @@ async def get_connection_health(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.check_access(db, conn.project_id, user["user_id"])
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"])
 
     state = health_monitor.get_health(connection_id)
     if not state:
@@ -47,7 +47,7 @@ async def get_all_connections_health(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.check_access(db, project_id, user["user_id"])
+    await _membership_svc.require_role(db, project_id, user["user_id"])
 
     connections = await _svc.list_by_project(db, project_id)
     result: dict[str, dict] = {}
@@ -72,7 +72,7 @@ async def reconnect_connection(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.check_access(db, conn.project_id, user["user_id"])
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"])
 
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
