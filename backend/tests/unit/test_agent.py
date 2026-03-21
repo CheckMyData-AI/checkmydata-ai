@@ -807,3 +807,188 @@ class TestVizFallback:
 
         assert resp.viz_type == "table"
         assert resp.response_type == "sql_result"
+
+
+class TestThinkingEvents:
+    """Verify that orchestrator emits 'thinking' tracker events."""
+
+    @pytest.mark.asyncio
+    async def test_thinking_emitted_on_tool_call(
+        self,
+        agent,
+        mock_llm,
+        mock_tracker,
+        config,
+    ):
+        """When LLM decides to call a tool, a thinking event is emitted."""
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-1",
+                            name="query_database",
+                            arguments={"question": "find users"},
+                        ),
+                    ],
+                    usage={
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                )
+            return LLMResponse(
+                content="Done",
+                tool_calls=[],
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        with (
+            patch.object(
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="success"),
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+        ):
+            await agent.run(
+                question="find users",
+                project_id="proj-1",
+                connection_config=config,
+            )
+
+        thinking_calls = [c for c in mock_tracker.emit.call_args_list if c.args[1] == "thinking"]
+        assert len(thinking_calls) >= 2
+        details = [c.args[3] for c in thinking_calls]
+        assert any("Analyzing" in d for d in details)
+        assert any("SQL Agent" in d for d in details)
+
+    @pytest.mark.asyncio
+    async def test_thinking_emitted_on_final_answer(
+        self,
+        agent,
+        mock_llm,
+        mock_tracker,
+    ):
+        """A thinking event fires when the LLM produces a final answer."""
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="Hello!",
+                tool_calls=[],
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+        )
+        await agent.run(
+            question="Hi",
+            project_id="proj-1",
+            connection_config=None,
+        )
+
+        thinking_calls = [c for c in mock_tracker.emit.call_args_list if c.args[1] == "thinking"]
+        assert len(thinking_calls) >= 1
+        details = [c.args[3] for c in thinking_calls]
+        assert any("Composing" in d or "Analyzing" in d for d in details)
+
+    @pytest.mark.asyncio
+    async def test_thinking_includes_tool_name(
+        self,
+        agent,
+        mock_llm,
+        mock_tracker,
+        config,
+    ):
+        """Thinking detail mentions the tool name being called."""
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="Let me search",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-1",
+                            name="search_codebase",
+                            arguments={
+                                "question": "what framework",
+                            },
+                        ),
+                    ],
+                    usage={
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                )
+            return LLMResponse(
+                content="It uses FastAPI",
+                tool_calls=[],
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        from app.agents.knowledge_agent import KnowledgeResult
+
+        collection = MagicMock()
+        collection.count = MagicMock(return_value=5)
+
+        with (
+            patch.object(
+                agent._orchestrator._knowledge,
+                "run",
+                new_callable=AsyncMock,
+                return_value=KnowledgeResult(
+                    answer="FastAPI",
+                    status="success",
+                ),
+            ),
+            patch.object(
+                agent._orchestrator._vector_store,
+                "get_or_create_collection",
+                return_value=collection,
+            ),
+        ):
+            await agent.run(
+                question="what framework?",
+                project_id="proj-1",
+                connection_config=None,
+            )
+
+        thinking_calls = [c for c in mock_tracker.emit.call_args_list if c.args[1] == "thinking"]
+        details = [c.args[3] for c in thinking_calls]
+        assert any("Knowledge Agent" in d for d in details)

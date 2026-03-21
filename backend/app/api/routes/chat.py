@@ -71,6 +71,9 @@ class ChatRequest(BaseModel):
     message: str = Field(max_length=20000)
     preferred_provider: str | None = None
     model: str | None = None
+    pipeline_action: str | None = None  # continue | modify | retry
+    pipeline_run_id: str | None = None
+    modification: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -449,6 +452,14 @@ async def ask(
     sql_provider = (project.sql_llm_provider if project else None) or agent_provider
     sql_model = (project.sql_llm_model if project else None) or agent_model
 
+    extra: dict = {"session_id": session_id}
+    if body.pipeline_action:
+        extra["pipeline_action"] = body.pipeline_action
+    if body.pipeline_run_id:
+        extra["pipeline_run_id"] = body.pipeline_run_id
+    if body.modification:
+        extra["modification"] = body.modification
+
     result = await _agent.run(
         question=body.message,
         project_id=body.project_id,
@@ -460,6 +471,7 @@ async def ask(
         sql_model=sql_model,
         project_name=project.name if project else None,
         user_id=user["user_id"],
+        extra=extra,
     )
 
     viz_data = None
@@ -633,6 +645,14 @@ async def ask_stream(
         result_holder: list = []
         queue = tracker.subscribe()
 
+        stream_extra: dict = {"session_id": session_id}
+        if body.pipeline_action:
+            stream_extra["pipeline_action"] = body.pipeline_action
+        if body.pipeline_run_id:
+            stream_extra["pipeline_run_id"] = body.pipeline_run_id
+        if body.modification:
+            stream_extra["modification"] = body.modification
+
         async def _process():
             res = await _agent.run(
                 question=body.message,
@@ -645,6 +665,7 @@ async def ask_stream(
                 sql_model=sql_model,
                 project_name=project_name,
                 user_id=user["user_id"],
+                extra=stream_extra,
             )
             result_holder.append(res)
 
@@ -673,7 +694,24 @@ async def ask_stream(
                 "elapsed_ms": event.elapsed_ms,
             }
 
-            if event.step.startswith("tool:") or ":tool:" in event.step:
+            pipeline_events = frozenset(
+                {
+                    "plan",
+                    "stage_start",
+                    "stage_result",
+                    "stage_validation",
+                    "stage_complete",
+                    "checkpoint",
+                    "stage_retry",
+                }
+            )
+
+            if event.step == "thinking":
+                yield (f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n")
+            elif event.step in pipeline_events:
+                event_data["extra"] = event.extra
+                yield f"event: {event.step}\ndata: {json.dumps(event_data, default=str)}\n\n"
+            elif event.step.startswith("tool:") or ":tool:" in event.step:
                 yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
             elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
                 agent_name = event.step.split(":")[0]

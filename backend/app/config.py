@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
 
+    # Pipeline settings
+    pipeline_run_ttl_days: int = 7
+    max_stage_retries: int = 2
+
     # Backup settings
     backup_enabled: bool = True
     backup_hour: int = 0

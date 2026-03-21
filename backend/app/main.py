@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
     await _decay_stale_learnings()
+    await _cleanup_pipeline_runs()
 
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
@@ -290,6 +291,28 @@ async def _decay_stale_learnings() -> None:
                 logger.info("Startup: decayed confidence for %d stale learnings", affected)
     except Exception:
         logger.warning("Failed to decay stale learnings at startup", exc_info=True)
+
+
+async def _cleanup_pipeline_runs() -> None:
+    """Delete pipeline_runs older than PIPELINE_RUN_TTL_DAYS."""
+    try:
+        from datetime import timedelta
+
+        from sqlalchemy import delete
+
+        from app.models.pipeline_run import PipelineRun
+
+        cutoff = datetime.now(UTC) - timedelta(days=settings.pipeline_run_ttl_days)
+        async with async_session_factory() as session:
+            result = await session.execute(
+                delete(PipelineRun).where(PipelineRun.updated_at < cutoff)
+            )
+            await session.commit()
+            deleted = result.rowcount  # type: ignore[attr-defined]
+            if deleted:
+                logger.info("Startup: cleaned %d expired pipeline_runs", deleted)
+    except Exception:
+        logger.warning("Failed to clean expired pipeline_runs at startup", exc_info=True)
 
 
 async def _backup_cron_loop() -> None:

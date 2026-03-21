@@ -177,7 +177,7 @@ export interface ChatResponse {
   error: string | null;
   workflow_id: string | null;
   staleness_warning: string | null;
-  response_type?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request";
+  response_type?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed";
   assistant_message_id?: string | null;
   user_message_id?: string | null;
   raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
@@ -563,11 +563,16 @@ export const api = {
         session_id?: string;
         preferred_provider?: string;
         model?: string;
+        pipeline_action?: string;
+        pipeline_run_id?: string;
+        modification?: string;
       },
       onStep: (event: Record<string, unknown>) => void,
       onResult: (result: ChatResponse) => void,
       onError: (error: StreamError) => void,
       onToolCall?: (event: Record<string, unknown>) => void,
+      onPipelineEvent?: (eventType: string, event: Record<string, unknown>) => void,
+      onThinking?: (event: Record<string, unknown>) => void,
     ) => {
       const ctrl = new AbortController();
       const streamPromise = fetch(`${API_BASE}/chat/ask/stream`, {
@@ -604,10 +609,16 @@ export const api = {
             const [, eventType, jsonStr] = eventMatch;
             try {
               const parsed = JSON.parse(jsonStr);
-              if (eventType === "step") onStep(parsed);
+              const pipelineEvents = new Set([
+                "plan", "stage_start", "stage_result", "stage_validation",
+                "stage_complete", "checkpoint", "stage_retry",
+              ]);
+              if (eventType === "thinking") onThinking?.(parsed);
+              else if (eventType === "step") onStep(parsed);
               else if (eventType === "tool_call") onToolCall?.(parsed);
               else if (eventType === "result") onResult(parsed as ChatResponse);
               else if (eventType === "error") onError(parsed as StreamError);
+              else if (pipelineEvents.has(eventType)) onPipelineEvent?.(eventType, parsed);
             } catch { /* skip malformed */ }
           }
         }

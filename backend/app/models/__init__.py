@@ -10,6 +10,7 @@ from app.models.custom_rule import CustomRule  # noqa: F401
 from app.models.db_index import DbIndex  # noqa: F401
 from app.models.indexing_checkpoint import IndexingCheckpoint  # noqa: F401
 from app.models.knowledge_doc import KnowledgeDoc  # noqa: F401
+from app.models.pipeline_run import PipelineRun  # noqa: F401
 from app.models.project import Project  # noqa: F401
 from app.models.project_cache import ProjectCache  # noqa: F401
 from app.models.project_invite import ProjectInvite  # noqa: F401

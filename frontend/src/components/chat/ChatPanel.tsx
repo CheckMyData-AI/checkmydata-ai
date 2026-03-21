@@ -7,7 +7,8 @@ import type { WorkflowEvent } from "@/lib/sse";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
-import { StreamWorkflowProgress } from "../workflow/StreamWorkflowProgress";
+import { ThinkingLog } from "./ThinkingLog";
+import { StageProgress, type PipelineStage } from "./StageProgress";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 
 export function ChatPanel() {
@@ -32,11 +33,190 @@ export function ChatPanel() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
+  const [pipelineRunId, setPipelineRunId] = useState<string | undefined>();
+  const [checkpointStageId, setCheckpointStageId] = useState<string | undefined>();
+  const [thinkingLog, setThinkingLog] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const cachedReady = useAppStore((s) =>
     activeProject ? s.readinessCache[activeProject.id]?.ready : false
   );
   const [readinessBypassed, setReadinessBypassed] = useState(false);
+
+  const handlePipelineEvent = useCallback(
+    (eventType: string, event: Record<string, unknown>) => {
+      const extra = (event.extra ?? {}) as Record<string, unknown>;
+      switch (eventType) {
+        case "plan": {
+          const rawStages = (extra.stages ?? []) as Array<{
+            id: string;
+            description: string;
+            tool: string;
+            checkpoint: boolean;
+          }>;
+          setPipelineStages(
+            rawStages.map((s) => ({
+              id: s.id,
+              description: s.description,
+              tool: s.tool,
+              checkpoint: s.checkpoint,
+              status: "pending" as const,
+            })),
+          );
+          break;
+        }
+        case "stage_start": {
+          const sid = extra.stage_id as string;
+          setPipelineStages((prev) =>
+            prev.map((s) => (s.id === sid ? { ...s, status: "running" } : s)),
+          );
+          break;
+        }
+        case "stage_result":
+        case "stage_complete": {
+          const sid = extra.stage_id as string;
+          const status = extra.status as string;
+          setPipelineStages((prev) =>
+            prev.map((s) =>
+              s.id === sid
+                ? {
+                    ...s,
+                    status: status === "error" ? "failed" : "passed",
+                    rowCount: (extra.row_count as number) ?? s.rowCount,
+                    columns: (extra.columns as string[]) ?? s.columns,
+                    error: (extra.error as string) ?? undefined,
+                  }
+                : s,
+            ),
+          );
+          break;
+        }
+        case "stage_validation": {
+          const sid = extra.stage_id as string;
+          const passed = extra.passed as boolean;
+          if (!passed) {
+            setPipelineStages((prev) =>
+              prev.map((s) =>
+                s.id === sid
+                  ? {
+                      ...s,
+                      status: "failed",
+                      warnings: (extra.warnings as string[]) ?? [],
+                      error: ((extra.errors as string[]) ?? []).join("; "),
+                    }
+                  : s,
+              ),
+            );
+          }
+          break;
+        }
+        case "checkpoint": {
+          const sid = extra.stage_id as string;
+          setCheckpointStageId(sid);
+          setPipelineStages((prev) =>
+            prev.map((s) => (s.id === sid ? { ...s, status: "checkpoint" } : s)),
+          );
+          break;
+        }
+        case "stage_retry": {
+          const sid = extra.stage_id as string;
+          setPipelineStages((prev) =>
+            prev.map((s) => (s.id === sid ? { ...s, status: "running" } : s)),
+          );
+          break;
+        }
+      }
+    },
+    [],
+  );
+
+  const handleThinkingEvent = useCallback(
+    (event: Record<string, unknown>) => {
+      const detail = (event.detail as string) ?? "";
+      if (!detail) return;
+      setThinkingLog((prev) => {
+        const next = [...prev, detail];
+        return next.length > 50 ? next.slice(-50) : next;
+      });
+    },
+    [],
+  );
+
+  const sendPipelineAction = useCallback(
+    (action: string, modification?: string) => {
+      if (!activeProject || !pipelineRunId || !activeSession) return;
+      setCheckpointStageId(undefined);
+      setThinking(true);
+      setLoading(true);
+      setThinkingLog([]);
+
+      const ctrl = api.chat.askStream(
+        {
+          project_id: activeProject.id,
+          connection_id: activeConnection?.id,
+          message: modification || action,
+          session_id: activeSession.id,
+          pipeline_action: action,
+          pipeline_run_id: pipelineRunId,
+          modification,
+        },
+        (step) => setStreamSteps((prev) => [...prev, step as unknown as WorkflowEvent]),
+        (result: ChatResponse) => {
+          const vizConfig = (result as unknown as Record<string, unknown>).viz_config as Record<string, unknown> | undefined;
+          if (vizConfig?.pipeline_run_id) {
+            setPipelineRunId(vizConfig.pipeline_run_id as string);
+          }
+
+          addMessage({
+            id: result.assistant_message_id || crypto.randomUUID(),
+            role: "assistant",
+            content: result.answer,
+            query: result.query || undefined,
+            queryExplanation: result.query_explanation || undefined,
+            visualization: result.visualization,
+            error: result.error,
+            responseType: result.response_type,
+            timestamp: Date.now(),
+          });
+          setThinking(false);
+          setLoading(false);
+          setStreamSteps([]);
+          clearToolCalls();
+          setThinkingLog([]);
+          if (result.response_type !== "stage_checkpoint" && result.response_type !== "stage_failed") {
+            setPipelineStages([]);
+            setPipelineRunId(undefined);
+          }
+        },
+        (streamErr: StreamError) => {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: streamErr.user_message || streamErr.error || "An unexpected error occurred.",
+            error: streamErr.error,
+            responseType: "error",
+            timestamp: Date.now(),
+          });
+          setThinking(false);
+          setLoading(false);
+          setStreamSteps([]);
+          clearToolCalls();
+          setThinkingLog([]);
+        },
+        (toolEvent) => {
+          addToolCall({
+            step: (toolEvent as Record<string, string>).step ?? "",
+            status: (toolEvent as Record<string, string>).status ?? "",
+            detail: (toolEvent as Record<string, string>).detail ?? "",
+          });
+        },
+        handlePipelineEvent,
+        handleThinkingEvent,
+      );
+      abortRef.current = ctrl;
+    },
+    [activeProject, activeConnection, activeSession, pipelineRunId, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent],
+  );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -59,6 +239,10 @@ export function ChatPanel() {
       setLoading(true);
       setStreamSteps([]);
       clearToolCalls();
+      setThinkingLog([]);
+      setPipelineStages([]);
+      setPipelineRunId(undefined);
+      setCheckpointStageId(undefined);
 
       const ctrl = api.chat.askStream(
         {
@@ -144,10 +328,24 @@ export function ChatPanel() {
             bumpRulesVersion();
           }
 
+          const vizConfig = (result as unknown as Record<string, unknown>).viz_config as Record<string, unknown> | undefined;
+          if (vizConfig?.pipeline_run_id) {
+            setPipelineRunId(vizConfig.pipeline_run_id as string);
+          }
+
           setThinking(false);
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
+          setThinkingLog([]);
+
+          if (
+            result.response_type !== "stage_checkpoint" &&
+            result.response_type !== "stage_failed"
+          ) {
+            setPipelineStages([]);
+            setPipelineRunId(undefined);
+          }
         },
         (streamErr: StreamError) => {
           const displayMsg = streamErr.user_message || streamErr.error || "An unexpected error occurred.";
@@ -164,6 +362,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
+          setThinkingLog([]);
         },
         (toolEvent) => {
           addToolCall({
@@ -172,10 +371,12 @@ export function ChatPanel() {
             detail: (toolEvent as Record<string, string>).detail ?? "",
           });
         },
+        handlePipelineEvent,
+        handleThinkingEvent,
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion],
+    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, handlePipelineEvent, handleThinkingEvent],
   );
 
   useEffect(() => {
@@ -294,19 +495,43 @@ export function ChatPanel() {
             />
           );
         })}
+        {/* Pipeline stage progress (visible even after thinking finishes for checkpoints) */}
+        {pipelineStages.length > 0 && (
+          <div className="bg-zinc-800/80 rounded-xl px-4 py-3">
+            <StageProgress
+              stages={pipelineStages}
+              pipelineRunId={pipelineRunId}
+              checkpointStageId={checkpointStageId}
+              onContinue={
+                checkpointStageId ? () => sendPipelineAction("continue") : undefined
+              }
+              onModify={
+                checkpointStageId || pipelineStages.some((s) => s.status === "failed")
+                  ? (mod) => sendPipelineAction("modify", mod)
+                  : undefined
+              }
+              onRetry={
+                pipelineStages.some((s) => s.status === "failed")
+                  ? () => sendPipelineAction("retry")
+                  : undefined
+              }
+            />
+          </div>
+        )}
         {isThinking && (
           <div className="flex gap-3">
-            <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2">
-              {activeToolCalls.length > 0 ? (
-                <ToolCallIndicator events={activeToolCalls} />
-              ) : streamSteps.length > 0 ? (
-                <StreamWorkflowProgress events={streamSteps} compact />
+            <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-lg">
+              {thinkingLog.length > 0 ? (
+                <ThinkingLog entries={thinkingLog} />
               ) : (
                 <div className="flex gap-1">
                   <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
                   <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
                   <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
                 </div>
+              )}
+              {activeToolCalls.length > 0 && (
+                <ToolCallIndicator events={activeToolCalls} />
               )}
             </div>
           </div>

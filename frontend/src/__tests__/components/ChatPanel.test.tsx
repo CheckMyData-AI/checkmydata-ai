@@ -51,8 +51,10 @@ vi.mock("@/components/chat/ToolCallIndicator", () => ({
   ToolCallIndicator: () => <div data-testid="tool-calls" />,
 }));
 
-vi.mock("@/components/workflow/StreamWorkflowProgress", () => ({
-  StreamWorkflowProgress: () => <div data-testid="workflow-progress" />,
+vi.mock("@/components/chat/ThinkingLog", () => ({
+  ThinkingLog: ({ entries }: { entries: string[] }) => (
+    <div data-testid="thinking-log">{entries.join("; ")}</div>
+  ),
 }));
 
 vi.mock("@/components/log/LogPanel", () => ({
@@ -264,5 +266,21 @@ describe("ChatPanel", () => {
     await waitFor(() => {
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
     });
+  });
+
+  it("shows bouncing dots when thinking with no thinking log", async () => {
+    useAppStore.setState({
+      activeProject: makeProject(),
+      activeConnection: makeConnection(),
+      messages: [
+        { id: "m1", role: "user", content: "query", timestamp: Date.now() },
+      ],
+      isThinking: true,
+    });
+
+    await renderPanel();
+    const dots = document.querySelectorAll(".animate-bounce");
+    expect(dots.length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByTestId("thinking-log")).not.toBeInTheDocument();
   });
 });

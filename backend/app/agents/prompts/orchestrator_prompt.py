@@ -130,4 +130,20 @@ def build_orchestrator_system_prompt(
             "when you need to confirm data accuracy or clarify ambiguous requests."
         )
 
+    if has_connection:
+        sections.append("")
+        sections.append(
+            "COMPLEX MULTI-STEP QUERIES:\n"
+            "For complex requests that involve multiple data retrieval steps, "
+            "cross-referencing, or building summary tables from multiple queries, "
+            "I will automatically create an execution plan and work through it "
+            "stage by stage.\n"
+            "- After each major data retrieval, I will show you the intermediate "
+            "results for confirmation.\n"
+            "- You can ask me to modify, retry, or skip any stage.\n"
+            "- If a stage fails validation, I will retry automatically or ask "
+            "you for guidance.\n"
+            "- The final answer combines all stage results into a coherent response."
+        )
+
     return "\n".join(sections)

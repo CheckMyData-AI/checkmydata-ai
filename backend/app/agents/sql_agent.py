@@ -205,11 +205,18 @@ class SQLAgent(BaseAgent):
         provider = context.sql_provider or context.preferred_provider
         model = context.sql_model or context.model
 
-        for iteration in range(settings.max_sql_iterations):
+        max_sql_iter = settings.max_sql_iterations
+        for iteration in range(max_sql_iter):
+            await tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"SQL Agent thinking (step {iteration + 1}/{max_sql_iter})…",
+            )
             async with tracker.step(
                 wf_id,
                 "sql:llm_call",
-                f"SQL LLM call ({iteration + 1}/{settings.max_sql_iterations})",
+                f"SQL LLM call ({iteration + 1}/{max_sql_iter})",
             ):
                 llm_resp: LLMResponse = await self._llm.complete(
                     messages=messages,
@@ -232,6 +239,21 @@ class SQLAgent(BaseAgent):
             )
 
             for tc in llm_resp.tool_calls:
+                tool_desc = tc.name
+                if tc.name == "execute_query":
+                    q = (tc.arguments or {}).get("query", "")
+                    if len(q) > 60:
+                        tool_desc = f"execute_query: {q[:60]}…"
+                    else:
+                        tool_desc = f"execute_query: {q}"
+                elif tc.name == "get_schema_info":
+                    tool_desc = "Checking database schema"
+                await tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"SQL Agent → {tool_desc}",
+                )
                 async with tracker.step(wf_id, f"sql:tool:{tc.name}", f"SQL tool: {tc.name}"):
                     result_text = await self._dispatch_tool(
                         tc,
@@ -368,11 +390,25 @@ class SQLAgent(BaseAgent):
         if not loop_result.success:
             err = loop_result.final_error
             msg = err.message if err else "Query validation failed"
-            return f"Query failed after {loop_result.total_attempts} attempt(s): {msg}"
+            attempts = loop_result.total_attempts
+            await ctx.tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"Query failed after {attempts} attempt(s): {msg[:80]}",
+            )
+            return f"Query failed after {attempts} attempt(s): {msg}"
 
         results = loop_result.results
         if results is None:
             raise RuntimeError("Expected 'results' after successful validation but got None")
+
+        await ctx.tracker.emit(
+            wf_id,
+            "thinking",
+            "in_progress",
+            f"Query executed: {results.row_count} rows, {len(results.columns)} columns returned",
+        )
 
         self._last_query = loop_result.query
         self._last_explanation = loop_result.explanation
@@ -401,6 +437,14 @@ class SQLAgent(BaseAgent):
 
         async with ctx.tracker.step(wf_id, "sql:get_schema", f"Fetching schema ({scope})"):
             schema = await self._get_cached_schema(cfg)
+
+        n_tables = len(schema.tables) if schema and schema.tables else 0
+        await ctx.tracker.emit(
+            wf_id,
+            "thinking",
+            "in_progress",
+            f"Loaded schema: {n_tables} tables",
+        )
 
         if scope == "overview":
             return self._format_schema_overview(schema)

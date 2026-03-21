@@ -24,7 +24,11 @@ from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+from app.agents.query_planner import QueryPlanner, detect_complexity
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
+from app.agents.stage_context import ExecutionPlan, StageContext
+from app.agents.stage_executor import StageExecutor, _StageExecutorResult
+from app.agents.stage_validator import StageValidator
 from app.agents.tools.orchestrator_tools import get_orchestrator_tools
 from app.agents.validation import AgentResultValidator
 from app.agents.viz_agent import VizAgent, VizResult
@@ -129,6 +133,11 @@ class OrchestratorAgent(BaseAgent):
         question = context.user_question
 
         try:
+            # Check for pipeline resume first
+            resume_info = await self._check_pipeline_resume(context)
+            if resume_info:
+                return await self._resume_pipeline(resume_info, context)
+
             staleness_warning = await self._check_staleness(context.project_id, wf_id)
 
             if context.chat_history:
@@ -159,6 +168,17 @@ class OrchestratorAgent(BaseAgent):
                         context.connection_config.connection_id = cid
                 if cid:
                     table_map = await self._build_table_map(cid, wf_id)
+
+            # Complexity detection — branch to multi-stage pipeline
+            if (
+                has_connection
+                and not context.extra.get("_skip_complexity")
+                and detect_complexity(question, context.chat_history)
+            ):
+                logger.info("Complex query detected — using multi-stage pipeline")
+                return await self._run_complex_pipeline(
+                    context, wf_id, table_map, db_type, staleness_warning
+                )
 
             project_overview = await self._load_project_overview(context.project_id)
 
@@ -197,11 +217,18 @@ class OrchestratorAgent(BaseAgent):
             used_provider = ""
             used_model = ""
 
-            for iteration in range(settings.max_orchestrator_iterations):
+            max_iter = settings.max_orchestrator_iterations
+            for iteration in range(max_iter):
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"Analyzing request (step {iteration + 1}/{max_iter})…",
+                )
                 async with self._tracker.step(
                     wf_id,
                     "orchestrator:llm_call",
-                    f"Orchestrator LLM ({iteration + 1}/{settings.max_orchestrator_iterations})",
+                    f"Orchestrator LLM ({iteration + 1}/{max_iter})",
                 ):
                     llm_resp = await self._llm_call_with_retry(
                         messages=messages,
@@ -217,8 +244,26 @@ class OrchestratorAgent(BaseAgent):
                 self.accum_usage(total_usage, llm_resp.usage)
 
                 if not llm_resp.tool_calls:
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Composing final answer…",
+                    )
                     final_text = llm_resp.content or ""
                     break
+
+                tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
+                thinking_detail = f"Decided to use: {tool_names}"
+                if llm_resp.content:
+                    snippet = llm_resp.content[:120].replace("\n", " ")
+                    thinking_detail += f" — {snippet}"
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    thinking_detail,
+                )
 
                 messages.append(
                     Message(
@@ -258,6 +303,12 @@ class OrchestratorAgent(BaseAgent):
                         )
                     )
             else:
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Reached maximum iterations, wrapping up…",
+                )
                 final_text = (
                     "I reached the maximum number of tool calls. "
                     "Here is what I found so far based on the tools I used."
@@ -269,6 +320,12 @@ class OrchestratorAgent(BaseAgent):
             viz_config: dict = {}
             if last_sql_result and last_sql_result.results and response_type == "sql_result":
                 try:
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Choosing the best visualization…",
+                    )
                     async with self._tracker.step(
                         wf_id,
                         "orchestrator:viz",
@@ -283,6 +340,12 @@ class OrchestratorAgent(BaseAgent):
                     self.accum_usage(total_usage, last_viz_result.token_usage)
                     viz_type = last_viz_result.viz_type
                     viz_config = last_viz_result.viz_config
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        f"Selected {viz_type} visualization",
+                    )
 
                     vv = self._validator.validate_viz_result(
                         last_viz_result,
@@ -365,6 +428,301 @@ class OrchestratorAgent(BaseAgent):
                 response_type="error",
             )
 
+    # ------------------------------------------------------------------
+    # Multi-stage pipeline
+    # ------------------------------------------------------------------
+
+    async def _run_complex_pipeline(
+        self,
+        context: AgentContext,
+        wf_id: str,
+        table_map: str,
+        db_type: str | None,
+        staleness_warning: str | None,
+    ) -> AgentResponse:
+        """Plan and execute a multi-stage pipeline for complex queries."""
+        await self._tracker.emit(
+            wf_id,
+            "thinking",
+            "in_progress",
+            "Complex query detected, creating execution plan…",
+        )
+        planner = QueryPlanner(self._llm)
+
+        async with self._tracker.step(wf_id, "orchestrator:planning", "Creating execution plan"):
+            plan = await planner.plan(
+                context.user_question,
+                table_map=table_map,
+                db_type=db_type,
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+            )
+
+        if not plan:
+            await self._tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                "Planning failed, falling back to standard approach…",
+            )
+            logger.warning("Planner failed — falling back to flat loop")
+            return await self.run(
+                AgentContext(
+                    project_id=context.project_id,
+                    connection_config=context.connection_config,
+                    user_question=context.user_question,
+                    chat_history=context.chat_history,
+                    llm_router=context.llm_router,
+                    tracker=context.tracker,
+                    workflow_id=wf_id,
+                    user_id=context.user_id,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                    sql_provider=context.sql_provider,
+                    sql_model=context.sql_model,
+                    project_name=context.project_name,
+                    extra={**context.extra, "_skip_complexity": True},
+                ),
+            )
+
+        n_stages = len(plan.stages)
+        await self._tracker.emit(
+            wf_id,
+            "thinking",
+            "in_progress",
+            f"Plan created: {n_stages} stages",
+        )
+
+        pipeline_run = await self._create_pipeline_run(context, plan)
+
+        executor = StageExecutor(
+            sql_agent=self._sql,
+            knowledge_agent=self._knowledge,
+            llm_router=self._llm,
+            tracker=self._tracker,
+            validator=StageValidator(),
+        )
+
+        stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
+        exec_result = await executor.execute(plan, context, stage_ctx=stage_ctx)
+
+        await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
+
+        return self._build_pipeline_response(exec_result, wf_id, staleness_warning, pipeline_run.id)
+
+    async def _check_pipeline_resume(self, context: AgentContext) -> dict | None:
+        """Detect if the user message is a pipeline action (continue/modify/retry)."""
+        action = context.extra.get("pipeline_action")
+        run_id = context.extra.get("pipeline_run_id")
+        if not action or not run_id:
+            return None
+        return {
+            "action": action,
+            "pipeline_run_id": run_id,
+            "modification": context.extra.get("modification", ""),
+        }
+
+    async def _resume_pipeline(self, resume_info: dict, context: AgentContext) -> AgentResponse:
+        """Resume a pipeline from a checkpoint or failed stage."""
+        import json as _json
+
+        from sqlalchemy import select
+
+        from app.models.base import async_session_factory
+        from app.models.pipeline_run import PipelineRun
+
+        run_id = resume_info["pipeline_run_id"]
+        action = resume_info["action"]
+        modification = resume_info.get("modification", "")
+        wf_id = context.workflow_id
+
+        async with async_session_factory() as session:
+            result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+            pipeline_run = result.scalar_one_or_none()
+            if not pipeline_run:
+                return AgentResponse(
+                    answer="Could not find the pipeline to resume. Please try your question again.",
+                    workflow_id=wf_id,
+                    response_type="error",
+                )
+
+            plan = ExecutionPlan.from_json(pipeline_run.plan_json)
+            stage_results_raw = _json.loads(pipeline_run.stage_results_json)
+            user_feedback = _json.loads(pipeline_run.user_feedback_json)
+            current_idx = pipeline_run.current_stage_idx
+
+        cur_stage_id = plan.stages[current_idx].stage_id if current_idx < len(plan.stages) else ""
+        if modification:
+            user_feedback.append(
+                {
+                    "stage_id": cur_stage_id,
+                    "feedback_text": modification,
+                    "action": action,
+                }
+            )
+        elif action == "continue":
+            user_feedback.append(
+                {
+                    "stage_id": cur_stage_id,
+                    "feedback_text": "",
+                    "action": "continue",
+                }
+            )
+
+        stage_ctx = StageContext.from_persistence(
+            plan=plan,
+            stage_results_raw=stage_results_raw,
+            user_feedback=user_feedback,
+            current_stage_idx=current_idx,
+            pipeline_run_id=run_id,
+        )
+
+        resume_from = current_idx + 1 if action == "continue" else current_idx
+
+        executor = StageExecutor(
+            sql_agent=self._sql,
+            knowledge_agent=self._knowledge,
+            llm_router=self._llm,
+            tracker=self._tracker,
+            validator=StageValidator(),
+        )
+        exec_result = await executor.execute(
+            plan, context, resume_from=resume_from, stage_ctx=stage_ctx
+        )
+
+        await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
+
+        return self._build_pipeline_response(exec_result, wf_id, None, run_id)
+
+    async def _create_pipeline_run(
+        self,
+        context: AgentContext,
+        plan: ExecutionPlan,
+    ) -> Any:
+        """Create a PipelineRun DB record."""
+        from app.models.base import async_session_factory
+        from app.models.pipeline_run import PipelineRun
+
+        run = PipelineRun(
+            session_id=context.extra.get("session_id", ""),
+            user_question=context.user_question,
+            plan_json=plan.to_json(),
+            status="executing",
+        )
+
+        async with async_session_factory() as session:
+            session.add(run)
+            await session.commit()
+            await session.refresh(run)
+
+        return run
+
+    async def _persist_stage_results(
+        self,
+        run_id: str,
+        stage_ctx: StageContext,
+        user_feedback: list[dict] | None = None,
+    ) -> None:
+        """Update the PipelineRun with latest stage results."""
+        import json as _json
+
+        from sqlalchemy import update
+
+        from app.models.base import async_session_factory
+        from app.models.pipeline_run import PipelineRun
+
+        status = "executing"
+        if all(sr.status in ("success", "skipped") for sr in stage_ctx.results.values()) and len(
+            stage_ctx.results
+        ) == len(stage_ctx.plan.stages):
+            status = "completed"
+
+        async with async_session_factory() as session:
+            values: dict[str, Any] = {
+                "stage_results_json": _json.dumps(stage_ctx.to_persistence_dict(), default=str),
+                "current_stage_idx": stage_ctx.current_stage_idx,
+                "status": status,
+            }
+            if user_feedback is not None:
+                values["user_feedback_json"] = _json.dumps(user_feedback, default=str)
+            await session.execute(
+                update(PipelineRun).where(PipelineRun.id == run_id).values(**values)
+            )
+            await session.commit()
+
+    def _build_pipeline_response(
+        self,
+        exec_result: _StageExecutorResult,
+        wf_id: str,
+        staleness_warning: str | None,
+        pipeline_run_id: str,
+    ) -> AgentResponse:
+        """Convert a ``_StageExecutorResult`` into an ``AgentResponse``."""
+        last_sql_result = None
+        for stage in reversed(exec_result.stage_ctx.plan.stages):
+            sr = exec_result.stage_ctx.get_result(stage.stage_id)
+            if sr and sr.query_result:
+                last_sql_result = sr
+                break
+
+        if exec_result.status == "completed":
+            return AgentResponse(
+                answer=exec_result.final_answer,
+                query=last_sql_result.query if last_sql_result else None,
+                results=last_sql_result.query_result if last_sql_result else None,
+                workflow_id=wf_id,
+                staleness_warning=staleness_warning,
+                response_type="pipeline_complete",
+                viz_type="table" if last_sql_result else "text",
+                viz_config={"pipeline_run_id": pipeline_run_id},
+            )
+
+        if exec_result.status == "checkpoint":
+            cp = exec_result.checkpoint_result
+            preview = ""
+            if cp and cp.query_result:
+                preview = (
+                    f"Found {cp.query_result.row_count} rows "
+                    f"(columns: {', '.join(cp.query_result.columns)}). "
+                )
+            cp_stage = exec_result.checkpoint_stage
+            stage_desc = cp_stage.description if cp_stage else ""
+            return AgentResponse(
+                answer=(
+                    f"{preview}{stage_desc}\n\nDoes this look correct? "
+                    "You can **continue**, **modify** the request, "
+                    "or **retry** this stage."
+                ),
+                query=cp.query if cp else None,
+                results=cp.query_result if cp else None,
+                workflow_id=wf_id,
+                staleness_warning=staleness_warning,
+                response_type="stage_checkpoint",
+                viz_type="table" if cp and cp.query_result else "text",
+                viz_config={
+                    "pipeline_run_id": pipeline_run_id,
+                    "stage_id": cp_stage.stage_id if cp_stage else "",
+                },
+            )
+
+        # stage_failed
+        fail_msg = ""
+        if exec_result.failed_validation:
+            fail_msg = exec_result.failed_validation.error_summary
+        stage_desc = exec_result.failed_stage.description if exec_result.failed_stage else ""
+        return AgentResponse(
+            answer=f"Stage '{stage_desc}' failed: {fail_msg}\n\n"
+            "Would you like me to **retry** with a different approach, "
+            "or **modify** the request?",
+            workflow_id=wf_id,
+            staleness_warning=staleness_warning,
+            response_type="stage_failed",
+            viz_config={
+                "pipeline_run_id": pipeline_run_id,
+                "stage_id": exec_result.failed_stage.stage_id if exec_result.failed_stage else "",
+            },
+        )
+
     async def _llm_call_with_retry(
         self,
         messages: list[Message],
@@ -404,6 +762,12 @@ class OrchestratorAgent(BaseAgent):
                     "retrying",
                     f"Attempt {attempt} failed, retrying…",
                 )
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"Provider error, retrying (attempt {attempt + 1})…",
+                )
                 await asyncio.sleep(wait)
                 delay *= 2.0
             except LLMAllProvidersFailedError as exc:
@@ -422,12 +786,38 @@ class OrchestratorAgent(BaseAgent):
                     "retrying",
                     "All providers failed, retrying…",
                 )
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "All providers failed, retrying…",
+                )
                 await asyncio.sleep(delay)
                 delay *= 2.0
 
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("LLM call failed without exception")
+
+    def _emit_tool_result_thinking(
+        self,
+        wf_id: str,
+        label: str,
+        sub_result: Any,
+    ) -> None:
+        """Fire-and-forget a thinking event summarising a sub-agent result."""
+        detail = f"{label} finished"
+        if isinstance(sub_result, SQLAgentResult):
+            if sub_result.results:
+                rc = sub_result.results.row_count
+                cc = len(sub_result.results.columns)
+                detail = f"{label}: {rc} rows, {cc} columns returned"
+            elif sub_result.error:
+                detail = f"{label}: error — {sub_result.error[:80]}"
+        elif isinstance(sub_result, KnowledgeResult):
+            n = len(sub_result.sources)
+            detail = f"{label}: {n} source(s) found"
+        asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
@@ -454,15 +844,53 @@ class OrchestratorAgent(BaseAgent):
 
         Returns ``(result_text_for_llm, typed_sub_result_or_None)``.
         """
+        tool_labels = {
+            "query_database": "SQL Agent",
+            "search_codebase": "Knowledge Agent",
+            "manage_rules": "Rules Manager",
+            "query_mcp_source": "MCP Source Agent",
+            "ask_user": "Asking user for clarification",
+        }
+        brief = (tc.arguments or {}).get("question", "")[:80]
+        label = tool_labels.get(tc.name, tc.name)
+        desc = f"Calling {label}"
+        if brief:
+            desc += f": {brief}"
+        await self._tracker.emit(wf_id, "thinking", "in_progress", desc)
+
         if tc.name == "query_database":
-            return await self._handle_query_database(tc, context, wf_id, total_usage)
+            sql_text, sql_sub = await self._handle_query_database(
+                tc,
+                context,
+                wf_id,
+                total_usage,
+            )
+            self._emit_tool_result_thinking(wf_id, "SQL Agent", sql_sub)
+            return sql_text, sql_sub
         if tc.name == "search_codebase":
-            return await self._handle_search_codebase(tc, context, wf_id, total_usage)
+            kb_text, kb_sub = await self._handle_search_codebase(
+                tc,
+                context,
+                wf_id,
+                total_usage,
+            )
+            self._emit_tool_result_thinking(wf_id, "Knowledge Agent", kb_sub)
+            return kb_text, kb_sub
         if tc.name == "manage_rules":
-            text = await self._handle_manage_rules(tc.arguments or {}, context, wf_id)
-            return text, None
+            rules_text = await self._handle_manage_rules(
+                tc.arguments or {},
+                context,
+                wf_id,
+            )
+            return rules_text, None
         if tc.name == "query_mcp_source":
-            return await self._handle_query_mcp_source(tc, context, wf_id, total_usage)
+            mcp_text, mcp_sub = await self._handle_query_mcp_source(
+                tc,
+                context,
+                wf_id,
+                total_usage,
+            )
+            return mcp_text, mcp_sub
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
         logger.warning("Unknown meta-tool called: %s", tc.name)

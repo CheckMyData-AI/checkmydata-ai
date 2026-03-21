@@ -2048,7 +2048,7 @@ make test-frontend    # frontend vitest
 | Custom Rules | 16 (file loading, YAML, context generation, default template, DB rule IDs in context) | 9 (CRUD, access control, default rule auto-creation) |
 | Retry | 5 (success, retry, max attempts, callback) | — |
 | LLMRouter | 14 (primary succeeds, fallback on failure, all-fail raises LLMAllProvidersFailedError, non-retryable stops chain, retries within provider, fallback chain ordering/filtering/default, unknown provider, no keys, close, OpenRouter/OpenAI format messages) | — |
-| ConversationalAgent / OrchestratorAgent | 9 (text reply, text with connection, knowledge search, max iterations, error handling, LLM error friendly message, token accumulation, workflow_id, tool_call_log) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
+| ConversationalAgent / OrchestratorAgent | 12 (text reply, text with connection, knowledge search, max iterations, error handling, LLM error friendly message, token accumulation, workflow_id, tool_call_log, thinking events on tool call, thinking events on final answer, thinking includes tool name) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
 | ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
@@ -2084,7 +2084,7 @@ make test-frontend    # frontend vitest
 | Frontend (task-store) | 13 (processEvent lifecycle, pipeline filtering, step updates with/without pipeline field, completed/failed, auto-dismiss timers, seedFromApi merge, manual dismiss, untracked pipeline_end ignored) | — |
 | Frontend (ProjectSelector) | 8 (render, new button, list items, click selects project, edit form, delete button, create form, empty state) | — |
 | Frontend (ConnectionSelector) | 10 (render, create button, list items, DB type badge, test button, index button, sync button, delete button, form fields, DB type switch) | — |
-| Frontend (ChatPanel) | 8 (render, empty state, user/assistant messages, loading indicator, error display, scroll-to-bottom, input area) | — |
+| Frontend (ChatPanel) | 9 (render, empty state, user/assistant messages, loading indicator, error display, scroll-to-bottom, input area, thinking log bouncing dots) | — |
 | Frontend (ChatMessage) | 8 (user/assistant content, feedback buttons, no feedback for user, SQL query block, visualization, error+retry, markdown) | — |
 | Note Service | 10 (create, get, list_by_project, update, delete, update_result, filtering, ordering) | — |
 | Notes API | — | 12 (create, list, get, update, delete, execute, connection validation, membership checks, audit logging, auth) |
@@ -2106,6 +2106,7 @@ make test-frontend    # frontend vitest
 | DatabasePipeline | 8 (index delegates, error propagates, sync delegates, get_status combines/no index/no sync, source_type, constructor) | — |
 | MCPPipeline | 8 (index stores schemas/no tools/connection failure, sync noop, get_status with/without docs, source_type, constructor) | — |
 | Pipeline Registry | 6 (get database/mcp/unknown/case-insensitive, registry entries, subclass check) | — |
+| Multi-Stage Pipeline | 36 (complexity detection, plan validation, StageContext, StageValidator, QueryPlanner, StageExecutor, serialization, validation outcome) | — |
 | Frontend (AuthGate) | 8 (login/register form, inputs, submit, google SSO, error, loading, auth passthrough) | — |
 | Frontend (ChatInput) | 6 (render, typing, submit, empty guard, disabled, placeholder) | — |
 | Frontend (RulesManager) | 8 (new button, empty state, rule items, edit/delete buttons, create form, cancel edit) | — |
@@ -2356,6 +2357,67 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-21 — Multi-Stage Query Pipeline
+
+**Complex query decomposition:**
+
+- **QueryPlanner** (`backend/app/agents/query_planner.py`) — Detects complex queries using a fast heuristic (no LLM call) and decomposes them into 2-5 stages via a single LLM tool call. Each stage specifies the tool (query_database, search_codebase, analyze_results, synthesize), dependencies, validation criteria, and whether to checkpoint for user confirmation.
+
+- **StageExecutor** (`backend/app/agents/stage_executor.py`) — Executes pipeline stages sequentially with validation gates. On failure: retries up to `max_stage_retries` (default 2) with error context injected, then pauses for user intervention. On checkpoint: returns intermediate results for user review before continuing.
+
+- **StageValidator** (`backend/app/agents/stage_validator.py`) — Per-stage validation: expected columns, row count bounds, cross-stage consistency checks (e.g. `row_count <= stage1.row_count * 2`), and business rules (e.g. "no negative amounts").
+
+- **StageContext** (`backend/app/agents/stage_context.py`) — In-memory state carrying structured `QueryResult` objects between stages. Serialises to compact summaries for DB persistence; restores on resume.
+
+- **PipelineRun** (`backend/app/models/pipeline_run.py`) — DB model tracking execution plan, stage results, user feedback, and pipeline status. Auto-cleaned after `PIPELINE_RUN_TTL_DAYS` (default 7). Final answers are permanent in `chat_messages`.
+
+**Orchestrator integration:**
+
+- `OrchestratorAgent.run()` now detects complexity before entering the flat loop. Complex queries branch into QueryPlanner → StageExecutor. Simple queries are unaffected (zero overhead — heuristic only, no LLM call).
+- Pipeline resume: when a user responds to a checkpoint or failure, the orchestrator loads the `PipelineRun`, restores `StageContext` from persisted summaries, and resumes execution from the appropriate stage.
+- `ChatRequest` now accepts `pipeline_action`, `pipeline_run_id`, and `modification` fields for resume actions.
+
+**SSE events (backend):**
+
+- New event types: `plan`, `stage_start`, `stage_result`, `stage_validation`, `stage_complete`, `checkpoint`, `stage_retry`. Existing SSE events unchanged.
+
+**Frontend:**
+
+- **StageProgress** (`frontend/src/components/chat/StageProgress.tsx`) — Vertical step list showing per-stage status (pending/running/passed/failed/checkpoint/skipped), row counts, column names, and error messages. Checkpoint and failure states show Continue/Modify/Retry action buttons.
+- **ChatPanel** integration — Pipeline events update `StageProgress` in real-time. Checkpoint/failure actions send pipeline resume requests.
+
+**Prompts:**
+
+- Orchestrator system prompt now mentions multi-stage capabilities to set user expectations.
+- New planner prompt (`backend/app/agents/prompts/planner_prompt.py`) instructs the LLM to decompose queries with validation criteria and checkpoint placement.
+
+**Tests:**
+
+- 36 new tests in `backend/tests/unit/test_pipeline.py` covering: complexity detection, plan validation (cycles, missing deps, invalid tools), StageContext persistence roundtrip, StageValidator (columns, bounds, cross-stage), QueryPlanner (success, fallback, LLM failure), StageExecutor (checkpoint, resume, failure, validation retry), and serialization.
+
+| Component | Tests | Notes |
+|---|---|---|
+| ComplexityDetection | 5 | heuristic scoring |
+| PlanValidation | 6 | structure, cycles, deps |
+| StageContext | 4 | set/get, context builder, persistence |
+| StageValidator | 5 | columns, bounds, cross-stage, errors |
+| QueryPlanner | 4 | success, invalid, exception, no-tool |
+| StageExecutor | 5 | checkpoint, full run, resume, failure, retry |
+| Serialization | 5 | plan, result roundtrips |
+| ValidationOutcome | 3 | fail/warn/to_dict |
+
+### 2026-03-20 — Agent Thinking Stream
+
+**Real-time narration of agent reasoning in the chat UI:**
+
+- The orchestrator, SQL agent, and knowledge agent now emit lightweight `thinking` events via `WorkflowTracker.emit()` at every decision point: before/after LLM calls, tool selection rationale, sub-agent dispatch, query execution results, schema loading, validation outcomes, visualization selection, and error/retry paths.
+- A new SSE event type `thinking` is routed from the backend through `chat.py` to the frontend.
+- `frontend/src/lib/api.ts` `askStream` accepts an `onThinking` callback for receiving thinking events.
+- New `ThinkingLog` component (`frontend/src/components/chat/ThinkingLog.tsx`) renders a compact, auto-scrolling narration log with monospace font, max 120px height, animated entry dots, and the latest entry highlighted.
+- `ChatPanel` integrates `ThinkingLog` as the primary thinking indicator: bouncing dots appear until the first thinking event arrives, then the log takes over. Tool call indicators appear alongside the log. The log is cleared on each new user message and on response completion.
+- Backend: zero new infrastructure — reuses existing `tracker.emit()`. Frontend: capped at 50 entries to prevent memory bloat.
+- 3 new backend tests (`TestThinkingEvents`) verify thinking events are emitted on tool calls, final answers, and include tool names. 1 new frontend test verifies bouncing dots when no thinking log is present.
 
 ### 2026-03-20 — Token Usage Tracking and Statistics
 

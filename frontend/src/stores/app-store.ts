@@ -19,7 +19,7 @@ interface ChatMessage {
   error?: string | null;
   metadataJson?: string | null;
   stalenessWarning?: string | null;
-  responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request";
+  responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed";
   userRating?: number | null;
   toolCallsJson?: string | null;
   rawResult?: RawResult | null;

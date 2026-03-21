@@ -77,9 +77,17 @@ class KnowledgeAgent(BaseAgent):
         result = KnowledgeResult()
         tool_call_log: list[dict[str, Any]] = []
 
+        tracker = context.tracker
+        wf_id = context.workflow_id
         for iteration in range(self.MAX_ITERATIONS):
-            async with context.tracker.step(
-                context.workflow_id,
+            await tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"Knowledge Agent thinking (step {iteration + 1}/{self.MAX_ITERATIONS})…",
+            )
+            async with tracker.step(
+                wf_id,
                 "knowledge:llm_call",
                 f"Knowledge LLM call ({iteration + 1}/{self.MAX_ITERATIONS})",
             ):
@@ -93,6 +101,12 @@ class KnowledgeAgent(BaseAgent):
             self.accum_usage(total_usage, llm_resp.usage)
 
             if not llm_resp.tool_calls:
+                await tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Knowledge Agent composing answer…",
+                )
                 result.answer = llm_resp.content or ""
                 break
 
@@ -105,8 +119,14 @@ class KnowledgeAgent(BaseAgent):
             )
 
             for tc in llm_resp.tool_calls:
-                async with context.tracker.step(
-                    context.workflow_id,
+                await tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"Knowledge Agent → {tc.name}",
+                )
+                async with tracker.step(
+                    wf_id,
                     f"knowledge:tool:{tc.name}",
                     f"Knowledge tool: {tc.name}",
                 ):
@@ -195,6 +215,12 @@ class KnowledgeAgent(BaseAgent):
             sim = f" (similarity: {1 - distance:.2f})" if distance is not None else ""
             parts.append(f"### {source}{sim}\n{doc}")
 
+        await ctx.tracker.emit(
+            ctx.workflow_id,
+            "thinking",
+            "in_progress",
+            f"Found {len(filtered)} relevant document(s)",
+        )
         return f"Found {len(filtered)} relevant document(s):\n\n" + "\n\n".join(parts)
 
     async def _handle_get_entity_info(self, args: dict, ctx: AgentContext) -> str:
