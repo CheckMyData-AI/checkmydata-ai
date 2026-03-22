@@ -87,6 +87,15 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+    logger.info("Shutting down: closing LLM clients")
+    try:
+        llm_router = chat._agent._orchestrator._llm
+        await llm_router.stop_health_checks()
+        await llm_router.close()
+        logger.info("LLM router closed")
+    except Exception:
+        logger.exception("Error closing LLM router")
+
     logger.info("Shutting down: disconnecting connectors and tunnels")
     try:
         sql_agent = chat._agent._orchestrator._sql

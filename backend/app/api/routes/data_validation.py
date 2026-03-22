@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -30,7 +31,7 @@ class ValidateDataRequest(BaseModel):
     session_id: str
     message_id: str
     query: str
-    verdict: str  # confirmed | rejected | approximate | unknown
+    verdict: Literal["confirmed", "rejected", "approximate", "unknown"]
     metric_description: str = ""
     agent_value: str = ""
     user_expected_value: str | None = None

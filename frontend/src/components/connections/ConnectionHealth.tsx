@@ -47,7 +47,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
           onStatusChange?.(h.status as HealthStatus);
         }
       })
-      .catch(() => {});
+      .catch(() => { /* polling — suppress to avoid toast spam */ });
   }, [connectionId, onStatusChange]);
 
   useEffect(() => {

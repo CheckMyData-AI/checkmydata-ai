@@ -1354,7 +1354,7 @@ class OrchestratorAgent(BaseAgent):
                         "MCP source check failed; MCP tools unavailable this request",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Failed to emit MCP degradation warning", exc_info=True)
             return False
 
     def _has_knowledge_base(self, project_id: str) -> bool:
@@ -1384,7 +1384,7 @@ class OrchestratorAgent(BaseAgent):
                         "Schema map unavailable; SQL quality may be reduced",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Failed to emit schema-map degradation warning", exc_info=True)
             return ""
 
     async def _resolve_connection_id(
@@ -1506,5 +1506,5 @@ class OrchestratorAgent(BaseAgent):
                         "Staleness check failed; unable to verify knowledge base freshness",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Failed to emit staleness degradation warning", exc_info=True)
             return None

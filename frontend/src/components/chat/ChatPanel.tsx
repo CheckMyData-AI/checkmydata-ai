@@ -596,7 +596,7 @@ export function ChatPanel() {
             onClick={() => {
               api.connections.reconnect(activeConnection.id).then((r) => {
                 if (r.health) setConnHealthStatus(r.health.status);
-              }).catch(() => {});
+              }).catch((err) => toast(err instanceof Error ? err.message : "Reconnect failed", "error"));
             }}
             className="text-[10px] text-error hover:text-error/80 underline"
           >

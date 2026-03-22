@@ -42,14 +42,16 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
       {data.question_type === "yes_no" && (
         <div className="flex gap-2">
           <button
-            onClick={() => { setAnswer("Yes"); onSubmit("Yes"); setSubmitted(true); }}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-900/40 text-emerald-400 border border-emerald-800/40 hover:bg-emerald-900/60 transition-colors"
+            disabled={submitted}
+            onClick={() => { setSubmitted(true); setAnswer("Yes"); onSubmit("Yes"); }}
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-900/40 text-emerald-400 border border-emerald-800/40 hover:bg-emerald-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Yes
           </button>
           <button
-            onClick={() => { setAnswer("No"); onSubmit("No"); setSubmitted(true); }}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-red-900/40 text-red-400 border border-red-800/40 hover:bg-red-900/60 transition-colors"
+            disabled={submitted}
+            onClick={() => { setSubmitted(true); setAnswer("No"); onSubmit("No"); }}
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-red-900/40 text-red-400 border border-red-800/40 hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             No
           </button>
@@ -61,8 +63,9 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
           {data.options.map((option) => (
             <button
               key={option}
-              onClick={() => { setAnswer(option); onSubmit(option); setSubmitted(true); }}
-              className={`block w-full text-left px-3 py-2 rounded-md text-xs border transition-colors ${
+              disabled={submitted}
+              onClick={() => { setSubmitted(true); setAnswer(option); onSubmit(option); }}
+              className={`block w-full text-left px-3 py-2 rounded-md text-xs border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 answer === option
                   ? "border-blue-600 bg-blue-900/30 text-blue-300"
                   : "border-zinc-700/50 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"

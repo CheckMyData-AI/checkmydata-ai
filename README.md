@@ -2098,8 +2098,9 @@ src/
 | **Authorization** | Role-based access control per project: owner, editor, viewer. Membership checked via `MembershipService.require_role()`. See permission matrix below. |
 | **Project sharing** | Email-based invite system. Invites auto-accept on registration. Session isolation per user. |
 | **Encryption at rest** | Fernet (AES-128-CBC + HMAC-SHA256) for SSH keys, passwords, connection strings |
-| **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing |
-| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat, 10/min note execute |
+| **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing. Applied to all execution paths: agent queries, note execution, scheduled queries, and MCP raw queries. |
+| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat, 10/min note execute, 5/min change-password, 3/min delete-account, 10/min create-session, 10/min accept-invite |
+| **MCP authentication** | API key or JWT required for all MCP tool calls. Anonymous access is rejected when no credentials are provided. |
 | **CORS** | Configurable origins via `CORS_ORIGINS` env var |
 | **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). `get_decrypted()` enforces ownership when `user_id` is provided. |
 | **Shell injection prevention** | SSH exec template variables (`db_name`, `db_user`, `db_host`, `db_password`) are shell-escaped via single-quoting before substitution. Queries are piped via stdin. |
@@ -2294,11 +2295,11 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 1,921 across 123 test files
-- Backend integration tests: 391 across 41 test files
+- Backend unit tests: 1,952 across 128 test files
+- Backend integration tests: 411 across 47 test files
 - Frontend tests: 345 across 39 test files
-- **Grand total: 2,657 tests**
-- Backend coverage: 70% combined (68.5% unit-only; enforced CI minimum: 68%)
+- **Grand total: 2,708 tests**
+- Backend coverage: 70%+ combined (69% unit-only; enforced CI minimum: 68%)
 - Zero flaky tests, zero skipped tests
 - Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 
@@ -2783,6 +2784,27 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-22 — Security, Reliability, and UX Hardening (Iteration 1)
+
+**Security fixes (backend):**
+
+- **backup_manager.py:** Eliminated command injection vulnerability — `pg_dump` no longer uses `shell=True`; replaced with subprocess pipe chain using argument lists.
+- **data_validation.py:** `ValidateDataRequest.verdict` now enforced via `Literal["confirmed","rejected","approximate","unknown"]` instead of accepting any string.
+
+**Reliability fixes (backend):**
+
+- **main.py:** Lifespan shutdown now closes LLM router HTTP clients and stops background health checks before disposing the DB engine, preventing resource leaks.
+- **auth.py:** `delete_account` wrapped in `begin_nested()` transaction for atomicity across all three delete operations.
+- **chat.py:** `_SQL_EXPLAIN_CACHE` protected with `asyncio.Lock` to prevent corruption under concurrent requests.
+- **orchestrator.py, core/orchestrator.py:** Replaced silent `except Exception: pass` blocks with `logger.debug`/`logger.warning` calls so failures are observable.
+
+**UX fixes (frontend):**
+
+- **api.ts:** `askStream` now has a 120-second idle timeout that resets on each received chunk; user sees a clear timeout error instead of indefinite hang.
+- **RulesManager, ClarificationCard, WrongDataModal:** Added `disabled` states during async operations to prevent double-submit.
+- **WrongDataModal:** Added `role="dialog"`, `aria-modal`, Escape-to-close, click-outside-to-close, and `mountedRef` guard to prevent state updates after unmount.
+- **ChatPanel, KnowledgeDocs, RulesManager, Sidebar, DashboardBuilder:** Replaced silent `.catch(() => {})` with toast error notifications for API failures.
 
 ### 2026-03-21 — Bulk Operations and Batch Query Execution
 

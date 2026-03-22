@@ -20,6 +20,7 @@ import { Icon } from "./ui/Icon";
 import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 import { useLogStore } from "@/stores/log-store";
+import { toast } from "@/stores/toast-store";
 import { AccountMenu } from "./auth/AccountMenu";
 import { UsageStatsPanel } from "./usage/UsageStatsPanel";
 import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
@@ -161,7 +162,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     api.sshKeys
       .list()
       .then(setSshKeys)
-      .catch(() => {});
+      .catch((err) => toast(err instanceof Error ? err.message : "Failed to load SSH keys", "error"));
   }, [setSshKeys]);
 
   const toggleCollapsed = () => {

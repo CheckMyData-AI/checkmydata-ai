@@ -231,14 +231,15 @@ async def delete_account(
 
     user_id = current_user["user_id"]
 
-    owned_project_ids_q = select(Project.id).where(Project.owner_id == user_id)
-    owned_ids = (await db.execute(owned_project_ids_q)).scalars().all()
-    if owned_ids:
-        await db.execute(delete(Project).where(Project.id.in_(owned_ids)))
+    async with db.begin_nested():
+        owned_project_ids_q = select(Project.id).where(Project.owner_id == user_id)
+        owned_ids = (await db.execute(owned_project_ids_q)).scalars().all()
+        if owned_ids:
+            await db.execute(delete(Project).where(Project.id.in_(owned_ids)))
 
-    await db.execute(delete(ProjectMember).where(ProjectMember.user_id == user_id))
+        await db.execute(delete(ProjectMember).where(ProjectMember.user_id == user_id))
+        await db.execute(delete(User).where(User.id == user_id))
 
-    await db.execute(delete(User).where(User.id == user_id))
     await db.commit()
 
     logger.info("Account deleted: user_id=%s", user_id)

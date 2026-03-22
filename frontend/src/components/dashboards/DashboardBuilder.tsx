@@ -46,7 +46,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
 
   useEffect(() => {
     if (!activeProject) return;
-    api.notes.list(activeProject.id, "all").then(setNotes).catch(() => {});
+    api.notes.list(activeProject.id, "all").then(setNotes).catch((err) => toast(err instanceof Error ? err.message : "Failed to load notes", "error"));
   }, [activeProject]);
 
   const noteMap = Object.fromEntries(notes.map((n) => [n.id, n]));
@@ -117,7 +117,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
     }
     setRefreshing(false);
     if (activeProject) {
-      api.notes.list(activeProject.id, "all").then(setNotes).catch(() => {});
+      api.notes.list(activeProject.id, "all").then(setNotes).catch((err) => toast(err instanceof Error ? err.message : "Failed to reload notes", "error"));
     }
     toast(`Refreshed: ${ok} succeeded${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "info");
   }, [cards, noteMap, activeProject]);

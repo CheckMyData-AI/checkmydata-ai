@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
@@ -40,6 +40,43 @@ export function WrongDataModal({
   const [investigationId, setInvestigationId] = useState<string | null>(null);
   const [investigation, setInvestigation] = useState<Record<string, unknown> | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const mountedRef = useRef(true);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
+
+  const pollInvestigation = useCallback(async (id: string) => {
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (!mountedRef.current) return;
+      try {
+        const inv = await api.dataValidation.getInvestigation(id);
+        if (!mountedRef.current) return;
+        setInvestigation(inv);
+        if (inv.status === "presenting_fix" || inv.status === "resolved" || inv.status === "failed") {
+          setStep("results");
+          return;
+        }
+      } catch {
+        break;
+      }
+    }
+  }, []);
 
   const handleStartInvestigation = async () => {
     const { activeProject, activeConnection } = useAppStore.getState();
@@ -57,38 +94,25 @@ export function WrongDataModal({
         expected_value: expectedValue || undefined,
         problematic_column: problematicColumn || undefined,
       });
+      if (!mountedRef.current) return;
       setInvestigationId(res.investigation_id);
       setStep("investigating");
       pollInvestigation(res.investigation_id);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to start investigation", "error");
     } finally {
-      setSubmitting(false);
+      if (mountedRef.current) setSubmitting(false);
     }
   };
 
-  const pollInvestigation = async (id: string) => {
-    const maxAttempts = 30;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const inv = await api.dataValidation.getInvestigation(id);
-        setInvestigation(inv);
-        if (inv.status === "presenting_fix" || inv.status === "resolved" || inv.status === "failed") {
-          setStep("results");
-          return;
-        }
-      } catch {
-        break;
-      }
-    }
-  };
+  const [confirming, setConfirming] = useState(false);
 
   const handleConfirmFix = async (accepted: boolean) => {
-    if (!investigationId) return;
+    if (!investigationId || confirming) return;
     const { activeProject } = useAppStore.getState();
     if (!activeProject) return;
 
+    setConfirming(true);
     try {
       await api.dataValidation.confirmFix(investigationId, {
         accepted,
@@ -103,12 +127,14 @@ export function WrongDataModal({
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to confirm", "error");
+    } finally {
+      setConfirming(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg mx-4 bg-zinc-900 rounded-xl border border-zinc-700/50 shadow-2xl max-h-[80vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Report Incorrect Data" tabIndex={-1} className="w-full max-w-lg mx-4 bg-zinc-900 rounded-xl border border-zinc-700/50 shadow-2xl max-h-[80vh] overflow-y-auto focus:outline-none">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-800">
           <h3 className="text-sm font-semibold text-zinc-200">Report Incorrect Data</h3>
@@ -197,13 +223,15 @@ export function WrongDataModal({
               <div className="flex gap-2">
                 <button
                   onClick={() => handleConfirmFix(true)}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                  disabled={confirming}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Accept Fix
+                  {confirming ? "Saving..." : "Accept Fix"}
                 </button>
                 <button
                   onClick={() => handleConfirmFix(false)}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-red-800/40 text-red-400 hover:bg-red-900/20 transition-colors"
+                  disabled={confirming}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-red-800/40 text-red-400 hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Still Wrong
                 </button>

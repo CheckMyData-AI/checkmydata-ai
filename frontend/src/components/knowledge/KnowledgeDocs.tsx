@@ -45,7 +45,7 @@ export function KnowledgeDocs() {
     api.repos
       .docs(activeProject.id)
       .then((d) => { if (!cancelled) setDocs(d); })
-      .catch(() => {})
+      .catch((err) => { if (!cancelled) toast(err instanceof Error ? err.message : "Failed to load docs", "error"); })
       .finally(() => { if (!cancelled) setListLoading(false); });
     return () => { cancelled = true; };
   }, [activeProject]);

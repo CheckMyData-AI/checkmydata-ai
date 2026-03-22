@@ -626,7 +626,7 @@ class Orchestrator:
             try:
                 await old_connector.disconnect()
             except Exception:
-                pass
+                logger.warning("Error disconnecting old connector for %s", key)
         connector = await self.get_or_create_connector(connection_config)
         schema = await connector.introspect_schema()
         self._schema_cache[key] = (schema, time.monotonic())
@@ -637,6 +637,6 @@ class Orchestrator:
             try:
                 await connector.disconnect()
             except Exception:
-                pass
+                logger.warning("Error disconnecting connector during shutdown")
         self._connectors.clear()
         self._schema_cache.clear()

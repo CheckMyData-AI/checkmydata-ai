@@ -50,6 +50,7 @@ _suggestion_engine = SuggestionEngine()
 
 _SQL_EXPLAIN_CACHE: OrderedDict[str, dict] = OrderedDict()
 _SQL_EXPLAIN_CACHE_MAX = 100
+_SQL_EXPLAIN_CACHE_LOCK = asyncio.Lock()
 
 
 def _compute_sql_complexity(sql: str) -> str:
@@ -1485,9 +1486,10 @@ async def explain_sql(
     complexity = _compute_sql_complexity(body.sql)
     cache_key = hashlib.sha256(body.sql.strip().encode()).hexdigest()
 
-    if cache_key in _SQL_EXPLAIN_CACHE:
-        _SQL_EXPLAIN_CACHE.move_to_end(cache_key)
-        return _SQL_EXPLAIN_CACHE[cache_key]
+    async with _SQL_EXPLAIN_CACHE_LOCK:
+        if cache_key in _SQL_EXPLAIN_CACHE:
+            _SQL_EXPLAIN_CACHE.move_to_end(cache_key)
+            return _SQL_EXPLAIN_CACHE[cache_key]
 
     project = await _project_svc.get(db, body.project_id)
     provider = (project.agent_llm_provider if project else None) or None
@@ -1523,9 +1525,10 @@ async def explain_sql(
 
     result = {"explanation": explanation, "complexity": complexity}
 
-    _SQL_EXPLAIN_CACHE[cache_key] = result
-    if len(_SQL_EXPLAIN_CACHE) > _SQL_EXPLAIN_CACHE_MAX:
-        _SQL_EXPLAIN_CACHE.popitem(last=False)
+    async with _SQL_EXPLAIN_CACHE_LOCK:
+        _SQL_EXPLAIN_CACHE[cache_key] = result
+        if len(_SQL_EXPLAIN_CACHE) > _SQL_EXPLAIN_CACHE_MAX:
+            _SQL_EXPLAIN_CACHE.popitem(last=False)
 
     return result
 

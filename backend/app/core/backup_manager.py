@@ -111,17 +111,35 @@ class BackupManager:
                 raw_url = "postgresql://" + raw_url[len(prefix) :]
                 break
 
-        result = await asyncio.to_thread(
-            subprocess.run,
-            f'pg_dump "{raw_url}" | gzip > "{backup_file}"',
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+        def _run_pg_dump() -> subprocess.CompletedProcess[bytes]:
+            pg = subprocess.Popen(
+                ["pg_dump", raw_url],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            gz = subprocess.Popen(
+                ["gzip"],
+                stdin=pg.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if pg.stdout:
+                pg.stdout.close()
+            gz_out, gz_err = gz.communicate(timeout=300)
+            pg.wait(timeout=10)
+            backup_file.write_bytes(gz_out)
+            return subprocess.CompletedProcess(
+                args=["pg_dump"],
+                returncode=pg.returncode or gz.returncode,
+                stderr=(pg.stderr.read() if pg.stderr else b"") + (gz_err or b""),
+            )
+
+        result = await asyncio.to_thread(_run_pg_dump)
 
         if result.returncode != 0:
-            manifest["errors"].append(f"pg_dump failed: {result.stderr[:500]}")
+            stderr = result.stderr
+            err_msg = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
+            manifest["errors"].append(f"pg_dump failed: {err_msg[:500]}")
             return 0
 
         size = backup_file.stat().st_size if backup_file.exists() else 0

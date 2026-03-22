@@ -724,6 +724,15 @@ export const api = {
       onToken?: (chunk: string) => void,
     ) => {
       const ctrl = new AbortController();
+      const STREAM_IDLE_TIMEOUT_MS = 120_000;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          ctrl.abort("Stream idle timeout");
+        }, STREAM_IDLE_TIMEOUT_MS);
+      };
+      resetIdleTimer();
       const streamPromise = fetch(`${API_BASE}/chat/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -749,6 +758,7 @@ export const api = {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          resetIdleTimer();
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split("\n\n");
           buffer = parts.pop() || "";
@@ -773,9 +783,15 @@ export const api = {
           }
         }
       }).catch((err) => {
-        if (err.name === "AbortError" || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        if (err.name === "AbortError" || (err instanceof DOMException && err.name === "AbortError")) {
+          if (String(err.message || err).includes("idle timeout")) {
+            onError({ error: "Stream timed out", error_type: "timeout", is_retryable: true, user_message: "The response timed out. Please try again." });
+          }
+          return;
+        }
         onError({ error: String(err), error_type: "network", is_retryable: true, user_message: "An unexpected error occurred. Please try again." });
-      });
+      }).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
       return Object.assign(ctrl, { done: streamPromise });
     },
   },
