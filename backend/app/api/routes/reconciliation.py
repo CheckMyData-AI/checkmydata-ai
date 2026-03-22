@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +92,30 @@ class ReconcileFullRequest(BaseModel):
 _engine = ReconciliationEngine()
 
 
+async def _validate_connection_ownership(
+    db: AsyncSession,
+    project_id: str,
+    connection_id: str,
+    label: str,
+) -> None:
+    """Verify a connection belongs to the given project."""
+    from sqlalchemy import select
+
+    from app.models.connection import Connection
+
+    result = await db.execute(
+        select(Connection.id).where(
+            Connection.id == connection_id,
+            Connection.project_id == project_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} connection does not belong to this project",
+        )
+
+
 @router.post("/{project_id}/row-counts")
 async def reconcile_row_counts(
     project_id: str,
@@ -102,6 +126,8 @@ async def reconcile_row_counts(
     """Compare row counts between two data sources."""
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _validate_connection_ownership(db, project_id, req.source_a_connection_id, "Source A")
+    await _validate_connection_ownership(db, project_id, req.source_b_connection_id, "Source B")
 
     discrepancies = _engine.reconcile_row_counts(
         req.source_a_name,
@@ -130,6 +156,8 @@ async def reconcile_values(
     """Compare aggregate metric values between two data sources."""
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _validate_connection_ownership(db, project_id, req.source_a_connection_id, "Source A")
+    await _validate_connection_ownership(db, project_id, req.source_b_connection_id, "Source B")
 
     discrepancies = _engine.reconcile_aggregate_values(
         req.source_a_name,
@@ -158,6 +186,8 @@ async def reconcile_schemas(
     """Compare table schemas (column lists) between two data sources."""
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _validate_connection_ownership(db, project_id, req.source_a_connection_id, "Source A")
+    await _validate_connection_ownership(db, project_id, req.source_b_connection_id, "Source B")
 
     discrepancies = _engine.reconcile_schemas(
         req.source_a_name,
@@ -189,6 +219,8 @@ async def reconcile_full(
     """
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _validate_connection_ownership(db, project_id, req.source_a_connection_id, "Source A")
+    await _validate_connection_ownership(db, project_id, req.source_b_connection_id, "Source B")
 
     all_discrepancies: list = []
     total_checks = 0

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
@@ -33,6 +33,24 @@ async def explore_project(
     """
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    if connection_id:
+        connection_id = validate_safe_id(connection_id, "connection_id")
+        from sqlalchemy import select
+
+        from app.models.connection import Connection
+
+        conn_check = await db.execute(
+            select(Connection.id).where(
+                Connection.id == connection_id,
+                Connection.project_id == project_id,
+            )
+        )
+        if not conn_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Connection does not belong to this project",
+            )
 
     from app.core.insight_memory import InsightMemoryService
 

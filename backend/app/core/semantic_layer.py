@@ -13,6 +13,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import sqlalchemy.exc
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -347,7 +349,7 @@ class SemanticLayerService:
                                 ),
                                 confidence=norm.confidence,
                             )
-                        except Exception:
+                        except (ValueError, KeyError, sqlalchemy.exc.IntegrityError):
                             logger.debug(
                                 "Failed to add same_entity relationship",
                                 exc_info=True,
