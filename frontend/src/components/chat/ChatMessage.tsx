@@ -13,12 +13,9 @@ import { toast } from "@/stores/toast-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { Icon } from "@/components/ui/Icon";
 import { ClarificationCard } from "./ClarificationCard";
-import { DataValidationCard } from "./DataValidationCard";
-import { FollowupChips } from "./SuggestionChips";
 import { InsightCards, type Insight } from "./InsightCards";
 import { SQLExplainer } from "./SQLExplainer";
 import { VerificationBadge } from "./VerificationBadge";
-import { WrongDataModal } from "./WrongDataModal";
 
 const mdComponents: Components = {
   p: ({ children }) => <p className="text-sm mb-2 last:mb-0">{children}</p>,
@@ -161,14 +158,12 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     }
   }
 
-  const [wrongDataOpen, setWrongDataOpen] = useState(false);
-
   const responseType = message.responseType || metadata?.response_type || "text";
   const isSqlResult = responseType === "sql_result";
   const isClarification = responseType === "clarification_request";
   const hasViz = !!message.visualization;
   const hasRawResult = !!message.rawResult;
-  const resultColumns = message.rawResult?.columns ?? [];
+
 
   const originalVizType = resolveOriginalVizType(message.visualization, metadata?.viz_type);
   const [activeVizType, setActiveVizType] = useState<VizTypeKey>(originalVizType);
@@ -207,6 +202,26 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     try {
       await api.chat.submitFeedback(message.id, rating);
       setUserRating(rating);
+
+      if (isSqlResult && message.query && sessionId) {
+        const { activeProject, activeConnection } = useAppStore.getState();
+        if (activeProject) {
+          api.dataValidation.validateData({
+            connection_id: activeConnection?.id ?? "",
+            session_id: sessionId,
+            message_id: message.id,
+            query: message.query,
+            verdict: rating === 1 ? "confirmed" : "rejected",
+            project_id: activeProject.id,
+          }).catch(() => {});
+        }
+      }
+
+      if (rating === -1 && isSqlResult && onSendMessage) {
+        onSendMessage(
+          "I flagged the previous query result as incorrect. Please investigate what might be wrong and suggest a corrected query."
+        );
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
     } finally {
@@ -587,16 +602,6 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </button>
-                <button
-                  onClick={() => setWrongDataOpen(true)}
-                  aria-label="Report wrong data"
-                  className="p-1 rounded transition-colors text-zinc-500 hover:text-amber-400 hover:bg-amber-900/20 ml-0.5"
-                  title="Report wrong data"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </button>
               </>
             )}
           </div>
@@ -633,52 +638,6 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               </div>
             ) : null}
           </div>
-        )}
-
-        {/* Quick exploration actions for SQL results */}
-        {isSqlResult && hasRawResult && onSendMessage && (
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {[
-              { label: "Top 10", prompt: `Show me only the top 10 rows from the previous result` },
-              { label: "Group by", prompt: `Group the previous result by the first text column and show counts` },
-              { label: "Sort desc", prompt: `Sort the previous result by the first numeric column in descending order` },
-            ].map((action) => (
-              <button
-                key={action.label}
-                onClick={() => onSendMessage(action.prompt)}
-                className="shrink-0 text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
-              >
-                {action.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {!isUser && metadata?.suggested_followups && metadata.suggested_followups.length > 0 && onSendMessage && (
-          <FollowupChips
-            followups={metadata.suggested_followups}
-            onSelect={onSendMessage}
-          />
-        )}
-
-        {/* Data validation card for sql_result messages */}
-        {isSqlResult && message.query && sessionId && (
-          <DataValidationCard
-            messageId={message.id}
-            query={message.query}
-            sessionId={sessionId}
-          />
-        )}
-
-        {/* Wrong Data investigation modal */}
-        {wrongDataOpen && isSqlResult && message.query && sessionId && (
-          <WrongDataModal
-            messageId={message.id}
-            query={message.query}
-            sessionId={sessionId}
-            resultColumns={resultColumns}
-            onClose={() => setWrongDataOpen(false)}
-          />
         )}
 
         {/* Metadata badges */}

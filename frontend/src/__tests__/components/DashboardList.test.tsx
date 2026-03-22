@@ -103,14 +103,12 @@ describe("DashboardList", () => {
     expect(screen.getByText("Second")).toBeInTheDocument();
   });
 
-  it("opens DashboardBuilder when New Dashboard is clicked", async () => {
-    const user = userEvent.setup();
+  it("opens DashboardBuilder when createRequested is true", async () => {
     vi.mocked(api.dashboards.list).mockResolvedValue([]);
-    await renderList();
+    const { DashboardList } = await import("@/components/dashboards/DashboardList");
+    render(<DashboardList createRequested={true} onCreateHandled={() => {}} />);
     await waitFor(() => {
-      expect(screen.getByText("No dashboards yet")).toBeInTheDocument();
+      expect(screen.getByTestId("dashboard-builder")).toBeInTheDocument();
     });
-    await user.click(screen.getByRole("button", { name: /New Dashboard/i }));
-    expect(screen.getByTestId("dashboard-builder")).toBeInTheDocument();
   });
 });

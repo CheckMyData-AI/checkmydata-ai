@@ -149,13 +149,15 @@ async function renderSelector() {
 describe("ConnectionSelector", () => {
   it("renders connection selector section", async () => {
     await renderSelector();
-    expect(screen.getByText("New")).toBeInTheDocument();
+    expect(document.querySelector("[class*='px-1']")).toBeInTheDocument();
   });
 
-  it("shows create/add button", async () => {
-    await renderSelector();
-    const newBtn = screen.getByText("New");
-    expect(newBtn).toBeInTheDocument();
+  it("opens create form when createRequested is true", async () => {
+    const { ConnectionSelector } = await import("@/components/connections/ConnectionSelector");
+    const onHandled = vi.fn();
+    render(<ConnectionSelector createRequested={true} onCreateHandled={onHandled} />);
+    expect(onHandled).toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Host")).toBeInTheDocument();
   });
 
   it("connection list renders items", async () => {
@@ -230,8 +232,8 @@ describe("ConnectionSelector", () => {
   });
 
   it("create form has host, port, database fields", async () => {
-    await renderSelector();
-    await userEvent.click(screen.getByText("New"));
+    const { ConnectionSelector } = await import("@/components/connections/ConnectionSelector");
+    render(<ConnectionSelector createRequested={true} onCreateHandled={() => {}} />);
 
     expect(screen.getByPlaceholderText("Host")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Port")).toBeInTheDocument();
@@ -239,8 +241,8 @@ describe("ConnectionSelector", () => {
   });
 
   it("switching DB type changes default port", async () => {
-    await renderSelector();
-    await userEvent.click(screen.getByText("New"));
+    const { ConnectionSelector } = await import("@/components/connections/ConnectionSelector");
+    render(<ConnectionSelector createRequested={true} onCreateHandled={() => {}} />);
 
     const typeSelect = screen.getByLabelText("Database type");
     expect(screen.getByLabelText("Database port")).toHaveValue("5432");

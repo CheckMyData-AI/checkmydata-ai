@@ -7,15 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- CI coverage threshold raised from 68% to 69%
+- CI coverage threshold raised from 69% to 70%
+- **Chat feedback redesign** — Removed quick-action chips, FollowupChips, DataValidationCard, and WrongDataModal from chat messages. Thumbs up/down now record data validation and thumbs down auto-triggers agent investigation in chat
+- **Sidebar "+New" redesign** — Moved all "+New" buttons from section content into section header "+" icons that appear only when expanded. Applies to Projects, Connections, Chat History, Rules, Schedules, and Dashboards
 
 ### Fixed
 - Recreated backend venv to fix stale shebangs from old project path
+- **InsightFeedPanel** now shows "Couldn't load insights" with Retry when API fails (previously showed misleading empty state)
+- **DashboardList** now shows "Couldn't load dashboards" with Retry when API fails (previously showed misleading empty state)
+- **ConnectionSelector** now shows "No connections yet" empty state when no connections exist
+- **VizRenderer** now shows "Visualization data unavailable" instead of rendering nothing when payload is missing
+- **test_alembic.py** — use `sys.executable -m alembic` instead of bare `alembic` CLI to avoid picking up system Python outside venv
 
 ### Tests
 - batch_service.py: 46% -> 100% coverage (9 new tests for execute_batch)
 - code_db_sync_service.py: 55% -> 93% coverage (39 new tests — CRUD, status helpers, runtime enrichment, formatting)
-- Overall backend coverage: 68.78% -> 69.42%
+- connection_service.py: 69% -> 99% coverage (20 new tests — test_ssh full flow, to_config error paths, update extended fields, pagination)
+- project_overview_service.py: 67% -> 93% coverage (24 new tests — save_overview, _split_overview_sections, _hash_section, notes section, edge cases)
+- viz/export.py: 68% -> 100% (xlsx export test), viz/utils.py: 83% -> 100% (serialize_value edge cases)
+- Overall backend coverage: 68.78% -> 72.13%
 
 ### Added
 - Open-source repository documentation (CONTRIBUTING, ARCHITECTURE, API, etc.)

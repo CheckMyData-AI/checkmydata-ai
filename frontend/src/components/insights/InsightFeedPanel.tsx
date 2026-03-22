@@ -193,11 +193,13 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
     by_severity: Record<string, number>;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [filter, setFilter] = useState<string>("all");
 
   const loadInsights = useCallback(async () => {
     if (!activeProject) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const params: Record<string, string> = {};
       if (filter !== "all") params.severity = filter;
@@ -208,7 +210,7 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
       setInsights(data);
       setSummary(sum);
     } catch {
-      /* endpoint may not exist yet — silently degrade */
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -309,7 +311,22 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
           </div>
         )}
 
-        {!loading && insights.length === 0 && (
+        {!loading && loadError && insights.length === 0 && (
+          <div className="text-center py-8 px-4">
+            <Icon name="alert-triangle" size={24} className="mx-auto text-warning mb-2" />
+            <p className="text-xs text-text-tertiary mb-2">
+              Couldn&apos;t load insights
+            </p>
+            <button
+              onClick={loadInsights}
+              className="text-[11px] text-accent hover:text-accent-hover transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {!loading && !loadError && insights.length === 0 && (
           <div className="text-center py-8 px-4">
             <Icon name="zap" size={24} className="mx-auto text-text-muted mb-2" />
             <p className="text-xs text-text-tertiary">

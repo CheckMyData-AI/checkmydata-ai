@@ -10,10 +10,11 @@ from app.viz.chart import (
     generate_pie_chart,
     generate_scatter,
 )
-from app.viz.export import export_csv, export_json
+from app.viz.export import export_csv, export_json, export_xlsx
 from app.viz.renderer import render
 from app.viz.table import format_table
 from app.viz.text import format_text
+from app.viz.utils import serialize_value
 
 
 def _sample_result():
@@ -165,6 +166,33 @@ class TestExport:
         data = json.loads(json_str)
         assert len(data) == 3
         assert data[0]["name"] == "Alice"
+
+    def test_xlsx(self):
+        xlsx_bytes = export_xlsx(_sample_result())
+        assert isinstance(xlsx_bytes, bytes)
+        assert len(xlsx_bytes) > 0
+
+
+class TestSerializeValue:
+    def test_none(self):
+        assert serialize_value(None) is None
+
+    def test_primitives(self):
+        assert serialize_value(42) == 42
+        assert serialize_value(3.14) == 3.14
+        assert serialize_value("hello") == "hello"
+        assert serialize_value(True) is True
+
+    def test_decimal(self):
+        from decimal import Decimal
+        assert serialize_value(Decimal("19.99")) == 19.99
+
+    def test_bytes(self):
+        assert serialize_value(b"\xab\xcd") == "abcd"
+
+    def test_fallback_to_str(self):
+        from datetime import date
+        assert serialize_value(date(2026, 1, 1)) == "2026-01-01"
 
 
 class TestBuildRawResult:

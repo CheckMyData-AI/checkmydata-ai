@@ -4,6 +4,51 @@ Changes made by the continuous improvement agent.
 
 ---
 
+## Cycle 3 — Quality & Reliability — 2026-03-22
+
+### UX Fixes
+- **InsightFeedPanel**: Added `loadError` state tracking. API failure now shows "Couldn't load insights" + Retry button instead of misleading "No insights yet" empty state.
+- **DashboardList**: Added `loadError` state tracking. API failure now shows "Couldn't load dashboards" + Retry button instead of misleading "No dashboards yet" empty state.
+- **ConnectionSelector**: Added empty state rendering ("No connections yet") when `connections.length === 0` and form is closed.
+- **VizRenderer**: Returns helpful "Visualization data unavailable" message instead of `null` when payload is missing.
+
+### Backend Test Coverage
+| Service | Before | After | Tests Added |
+|---------|--------|-------|-------------|
+| connection_service.py | 69% | 99% | 20 (test_ssh, to_config errors, update extended, pagination) |
+| project_overview_service.py | 67% | 93% | 24 (save_overview, split sections, hash, notes, edge cases) |
+| viz/export.py | 68% | 100% | 1 (xlsx export) |
+| viz/utils.py | 83% | 100% | 6 (serialize_value: Decimal, bytes, fallback) |
+
+### CI/CD
+- Coverage threshold raised from 69% to 70%.
+- Total backend unit tests: 2132 → 2181 (+49).
+- Overall coverage: 69.42% → 70.03%.
+
+---
+
+## UI Redesign — 2026-03-22
+
+### Chat Message Feedback
+
+- **Removed 4 UI blocks** from `ChatMessage.tsx`: quick-action chips ("Top 10", "Group by", "Sort desc"), FollowupChips (AI-generated suggestions), DataValidationCard ("Do these numbers look right?"), WrongDataModal ("Report Incorrect Data" dialog), and the "Report wrong data" icon button.
+- **Enhanced `handleFeedback`** — Thumbs up on SQL results now records `verdict: "confirmed"` via `api.dataValidation.validateData`. Thumbs down records `verdict: "rejected"` and auto-sends an investigation prompt to the agent in chat.
+- **Removed imports** for `DataValidationCard`, `FollowupChips`, `WrongDataModal`, and the `wrongDataOpen` state.
+
+### Sidebar "+New" Pattern
+
+- **`SidebarSection.tsx`** — Added `open &&` guard so the "+" action button only renders when the section is expanded.
+- **6 child components** (`ProjectSelector`, `ConnectionSelector`, `ChatSessionList`, `RulesManager`, `ScheduleManager`, `DashboardList`) — Added `createRequested` / `onCreateHandled` props and removed their internal "+New" buttons.
+- **`Sidebar.tsx`** — Added create-request state and `action` prop for all 6 sections (Projects, Connections, Chat History, Custom Rules, Schedules, Dashboards) in both mobile and desktop views.
+
+### Tests
+
+- **ChatMessage.test.tsx** — Removed 2 FollowupChips tests, removed FollowupChips mock, added `dataValidation.validateData` to API mock, added `sessionId` to render helper, added 3 new tests (thumbs down auto-sends, thumbs up confirms, thumbs down on non-SQL doesn't send).
+- **6 component test files updated** — `ChatSessionList`, `ConnectionSelector`, `ProjectSelector`, `RulesManager`, `ScheduleManager`, `DashboardList` tests updated to use `createRequested` prop instead of clicking removed "+New" buttons.
+- All 39 test files pass (346 tests).
+
+---
+
 ## Cycle 2 — 2026-03-22
 
 ### Infrastructure

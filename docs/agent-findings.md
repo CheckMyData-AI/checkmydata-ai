@@ -4,6 +4,45 @@ Discoveries made during continuous improvement cycles.
 
 ---
 
+## Cycle 3 — 2026-03-22
+
+### Project State
+
+- **Backend coverage:** 69.42% -> 70.03% (+0.61%)
+- **Total unit tests:** 2132 -> 2181 (+49 new)
+- **Frontend tests:** 346/346 (unchanged, all pass)
+
+### UX Findings
+
+1. **Misleading empty states (FIXED):** InsightFeedPanel and DashboardList both caught API errors silently and showed "no data" empty states — indistinguishable from truly empty responses. Users would think their data is empty when it's actually a network error. Added `loadError` state tracking with Retry buttons.
+
+2. **ConnectionSelector no empty state (FIXED):** When `connections.length === 0` and the form was closed, the list region rendered nothing. Added "No connections yet" text.
+
+3. **VizRenderer null return (FIXED):** `if (!payload) return null` caused visualization area to disappear silently. Replaced with a fallback message.
+
+4. **Additional UX gaps discovered (not yet fixed):**
+   - Mobile notes drawer: missing Escape key, focus trap, aria-modal (P2)
+   - Suggestion chips: truncated text lacks aria-label for screen readers (P3)
+   - Insight cards: missing aria-expanded on toggle buttons (P3)
+   - useMobileLayout: initial false default causes desktop layout flash on mobile (P3)
+
+### Coverage Improvements
+
+| Service | Before | After | Tests Added |
+|---------|--------|-------|-------------|
+| connection_service.py | 69% | 99% | 20 |
+| project_overview_service.py | 67% | 93% | 24 |
+| viz/export.py | 68% | 100% | 1 |
+| viz/utils.py | 83% | 100% | 6 |
+
+### Key Testing Observations
+
+- `connection_service.test_ssh` imports `asyncssh` locally inside the method — patches must target `asyncssh.connect` directly rather than `app.services.connection_service.asyncssh`.
+- `project_overview_service.save_overview` exercises incremental hashing; full integration test requires carefully sequenced mock results since it calls 6 builder methods in order.
+- `project_overview_service._build_db_section` uses `:,` format specifier on `row_count` — MagicMock objects can't handle this; test stubs need concrete numeric values.
+
+---
+
 ## Cycle 2 — 2026-03-22
 
 ### Project State

@@ -111,13 +111,15 @@ async function renderSelector() {
 describe("ProjectSelector", () => {
   it("renders project selector", async () => {
     await renderSelector();
-    expect(screen.getByText("New")).toBeInTheDocument();
+    expect(document.querySelector("[class*='px-1']")).toBeInTheDocument();
   });
 
-  it("shows New button to create a project", async () => {
-    await renderSelector();
-    const btn = screen.getByText("New");
-    expect(btn).toBeInTheDocument();
+  it("opens create form when createRequested is true", async () => {
+    const { ProjectSelector } = await import("@/components/projects/ProjectSelector");
+    const onHandled = vi.fn();
+    render(<ProjectSelector createRequested={true} onCreateHandled={onHandled} />);
+    expect(onHandled).toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Project name")).toBeInTheDocument();
   });
 
   it("project list renders items", async () => {
@@ -174,9 +176,8 @@ describe("ProjectSelector", () => {
   });
 
   it("create form has name input", async () => {
-    await renderSelector();
-    await userEvent.click(screen.getByText("New"));
-
+    const { ProjectSelector } = await import("@/components/projects/ProjectSelector");
+    render(<ProjectSelector createRequested={true} onCreateHandled={() => {}} />);
     expect(screen.getByPlaceholderText("Project name")).toBeInTheDocument();
   });
 
@@ -186,6 +187,5 @@ describe("ProjectSelector", () => {
 
     await renderSelector();
     expect(screen.queryByRole("button", { name: /Alpha/i })).not.toBeInTheDocument();
-    expect(screen.getByText("New")).toBeInTheDocument();
   });
 });

@@ -72,11 +72,14 @@ async function renderRulesManager() {
 }
 
 describe("RulesManager", () => {
-  it("renders New button", async () => {
-    await renderRulesManager();
+  it("opens create form when createRequested is true", async () => {
+    const { RulesManager } = await import("@/components/rules/RulesManager");
+    const onHandled = vi.fn();
+    render(<RulesManager createRequested={true} onCreateHandled={onHandled} />);
     await waitFor(() => {
-      expect(screen.getByText("New")).toBeInTheDocument();
+      expect(screen.getByLabelText("Rule name")).toBeInTheDocument();
     });
+    expect(onHandled).toHaveBeenCalled();
   });
 
   it("shows empty state message when no rules", async () => {
@@ -116,13 +119,14 @@ describe("RulesManager", () => {
     });
   });
 
-  it("clicking New opens create form with name and content fields", async () => {
-    await renderRulesManager();
-    await waitFor(() => expect(screen.getByText("New")).toBeInTheDocument());
-    await userEvent.click(screen.getByText("New"));
-    expect(screen.getByLabelText("Rule name")).toBeInTheDocument();
-    expect(screen.getByLabelText("Rule content")).toBeInTheDocument();
-    expect(screen.getByText("Create")).toBeInTheDocument();
+  it("create form has name and content fields via createRequested", async () => {
+    const { RulesManager } = await import("@/components/rules/RulesManager");
+    render(<RulesManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByLabelText("Rule name")).toBeInTheDocument();
+      expect(screen.getByLabelText("Rule content")).toBeInTheDocument();
+      expect(screen.getByText("Create")).toBeInTheDocument();
+    });
   });
 
   it("clicking edit opens form and cancel returns to list", async () => {
@@ -139,10 +143,11 @@ describe("RulesManager", () => {
     expect(screen.queryByDisplayValue("My Rule")).not.toBeInTheDocument();
   });
 
-  it("create form shows Create button", async () => {
-    await renderRulesManager();
-    await waitFor(() => expect(screen.getByText("New")).toBeInTheDocument());
-    await userEvent.click(screen.getByText("New"));
-    expect(screen.getByText("Create")).toBeInTheDocument();
+  it("create form shows Create button via createRequested", async () => {
+    const { RulesManager } = await import("@/components/rules/RulesManager");
+    render(<RulesManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByText("Create")).toBeInTheDocument();
+    });
   });
 });

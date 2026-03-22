@@ -113,7 +113,7 @@ export function SidebarSection({
             </span>
           )}
         </button>
-        {action && (
+        {action && open && (
           <button
             onClick={(e) => {
               e.stopPropagation();

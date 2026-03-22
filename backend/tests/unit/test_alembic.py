@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ def tmp_db(tmp_path):
 def _run_alembic(async_url: str, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": str(BACKEND_DIR), "DATABASE_URL": async_url}
     result = subprocess.run(
-        ["alembic", *args],
+        [sys.executable, "-m", "alembic", *args],
         cwd=str(BACKEND_DIR),
         capture_output=True,
         text=True,

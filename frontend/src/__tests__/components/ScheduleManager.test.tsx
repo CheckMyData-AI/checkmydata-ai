@@ -89,50 +89,52 @@ describe("ScheduleManager", () => {
     });
   });
 
-  it("shows New Schedule button", async () => {
-    render(<ScheduleManager />);
+  it("opens form when createRequested is true", async () => {
+    const onHandled = vi.fn();
+    render(<ScheduleManager createRequested={true} onCreateHandled={onHandled} />);
     await waitFor(() => {
-      expect(screen.getByText("New Schedule")).toBeTruthy();
+      expect(screen.getByPlaceholderText("Schedule title")).toBeTruthy();
+    });
+    expect(onHandled).toHaveBeenCalled();
+  });
+
+  it("form shows title and SQL fields via createRequested", async () => {
+    render(<ScheduleManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Schedule title")).toBeTruthy();
+      expect(screen.getByPlaceholderText("SQL query")).toBeTruthy();
     });
   });
 
-  it("clicking New Schedule shows form", async () => {
-    render(<ScheduleManager />);
-    await waitFor(() => screen.getByText("New Schedule"));
-    await userEvent.click(screen.getByText("New Schedule"));
-    expect(screen.getByPlaceholderText("Schedule title")).toBeTruthy();
-    expect(screen.getByPlaceholderText("SQL query")).toBeTruthy();
-  });
-
   it("shows Cancel button in form", async () => {
-    render(<ScheduleManager />);
-    await waitFor(() => screen.getByText("New Schedule"));
-    await userEvent.click(screen.getByText("New Schedule"));
-    expect(screen.getByText("Cancel")).toBeTruthy();
+    render(<ScheduleManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByText("Cancel")).toBeTruthy();
+    });
   });
 
   it("Create button disabled when form empty", async () => {
-    render(<ScheduleManager />);
-    await waitFor(() => screen.getByText("New Schedule"));
-    await userEvent.click(screen.getByText("New Schedule"));
-    const createBtn = screen.getByText("Create");
-    expect(createBtn).toHaveProperty("disabled", true);
+    render(<ScheduleManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      const createBtn = screen.getByText("Create");
+      expect(createBtn).toHaveProperty("disabled", true);
+    });
   });
 
   it("shows preset/custom cron toggle", async () => {
-    render(<ScheduleManager />);
-    await waitFor(() => screen.getByText("New Schedule"));
-    await userEvent.click(screen.getByText("New Schedule"));
-    expect(screen.getByText("Preset")).toBeTruthy();
-    expect(screen.getByText("Custom")).toBeTruthy();
+    render(<ScheduleManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByText("Preset")).toBeTruthy();
+      expect(screen.getByText("Custom")).toBeTruthy();
+    });
   });
 
   it("shows Alert Conditions section", async () => {
-    render(<ScheduleManager />);
-    await waitFor(() => screen.getByText("New Schedule"));
-    await userEvent.click(screen.getByText("New Schedule"));
-    expect(screen.getByText("Alert Conditions")).toBeTruthy();
-    expect(screen.getByText("+ Add")).toBeTruthy();
+    render(<ScheduleManager createRequested={true} onCreateHandled={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByText("Alert Conditions")).toBeTruthy();
+      expect(screen.getByText("+ Add")).toBeTruthy();
+    });
   });
 
   it("renders status dots for schedules", async () => {

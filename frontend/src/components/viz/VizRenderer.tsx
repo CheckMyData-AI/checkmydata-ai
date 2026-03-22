@@ -16,7 +16,13 @@ function VizRenderer({ data }: VizRendererProps) {
   const type = data.type as string;
   const payload = data.data as Record<string, unknown>;
 
-  if (!payload) return null;
+  if (!payload) {
+    return (
+      <div className="bg-zinc-900 rounded-lg p-4 text-center">
+        <p className="text-xs text-zinc-500">Visualization data unavailable</p>
+      </div>
+    );
+  }
 
   switch (type) {
     case "chart":

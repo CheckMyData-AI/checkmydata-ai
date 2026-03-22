@@ -13,12 +13,27 @@ vi.mock("@/lib/api", () => ({
       render: vi.fn(),
       export: vi.fn(),
     },
+    dataValidation: {
+      validateData: vi.fn().mockResolvedValue({ ok: true }),
+    },
   },
 }));
 
 vi.mock("@/stores/toast-store", () => ({
   toast: vi.fn(),
 }));
+
+vi.mock("@/stores/app-store", () => {
+  const state = {
+    activeProject: { id: "proj1", name: "Test Project" },
+    activeConnection: { id: "conn1" },
+  };
+  const useAppStore = Object.assign(
+    () => state,
+    { getState: () => state },
+  );
+  return { useAppStore };
+});
 
 vi.mock("@/components/viz/VizRenderer", () => ({
   VizRenderer: ({ data }: { data: Record<string, unknown> }) => (
@@ -40,24 +55,6 @@ vi.mock("@/lib/viz-utils", () => ({
   rerenderViz: vi.fn(),
 }));
 
-vi.mock("@/components/chat/SuggestionChips", () => ({
-  FollowupChips: ({
-    followups,
-    onSelect,
-  }: {
-    followups: string[];
-    onSelect: (t: string) => void;
-  }) => (
-    <div data-testid="followup-chips">
-      {followups.map((f: string, i: number) => (
-        <button key={i} data-testid="followup" onClick={() => onSelect(f)}>
-          {f}
-        </button>
-      ))}
-    </div>
-  ),
-}));
-
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -77,11 +74,12 @@ async function renderMessage(
   metadataJson?: string | null,
   onRetry?: () => void,
   onSendMessage?: (text: string) => void,
+  sessionId?: string,
 ) {
   const { ChatMessage } = await import("@/components/chat/ChatMessage");
   const msg = makeMessage(msgOverrides);
   return render(
-    <ChatMessage message={msg} metadataJson={metadataJson} onRetry={onRetry} onSendMessage={onSendMessage} />,
+    <ChatMessage message={msg} metadataJson={metadataJson} onRetry={onRetry} onSendMessage={onSendMessage} sessionId={sessionId} />,
   );
 }
 
@@ -222,41 +220,6 @@ describe("ChatMessage", () => {
     expect(screen.queryByTestId("data-table")).not.toBeInTheDocument();
   });
 
-  it("renders follow-up suggestion chips when metadata has suggested_followups", async () => {
-    const onSend = vi.fn();
-    const meta = JSON.stringify({
-      suggested_followups: ["Show as pie chart", "Break down by month"],
-    });
-
-    await renderMessage(
-      { role: "assistant", content: "Query results" },
-      meta,
-      undefined,
-      onSend,
-    );
-
-    expect(screen.getByTestId("followup-chips")).toBeInTheDocument();
-    const chips = screen.getAllByTestId("followup");
-    expect(chips).toHaveLength(2);
-    expect(chips[0]).toHaveTextContent("Show as pie chart");
-
-    await userEvent.click(chips[0]);
-    expect(onSend).toHaveBeenCalledWith("Show as pie chart");
-  });
-
-  it("does not render followup chips when no onSendMessage", async () => {
-    const meta = JSON.stringify({
-      suggested_followups: ["Show as pie chart"],
-    });
-
-    await renderMessage(
-      { role: "assistant", content: "Query results" },
-      meta,
-    );
-
-    expect(screen.queryByTestId("followup-chips")).not.toBeInTheDocument();
-  });
-
   it("renders insight cards when metadata has insights", async () => {
     const meta = JSON.stringify({
       response_type: "sql_result",
@@ -321,5 +284,68 @@ describe("ChatMessage", () => {
     await renderMessage({ role: "assistant", content: "Hello" });
     const outer = screen.getByText("Hello").closest("[class*='max-w-']");
     expect(outer?.className).toContain("max-w-[95%]");
+  });
+
+  it("thumbs down on SQL result auto-sends investigation message", async () => {
+    const { api } = await import("@/lib/api");
+    const onSend = vi.fn();
+    await renderMessage(
+      { role: "assistant", content: "Result", query: "SELECT 1", responseType: "sql_result" },
+      null,
+      undefined,
+      onSend,
+      "session-1",
+    );
+
+    const thumbDown = screen.getByTitle("Not helpful");
+    await userEvent.click(thumbDown);
+
+    expect(api.chat.submitFeedback).toHaveBeenCalledWith("msg1", -1);
+    expect(api.dataValidation.validateData).toHaveBeenCalledWith(
+      expect.objectContaining({ verdict: "rejected", message_id: "msg1" }),
+    );
+    expect(onSend).toHaveBeenCalledWith(
+      "I flagged the previous query result as incorrect. Please investigate what might be wrong and suggest a corrected query.",
+    );
+  });
+
+  it("thumbs up on SQL result records data validation as confirmed", async () => {
+    const { api } = await import("@/lib/api");
+    const onSend = vi.fn();
+    await renderMessage(
+      { role: "assistant", content: "Result", query: "SELECT 1", responseType: "sql_result" },
+      null,
+      undefined,
+      onSend,
+      "session-1",
+    );
+
+    const thumbUp = screen.getByTitle("Helpful");
+    await userEvent.click(thumbUp);
+
+    expect(api.chat.submitFeedback).toHaveBeenCalledWith("msg1", 1);
+    expect(api.dataValidation.validateData).toHaveBeenCalledWith(
+      expect.objectContaining({ verdict: "confirmed", message_id: "msg1" }),
+    );
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("thumbs down on non-SQL message does not auto-send", async () => {
+    const { api } = await import("@/lib/api");
+    const onSend = vi.fn();
+    await renderMessage(
+      { role: "assistant", content: "Just a text response" },
+      null,
+      undefined,
+      onSend,
+      "session-1",
+    );
+
+    const thumbDown = screen.getByTitle("Not helpful");
+    await userEvent.click(thumbDown);
+
+    expect(api.chat.submitFeedback).toHaveBeenCalledWith("msg1", -1);
+    expect(api.dataValidation.validateData).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

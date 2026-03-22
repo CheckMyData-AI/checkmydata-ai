@@ -25,6 +25,7 @@ import app.models.user  # noqa: F401
 from app.models.base import Base
 from app.models.project import Project
 from app.services.connection_service import ConnectionService
+from app.services.encryption import decrypt
 
 svc = ConnectionService()
 
@@ -417,3 +418,369 @@ class TestToConfig:
         assert config.extra["mcp_server_command"] == "node"
         assert config.extra["mcp_server_args"] == ["server.js"]
         assert config.extra["mcp_env"] == {"TOKEN": "abc"}
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("app.services.connection_service.decrypt", side_effect=Exception("bad key"))
+    async def test_to_config_decrypt_failure(self, _mock_decrypt, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="BadCrypto",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            db_password="secret",
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="Cannot decrypt credentials"):
+            await svc.to_config(db, conn)
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    async def test_to_config_invalid_ssh_pre_commands_json(self, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="BadJSON",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        conn.ssh_pre_commands = "NOT-JSON"
+        await db.commit()
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+        config = await svc.to_config(db, conn)
+        assert config.ssh_pre_commands is None
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    async def test_to_config_invalid_mcp_server_args_json(self, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="BadMCP",
+            db_type="mcp",
+            db_port=0,
+            db_name="",
+            source_type="mcp",
+        )
+        conn.mcp_server_args = "NOT-JSON"
+        await db.commit()
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+        config = await svc.to_config(db, conn)
+        assert config.extra["mcp_server_args"] == []
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("app.services.connection_service.decrypt")
+    async def test_to_config_mcp_env_decrypt_failure(self, mock_decrypt, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="MCPEnvFail",
+            db_type="mcp",
+            db_port=0,
+            db_name="",
+            source_type="mcp",
+            mcp_env={"KEY": "val"},
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+        original_decrypt = decrypt
+
+        def selective_decrypt(value):
+            if value == conn.mcp_env_encrypted:
+                raise Exception("bad key")
+            return original_decrypt(value)
+
+        mock_decrypt.side_effect = selective_decrypt
+        config = await svc.to_config(db, conn)
+        assert config.extra["mcp_env"] == {}
+
+
+class TestUpdateExtended:
+    @pytest.mark.asyncio
+    async def test_update_connection_string(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="ConnStr",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        updated = await svc.update(db, conn.id, connection_string="postgresql://host/db")
+        assert updated is not None
+        assert updated.connection_string_encrypted is not None
+
+    @pytest.mark.asyncio
+    async def test_update_clears_connection_string(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="ConnStr",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            connection_string="postgresql://host/db",
+        )
+        assert conn.connection_string_encrypted is not None
+        updated = await svc.update(db, conn.id, connection_string=None)
+        assert updated is not None
+        assert updated.connection_string_encrypted is None
+
+    @pytest.mark.asyncio
+    async def test_update_ssh_pre_commands_list(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="SSH",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        updated = await svc.update(db, conn.id, ssh_pre_commands=["cmd1", "cmd2"])
+        assert updated is not None
+        assert updated.ssh_pre_commands == json.dumps(["cmd1", "cmd2"])
+
+    @pytest.mark.asyncio
+    async def test_update_mcp_env(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="MCP",
+            db_type="mcp",
+            db_port=0,
+            db_name="",
+        )
+        updated = await svc.update(db, conn.id, mcp_env={"SECRET": "value"})
+        assert updated is not None
+        assert updated.mcp_env_encrypted is not None
+
+    @pytest.mark.asyncio
+    async def test_update_clears_mcp_env(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="MCP",
+            db_type="mcp",
+            db_port=0,
+            db_name="",
+            mcp_env={"SECRET": "value"},
+        )
+        updated = await svc.update(db, conn.id, mcp_env=None)
+        assert updated is not None
+        assert updated.mcp_env_encrypted is None
+
+    @pytest.mark.asyncio
+    async def test_update_mcp_server_args_list(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="MCP",
+            db_type="mcp",
+            db_port=0,
+            db_name="",
+        )
+        updated = await svc.update(db, conn.id, mcp_server_args=["--flag", "val"])
+        assert updated is not None
+        assert updated.mcp_server_args == json.dumps(["--flag", "val"])
+
+    @pytest.mark.asyncio
+    async def test_update_sanitizes_strings(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="Clean",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        updated = await svc.update(db, conn.id, name="  Spaced  ", ssh_host="  host.com\t")
+        assert updated is not None
+        assert updated.name == "Spaced"
+        assert updated.ssh_host == "host.com"
+
+
+class TestListByProjectPagination:
+    @pytest.mark.asyncio
+    async def test_skip_and_limit(self, db):
+        proj = await _make_project(db)
+        for i in range(5):
+            await svc.create(
+                db,
+                project_id=proj.id,
+                name=f"C{i}",
+                db_type="pg",
+                db_port=5432,
+                db_name="db",
+            )
+        page = await svc.list_by_project(db, proj.id, skip=2, limit=2)
+        assert len(page) == 2
+
+    @pytest.mark.asyncio
+    async def test_skip_beyond_total(self, db):
+        proj = await _make_project(db)
+        await svc.create(
+            db,
+            project_id=proj.id,
+            name="Only",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        page = await svc.list_by_project(db, proj.id, skip=100)
+        assert page == []
+
+
+class TestTestSsh:
+    @pytest.mark.asyncio
+    async def test_ssh_not_found(self, db):
+        result = await svc.test_ssh(db, "nonexistent")
+        assert result == {"success": False, "error": "Connection not found"}
+
+    @pytest.mark.asyncio
+    async def test_ssh_no_host(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="NoSSH",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+        )
+        result = await svc.test_ssh(db, conn.id)
+        assert result == {"success": False, "error": "No SSH host configured"}
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("asyncssh.connect")
+    async def test_ssh_success(self, mock_connect, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="SSH OK",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+
+        mock_run_result = MagicMock()
+        mock_run_result.stdout = "__SSH_TEST_OK__\nmy-server"
+        mock_run_result.exit_status = 0
+
+        mock_ssh_conn = AsyncMock()
+        mock_ssh_conn.run = AsyncMock(return_value=mock_run_result)
+        mock_ssh_conn.__aenter__ = AsyncMock(return_value=mock_ssh_conn)
+        mock_ssh_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_connect.return_value = mock_ssh_conn
+
+        result = await svc.test_ssh(db, conn.id)
+        assert result["success"] is True
+        assert result["hostname"] == "my-server"
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("asyncssh.connect")
+    async def test_ssh_marker_not_found(self, mock_connect, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="SSH Bad",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+
+        mock_run_result = MagicMock()
+        mock_run_result.stdout = "unexpected output"
+        mock_run_result.exit_status = 1
+
+        mock_ssh_conn = AsyncMock()
+        mock_ssh_conn.run = AsyncMock(return_value=mock_run_result)
+        mock_ssh_conn.__aenter__ = AsyncMock(return_value=mock_ssh_conn)
+        mock_ssh_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_connect.return_value = mock_ssh_conn
+
+        result = await svc.test_ssh(db, conn.id)
+        assert result["success"] is False
+        assert "stdout" in result
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("asyncssh.connect", side_effect=Exception("Connection refused"))
+    async def test_ssh_connection_exception(self, _mock_connect, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="SSH Err",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=None)
+
+        result = await svc.test_ssh(db, conn.id)
+        assert result["success"] is False
+        assert "Connection refused" in result["error"]
+
+    @pytest.mark.asyncio
+    @patch("app.services.connection_service._ssh_key_svc")
+    @patch("asyncssh.connect")
+    @patch("asyncssh.import_private_key")
+    async def test_ssh_with_key(self, mock_import_key, mock_connect, mock_ssh_svc, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="SSH Key",
+            db_type="pg",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+            ssh_key_id="key-1",
+        )
+        mock_ssh_svc.get_decrypted = AsyncMock(return_value=("---KEY---", "pass"))
+        mock_import_key.return_value = MagicMock()
+
+        mock_run_result = MagicMock()
+        mock_run_result.stdout = "__SSH_TEST_OK__\nhost1"
+        mock_run_result.exit_status = 0
+
+        mock_ssh_conn = AsyncMock()
+        mock_ssh_conn.run = AsyncMock(return_value=mock_run_result)
+        mock_ssh_conn.__aenter__ = AsyncMock(return_value=mock_ssh_conn)
+        mock_ssh_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_connect.return_value = mock_ssh_conn
+
+        result = await svc.test_ssh(db, conn.id)
+        assert result["success"] is True
+        mock_import_key.assert_called_once_with("---KEY---", "pass")

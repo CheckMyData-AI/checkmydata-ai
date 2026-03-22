@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
@@ -73,7 +73,12 @@ const SessionItem = memo(function SessionItem({
   );
 });
 
-export function ChatSessionList() {
+interface ChatSessionListProps {
+  createRequested?: boolean;
+  onCreateHandled?: () => void;
+}
+
+export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessionListProps) {
   const {
     activeProject,
     connections,
@@ -164,6 +169,13 @@ export function ChatSessionList() {
     setMessages([]);
   }, [setActiveSession, setMessages]);
 
+  useEffect(() => {
+    if (createRequested) {
+      handleNewChat();
+      onCreateHandled?.();
+    }
+  }, [createRequested, onCreateHandled, handleNewChat]);
+
   if (!activeProject) return null;
   if (chatSessions.length === 0) {
     return (
@@ -180,15 +192,6 @@ export function ChatSessionList() {
 
   return (
     <div className="px-1">
-      <div className="flex justify-end px-1 mb-1">
-        <button
-          onClick={handleNewChat}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
-        >
-          <Icon name="plus" size={12} />
-          New Chat
-        </button>
-      </div>
       <div>
         {visibleSessions.map((s) => (
           <SessionItem

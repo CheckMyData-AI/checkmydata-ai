@@ -30,7 +30,12 @@ function sortRules(rules: Rule[]): Rule[] {
   });
 }
 
-export function RulesManager() {
+interface RulesManagerProps {
+  createRequested?: boolean;
+  onCreateHandled?: () => void;
+}
+
+export function RulesManager({ createRequested, onCreateHandled }: RulesManagerProps) {
   const { activeProject, rulesVersion } = useAppStore();
   const { canDelete, canEdit } = usePermission();
   const [rules, setRules] = useState<Rule[]>([]);
@@ -44,6 +49,16 @@ export function RulesManager() {
   const editingRule = editingId
     ? rules.find((r) => r.id === editingId)
     : null;
+
+  useEffect(() => {
+    if (createRequested && canEdit) {
+      setEditingId(null);
+      setName("");
+      setContent("");
+      setShowCreate(true);
+      onCreateHandled?.();
+    }
+  }, [createRequested, onCreateHandled, canEdit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,33 +147,6 @@ export function RulesManager() {
 
   return (
     <div className="px-1">
-      <div className="flex justify-end px-1 mb-1">
-        {canEdit && (
-          <button
-            onClick={() => {
-              if (showCreate) {
-                setShowCreate(false);
-              } else {
-                setEditingId(null);
-                setName("");
-                setContent("");
-                setShowCreate(true);
-              }
-            }}
-            className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
-          >
-            {showCreate ? (
-              "Cancel"
-            ) : (
-              <>
-              <Icon name="plus" size={12} />
-              New
-            </>
-            )}
-          </button>
-        )}
-      </div>
-
       {isFormOpen && (
         <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle mb-1.5">
           {editingRule?.is_default && (

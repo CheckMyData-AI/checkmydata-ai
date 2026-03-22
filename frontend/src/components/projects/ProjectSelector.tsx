@@ -127,7 +127,12 @@ const ROLE_STYLES: Record<string, string> = {
   viewer: "bg-surface-2 text-text-tertiary",
 };
 
-export function ProjectSelector() {
+interface ProjectSelectorProps {
+  createRequested?: boolean;
+  onCreateHandled?: () => void;
+}
+
+export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSelectorProps) {
   const {
     sshKeys,
     projects,
@@ -239,6 +244,15 @@ export function ProjectSelector() {
     setAccessResult(null);
     setChecking(false);
   };
+
+  useEffect(() => {
+    if (createRequested) {
+      setEditingId(null);
+      resetForm();
+      setShowCreate(true);
+      onCreateHandled?.();
+    }
+  }, [createRequested, onCreateHandled]);
 
   const [nameError, setNameError] = useState("");
 
@@ -587,31 +601,6 @@ export function ProjectSelector() {
 
   return (
     <div className="px-1">
-      <div className="flex justify-end px-1 mb-1">
-        <button
-          onClick={() => {
-            if (showCreate) {
-              setShowCreate(false);
-              resetForm();
-            } else {
-              setEditingId(null);
-              resetForm();
-              setShowCreate(true);
-            }
-          }}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
-        >
-          {showCreate ? (
-            "Cancel"
-          ) : (
-            <>
-              <Icon name="plus" size={12} />
-              New
-            </>
-          )}
-        </button>
-      </div>
-
       {isFormOpen && <div className="mb-1.5">{formUI}</div>}
 
       {listLoading && <Spinner />}

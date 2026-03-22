@@ -94,10 +94,13 @@ describe("ChatSessionList", () => {
     expect(screen.getByText("Session 3")).toBeInTheDocument();
   });
 
-  it('shows "New Chat" button', () => {
-    setupStore();
-    render(<ChatSessionList />);
-    expect(screen.getByText("New Chat")).toBeInTheDocument();
+  it("triggers new chat when createRequested prop is set", () => {
+    const store = setupStore();
+    const onHandled = vi.fn();
+    render(<ChatSessionList createRequested={true} onCreateHandled={onHandled} />);
+    expect(store.setActiveSession).toHaveBeenCalledWith(null);
+    expect(store.setMessages).toHaveBeenCalledWith([]);
+    expect(onHandled).toHaveBeenCalled();
   });
 
   it("active session has visual indicator", () => {
@@ -109,13 +112,11 @@ describe("ChatSessionList", () => {
     expect(activeRow).toHaveClass("bg-surface-1");
   });
 
-  it("clicking New Chat resets active session and messages", async () => {
+  it("does not trigger new chat when createRequested is false", () => {
     const store = setupStore();
-    render(<ChatSessionList />);
-
-    await userEvent.click(screen.getByText("New Chat"));
-    expect(store.setActiveSession).toHaveBeenCalledWith(null);
-    expect(store.setMessages).toHaveBeenCalledWith([]);
+    render(<ChatSessionList createRequested={false} />);
+    expect(store.setActiveSession).not.toHaveBeenCalled();
+    expect(store.setMessages).not.toHaveBeenCalled();
   });
 
   it('shows "Show all" button when > 5 sessions', () => {

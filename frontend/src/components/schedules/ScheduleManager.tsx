@@ -63,7 +63,12 @@ interface AlertCondition {
   threshold: string;
 }
 
-export function ScheduleManager() {
+interface ScheduleManagerProps {
+  createRequested?: boolean;
+  onCreateHandled?: () => void;
+}
+
+export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleManagerProps) {
   const activeProject = useAppStore((s) => s.activeProject);
   const connections = useAppStore((s) => s.connections);
   const activeConnection = useAppStore((s) => s.activeConnection);
@@ -127,6 +132,14 @@ export function ScheduleManager() {
     setConnectionId(activeConnection?.id || connections[0]?.id || "");
     setShowForm(true);
   };
+
+  useEffect(() => {
+    if (createRequested) {
+      openCreate();
+      onCreateHandled?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequested]);
 
   const openEdit = (s: ScheduledQuery) => {
     setTitle(s.title);
@@ -562,15 +575,6 @@ export function ScheduleManager() {
         </div>
       )}
 
-      {!showForm && (
-        <button
-          onClick={openCreate}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] bg-surface-2 text-text-secondary rounded-lg hover:bg-surface-3 hover:text-text-primary transition-colors"
-        >
-          <Icon name="plus" size={12} />
-          New Schedule
-        </button>
-      )}
     </div>
   );
 }

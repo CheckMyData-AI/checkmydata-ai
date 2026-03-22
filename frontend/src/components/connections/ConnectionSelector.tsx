@@ -115,7 +115,12 @@ function connToForm(c: Connection): FormState {
   };
 }
 
-export function ConnectionSelector() {
+interface ConnectionSelectorProps {
+  createRequested?: boolean;
+  onCreateHandled?: () => void;
+}
+
+export function ConnectionSelector({ createRequested, onCreateHandled }: ConnectionSelectorProps) {
   const {
     activeProject,
     connections,
@@ -348,6 +353,16 @@ export function ConnectionSelector() {
     });
     return () => { cancelled = true; };
   }, [connections, startIndexPoll, startSyncPoll]);
+
+  useEffect(() => {
+    if (createRequested) {
+      setEditingId(null);
+      setForm({ ...EMPTY_FORM });
+      setUseConnString(false);
+      setShowCreate(true);
+      onCreateHandled?.();
+    }
+  }, [createRequested, onCreateHandled]);
 
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
@@ -1069,32 +1084,13 @@ export function ConnectionSelector() {
 
   return (
     <div className="px-1">
-      <div className="flex justify-end px-1 mb-1">
-        <button
-          onClick={() => {
-            if (showCreate) {
-              setShowCreate(false);
-              resetForm();
-            } else {
-              setEditingId(null);
-              resetForm();
-              setShowCreate(true);
-            }
-          }}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
-        >
-          {showCreate ? (
-            "Cancel"
-          ) : (
-            <>
-              <Icon name="plus" size={12} />
-              New
-            </>
-          )}
-        </button>
-      </div>
-
       {isFormOpen && <div className="mb-1.5">{formUI}</div>}
+
+      {!isFormOpen && connections.length === 0 && (
+        <div className="px-2 py-3 text-center">
+          <p className="text-[10px] text-text-muted">No connections yet</p>
+        </div>
+      )}
 
       <div>
         {connections.map((c) => {

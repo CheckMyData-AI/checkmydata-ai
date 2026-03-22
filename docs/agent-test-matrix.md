@@ -4,7 +4,7 @@ Core user flow verification status. Updated each improvement cycle.
 
 ---
 
-## Last Updated: 2026-03-22 (Cycle 2)
+## Last Updated: 2026-03-22 (Cycle 3)
 
 ## Automated Test Coverage
 
@@ -13,7 +13,7 @@ Core user flow verification status. Updated each improvement cycle.
 | Authentication (register/login) | 35+ | 15+ | 92% | PASS |
 | Google OAuth | 3 | — | 92% | PASS (fixed missing dep) |
 | Project CRUD | 10+ | 8+ | 90% | PASS |
-| Connection CRUD | 15+ | 12+ | 69% | PASS |
+| Connection CRUD | 44 | 12+ | 99% | PASS |
 | SSH Key Management | 10+ | 5+ | 78% | PASS |
 | Chat / Orchestrator | 20+ | — | ~70% | PASS |
 | SQL Agent | 15+ | — | ~65% | PASS |
@@ -31,6 +31,8 @@ Core user flow verification status. Updated each improvement cycle.
 | Semantic Layer | 3+ | 2+ | ~60% | PASS |
 | Exploration | 3+ | 2+ | ~60% | PASS |
 | Temporal Intelligence | 3+ | 2+ | ~60% | PASS |
+| Project Overview | 38 | — | 93% | PASS |
+| Viz (chart/table/text/export) | 54 | — | 88-100% | PASS |
 
 ## Frontend Component Tests
 
@@ -72,10 +74,12 @@ Core user flow verification status. Updated each improvement cycle.
 
 | Service | Current | Target | Gap |
 |---------|---------|--------|-----|
+| connection_service.py | 99% | — | Done |
+| project_overview_service.py | 93% | — | Done |
 | batch_service.py | 100% | — | Done |
 | code_db_sync_service.py | 93% | — | Done |
+| viz/export.py | 100% | — | Done |
+| viz/utils.py | 100% | — | Done |
 | agent_learning_service.py | 66% | 80% | +14% |
 | benchmark_service.py | 66% | 80% | +14% |
-| project_overview_service.py | 67% | 80% | +13% |
-| connection_service.py | 69% | 80% | +11% |
 | db_index_service.py | 69% | 80% | +11% |

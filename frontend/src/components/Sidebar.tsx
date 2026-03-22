@@ -187,6 +187,13 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const usageCollapse = useSectionCollapse("usage", false);
   const analyticsCollapse = useSectionCollapse("analytics", false);
 
+  const [projCreateReq, setProjCreateReq] = useState(false);
+  const [connCreateReq, setConnCreateReq] = useState(false);
+  const [chatCreateReq, setChatCreateReq] = useState(false);
+  const [rulesCreateReq, setRulesCreateReq] = useState(false);
+  const [schedCreateReq, setSchedCreateReq] = useState(false);
+  const [dashCreateReq, setDashCreateReq] = useState(false);
+
   const projectsRef = useRef<HTMLDivElement>(null);
   const repoRef = useRef<HTMLDivElement>(null);
   const connRef = useRef<HTMLDivElement>(null);
@@ -441,8 +448,8 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             </SidebarSection>
 
             <div ref={projectsRef}>
-              <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false}>
-                <ProjectSelector />
+              <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
+                <ProjectSelector createRequested={projCreateReq} onCreateHandled={() => setProjCreateReq(false)} />
               </SidebarSection>
             </div>
 
@@ -462,13 +469,13 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 )}
 
                 <div ref={connRef}>
-                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false}>
-                    <ConnectionSelector />
+                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}>
+                    <ConnectionSelector createRequested={connCreateReq} onCreateHandled={() => setConnCreateReq(false)} />
                     <SyncStatusIndicator />
                   </SidebarSection>
                 </div>
 
-                <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false}>
+                <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false} action={{ label: "New chat", onClick: () => setChatCreateReq(true) }}>
                   {restoringState ? (
                     <div className="px-3 py-2 space-y-1.5">
                       {[1, 2, 3].map((i) => (
@@ -478,17 +485,17 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   ) : (
                     <>
                       {activeProject && <ChatSearch />}
-                      <ChatSessionList />
+                      <ChatSessionList createRequested={chatCreateReq} onCreateHandled={() => setChatCreateReq(false)} />
                     </>
                   )}
                 </SidebarSection>
 
-                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false}>
-                  <RulesManager />
+                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}>
+                  <RulesManager createRequested={rulesCreateReq} onCreateHandled={() => setRulesCreateReq(false)} />
                 </SidebarSection>
 
-                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false}>
-                  <ScheduleManager />
+                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}>
+                  <ScheduleManager createRequested={schedCreateReq} onCreateHandled={() => setSchedCreateReq(false)} />
                 </SidebarSection>
 
                 <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
@@ -657,8 +664,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             onToggle={projectsCollapse.toggle}
             count={projects.length}
             collapsed={collapsed}
+            action={{ label: "New project", onClick: () => setProjCreateReq(true) }}
           >
-            <ProjectSelector />
+            <ProjectSelector createRequested={projCreateReq} onCreateHandled={() => setProjCreateReq(false)} />
           </SidebarSection>
         </div>
 
@@ -701,8 +709,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 onToggle={connCollapse.toggle}
                 count={connections.length}
                 collapsed={collapsed}
+                action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}
               >
-                <ConnectionSelector />
+                <ConnectionSelector createRequested={connCreateReq} onCreateHandled={() => setConnCreateReq(false)} />
                 <SyncStatusIndicator />
               </SidebarSection>
             </div>
@@ -713,6 +722,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={chatCollapse.open}
               onToggle={chatCollapse.toggle}
               collapsed={collapsed}
+              action={{ label: "New chat", onClick: () => setChatCreateReq(true) }}
             >
               {restoringState ? (
                 <div className="px-3 py-2 space-y-1.5">
@@ -723,7 +733,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               ) : (
                 <>
                   {!collapsed && activeProject && <ChatSearch />}
-                  <ChatSessionList />
+                  <ChatSessionList createRequested={chatCreateReq} onCreateHandled={() => setChatCreateReq(false)} />
                 </>
               )}
             </SidebarSection>
@@ -734,8 +744,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={rulesCollapse.open}
               onToggle={rulesCollapse.toggle}
               collapsed={collapsed}
+              action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}
             >
-              <RulesManager />
+              <RulesManager createRequested={rulesCreateReq} onCreateHandled={() => setRulesCreateReq(false)} />
             </SidebarSection>
 
             <SidebarSection
@@ -744,8 +755,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={schedulesCollapse.open}
               onToggle={schedulesCollapse.toggle}
               collapsed={collapsed}
+              action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}
             >
-              <ScheduleManager />
+              <ScheduleManager createRequested={schedCreateReq} onCreateHandled={() => setSchedCreateReq(false)} />
             </SidebarSection>
 
             <SidebarSection
@@ -754,8 +766,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={dashboardsCollapse.open}
               onToggle={dashboardsCollapse.toggle}
               collapsed={collapsed}
+              action={{ label: "New dashboard", onClick: () => setDashCreateReq(true) }}
             >
-              <DashboardList />
+              <DashboardList createRequested={dashCreateReq} onCreateHandled={() => setDashCreateReq(false)} />
             </SidebarSection>
 
             <SidebarSection
