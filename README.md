@@ -2294,11 +2294,11 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 1,808 across 114 test files
-- Backend integration tests: 338 across 34 test files
-- Frontend tests: 276 across 33 test files
-- **Grand total: 2,422 tests**
-- Backend coverage: 67% (enforced CI minimum: 65%)
+- Backend unit tests: 1,921 across 123 test files
+- Backend integration tests: 391 across 41 test files
+- Frontend tests: 345 across 39 test files
+- **Grand total: 2,657 tests**
+- Backend coverage: 70% combined (68.5% unit-only; enforced CI minimum: 68%)
 - Zero flaky tests, zero skipped tests
 - Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 
@@ -2403,8 +2403,9 @@ make test-frontend    # frontend vitest
 | Batch Service | — | 6 (CRUD, list, delete) |
 | Data Sanity Checker | 5 (healthy, duplicates, negatives, nulls) | — |
 | Business Logic | — | 11 (schedules, notifications, notes, dashboards) |
+| Schedule & Notes Routes | — | 21 (schedules CRUD, run-now, history, notes CRUD, execute, auth guards) |
 | API Coverage | — | 12 (chat sessions, data validation, batch, usage, models, tasks, legal) |
-| Auth Extended | — | 8 (project lifecycle, connection lifecycle for all 4 DB types, health) |
+| Auth Extended | — | 18 (change-password, refresh, me, onboarding, delete-account, registration validation) |
 | Performance Smoke | — | 9 (health latency, auth latency, CRUD latency, list endpoints) |
 | Dashboard Service | 10 (CRUD, allowed fields, visibility) | 8 (routes CRUD, RBAC, private visibility) |
 | Probe Service | 8 (run probes, null rates, findings, errors) | — |
@@ -2472,6 +2473,18 @@ make test-frontend    # frontend vitest
 | GitTracker | 16 (ChangedFilesResult, get_head_sha, get_changed_files diff/full/fallback, get_last_indexed_sha, record_index, count_commits_ahead, cleanup_old_records) | — |
 | BackupManager Extended | 21 (run_backup manifest/errors, _backup_database types, _backup_chroma skip/copy, _backup_rules, prune retention/failure, list_backups valid/corrupt/incomplete, pg_dump failure) | — |
 | Connectors Extended | 49 (Postgres execute/params/disconnect/test, MySQL execute/params/test, MongoDB find/count/aggregate/invalid/test, ClickHouse execute/params/test, _dict_to_positional) | — |
+| InvestigationAgent | 39 (run loop, tool dispatch, record finding, diagnostic query, compare results, column formats, learnings, error handling) | — |
+| Batch Service | 12 (create, get, list, delete, note_ids loading, queries_json, note_ids_json) | — |
+| Checkpoint Service | 33 (get_active, create, complete_step, mark_doc_processed, mark_docs_batch_processed, mark_failed, delete, cleanup_stale, static methods) | — |
+| Usage Service | 13 (record_usage, get_period_comparison, aggregate_period, daily_breakdown, change_percent) | — |
+| Auth Extended Routes | — | 18 (change-password, refresh, me, complete-onboarding, delete-account, registration validation) |
+| Schedule & Notes Routes | — | 22 (schedules CRUD, invalid cron, run-now, history, notes CRUD, execute, auth guards) |
+| Frontend (toast-store) | 12 (addToast, removeToast, auto-remove by type, unique ids, helper function) | — |
+| Frontend (ConfirmModal) | 17 (store show/close, options, previous dialog resolution, component rendering, Cancel/Confirm, severity icons, confirmText typing, destructive styling) | — |
+| Frontend (DataTable) | 9 (column headers, row data, row count, execution time, NULL display, export buttons, empty/missing data) | — |
+| Frontend (OnboardingWizard) | 10 (step rendering, DB types, form inputs, SSH tunnel, skip/demo buttons, step indicators) | — |
+| Frontend (BatchRunner) | 11 (header, title input, connection selector, add query, run all count, close, pre-select connection) | — |
+| Frontend (ScheduleManager) | 8 (schedule list, cron labels, form, cancel, create disabled, preset/custom, alert conditions, status dots) | — |
 
 ---
 

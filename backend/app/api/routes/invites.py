@@ -118,7 +118,9 @@ async def revoke_invite(
 
 
 @router.post("/accept/{invite_id}")
+@limiter.limit("10/minute")
 async def accept_invite(
+    request: Request,
     invite_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

@@ -409,6 +409,7 @@ async def _scheduler_loop() -> None:
     import time as _time
 
     from app.core.alert_evaluator import AlertEvaluator
+    from app.core.safety import SafetyGuard, SafetyLevel
     from app.models.notification import Notification
     from app.services.connection_service import ConnectionService
     from app.services.scheduler_service import SchedulerService
@@ -440,6 +441,27 @@ async def _scheduler_loop() -> None:
 
                         from app.connectors.registry import get_connector
                         from app.viz.utils import serialize_value
+
+                        if conn_model.is_read_only:
+                            guard = SafetyGuard(SafetyLevel.READ_ONLY)
+                        else:
+                            guard = SafetyGuard(SafetyLevel.ALLOW_DML)
+                        safety_result = guard.validate(schedule.sql_query, conn_model.db_type)
+                        if not safety_result.is_safe:
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps(
+                                    {"error": f"Query blocked: {safety_result.reason}"}
+                                ),
+                            )
+                            logger.warning(
+                                "Scheduler: query blocked by SafetyGuard for schedule %s: %s",
+                                schedule.id[:8],
+                                safety_result.reason,
+                            )
+                            continue
 
                         connector = get_connector(
                             conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode

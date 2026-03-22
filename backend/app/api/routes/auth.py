@@ -139,7 +139,9 @@ async def google_login(
 
 
 @router.post("/change-password")
+@limiter.limit("5/minute")
 async def change_password(
+    request: Request,
     body: ChangePasswordRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -214,7 +216,9 @@ async def complete_onboarding(
 
 
 @router.delete("/account")
+@limiter.limit("3/minute")
 async def delete_account(
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

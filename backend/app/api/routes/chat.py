@@ -402,7 +402,9 @@ class SessionResponse(BaseModel):
 
 
 @router.post("/sessions", response_model=SessionResponse)
+@limiter.limit("10/minute")
 async def create_session(
+    request: Request,
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

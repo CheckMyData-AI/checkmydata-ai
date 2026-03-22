@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
+from app.core.safety import SafetyGuard, SafetyLevel
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.note_service import NoteService
@@ -221,6 +222,17 @@ async def execute_note(
 
     from app.connectors.registry import get_connector
     from app.viz.utils import serialize_value
+
+    if conn_model.is_read_only:
+        guard = SafetyGuard(SafetyLevel.READ_ONLY)
+    else:
+        guard = SafetyGuard(SafetyLevel.ALLOW_DML)
+    safety_result = guard.validate(note.sql_query, conn_model.db_type)
+    if not safety_result.is_safe:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Query blocked: {safety_result.reason}",
+        )
 
     connector = get_connector(conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode)
     try:

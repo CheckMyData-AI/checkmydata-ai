@@ -18,6 +18,7 @@ import { useMobileLayout } from "@/hooks/useMobileLayout";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { NotificationBell } from "@/components/ui/NotificationBell";
+import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 
 export default function Home() {
   const { activeProject, activeConnection, projects } = useAppStore();
@@ -57,20 +58,37 @@ export default function Home() {
               <h1 className="text-sm font-semibold text-text-primary truncate">
                 {activeProject?.name || "CheckMyData"}
               </h1>
-              <NotificationBell />
+              <div className="flex items-center gap-1">
+                {activeProject && (
+                  <button
+                    onClick={toggleNotes}
+                    aria-label={notesOpen ? "Hide saved queries" : "Show saved queries"}
+                    className={`p-2 rounded-md transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center ${
+                      notesOpen
+                        ? "text-accent bg-accent-muted"
+                        : "text-text-secondary hover:bg-surface-2"
+                    }`}
+                  >
+                    <Icon name="bookmark" size={18} />
+                  </button>
+                )}
+                <NotificationBell />
+              </div>
             </div>
           )}
 
           <div className="flex flex-1 min-h-0">
-            {isMobile ? (
-              <Sidebar
-                isMobile
-                isOpen={sidebarOpen}
-                onClose={() => setSidebarOpen(false)}
-              />
-            ) : (
-              <Sidebar />
-            )}
+            <SectionErrorBoundary sectionName="Sidebar">
+              {isMobile ? (
+                <Sidebar
+                  isMobile
+                  isOpen={sidebarOpen}
+                  onClose={() => setSidebarOpen(false)}
+                />
+              ) : (
+                <Sidebar />
+              )}
+            </SectionErrorBoundary>
             <div className="flex-1 flex flex-col min-h-0 relative">
               {/* Desktop content header - hidden on mobile */}
               <header className="hidden md:flex border-b border-border-subtle px-6 py-2.5 items-center justify-between bg-surface-0">
@@ -139,15 +157,47 @@ export default function Home() {
                   )}
                 </div>
               </header>
-              <ChatPanel />
+              <SectionErrorBoundary sectionName="Chat">
+                <ChatPanel />
+              </SectionErrorBoundary>
               <PersistentLogToggle />
             </div>
-            {!isMobile && <NotesPanel />}
+            {!isMobile && (
+              <SectionErrorBoundary sectionName="Notes">
+                <NotesPanel />
+              </SectionErrorBoundary>
+            )}
           </div>
           <LogPanel />
         </div>
         {showBatchRunner && (
           <BatchRunner onClose={() => setShowBatchRunner(false)} />
+        )}
+        {/* Mobile Notes Drawer */}
+        {isMobile && notesOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={toggleNotes}
+            />
+            <div className="absolute bottom-0 left-0 right-0 max-h-[80vh] bg-surface-0 border-t border-border-subtle rounded-t-2xl overflow-hidden flex flex-col animate-slide-up">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
+                <h3 className="text-sm font-semibold text-text-primary">Saved Queries</h3>
+                <button
+                  onClick={toggleNotes}
+                  aria-label="Close notes"
+                  className="p-2 rounded-md text-text-muted hover:bg-surface-2 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                >
+                  <Icon name="x" size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <SectionErrorBoundary sectionName="Notes">
+                  <NotesPanel />
+                </SectionErrorBoundary>
+              </div>
+            </div>
+          </div>
         )}
       </main>
     </AuthGate>

@@ -231,7 +231,27 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
         >
           {cards.map((card) => {
             const note = noteMap[card.note_id];
-            if (!note) return null;
+            if (!note) {
+              return (
+                <div
+                  key={card.note_id}
+                  className="bg-surface-1 border border-dashed border-border-subtle rounded-lg p-3 space-y-2 opacity-60"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-text-muted italic truncate flex-1">
+                      This query was deleted
+                    </p>
+                    <button
+                      onClick={() => handleRemoveCard(card.note_id)}
+                      title="Remove card"
+                      className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors shrink-0"
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  </div>
+                </div>
+              );
+            }
             const viz = note.visualization_json ? JSON.parse(note.visualization_json) : null;
             return (
               <div

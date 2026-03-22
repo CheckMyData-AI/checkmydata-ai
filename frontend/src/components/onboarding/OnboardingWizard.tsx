@@ -434,15 +434,26 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 {testError && (
                   <p className="text-xs text-text-muted max-w-sm text-center">{testError}</p>
                 )}
-                <button
-                  onClick={() => {
-                    setTestStatus("idle");
-                    handleTestConnection();
-                  }}
-                  className={btnSecondary}
-                >
-                  Retry
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      setTestStatus("idle");
+                      goBack();
+                    }}
+                    className={btnSecondary}
+                  >
+                    Edit connection
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTestStatus("idle");
+                      handleTestConnection();
+                    }}
+                    className={btnPrimary}
+                  >
+                    Retry
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -484,6 +495,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 <p className="text-sm text-warning font-medium">
                   Indexing had issues, but you can still use the app
                 </p>
+                <button onClick={goNext} className={btnPrimary}>
+                  Continue
+                </button>
               </>
             )}
           </div>
@@ -656,7 +670,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
           </div>
 
           <div className="flex items-center gap-3">
-            {(step === 2 || step === 3) && (
+            {step === 3 && (
+              <button onClick={goNext} className={btnSecondary}>
+                Skip
+              </button>
+            )}
+            {step === 2 && indexStatus === "idle" && (
               <button onClick={goNext} className={btnSecondary}>
                 Skip
               </button>

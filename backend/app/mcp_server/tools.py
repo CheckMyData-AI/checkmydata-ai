@@ -210,6 +210,8 @@ async def execute_raw_query(connection_id: str, query: str) -> str:
 
     Requires the connection to be in read-only mode for safety.
     """
+    from app.core.safety import SafetyGuard, SafetyLevel
+
     async with async_session_factory() as session:
         conn = await _connection_svc.get(session, connection_id)
         if not conn:
@@ -219,6 +221,11 @@ async def execute_raw_query(connection_id: str, query: str) -> str:
             return json.dumps(
                 {"error": "Raw query execution is only allowed on read-only connections"}
             )
+
+        guard = SafetyGuard(SafetyLevel.READ_ONLY)
+        safety_result = guard.validate(query, conn.db_type)
+        if not safety_result.is_safe:
+            return json.dumps({"error": f"Query blocked: {safety_result.reason}"})
 
         config = await _connection_svc.to_config(session, conn)
 
