@@ -12,7 +12,7 @@ interface VizRendererProps {
   data: Record<string, unknown>;
 }
 
-export function VizRenderer({ data }: VizRendererProps) {
+function VizRenderer({ data }: VizRendererProps) {
   const type = data.type as string;
   const payload = data.data as Record<string, unknown>;
 
@@ -34,6 +34,9 @@ export function VizRenderer({ data }: VizRendererProps) {
       return <DataTable data={payload} />;
   }
 }
+
+export { VizRenderer };
+export default VizRenderer;
 
 function TextViz({ data }: { data: Record<string, unknown> }) {
   if (data.type === "number") {

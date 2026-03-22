@@ -334,7 +334,7 @@ function NotePicker({ notes, onSelect, onClose }: NotePickerProps) {
     <div className="absolute inset-0 bg-surface-0/95 rounded-lg flex flex-col z-10">
       <div className="px-5 py-3 border-b border-border-subtle flex items-center justify-between">
         <h3 className="text-xs font-medium text-text-primary">Select Saved Notes</h3>
-        <button onClick={onClose} className="p-1 rounded text-text-muted hover:text-text-secondary">
+        <button onClick={onClose} aria-label="Close note picker" className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center">
           <Icon name="x" size={14} />
         </button>
       </div>

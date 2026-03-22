@@ -34,21 +34,24 @@ export function LlmModelSelector({
 }) {
   const [models, setModels] = useState<LLMModel[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!pair.provider) {
       setModels([]);
+      setLoadError(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
+    setLoadError(false);
     api.models
       .list(pair.provider)
       .then((m) => {
         if (!cancelled) setModels(m);
       })
       .catch(() => {
-        if (!cancelled) setModels([]);
+        if (!cancelled) { setModels([]); setLoadError(true); }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -103,13 +106,18 @@ export function LlmModelSelector({
             ))}
           </select>
         ) : (
-          <input
-            value={pair.model}
-            onChange={(e) => onChange({ ...pair, model: e.target.value })}
-            placeholder="Model name (e.g. gpt-4o)"
-            className={inputCls}
-            disabled={disabled}
-          />
+          <div>
+            <input
+              value={pair.model}
+              onChange={(e) => onChange({ ...pair, model: e.target.value })}
+              placeholder="Model name (e.g. gpt-4o)"
+              className={`${inputCls} ${loadError ? "border-amber-600" : ""}`}
+              disabled={disabled}
+            />
+            {loadError && (
+              <p className="text-[10px] text-amber-400 mt-0.5 px-1">Could not load models — type model name manually</p>
+            )}
+          </div>
         )
       )}
     </div>

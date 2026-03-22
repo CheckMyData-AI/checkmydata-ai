@@ -129,6 +129,7 @@ export function ConnectionSelector() {
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   const [useConnString, setUseConnString] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<
     Record<string, { success: boolean; error?: string }>
   >({});
@@ -385,6 +386,7 @@ export function ConnectionSelector() {
     const mcpArgs = isMCP && form.mcp_server_args.trim()
       ? form.mcp_server_args.split(/\s+/).filter(Boolean)
       : null;
+    setSaving(true);
     try {
       const conn = await api.connections.create({
         project_id: activeProject.id,
@@ -425,6 +427,8 @@ export function ConnectionSelector() {
         err instanceof Error ? err.message : "Failed to create connection",
         "error",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1026,9 +1030,11 @@ export function ConnectionSelector() {
       <div className="flex gap-2 pt-1">
         <button
           onClick={editingId ? handleUpdate : handleCreate}
-          className="flex-1 px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors"
+          disabled={saving}
+          className="flex-1 px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          {editingId ? "Save Changes" : "Create Connection"}
+          {saving && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+          {saving ? "Saving…" : editingId ? "Save Changes" : "Create Connection"}
         </button>
         {editingId && (
           <button

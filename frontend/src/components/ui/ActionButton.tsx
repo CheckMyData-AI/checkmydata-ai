@@ -26,9 +26,9 @@ const VARIANT_CLASSES: Record<ActionVariant, string> = {
 };
 
 const SIZE_CLASSES: Record<NonNullable<ActionButtonProps["size"]>, { btn: string; icon: number }> = {
-  xs: { btn: "p-0.5 rounded min-w-5 min-h-5", icon: 10 },
-  sm: { btn: "p-1 rounded min-w-7 min-h-7", icon: 12 },
-  md: { btn: "p-1.5 rounded-md min-w-8 min-h-8", icon: 14 },
+  xs: { btn: "p-1 rounded min-w-6 min-h-6", icon: 10 },
+  sm: { btn: "p-1.5 rounded min-w-8 min-h-8", icon: 12 },
+  md: { btn: "p-2 rounded-md min-w-9 min-h-9", icon: 14 },
 };
 
 export function ActionButton({

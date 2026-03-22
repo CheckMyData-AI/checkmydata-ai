@@ -109,11 +109,14 @@ export function ConfirmModal() {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-modal-title"
       onClick={(e) => {
         if (e.target === e.currentTarget) close(false);
       }}
     >
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
         {severity !== "normal" && (
           <div className="flex justify-center mb-3">
             <svg className={`w-8 h-8 ${icon.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -122,7 +125,7 @@ export function ConfirmModal() {
           </div>
         )}
 
-        <p className="text-sm text-zinc-200 mb-1 leading-relaxed">{message}</p>
+        <p id="confirm-modal-title" className="text-sm text-zinc-200 mb-1 leading-relaxed">{message}</p>
 
         {detail && (
           <p className="text-xs text-zinc-400 mb-4 leading-relaxed">{detail}</p>

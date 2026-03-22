@@ -232,6 +232,12 @@ export function ChatSearch() {
             </div>
           )}
 
+          {!loading && results.length === 0 && query.trim().length > 0 && query.trim().length < 2 && (
+            <div className="py-4 text-center text-xs text-text-muted">
+              Type at least 2 characters to search
+            </div>
+          )}
+
           {results.map((r, i) => (
             <button
               key={`${r.message_id}-${i}`}

@@ -37,7 +37,7 @@ jobs:
         run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
 
       - name: Unit tests
-        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing --cov-fail-under=60
+        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing --cov-fail-under=65
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}

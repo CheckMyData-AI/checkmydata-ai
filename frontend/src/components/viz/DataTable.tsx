@@ -46,7 +46,9 @@ export function DataTable({ data }: DataTableProps) {
               key={fmt}
               onClick={() => handleExport(fmt)}
               disabled={exporting}
-              className="text-xs px-2 py-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
+              aria-label={`Export as ${fmt.toUpperCase()}`}
+              title={`Export as ${fmt.toUpperCase()}`}
+              className="text-xs px-2.5 py-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50 min-h-[28px]"
             >
               {fmt.toUpperCase()}
             </button>

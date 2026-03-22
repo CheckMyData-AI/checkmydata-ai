@@ -171,7 +171,8 @@ export function NoteCard({ note }: NoteCardProps) {
               onClick={handleToggleShare}
               disabled={sharing}
               title={note.is_shared ? "Unshare" : "Share with team"}
-              className={`p-1 rounded transition-colors ${
+              aria-label={note.is_shared ? "Unshare" : "Share with team"}
+              className={`p-1.5 rounded transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center ${
                 note.is_shared
                   ? "text-accent hover:text-accent-hover"
                   : "text-text-muted hover:text-accent hover:bg-accent-muted"
@@ -194,7 +195,8 @@ export function NoteCard({ note }: NoteCardProps) {
               <button
                 onClick={handleDelete}
                 title="Delete"
-                className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors"
+                aria-label="Delete note"
+                className="p-1.5 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center"
               >
                 <Icon name="trash" size={12} />
               </button>

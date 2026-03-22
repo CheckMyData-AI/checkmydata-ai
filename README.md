@@ -422,6 +422,7 @@ During DB indexing, DISTINCT values are now collected more broadly:
 
 **New files:**
 - `backend/app/services/probe_service.py` — Data health probe runner
+- `backend/tests/unit/test_probe_service.py` — Unit tests for `ProbeService` (table limits, session notes, disconnect on error, `_probe_table` paths)
 - `backend/alembic/versions/c5d6e7f8g9h0_add_section_hashes_to_project_cache.py` — Migration for `section_hashes_json`
 - `frontend/src/components/analytics/FeedbackAnalyticsPanel.tsx` — Feedback analytics dashboard component
 
@@ -2256,6 +2257,33 @@ You can also run the scripts directly:
 
 ---
 
+## UX & Accessibility Improvements
+
+Twenty targeted UX/visual quality improvements applied across the frontend:
+
+1. **Toast dismiss button** — added `aria-label`, increased touch target, `role="alert"` on toasts
+2. **WrongDataModal close** — added `aria-label`, hover background, min click target
+3. **DashboardBuilder picker close** — added `aria-label`, transition, min click target
+4. **BatchRunner note picker close** — added `aria-label`, hover feedback, min click target
+5. **Dashboard back button** — added `aria-label="Back to home"`, min 36px touch target
+6. **Spinner** — added `role="status"`, `aria-live="polite"`, screen-reader text
+7. **SuggestionChips** — `aria-hidden="true"` on decorative lightbulb SVG
+8. **ActionButton sizes** — increased xs/sm/md minimum dimensions for better touch targets
+9. **ConfirmModal** — added `role="dialog"`, `aria-modal`, `aria-labelledby`, fade-in animation
+10. **ToastContainer** — elevated z-index to `z-[60]` (above modals), `aria-live` region
+11. **ConnectionSelector** — added saving/loading state with spinner on Create/Save button
+12. **AuthGate email** — inline validation on blur with red border and error message
+13. **LlmModelSelector** — shows error state when model list fails to load
+14. **ChatInput** — 4000-char limit with remaining count near limit, `maxLength` enforced
+15. **Viewport** — changed `userScalable: true`, `maximumScale: 5` for accessibility (pinch-to-zoom)
+16. **NoteCard buttons** — added `aria-label` to share/delete icon buttons, increased touch targets
+17. **ErrorBoundary** — added focus ring, `autoFocus` on reload button, rounded-lg styling
+18. **DataTable exports** — added `aria-label` and `title` tooltips on CSV/JSON/XLSX buttons
+19. **ChatSearch** — added "Type at least 2 characters" hint for short queries
+20. **Toast animation** — slide-in animation preserved, z-index layering fixed
+
+---
+
 ## Testing
 
 ### Automated Tests
@@ -2266,11 +2294,11 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 1,402 across 94 test files
-- Backend integration tests: 309 across 31 test files
-- Frontend tests: 211 across 25 test files
-- **Grand total: 1,922 tests**
-- Backend coverage: 65% (enforced minimum: 60%)
+- Backend unit tests: 1,616 across 105 test files
+- Backend integration tests: 338 across 34 test files
+- Frontend tests: 240 across 30 test files
+- **Grand total: 2,194 tests**
+- Backend coverage: 68% (enforced CI minimum: 65%)
 - Zero flaky tests (verified via 3x sequential runs)
 - Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 
@@ -2326,8 +2354,10 @@ make test-frontend    # frontend vitest
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
 | API Routes | 23 (projects, connections, viz routes, active tasks, stale index/sync status reset, pipeline failure propagation, sync background failure propagation, startup stale reset) | — |
+| Route coverage (backup, demo, metrics, health monitor, notifications, dashboards RBAC) | — | 8 |
 | Models Routes | 11 (sorting, cache, static providers, error fallback) | — |
 | Connection Service | 25 (create, encrypt, sanitize, get, list, update, delete, test_connection, to_config: basic/SSH/MCP) | — |
+| Dashboard Service | 10 (create, get, list_for_project OR filter, update allowed/ignored/missing, delete, ALLOWED_UPDATE_FIELDS) | — |
 | Repository Service | 10 (create, get, list_by_project, update, delete, error cases) | — |
 | Rule Service | 15 (create, get, list_all scoping, update, delete, ensure_default_rule) | — |
 | Project Cache Service | 8 (load_knowledge, load_profile, save create/update, deserialization error) | — |
@@ -2365,10 +2395,27 @@ make test-frontend    # frontend vitest
 | API Coverage | — | 12 (chat sessions, data validation, batch, usage, models, tasks, legal) |
 | Auth Extended | — | 8 (project lifecycle, connection lifecycle for all 4 DB types, health) |
 | Performance Smoke | — | 9 (health latency, auth latency, CRUD latency, list endpoints) |
+| Dashboard Service | 10 (CRUD, allowed fields, visibility) | 8 (routes CRUD, RBAC, private visibility) |
+| Probe Service | 8 (run probes, null rates, findings, errors) | — |
+| Backup Routes | — | 4 (trigger, list, history, auth) |
+| Demo Routes | — | 2 (setup, auth) |
+| Metrics Route | — | 2 (shape, auth) |
+| Health Monitor | — | 2 (connection health, reconnect) |
+| Notification Routes | — | 3 (list/count, read-all, mark-read 404) |
+| LLM Adapters | 24 (OpenAI/Anthropic/OpenRouter classifiers, complete, format) | — |
+| MCP Client | 18 (connect, disconnect, test, list, query, call_tool) | — |
+| Connectors (PG/MySQL/Mongo/CH) | 49 (execute, test, disconnect, params, errors) | — |
+| Batch Routes | 7 (sheet name sanitization) | 9 (execute, CRUD, export, auth, cross-project) |
+| Edge Cases | 10 (alert evaluator: null/zero/unknown/negative/string) | 12 (demo idempotency, dashboard privacy, notification edges) |
 | Frontend (ErrorBoundary) | 3 (render ok, error UI, reload button) | — |
 | Frontend (StatusDot) | 9 (all statuses, sizes, pulse) | — |
 | Frontend (ToastContainer) | 5 (empty, success, error, multiple, dismiss) | — |
 | Frontend (Spinner) | 3 (render, className, styles) | — |
+| Frontend (VizRenderer) | 7 (table, chart, text, number, key_value, unknown, default) | — |
+| Frontend (SuggestionChips) | 8 (loading, render, truncate, onSelect, empty, followups) | — |
+| Frontend (NotificationBell) | 5 (bell, badge, dropdown, notifications) | — |
+| Frontend (DashboardList) | 5 (loading, empty, list, new button) | — |
+| Frontend (AccountMenu) | 5 (gear, menu, change password, google-only, sign out) | — |
 | Frontend (api) | 4 (fetch mock, auth headers) | — |
 | Frontend (auth-store) | 4 (login, error, logout, restore) | — |
 | Frontend (app-store) | 10 (setActiveProject, addMessage, localStorage persistence, updateMessageId, userRating, rawResult) | — |
@@ -2406,6 +2453,14 @@ make test-frontend    # frontend vitest
 | Frontend (ReadinessGate) | 8 (status dashboard, bypass button, callback, warning, auto-bypass when ready, green indicators, staleness warning, last indexed time) | — |
 | Frontend (Sidebar) | 8 (render, nav sections, collapse, workspace sections, sign out, mobile drawer render, mobile drawer hidden, mobile close) | — |
 | Frontend (InviteManager) | 6 (render, email+role inputs, invite button, members list, remove button except owner, pending invites) | — |
+| Frontend (NotificationBell) | 5 (bell icon, badge when unread, no badge at zero, dropdown opens and lists, notification rows) | — |
+| Frontend (DashboardList) | 4 (loading then list, empty state, dashboard titles, New Dashboard opens builder) | — |
+| Frontend (AccountMenu) | 5 (gear button, menu open, Change Password for email vs Google-only, Sign Out calls logout) | — |
+| Context Budget Manager | 23 (_estimate, BudgetAllocation, allocate, _truncate, budget limits, empty texts) | — |
+| VectorStore | 21 (init client types, collection CRUD, add_documents, query, delete_by_source_path, delete_collection, embedding function) | — |
+| GitTracker | 16 (ChangedFilesResult, get_head_sha, get_changed_files diff/full/fallback, get_last_indexed_sha, record_index, count_commits_ahead, cleanup_old_records) | — |
+| BackupManager Extended | 21 (run_backup manifest/errors, _backup_database types, _backup_chroma skip/copy, _backup_rules, prune retention/failure, list_backups valid/corrupt/incomplete, pg_dump failure) | — |
+| Connectors Extended | 49 (Postgres execute/params/disconnect/test, MySQL execute/params/test, MongoDB find/count/aggregate/invalid/test, ClickHouse execute/params/test, _dict_to_positional) | — |
 
 ---
 

@@ -192,7 +192,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
             <span className="text-xs font-medium text-text-primary">Select a saved query</span>
             <button
               onClick={() => setShowPicker(false)}
-              className="p-1 rounded text-text-muted hover:text-text-secondary"
+              aria-label="Close picker"
+              className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center"
             >
               <Icon name="x" size={12} />
             </button>

@@ -224,7 +224,8 @@ export default function DashboardPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push("/")}
-            className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
+            aria-label="Back to home"
+            className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
           >
             <Icon name="arrow-left" size={16} />
           </button>

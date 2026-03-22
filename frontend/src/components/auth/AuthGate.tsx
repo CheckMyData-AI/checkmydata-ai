@@ -31,6 +31,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const googleLoadingRef = useRef(false);
@@ -164,16 +165,23 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             />
           )}
 
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className={inputCls}
-            aria-label="Email"
-            aria-required="true"
-          />
+          <div>
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); if (emailTouched && emailRegex.test(e.target.value)) useAuthStore.setState({ error: null }); }}
+              onBlur={() => setEmailTouched(true)}
+              required
+              className={`${inputCls} ${emailTouched && email && !emailRegex.test(email) ? "border-red-500 focus:border-red-500 focus:ring-red-500/30" : ""}`}
+              aria-label="Email"
+              aria-required="true"
+              aria-invalid={emailTouched && email ? !emailRegex.test(email) : undefined}
+            />
+            {emailTouched && email && !emailRegex.test(email) && (
+              <p className="text-[10px] text-red-400 mt-1 px-1">Please enter a valid email address</p>
+            )}
+          </div>
 
           <div>
             <input
