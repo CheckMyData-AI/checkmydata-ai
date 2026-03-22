@@ -2147,6 +2147,10 @@ src/
 | `POST` | `/api/feed/{project_id}/scan` | Trigger full-project insight scan |
 | `POST` | `/api/feed/{project_id}/opportunities/{conn_id}` | Scan for growth opportunities |
 | `POST` | `/api/feed/{project_id}/losses/{conn_id}` | Scan for revenue leaks and conversion drops |
+| `POST` | `/api/reconciliation/{project_id}/row-counts` | Compare row counts between two sources |
+| `POST` | `/api/reconciliation/{project_id}/values` | Compare aggregate metric values between two sources |
+| `POST` | `/api/reconciliation/{project_id}/schemas` | Compare table schemas between two sources |
+| `POST` | `/api/reconciliation/{project_id}/full` | Full reconciliation (counts + values + schemas) |
 
 ### Security Model
 

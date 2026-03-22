@@ -33,6 +33,7 @@ from app.api.routes import (
     notes,
     notifications,
     projects,
+    reconciliation,
     repos,
     rules,
     schedules,
@@ -260,6 +261,7 @@ app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 app.include_router(data_graph.router, prefix="/api/data-graph", tags=["data-graph"])
 app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
 app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
+app.include_router(reconciliation.router, prefix="/api/reconciliation", tags=["reconciliation"])
 
 
 async def _check_alembic_head() -> None:

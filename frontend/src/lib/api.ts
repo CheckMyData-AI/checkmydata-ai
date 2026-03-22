@@ -616,6 +616,35 @@ export interface ActionRecommendationDTO {
   source_insight_title: string;
 }
 
+export interface ReconciliationDiscrepancyDTO {
+  discrepancy_type: string;
+  severity: string;
+  title: string;
+  description: string;
+  source_a_name: string;
+  source_b_name: string;
+  source_a_value: unknown;
+  source_b_value: unknown;
+  affected_metric: string;
+  affected_table: string;
+  difference_pct: number;
+  likely_cause: string;
+  recommended_action: string;
+}
+
+export interface ReconciliationReportDTO {
+  source_a_name: string;
+  source_b_name: string;
+  source_a_connection_id: string;
+  source_b_connection_id: string;
+  status: string;
+  total_checks: number;
+  critical_count: number;
+  warning_count: number;
+  discrepancies: ReconciliationDiscrepancyDTO[];
+  summary: string;
+}
+
 export interface LossReportDTO {
   loss_type: string;
   title: string;
@@ -1384,5 +1413,46 @@ export const api = {
         `/insights/${projectId}/actions${q ? `?${q}` : ""}`,
       );
     },
+  },
+
+  reconciliation: {
+    full: (
+      projectId: string,
+      body: {
+        project_id: string;
+        source_a_connection_id: string;
+        source_a_name?: string;
+        source_b_connection_id: string;
+        source_b_name?: string;
+        counts_a?: Record<string, number>;
+        counts_b?: Record<string, number>;
+        aggregates_a?: Record<string, number>;
+        aggregates_b?: Record<string, number>;
+        schema_a?: Record<string, string[]>;
+        schema_b?: Record<string, string[]>;
+      },
+    ) =>
+      request<ReconciliationReportDTO>(
+        `/reconciliation/${projectId}/full`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      ),
+    rowCounts: (projectId: string, body: Record<string, unknown>) =>
+      request<ReconciliationReportDTO>(
+        `/reconciliation/${projectId}/row-counts`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    values: (projectId: string, body: Record<string, unknown>) =>
+      request<ReconciliationReportDTO>(
+        `/reconciliation/${projectId}/values`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    schemas: (projectId: string, body: Record<string, unknown>) =>
+      request<ReconciliationReportDTO>(
+        `/reconciliation/${projectId}/schemas`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
   },
 };
