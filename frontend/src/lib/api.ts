@@ -583,6 +583,22 @@ export interface AnomalyReportDTO {
   related_anomalies: string[];
 }
 
+export interface OpportunityDTO {
+  opportunity_type: string;
+  title: string;
+  description: string;
+  segment: string;
+  metric: string;
+  current_value: number;
+  benchmark_value: number;
+  gap_pct: number;
+  estimated_impact: string;
+  suggested_action: string;
+  confidence: number;
+  evidence: string[];
+  severity: string;
+}
+
 export const api = {
   auth: {
     register: (email: string, password: string, displayName?: string) =>
@@ -1274,6 +1290,13 @@ export const api = {
         `/feed/${projectId}/scan`,
         { method: "POST" },
       ),
+    scanOpportunities: (projectId: string, connectionId: string) =>
+      request<{
+        ok: boolean;
+        opportunities: OpportunityDTO[];
+        tables_scanned: number;
+        insights_stored: number;
+      }>(`/feed/${projectId}/opportunities/${connectionId}`, { method: "POST" }),
   },
 
   insights: {

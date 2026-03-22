@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - SQL Agent now automatically stores critical/warning anomalies as insight records in Memory Layer
 - Probe Service enriched with anomaly intelligence reports per table
 - Frontend `AnomalyReportCard` component with expandable root cause, impact, and action details
+- **Opportunity Detector** — finds high-performing segments, conversion gaps, undermonetized users, and growth-potential channels with impact estimates (`OpportunityDetector`, `OpportunityCard`)
+- New API endpoint: `POST /api/feed/{project_id}/opportunities/{connection_id}` (opportunity scan with auto-store to insights)
 - BACKLOG.md for iterative development tracking
 
 ## [0.10.0] - 2026-03-22
