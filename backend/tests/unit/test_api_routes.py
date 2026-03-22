@@ -54,6 +54,10 @@ class TestProjectRoutes:
         mock_project.sql_llm_model = None
         mock_project.owner_id = "test-user-1"
 
+        exec_result = MagicMock()
+        exec_result.scalar_one_or_none.return_value = None
+        _FAKE_DB.execute = AsyncMock(return_value=exec_result)
+
         with (
             patch("app.api.routes.projects._svc") as mock_svc,
             patch("app.api.routes.projects._membership_svc") as mock_msvc,
@@ -63,6 +67,7 @@ class TestProjectRoutes:
             resp = client.post("/api/projects", json={"name": "Test"})
             assert resp.status_code == 200
             assert resp.json()["name"] == "Test"
+        _FAKE_DB.execute = AsyncMock()
 
     def test_get_project_not_found(self, client):
         with (

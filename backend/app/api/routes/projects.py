@@ -92,8 +92,27 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    from sqlalchemy import and_, select
+
+    from app.models.project import Project
+
     data = body.model_dump()
     data["owner_id"] = user["user_id"]
+
+    existing = await db.execute(
+        select(Project).where(
+            and_(
+                Project.owner_id == user["user_id"],
+                Project.name == body.name,
+            )
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail="A project with this name already exists",
+        )
+
     project = await _svc.create(db, **data)
     await _membership_svc.add_member(db, project.id, user["user_id"], "owner")
     await _rule_svc.ensure_default_rule(db, project.id)

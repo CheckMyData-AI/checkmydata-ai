@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
@@ -5,6 +6,18 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import async_session_factory
+
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+def validate_safe_id(value: str, name: str = "id") -> str:
+    """Reject path-parameter values that could cause path traversal."""
+    if not _SAFE_ID_RE.match(value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {name}: must be alphanumeric, dash, or underscore (max 128 chars)",
+        )
+    return value
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

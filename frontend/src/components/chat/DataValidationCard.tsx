@@ -113,6 +113,8 @@ export function DataValidationCard({ messageId, query, sessionId }: DataValidati
             value={expectedValue}
             onChange={(e) => setExpectedValue(e.target.value)}
             placeholder="What did you expect? (optional)"
+            maxLength={200}
+            aria-label="Expected value"
             className="w-full px-2.5 py-1.5 rounded text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-600"
           />
           <input
@@ -120,6 +122,8 @@ export function DataValidationCard({ messageId, query, sessionId }: DataValidati
             value={rejectionReason}
             onChange={(e) => setRejectionReason(e.target.value)}
             placeholder="What seems wrong? (optional)"
+            maxLength={500}
+            aria-label="Rejection reason"
             className="w-full px-2.5 py-1.5 rounded text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-600"
           />
           <div className="flex gap-1.5">

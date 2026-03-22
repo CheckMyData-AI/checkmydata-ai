@@ -160,3 +160,14 @@ class VectorStore:
             self._client.delete_collection(self._collection_name(project_id))
         except Exception:
             logger.warning("Failed to delete collection for project %s", project_id, exc_info=True)
+
+    def close(self) -> None:
+        """Release ChromaDB resources on shutdown."""
+        with self._lock:
+            self._collections.clear()
+        if hasattr(self._client, "_identifier_to_system"):
+            for system in self._client._identifier_to_system.values():
+                system.stop()
+        elif hasattr(self._client, "close"):
+            self._client.close()
+        logger.info("VectorStore closed")

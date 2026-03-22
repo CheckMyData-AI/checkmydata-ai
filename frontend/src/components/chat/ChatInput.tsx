@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState, useRef, useCallback } from "react";
+import { type ReactNode, useState, useRef, useCallback, useEffect } from "react";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -20,6 +20,19 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
     setValue("");
     inputRef.current?.focus();
   }, [value, disabled, onSend]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   const MAX_LENGTH = 4000;
   const remaining = MAX_LENGTH - value.length;

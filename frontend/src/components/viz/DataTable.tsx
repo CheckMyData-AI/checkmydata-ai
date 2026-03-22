@@ -8,12 +8,17 @@ interface DataTableProps {
   data: Record<string, unknown>;
 }
 
+const MAX_RENDERED_ROWS = 500;
+
 export function DataTable({ data }: DataTableProps) {
   const columns = (data.columns as string[]) || [];
-  const rows = (data.rows as Record<string, unknown>[]) || [];
-  const totalRows = (data.total_rows as number) || rows.length;
+  const allRows = (data.rows as Record<string, unknown>[]) || [];
+  const totalRows = (data.total_rows as number) || allRows.length;
   const executionTime = data.execution_time_ms as number | undefined;
   const [exporting, setExporting] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const isCapped = allRows.length > MAX_RENDERED_ROWS && !showAll;
+  const rows = isCapped ? allRows.slice(0, MAX_RENDERED_ROWS) : allRows;
 
   const handleExport = async (format: string) => {
     setExporting(true);
@@ -92,6 +97,16 @@ export function DataTable({ data }: DataTableProps) {
           </tbody>
         </table>
       </div>
+      {isCapped && (
+        <div className="px-4 py-2 border-t border-zinc-800/50 text-center">
+          <button
+            onClick={() => setShowAll(true)}
+            className="text-[11px] text-accent hover:text-accent-hover transition-colors"
+          >
+            Showing {MAX_RENDERED_ROWS} of {allRows.length} rows — click to show all
+          </button>
+        </div>
+      )}
     </div>
   );
 }

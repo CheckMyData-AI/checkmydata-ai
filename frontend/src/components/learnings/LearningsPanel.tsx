@@ -156,7 +156,9 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
     [categoryCounts]
   );
 
-  const grouped = filtered.reduce<Record<string, AgentLearningDTO[]>>((acc, l) => {
+  const MAX_VISIBLE = 200;
+  const capped = filtered.length > MAX_VISIBLE ? filtered.slice(0, MAX_VISIBLE) : filtered;
+  const grouped = capped.reduce<Record<string, AgentLearningDTO[]>>((acc, l) => {
     (acc[l.category] ??= []).push(l);
     return acc;
   }, {});

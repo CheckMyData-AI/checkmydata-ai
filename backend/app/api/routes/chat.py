@@ -147,6 +147,10 @@ async def estimate_cost(
         except Exception:
             pass
 
+    from app.api.deps import validate_safe_id
+
+    validate_safe_id(project_id, "project_id")
+
     rules_text = ""
     try:
         file_rules = rules_engine.load_rules(

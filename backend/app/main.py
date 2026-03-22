@@ -121,6 +121,27 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("Error closing tunnel manager")
     try:
+        orch = chat._agent._orchestrator
+        if hasattr(orch, "_vector_store"):
+            orch._vector_store.close()
+        elif hasattr(orch, "_sql") and hasattr(orch._sql, "_vector_store"):
+            orch._sql._vector_store.close()
+        logger.info("VectorStore closed")
+    except Exception:
+        logger.debug("VectorStore cleanup skipped", exc_info=True)
+
+    try:
+        from pathlib import Path
+
+        clone_dir = Path(settings.repo_clone_base_dir)
+        if clone_dir.exists():
+            for lock_file in clone_dir.glob("*/.git/index.lock"):
+                lock_file.unlink(missing_ok=True)
+                logger.info("Removed stale lock: %s", lock_file)
+    except Exception:
+        logger.debug("Repo clone cleanup skipped", exc_info=True)
+
+    try:
         from app.models.base import engine
 
         await engine.dispose()

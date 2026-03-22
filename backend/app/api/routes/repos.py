@@ -323,6 +323,9 @@ async def check_for_updates(
 ):
     """Quick check: fetch remote + compare HEAD with last indexed SHA."""
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    from app.api.deps import validate_safe_id
+
+    validate_safe_id(project_id, "project_id")
     project = await _project_svc.get(db, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
