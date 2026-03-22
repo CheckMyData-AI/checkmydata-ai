@@ -1,6 +1,39 @@
 # CheckMyData.ai
 
+[![CI](https://github.com/ssheleg/checkmydata-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/ssheleg/checkmydata-ai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 AI-powered database query agent that analyzes Git repositories, understands database schemas, and lets you query databases through natural language chat with rich data visualization.
+
+**Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB
+**LLM providers**: OpenAI, Anthropic, OpenRouter
+
+## Quick Start
+
+```bash
+git clone https://github.com/ssheleg/checkmydata-ai.git
+cd checkmydata-ai
+make setup    # Install deps, create .env, run migrations
+make dev      # Backend on :8000, frontend on :3100
+```
+
+Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](INSTALLATION.md) for detailed setup instructions.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [INSTALLATION.md](INSTALLATION.md) | Setup and deployment instructions |
+| [USAGE.md](USAGE.md) | How to use the application |
+| [API.md](API.md) | REST API reference |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design and module overview |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [ROADMAP.md](ROADMAP.md) | Future plans and priorities |
+| [FAQ.md](FAQ.md) | Common questions and troubleshooting |
+| [SECURITY.md](SECURITY.md) | Security policy and reporting |
+| [SUPPORT.md](SUPPORT.md) | Getting help |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
 
 ---
 
@@ -3475,3 +3508,19 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 - **ProjectSelector:** Added loading spinner and error toast during project selection.
 - **ConfirmModal:** Now supports a `destructive` option — non-destructive confirmations show an accent-colored button instead of red.
 - **API client:** Added 60-second request timeout, explicit 403 handling with user-friendly message, and ensured `askStream` rejects its promise on 401/403.
+
+---
+
+## Contributing
+
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for
+guidelines on:
+
+- Setting up the development environment
+- Branch naming and commit conventions
+- Pull request process
+- Testing expectations
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
