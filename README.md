@@ -2294,12 +2294,12 @@ make test-frontend    # frontend vitest
 ```
 
 **Test counts:**
-- Backend unit tests: 1,616 across 105 test files
+- Backend unit tests: 1,808 across 114 test files
 - Backend integration tests: 338 across 34 test files
-- Frontend tests: 240 across 30 test files
-- **Grand total: 2,194 tests**
-- Backend coverage: 68% (enforced CI minimum: 65%)
-- Zero flaky tests (verified via 3x sequential runs)
+- Frontend tests: 276 across 33 test files
+- **Grand total: 2,422 tests**
+- Backend coverage: 67% (enforced CI minimum: 65%)
+- Zero flaky tests, zero skipped tests
 - Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 
 ### Test Coverage by Module
@@ -2352,6 +2352,17 @@ make test-frontend    # frontend vitest
 | ConversationalAgent / OrchestratorAgent | 12 (text reply, text with connection, knowledge search, max iterations, error handling, LLM error friendly message, token accumulation, workflow_id, tool_call_log, thinking events on tool call, thinking events on final answer, thinking includes tool name) | 13 (full chat: text/SQL/knowledge flow, optional connection, stream events, rules_changed flag, user_id forwarding) |
 | ToolExecutor | 52 (execute_query, search_knowledge, get_schema_info, get_custom_rules, get_entity_info, unknown tool, RAG threshold, get_db_index, get_sync_context, get_query_context, _format_table_context, auto_detect_tables, manage_custom_rules CRUD/validation/RBAC) | — |
 | Prompt Builder | 13 (all combinations of connection/knowledge flags, re-visualization prompt, manage_rules capability/guideline) | — |
+| Auth Service | 28 (register, login, JWT, Google OAuth, password hash, duplicate email, token decode) | — |
+| Chat Service | 18 (session CRUD, message CRUD, history enrichment, user isolation, metadata parsing) | — |
+| Project Service | 15 (CRUD, list ordering, update, delete, None-value handling) | — |
+| Scheduler Service | 25 (cron validation, schedule CRUD, due schedules, record run, run history) | — |
+| Note Service | 18 (CRUD, scope filtering: mine/shared/all, update allowed fields, result update) | — |
+| Query Planner | 25 (complexity detection, adaptive LLM fallback, plan validation, cycle detection) | — |
+| Agent Validation | 20 (SQL/viz/knowledge result validation, warnings, error states) | — |
+| Stage Executor | 20 (execute, retry, dispatch, checkpoint, error handling, question builder) | — |
+| Feedback Pipeline | 30 (confirmed/approximate/rejected verdicts, learning derivation, _try_float) | — |
+| Query Cache | 18 (LRU, TTL, invalidation, schema-aware keys, eviction) | — |
+| API Dependencies | 9 (auth header parsing, JWT validation, user lookup, inactive user) | — |
 | Alembic | 2 (upgrade head, downgrade base) | — |
 | API Routes | 23 (projects, connections, viz routes, active tasks, stale index/sync status reset, pipeline failure propagation, sync background failure propagation, startup stale reset) | — |
 | Route coverage (backup, demo, metrics, health monitor, notifications, dashboards RBAC) | — | 8 |
