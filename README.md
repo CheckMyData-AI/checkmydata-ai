@@ -2154,6 +2154,7 @@ src/
 | `POST` | `/api/semantic-layer/{project_id}/build/{conn_id}` | Build semantic catalog from DB index |
 | `POST` | `/api/semantic-layer/{project_id}/normalize` | Normalize metrics across all connections |
 | `GET` | `/api/semantic-layer/{project_id}/catalog` | Browse the metric catalog |
+| `POST` | `/api/explore/{project_id}` | Autonomous investigation — "What's wrong?" |
 
 ### Security Model
 

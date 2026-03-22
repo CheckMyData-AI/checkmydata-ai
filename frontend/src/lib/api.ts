@@ -616,6 +616,29 @@ export interface ActionRecommendationDTO {
   source_insight_title: string;
 }
 
+export interface ExplorationFindingDTO {
+  category: string;
+  severity: string;
+  title: string;
+  description: string;
+  evidence: string;
+  recommended_action: string;
+  confidence: number;
+  source: string;
+}
+
+export interface ExplorationReportDTO {
+  status: string;
+  total_findings: number;
+  critical_count: number;
+  warning_count: number;
+  positive_count: number;
+  findings: ExplorationFindingDTO[];
+  summary: string;
+  investigation_steps: string[];
+  data_coverage: Record<string, number>;
+}
+
 export interface CatalogMetricDTO {
   id: string;
   name: string;
@@ -1439,6 +1462,18 @@ export const api = {
       const q = qs.toString();
       return request<{ total: number; actions: ActionRecommendationDTO[] }>(
         `/insights/${projectId}/actions${q ? `?${q}` : ""}`,
+      );
+    },
+  },
+
+  explore: {
+    investigate: (projectId: string, connectionId?: string) => {
+      const qs = new URLSearchParams();
+      if (connectionId) qs.set("connection_id", connectionId);
+      const q = qs.toString();
+      return request<ExplorationReportDTO>(
+        `/explore/${projectId}${q ? `?${q}` : ""}`,
+        { method: "POST" },
       );
     },
   },

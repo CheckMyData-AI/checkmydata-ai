@@ -24,6 +24,7 @@ from app.api.routes import (
     data_graph,
     data_validation,
     demo,
+    exploration,
     feed,
     health_monitor,
     insights,
@@ -264,6 +265,7 @@ app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
 app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
 app.include_router(reconciliation.router, prefix="/api/reconciliation", tags=["reconciliation"])
 app.include_router(semantic_layer.router, prefix="/api/semantic-layer", tags=["semantic-layer"])
+app.include_router(exploration.router, prefix="/api/explore", tags=["explore"])
 
 
 async def _check_alembic_head() -> None:

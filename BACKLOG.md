@@ -199,7 +199,7 @@
 
 ---
 
-### Task 9: Query-less Exploration
+### Task 9: Query-less Exploration ✅ `done`
 
 **Goal:** User says "What's wrong?" and agent autonomously investigates.
 
