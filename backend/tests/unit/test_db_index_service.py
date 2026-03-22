@@ -1,7 +1,7 @@
 """Unit tests for DbIndexService."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -281,3 +281,225 @@ class TestIsIndexed:
         result.scalar_one_or_none.return_value = summary
         session.execute = AsyncMock(return_value=result)
         assert await svc.is_indexed(session, "conn-1") is False
+
+
+def _mock_session(scalar_one_or_none=None, scalars_all=None):
+    session = AsyncMock()
+    result_mock = MagicMock()
+    if scalars_all is not None:
+        result_mock.scalars.return_value.all.return_value = scalars_all
+    result_mock.scalar_one_or_none.return_value = scalar_one_or_none
+    session.execute = AsyncMock(return_value=result_mock)
+    return session
+
+
+class TestUpsertTable:
+    @pytest.mark.asyncio
+    async def test_insert_new(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        session.add = MagicMock()
+        result = await svc.upsert_table(
+            session, "conn-1", {"table_name": "orders", "row_count": 100}
+        )
+        session.add.assert_called_once()
+        assert result.table_name == "orders"
+
+    @pytest.mark.asyncio
+    async def test_update_existing(self, svc):
+        existing = _make_entry(table_name="orders", row_count=50)
+        session = _mock_session(scalar_one_or_none=existing)
+        result = await svc.upsert_table(
+            session, "conn-1", {"table_name": "orders", "row_count": 200}
+        )
+        assert result.row_count == 200
+
+
+class TestGetIndex:
+    @pytest.mark.asyncio
+    async def test_returns_list(self, svc):
+        items = [_make_entry(), _make_entry(table_name="orders")]
+        session = _mock_session(scalars_all=items)
+        result = await svc.get_index(session, "conn-1")
+        assert len(result) == 2
+
+
+class TestGetTableIndex:
+    @pytest.mark.asyncio
+    async def test_found(self, svc):
+        entry = _make_entry()
+        session = _mock_session(scalar_one_or_none=entry)
+        result = await svc.get_table_index(session, "conn-1", "users")
+        assert result is entry
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        assert await svc.get_table_index(session, "conn-1", "missing") is None
+
+
+class TestDeleteStaleTables:
+    @pytest.mark.asyncio
+    async def test_deletes_stale(self, svc):
+        entries = [
+            _make_entry(table_name="keep"),
+            _make_entry(table_name="remove_me"),
+        ]
+        session = _mock_session(scalars_all=entries)
+        count = await svc.delete_stale_tables(session, "conn-1", {"keep"})
+        assert count == 1
+        session.delete.assert_awaited_once()
+        session.flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_none_stale(self, svc):
+        entries = [_make_entry(table_name="keep")]
+        session = _mock_session(scalars_all=entries)
+        count = await svc.delete_stale_tables(session, "conn-1", {"keep"})
+        assert count == 0
+        session.flush.assert_not_awaited()
+
+
+class TestDeleteAll:
+    @pytest.mark.asyncio
+    async def test_deletes_index_and_summary(self, svc):
+        session = AsyncMock()
+        await svc.delete_all(session, "conn-1")
+        assert session.execute.await_count == 2
+        session.commit.assert_awaited_once()
+
+
+class TestUpsertSummary:
+    @pytest.mark.asyncio
+    async def test_insert_new(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        session.add = MagicMock()
+        result = await svc.upsert_summary(
+            session, "conn-1", {"total_tables": 5, "active_tables": 3}
+        )
+        session.add.assert_called_once()
+        assert result.total_tables == 5
+
+    @pytest.mark.asyncio
+    async def test_update_existing(self, svc):
+        existing = _make_summary(total_tables=5)
+        session = _mock_session(scalar_one_or_none=existing)
+        result = await svc.upsert_summary(session, "conn-1", {"total_tables": 10})
+        assert result.total_tables == 10
+
+
+class TestGetSummary:
+    @pytest.mark.asyncio
+    async def test_found(self, svc):
+        summary = _make_summary()
+        session = _mock_session(scalar_one_or_none=summary)
+        assert await svc.get_summary(session, "conn-1") is summary
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        assert await svc.get_summary(session, "conn-1") is None
+
+
+class TestGetIndexAge:
+    @pytest.mark.asyncio
+    async def test_no_summary(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        assert await svc.get_index_age(session, "conn-1") is None
+
+    @pytest.mark.asyncio
+    async def test_aware_timestamp(self, svc):
+        summary = _make_summary(indexed_at=datetime(2026, 3, 20, tzinfo=UTC))
+        session = _mock_session(scalar_one_or_none=summary)
+        age = await svc.get_index_age(session, "conn-1")
+        assert isinstance(age, timedelta)
+        assert age.total_seconds() > 0
+
+    @pytest.mark.asyncio
+    async def test_naive_timestamp(self, svc):
+        summary = _make_summary(indexed_at=datetime(2026, 3, 20))
+        summary.indexed_at = datetime(2026, 3, 20)  # force naive
+        session = _mock_session(scalar_one_or_none=summary)
+        age = await svc.get_index_age(session, "conn-1")
+        assert isinstance(age, timedelta)
+
+
+class TestIsStale:
+    @pytest.mark.asyncio
+    async def test_no_age_returns_false(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        assert await svc.is_stale(session, "conn-1") is False
+
+    @pytest.mark.asyncio
+    async def test_stale_index(self, svc):
+        old_summary = _make_summary(indexed_at=datetime(2026, 1, 1, tzinfo=UTC))
+        session = _mock_session(scalar_one_or_none=old_summary)
+        assert await svc.is_stale(session, "conn-1", ttl_hours=24) is True
+
+    @pytest.mark.asyncio
+    async def test_fresh_index(self, svc):
+        recent = _make_summary(indexed_at=datetime.now(UTC))
+        session = _mock_session(scalar_one_or_none=recent)
+        assert await svc.is_stale(session, "conn-1", ttl_hours=24) is False
+
+
+class TestSetIndexingStatus:
+    @pytest.mark.asyncio
+    async def test_updates_existing(self, svc):
+        summary = _make_summary(indexing_status="idle")
+        session = _mock_session(scalar_one_or_none=summary)
+        await svc.set_indexing_status(session, "conn-1", "running")
+        assert summary.indexing_status == "running"
+
+    @pytest.mark.asyncio
+    async def test_creates_new(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        session.add = MagicMock()
+        await svc.set_indexing_status(session, "conn-1", "running")
+        session.add.assert_called_once()
+
+
+class TestGetIndexingStatus:
+    @pytest.mark.asyncio
+    async def test_no_summary(self, svc):
+        session = _mock_session(scalar_one_or_none=None)
+        assert await svc.get_indexing_status(session, "conn-1") == "idle"
+
+    @pytest.mark.asyncio
+    async def test_with_status(self, svc):
+        summary = _make_summary(indexing_status="running")
+        session = _mock_session(scalar_one_or_none=summary)
+        assert await svc.get_indexing_status(session, "conn-1") == "running"
+
+
+class TestTableIndexToDetailEdgeCases:
+    def test_code_match_details(self, svc):
+        entry = _make_entry(
+            code_match_status="matched",
+            code_match_details="Found in models/user.py line 42",
+        )
+        result = svc.table_index_to_detail(entry)
+        assert "models/user.py" in result
+
+    def test_invalid_column_notes_json(self, svc):
+        entry = _make_entry(column_notes_json="{not valid json")
+        result = svc.table_index_to_detail(entry)
+        assert "Column notes" not in result
+
+    def test_numeric_format_notes(self, svc):
+        entry = _make_entry()
+        entry.numeric_format_notes = '{"price": "2 decimal places"}'
+        result = svc.table_index_to_detail(entry)
+        assert "Numeric format notes" in result
+        assert "`price`" in result
+
+    def test_invalid_sample_data_json(self, svc):
+        entry = _make_entry(sample_data_json="{not valid}")
+        result = svc.table_index_to_detail(entry)
+        assert "Sample data" not in result
+
+    def test_distinct_values(self, svc):
+        entry = _make_entry()
+        entry.column_distinct_values_json = '{"status": ["active", "inactive", "pending"]}'
+        result = svc.table_index_to_detail(entry)
+        assert "Distinct values" in result
+        assert "active" in result
