@@ -4,6 +4,23 @@ Changes made by the continuous improvement agent.
 
 ---
 
+## Cycle 2 — 2026-03-22
+
+### Infrastructure
+
+- **Recreated backend venv** — Removed stale `.venv` with shebangs pointing to `/Users/sshlg/DATA/esim-database-agent/`. Recreated with correct paths. All CLI tools (pip, ruff, mypy, pytest) now work directly without `python -m` prefix.
+
+### Tests
+
+- **batch_service.py: 46% -> 100%** — Added 9 unit tests for `execute_batch` covering: batch not found, connection not found, all-succeed, all-fail, partial failure, row cap (500), tracker event emission, missing SQL key fallback, connector disconnect on failure.
+- **code_db_sync_service.py: 55% -> 93%** — Created new test file with 39 tests covering: upsert (create/update), get_sync, get_table_sync, delete_stale_tables, delete_all, summary CRUD, is_synced, set/get_sync_status, get_status dict, mark_stale, mark_stale_for_project, runtime enrichment (JSON merge, text append, invalid field, missing table, invalid JSON, dedup), prompt context formatting, detail formatting, response formatting.
+
+### CI/CD
+
+- **Coverage threshold raised** — CI `--cov-fail-under` increased from 68% to 69% in `.github/workflows/ci.yml`.
+
+---
+
 ## Cycle 1 — 2026-03-22
 
 ### Fixed

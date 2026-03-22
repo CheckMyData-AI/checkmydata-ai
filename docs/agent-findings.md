@@ -4,6 +4,33 @@ Discoveries made during continuous improvement cycles.
 
 ---
 
+## Cycle 2 — 2026-03-22
+
+### Project State
+
+- **Backend coverage:** 68.78% -> 69.42% (+0.64%)
+- **Total unit tests:** 2103 -> 2132 (+29 new)
+- **Frontend tests:** 345/345 (unchanged, all pass)
+
+### Infrastructure Fix
+
+- **Stale venv shebangs** — The backend `.venv` was created when the project was named `esim-database-agent`. All executables in `.venv/bin/` had shebangs pointing to the old path. Recreated the entire venv under the correct project directory. All tools (pip, ruff, mypy, pytest) now work with direct invocation.
+
+### Coverage Improvements
+
+| Service | Before | After | Tests Added |
+|---------|--------|-------|-------------|
+| batch_service.py | 46% | 100% | 9 (execute_batch: all paths) |
+| code_db_sync_service.py | 55% | 93% | 39 (full CRUD + formatting) |
+
+### Key Testing Observations
+
+- `batch_service.execute_batch` had zero test coverage despite being the core execution method. It manages its own DB session (via `async_session_factory`), requiring careful mocking.
+- `code_db_sync_service` formatting methods (`sync_to_prompt_context`, `table_sync_to_detail`, `sync_to_response`) are static and don't need DB access, but test stubs must bypass SQLAlchemy instrumentation (can't use `__new__` on mapped classes).
+- `add_runtime_enrichment` handles both JSON merge and text append patterns — edge cases like invalid existing JSON and duplicate text are now covered.
+
+---
+
 ## Cycle 1 — 2026-03-22
 
 ### Project State

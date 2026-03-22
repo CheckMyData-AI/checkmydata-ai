@@ -2,6 +2,8 @@
 
 import json
 import uuid
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -27,12 +29,14 @@ import app.models.scheduled_query  # noqa: F401
 import app.models.ssh_key  # noqa: F401
 import app.models.token_usage  # noqa: F401
 import app.models.user  # noqa: F401
+from app.connectors.base import ConnectionConfig, QueryResult
 from app.models.base import Base
 from app.models.connection import Connection
 from app.models.project import Project
 from app.models.saved_note import SavedNote
 from app.models.user import User
 from app.services.batch_service import BatchService
+from app.services.batch_service import _conn_svc as _conn_svc_ref
 
 svc = BatchService()
 
@@ -255,3 +259,271 @@ class TestDeleteBatch:
     async def test_delete_missing_returns_false(self, db):
         result = await svc.delete_batch(db, "no-such-id")
         assert result is False
+
+
+class TestExecuteBatch:
+    """Tests for BatchService.execute_batch — the core execution loop."""
+
+    @pytest.fixture
+    def mock_tracker(self):
+        with patch("app.services.batch_service.tracker") as t:
+            t.begin = AsyncMock(return_value="wf-1")
+            t.emit = AsyncMock()
+            t.end = AsyncMock()
+            yield t
+
+    @pytest.fixture
+    def mock_conn_svc(self):
+        with (
+            patch.object(_conn_svc_ref, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(_conn_svc_ref, "to_config", new_callable=AsyncMock) as mock_config,
+        ):
+            yield mock_get, mock_config
+
+    @pytest.fixture
+    def mock_connector(self):
+        connector = AsyncMock()
+        connector.connect = AsyncMock()
+        connector.disconnect = AsyncMock()
+        with patch("app.services.batch_service.get_connector", return_value=connector):
+            yield connector
+
+    @pytest.fixture
+    def mock_session_factory(self, db):
+        @asynccontextmanager
+        async def _factory():
+            yield db
+
+        with patch("app.services.batch_service.async_session_factory", _factory):
+            yield
+
+    async def _setup(self, db):
+        user = await _make_user(db)
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        return user, proj, conn
+
+    @pytest.mark.asyncio
+    async def test_batch_not_found_logs_and_returns(self, db, mock_tracker, mock_session_factory):
+        await svc.execute_batch("nonexistent-id", "conn-id")
+        mock_tracker.begin.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connection_not_found_marks_failed(
+        self, db, mock_tracker, mock_conn_svc, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db, user.id, proj.id, conn.id, "Test", [{"sql": "SELECT 1", "title": "Q"}]
+        )
+
+        mock_get, _ = mock_conn_svc
+        mock_get.return_value = None
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        await db.refresh(batch)
+        assert batch.status == "failed"
+        assert batch.completed_at is not None
+        results = json.loads(batch.results_json)
+        assert results[0]["error"] == "Connection not found"
+
+    @pytest.mark.asyncio
+    async def test_all_queries_succeed(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "Success",
+            [{"sql": "SELECT 1", "title": "Q1"}, {"sql": "SELECT 2", "title": "Q2"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[[1], [2]], row_count=2
+        )
+
+        await svc.execute_batch(batch.id, conn.id, user_id=user.id)
+
+        await db.refresh(batch)
+        assert batch.status == "completed"
+        assert batch.completed_at is not None
+        results = json.loads(batch.results_json)
+        assert len(results) == 2
+        assert all(r["status"] == "success" for r in results)
+        assert results[0]["columns"] == ["id"]
+        assert results[0]["total_rows"] == 2
+        assert "duration_ms" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_all_queries_fail(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "AllFail",
+            [{"sql": "BAD SQL", "title": "Q1"}, {"sql": "WORSE SQL", "title": "Q2"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.side_effect = RuntimeError("syntax error")
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        await db.refresh(batch)
+        assert batch.status == "failed"
+        results = json.loads(batch.results_json)
+        assert len(results) == 2
+        assert all(r["status"] == "failed" for r in results)
+        assert "syntax error" in results[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "Partial",
+            [{"sql": "SELECT 1", "title": "Good"}, {"sql": "BAD", "title": "Bad"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.side_effect = [
+            QueryResult(columns=["v"], rows=[[1]], row_count=1),
+            RuntimeError("fail"),
+        ]
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        await db.refresh(batch)
+        assert batch.status == "partially_failed"
+        results = json.loads(batch.results_json)
+        assert results[0]["status"] == "success"
+        assert results[1]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_row_cap_applied(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "BigResult",
+            [{"sql": "SELECT *", "title": "Q"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        big_rows = [[i] for i in range(600)]
+        mock_connector.execute_query.return_value = QueryResult(
+            columns=["n"], rows=big_rows, row_count=600
+        )
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        await db.refresh(batch)
+        results = json.loads(batch.results_json)
+        assert len(results[0]["rows"]) == 500
+        assert results[0]["total_rows"] == 600
+
+    @pytest.mark.asyncio
+    async def test_tracker_events_emitted(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "Events",
+            [{"sql": "SELECT 1", "title": "Q1"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.return_value = QueryResult(
+            columns=["v"], rows=[[1]], row_count=1
+        )
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        mock_tracker.begin.assert_called_once()
+        assert mock_tracker.emit.call_count == 2
+        mock_tracker.end.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_missing_sql_key_uses_empty_string(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "NoSQL",
+            [{"title": "No SQL key"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.return_value = QueryResult(columns=[], rows=[], row_count=0)
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        mock_connector.execute_query.assert_called_once_with("")
+
+    @pytest.mark.asyncio
+    async def test_connector_disconnect_called_even_on_failure(
+        self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
+    ):
+        user, proj, conn = await self._setup(db)
+        batch = await svc.create_batch(
+            db,
+            user.id,
+            proj.id,
+            conn.id,
+            "DisconnectTest",
+            [{"sql": "SELECT 1", "title": "Q"}],
+        )
+
+        mock_get, mock_config = mock_conn_svc
+        mock_get.return_value = conn
+        mock_config.return_value = ConnectionConfig(db_type="postgresql")
+
+        mock_connector.execute_query.side_effect = RuntimeError("boom")
+
+        await svc.execute_batch(batch.id, conn.id)
+
+        mock_connector.disconnect.assert_called_once()

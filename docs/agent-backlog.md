@@ -18,7 +18,7 @@ _None found this cycle._
 
 | # | Title | Problem | User Impact | Solution | Priority | Complexity |
 |---|-------|---------|-------------|----------|----------|------------|
-| 1 | Stale venv shebangs | Backend venv created under old project path; CLI tools fail directly | Dev workflow friction — must use `python -m` prefix | Recreate venv or run `make setup-backend` | P1 | Low |
+| 1 | Stale venv shebangs | Backend venv created under old project path; CLI tools fail directly | Dev workflow friction — must use `python -m` prefix | **Resolved: venv recreated (Cycle 2)** | P1 (resolved) | Low |
 
 ---
 
@@ -26,7 +26,7 @@ _None found this cycle._
 
 | # | Title | Problem | User Impact | Solution | Priority | Complexity |
 |---|-------|---------|-------------|----------|----------|------------|
-| 2 | Test coverage at 68.78% | Below 80% target; Sprint 1 services have thin coverage | Reduced confidence in new features; regressions may slip through | Add tests for batch_service (46%), code_db_sync_service (55%), project_overview_service (67%) | P1 | High |
+| 2 | Test coverage at 69.42% | Below 80% target; improved from 68.78% | batch_service 46%→100%, code_db_sync_service 55%→93%. CI threshold raised to 69% | Next: project_overview_service (67%), agent_learning_service (66%), benchmark_service (66%) | P1 | High |
 | 3 | Missing google-auth in local venv | Dependency declared but not installed | 3 unit tests fail locally (CI installs fresh so CI passes) | Resolved: installed google-auth | P0 (resolved) | Trivial |
 
 ---
@@ -66,4 +66,4 @@ _No performance issues discovered this cycle. Needs browser-based profiling in n
 | # | Title | Problem | User Impact | Solution | Priority | Complexity |
 |---|-------|---------|-------------|----------|----------|------------|
 | 7 | README.md is 3600+ lines | Single massive README hard to navigate | Contributor friction, hard to find information | Consider splitting into focused topic docs | P3 | Medium |
-| 8 | CI coverage threshold at 68% | Threshold below the stated 80% target | Low bar allows coverage regression | Incrementally raise threshold as coverage improves | P2 | Trivial |
+| 8 | CI coverage threshold at 69% | Raised from 68% in Cycle 2; still below 80% target | Low bar allows coverage regression | Continue incrementally raising threshold | P2 | Trivial |

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- CI coverage threshold raised from 68% to 69%
+
+### Fixed
+- Recreated backend venv to fix stale shebangs from old project path
+
+### Tests
+- batch_service.py: 46% -> 100% coverage (9 new tests for execute_batch)
+- code_db_sync_service.py: 55% -> 93% coverage (39 new tests — CRUD, status helpers, runtime enrichment, formatting)
+- Overall backend coverage: 68.78% -> 69.42%
+
 ### Added
 - Open-source repository documentation (CONTRIBUTING, ARCHITECTURE, API, etc.)
 - GitHub issue templates and PR template

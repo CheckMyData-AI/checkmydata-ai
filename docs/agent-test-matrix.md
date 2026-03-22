@@ -4,7 +4,7 @@ Core user flow verification status. Updated each improvement cycle.
 
 ---
 
-## Last Updated: 2026-03-22 (Cycle 1)
+## Last Updated: 2026-03-22 (Cycle 2)
 
 ## Automated Test Coverage
 
@@ -18,7 +18,7 @@ Core user flow verification status. Updated each improvement cycle.
 | Chat / Orchestrator | 20+ | — | ~70% | PASS |
 | SQL Agent | 15+ | — | ~65% | PASS |
 | Knowledge / RAG | 10+ | — | ~60% | PASS |
-| Batch Queries | 5+ | — | 46% | PASS (low coverage) |
+| Batch Queries | 21 | — | 100% | PASS |
 | Data Validation | 10+ | 5+ | 100% (service) | PASS |
 | Scheduling | 10+ | — | 100% (service) | PASS |
 | Rules | 5+ | — | 100% (service) | PASS |
@@ -72,8 +72,8 @@ Core user flow verification status. Updated each improvement cycle.
 
 | Service | Current | Target | Gap |
 |---------|---------|--------|-----|
-| batch_service.py | 46% | 70% | +24% |
-| code_db_sync_service.py | 55% | 70% | +15% |
+| batch_service.py | 100% | — | Done |
+| code_db_sync_service.py | 93% | — | Done |
 | agent_learning_service.py | 66% | 80% | +14% |
 | benchmark_service.py | 66% | 80% | +14% |
 | project_overview_service.py | 67% | 80% | +13% |
