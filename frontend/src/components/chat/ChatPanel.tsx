@@ -59,6 +59,7 @@ export function ChatPanel() {
   );
   const [readinessBypassed, setReadinessBypassed] = useState(false);
   const [connHealthStatus, setConnHealthStatus] = useState<string>("unknown");
+  const [reconnecting, setReconnecting] = useState(false);
 
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
@@ -593,14 +594,17 @@ export function ChatPanel() {
             <span className="text-xs text-error">Connection is down. Attempting reconnect...</span>
           </div>
           <button
+            disabled={reconnecting}
             onClick={() => {
+              setReconnecting(true);
               api.connections.reconnect(activeConnection.id).then((r) => {
                 if (r.health) setConnHealthStatus(r.health.status);
-              }).catch((err) => toast(err instanceof Error ? err.message : "Reconnect failed", "error"));
+              }).catch((err) => toast(err instanceof Error ? err.message : "Reconnect failed", "error"))
+                .finally(() => setReconnecting(false));
             }}
-            className="text-[10px] text-error hover:text-error/80 underline"
+            className="text-[10px] text-error hover:text-error/80 underline disabled:opacity-50"
           >
-            Retry
+            {reconnecting ? "Retrying..." : "Retry"}
           </button>
         </div>
       )}

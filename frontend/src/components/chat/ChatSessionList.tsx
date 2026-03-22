@@ -26,7 +26,14 @@ export function ChatSessionList() {
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  if (!activeProject || chatSessions.length === 0) return null;
+  if (!activeProject) return null;
+  if (chatSessions.length === 0) {
+    return (
+      <div className="px-3 py-4 text-center">
+        <p className="text-xs text-text-muted">No chats yet</p>
+      </div>
+    );
+  }
 
   const handleSelect = async (sessionId: string) => {
     const session = chatSessions.find((s) => s.id === sessionId);

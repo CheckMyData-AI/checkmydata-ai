@@ -226,8 +226,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
         </div>
       ) : (
         <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+          className="grid gap-3 grid-cols-1 md:grid-cols-2"
+          style={columns > 2 ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
         >
           {cards.map((card) => {
             const note = noteMap[card.note_id];

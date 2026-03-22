@@ -78,13 +78,21 @@ export function NotificationBell() {
   };
 
   useEffect(() => {
+    if (!open) return;
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-    if (open) document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [open]);
 
   return (
@@ -103,7 +111,7 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-72 max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden z-50 animate-fade-in">
+        <div className="absolute right-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden z-50 animate-fade-in">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
             <span className="text-[11px] font-medium text-text-primary">Notifications</span>
             {count > 0 && (

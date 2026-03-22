@@ -191,15 +191,19 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className={inputCls}
+              className={`${inputCls} ${mode === "register" && password.length > 0 && password.length < 8 ? "border-red-500 focus:border-red-500 focus:ring-red-500/30" : ""}`}
               aria-label="Password"
               aria-required="true"
             />
-            {mode === "register" && (
+            {mode === "register" && password.length > 0 && password.length < 8 ? (
+              <p className="text-[10px] text-red-400 mt-1 px-1">
+                Password must be at least 8 characters
+              </p>
+            ) : mode === "register" ? (
               <p className="text-[10px] text-text-muted mt-1 px-1">
                 Min. 8 characters
               </p>
-            )}
+            ) : null}
           </div>
 
           {error && (

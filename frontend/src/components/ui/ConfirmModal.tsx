@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Severity = "normal" | "warning" | "critical";
 
@@ -87,18 +87,39 @@ export function ConfirmModal() {
   const { open, message, destructive, detail, severity, confirmText, close } =
     useConfirmStore();
   const [typed, setTyped] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      close(false);
+      return;
+    }
+    if (e.key === "Tab" && dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, [close]);
 
   useEffect(() => {
     if (!open) {
       setTyped("");
       return;
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, close]);
+    window.addEventListener("keydown", handleKeyDown);
+    dialogRef.current?.querySelector<HTMLElement>("button, input")?.focus();
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, handleKeyDown]);
 
   if (!open) return null;
 
@@ -116,7 +137,7 @@ export function ConfirmModal() {
         if (e.target === e.currentTarget) close(false);
       }}
     >
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+      <div ref={dialogRef} className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
         {severity !== "normal" && (
           <div className="flex justify-center mb-3">
             <svg className={`w-8 h-8 ${icon.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

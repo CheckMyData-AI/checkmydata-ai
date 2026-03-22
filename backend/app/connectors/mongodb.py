@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from typing import Any
 
@@ -65,7 +66,13 @@ class MongoDBConnector(BaseConnector):
                     error="Query spec must include a 'collection' key, e.g. "
                     '{"collection": "my_coll", "operation": "find", "filter": {}}',
                 )
-            collection = self._db[spec["collection"]]
+            coll_name = spec["collection"]
+            valid_coll = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.\-]{0,127}$")
+            if not isinstance(coll_name, str) or not valid_coll.match(coll_name):
+                return QueryResult(
+                    error=f"Invalid collection name: {coll_name!r}",
+                )
+            collection = self._db[coll_name]
             operation = spec.get("operation", "find")
 
             if operation == "find":

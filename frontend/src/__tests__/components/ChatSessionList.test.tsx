@@ -80,10 +80,10 @@ describe("ChatSessionList", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("returns null when chatSessions is empty", () => {
+  it("shows empty state when chatSessions is empty", () => {
     setupStore({ chatSessions: [] });
-    const { container } = render(<ChatSessionList />);
-    expect(container.innerHTML).toBe("");
+    render(<ChatSessionList />);
+    expect(screen.getByText("No chats yet")).toBeInTheDocument();
   });
 
   it("renders session titles", () => {
