@@ -264,3 +264,62 @@ class TestGetMethods:
 
         active = await svc.get_active_investigation(db, sess.id)
         assert active is None
+
+
+class TestUpdatePhaseEdgeCases:
+    @pytest.mark.asyncio
+    async def test_update_phase_with_corrupted_log_json(self, db):
+        """When investigation_log_json is invalid JSON, it should reset to empty list."""
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        sess = await _make_session(db, proj.id)
+
+        inv = await svc.create_investigation(db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1")
+        inv.investigation_log_json = "not valid json!!!"
+        await db.flush()
+
+        updated = await svc.update_phase(
+            db, inv.id, "investigating", "investigate", "Step after corruption"
+        )
+        log = json.loads(updated.investigation_log_json)
+        assert len(log) == 1
+        assert log[0]["detail"] == "Step after corruption"
+
+
+class TestRecordFindingEdgeCases:
+    @pytest.mark.asyncio
+    async def test_record_finding_with_result_json(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        sess = await _make_session(db, proj.id)
+
+        inv = await svc.create_investigation(db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1")
+        updated = await svc.record_finding(
+            db,
+            inv.id,
+            corrected_result_json='{"total": 50000}',
+        )
+        assert updated is not None
+        assert updated.corrected_result_json == '{"total": 50000}'
+
+
+class TestCompleteInvestigationEdgeCases:
+    @pytest.mark.asyncio
+    async def test_complete_with_benchmarks(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        sess = await _make_session(db, proj.id)
+
+        inv = await svc.create_investigation(db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1")
+        completed = await svc.complete_investigation(
+            db, inv.id, benchmarks_updated=["b1", "b2"]
+        )
+        assert completed is not None
+        assert json.loads(completed.benchmarks_updated_json) == ["b1", "b2"]
+
+
+class TestFailInvestigationEdgeCases:
+    @pytest.mark.asyncio
+    async def test_fail_nonexistent(self, db):
+        result = await svc.fail_investigation(db, "no-such-id", "reason")
+        assert result is None

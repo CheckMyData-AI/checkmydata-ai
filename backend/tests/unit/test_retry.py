@@ -84,3 +84,36 @@ class TestRetry:
         result = await flaky()
         assert result == "ok"
         assert len(retries) == 2
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_exception_raises_immediately(self):
+        call_count = 0
+
+        @retry(max_attempts=3, backoff_seconds=0)
+        async def raise_keyboard_interrupt():
+            nonlocal call_count
+            call_count += 1
+            raise KeyboardInterrupt("stop")
+
+        with pytest.raises(KeyboardInterrupt):
+            await raise_keyboard_interrupt()
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_on_retry_callback_failure_is_swallowed(self):
+        def bad_callback(attempt, exc):
+            raise RuntimeError("callback crash")
+
+        call_count = 0
+
+        @retry(max_attempts=3, backoff_seconds=0, on_retry=bad_callback)
+        async def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("retry me")
+            return "ok"
+
+        result = await flaky()
+        assert result == "ok"
+        assert call_count == 3

@@ -310,6 +310,176 @@ class TestVerifyAndDeactivate:
         assert result.is_active is False
 
 
+class TestCreateNoteVerified:
+    @pytest.mark.asyncio
+    async def test_exact_duplicate_with_verified_sets_flag(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        note1 = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="users",
+            note="Status 1 = active.",
+            is_verified=False,
+        )
+        assert note1.is_verified is False
+
+        note2 = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="users",
+            note="Status 1 = active.",
+            is_verified=True,
+        )
+        assert note2.id == note1.id
+        assert note2.is_verified is True
+
+    @pytest.mark.asyncio
+    async def test_similar_note_with_verified_sets_flag(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        note1 = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="payments",
+            note="Amount is stored in cents.",
+            is_verified=False,
+        )
+
+        note2 = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="payments",
+            note="The amount is stored in cents!",
+            is_verified=True,
+        )
+        assert note2.id == note1.id
+        assert note2.is_verified is True
+
+
+class TestGetNotesForContextCategory:
+    @pytest.mark.asyncio
+    async def test_filters_by_category(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Order status 1 = completed",
+        )
+        await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="orders",
+            note="Order amounts in cents not dollars",
+        )
+
+        notes = await svc.get_notes_for_context(db, conn.id, category="business_logic")
+        assert len(notes) == 1
+        assert notes[0].category == "business_logic"
+
+
+class TestGetNoteById:
+    @pytest.mark.asyncio
+    async def test_found(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        note = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="t",
+            note="Some note text for get_note_by_id test",
+        )
+        result = await svc.get_note_by_id(db, note.id)
+        assert result is not None
+        assert result.id == note.id
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, db):
+        result = await svc.get_note_by_id(db, str(uuid.uuid4()))
+        assert result is None
+
+
+class TestCountNotes:
+    @pytest.mark.asyncio
+    async def test_counts_active(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="a",
+            note="Active note",
+        )
+        await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="b",
+            note="Another entirely different note for counting",
+        )
+
+        count = await svc.count_notes(db, conn.id)
+        assert count == 2
+
+
+class TestDeactivateNonexistent:
+    @pytest.mark.asyncio
+    async def test_returns_none(self, db):
+        result = await svc.deactivate_note(db, str(uuid.uuid4()))
+        assert result is None
+
+
+class TestDecayStaleNotes:
+    @pytest.mark.asyncio
+    async def test_decay_returns_rowcount(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 3
+        session.execute = AsyncMock(return_value=mock_result)
+
+        count = await svc.decay_stale_notes(session, days_threshold=60, decay_amount=0.1)
+        assert count == 3
+        session.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_decay_zero_when_no_stale(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 0
+        session.execute = AsyncMock(return_value=mock_result)
+
+        count = await svc.decay_stale_notes(session)
+        assert count == 0
+
+
 class TestDeleteAllForConnection:
     @pytest.mark.asyncio
     async def test_delete_all(self, db):

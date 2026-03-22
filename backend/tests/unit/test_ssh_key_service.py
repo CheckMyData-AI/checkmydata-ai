@@ -95,6 +95,19 @@ class TestSshKeyServiceCRUD:
         assert result is None
 
 
+class TestSshKeyServiceGet:
+    @pytest.mark.asyncio
+    async def test_get_with_user_id(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await svc.get(mock_session, "key-123", user_id="user-1")
+        assert result is not None
+
+
 class TestSshKeyServiceDelete:
     @pytest.mark.asyncio
     async def test_delete_free_key(self):
@@ -142,3 +155,83 @@ class TestSshKeyServiceDelete:
 
         deleted = await svc.delete(mock_session, "nonexistent")
         assert deleted is False
+
+
+class TestSshKeyServiceListAll:
+    @pytest.mark.asyncio
+    async def test_list_all_no_filter(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+        mock_keys = [MagicMock(), MagicMock()]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_keys
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await svc.list_all(mock_session)
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_all_with_user_id(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+        mock_keys = [MagicMock()]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_keys
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await svc.list_all(mock_session, user_id="user-1")
+        assert len(result) == 1
+
+
+class TestSshKeyServiceDecryptFailure:
+    @pytest.mark.asyncio
+    async def test_decrypt_error_raises_value_error(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+        mock_key = MagicMock()
+        mock_key.name = "bad-key"
+        mock_key.private_key_encrypted = "corrupted-data"
+        mock_key.passphrase_encrypted = None
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_key
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("app.services.ssh_key_service.decrypt", side_effect=RuntimeError("bad")):
+            with pytest.raises(ValueError, match="Cannot decrypt SSH key"):
+                await svc.get_decrypted(mock_session, "key-123")
+
+
+class TestSshKeyServiceFindReferences:
+    @pytest.mark.asyncio
+    async def test_find_references_empty(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda self: iter([])
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        refs = await svc._find_references(mock_session, "key-123")
+        assert refs == []
+
+    @pytest.mark.asyncio
+    async def test_find_references_with_projects_and_connections(self):
+        svc = SshKeyService()
+        mock_session = AsyncMock()
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.__iter__ = lambda self: iter([("MyProject",)])
+            else:
+                result.__iter__ = lambda self: iter([("MyConn",)])
+            return result
+
+        mock_session.execute = mock_execute
+
+        refs = await svc._find_references(mock_session, "key-123")
+        assert "project:MyProject" in refs
+        assert "connection:MyConn" in refs

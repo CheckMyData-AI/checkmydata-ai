@@ -98,6 +98,35 @@ class TestLoadProfile:
         result = await svc.load_profile(db, proj.id)
         assert result is None
 
+    @pytest.mark.asyncio
+    @patch("app.services.project_cache_service.ProjectCacheService._get_row")
+    async def test_returns_profile_on_valid_cache(self, mock_get_row, db):
+        mock_profile_cls = MagicMock()
+        mock_profile_instance = MagicMock()
+        mock_profile_cls.from_json.return_value = mock_profile_instance
+
+        mock_cache = MagicMock()
+        mock_cache.profile_json = '{"description": "ecommerce"}'
+        mock_get_row.return_value = mock_cache
+
+        with patch("app.knowledge.project_profiler.ProjectProfile", mock_profile_cls):
+            result = await svc.load_profile(db, "proj-id")
+
+        assert result is mock_profile_instance
+
+    @pytest.mark.asyncio
+    @patch("app.services.project_cache_service.ProjectCacheService._get_row")
+    async def test_returns_none_on_deserialization_error(self, mock_get_row, db):
+        mock_cache = MagicMock()
+        mock_cache.profile_json = '{"bad": data}'
+        mock_get_row.return_value = mock_cache
+
+        with patch("app.knowledge.project_profiler.ProjectProfile") as mock_cls:
+            mock_cls.from_json.side_effect = ValueError("bad json")
+            result = await svc.load_profile(db, "proj-id")
+
+        assert result is None
+
 
 class TestSave:
     @pytest.mark.asyncio

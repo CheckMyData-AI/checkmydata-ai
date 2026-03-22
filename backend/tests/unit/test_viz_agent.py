@@ -465,3 +465,47 @@ class TestVizAgent:
         assert result.viz_config["labels_column"] in results.columns
         for dc in result.viz_config.get("data_columns", []):
             assert dc in results.columns
+
+
+class TestValidateAndFixConfigEdgeCases:
+    def test_fix_config_pie_chart(self):
+        """Invalid config for pie chart should be auto-fixed."""
+        agent = VizAgent()
+        results = _qr(
+            columns=["name", "value"],
+            rows=[["A", 10], ["B", 20]],
+        )
+        bad_config = {"labels_column": "nonexistent", "data_column": "also_bad"}
+        fixed = agent._validate_and_fix_config(bad_config, "pie_chart", results)
+        assert fixed["labels_column"] in results.columns
+
+    def test_fix_config_scatter(self):
+        """Invalid config for scatter should be auto-fixed."""
+        agent = VizAgent()
+        results = _qr(
+            columns=["x", "y"],
+            rows=[[1, 10], [2, 20]],
+        )
+        bad_config = {"x_column": "nonexistent", "y_column": "also_bad"}
+        fixed = agent._validate_and_fix_config(bad_config, "scatter", results)
+        assert "x_column" in fixed
+
+    def test_fix_config_bad_data_columns(self):
+        """data_columns list with invalid column triggers fix."""
+        agent = VizAgent()
+        results = _qr(
+            columns=["month", "revenue"],
+            rows=[["Jan", 100], ["Feb", 200]],
+        )
+        bad_config = {"labels_column": "month", "data_columns": ["nonexistent"]}
+        fixed = agent._validate_and_fix_config(bad_config, "bar_chart", results)
+        assert fixed["labels_column"] in results.columns
+        for dc in fixed.get("data_columns", []):
+            assert dc in results.columns
+
+
+class TestSummarizeResults:
+    def test_empty_results(self):
+        results = _qr(columns=["x"], rows=[])
+        summary = VizAgent._summarize_results(results)
+        assert summary == "No rows returned."

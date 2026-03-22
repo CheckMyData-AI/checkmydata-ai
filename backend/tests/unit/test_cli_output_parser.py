@@ -124,3 +124,23 @@ class TestParsePsqlCsv:
         columns, rows = CLIOutputParser.parse_psql_csv(stdout)
         assert columns == ["id", "name"]
         assert rows == [["1", "alice, jr"]]
+
+    def test_headers_only_no_data_rows(self):
+        """CSV with only a header line."""
+        stdout = "id,name\n"
+        columns, rows = CLIOutputParser.parse_psql_csv(stdout)
+        assert columns == ["id", "name"]
+        assert rows == []
+
+
+class TestParseGenericEdgeCases:
+    def test_empty_input(self):
+        columns, rows = CLIOutputParser.parse_generic("")
+        assert columns == []
+        assert rows == []
+
+
+class TestStripLinesEdgeCases:
+    def test_skips_blank_lines_between_content(self):
+        lines = _strip_lines("a\n\nb\n\nc")
+        assert lines == ["a", "b", "c"]

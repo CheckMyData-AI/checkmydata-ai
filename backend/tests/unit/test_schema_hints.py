@@ -132,6 +132,46 @@ class TestGetRelatedTables:
         assert related == []
 
 
+class TestGetTableDetailEdgeCases:
+    def test_table_with_comment(self):
+        schema = SchemaInfo(
+            tables=[
+                TableInfo(
+                    name="audit_log",
+                    columns=[ColumnInfo(name="id", data_type="int")],
+                    comment="Tracks all user actions",
+                ),
+            ],
+            db_type="postgresql",
+        )
+        detail = get_table_detail("audit_log", schema)
+        assert "Tracks all user actions" in detail
+
+    def test_table_with_indexes(self):
+        from app.connectors.base import IndexInfo
+
+        schema = SchemaInfo(
+            tables=[
+                TableInfo(
+                    name="events",
+                    columns=[
+                        ColumnInfo(name="id", data_type="int"),
+                        ColumnInfo(name="created_at", data_type="timestamp"),
+                    ],
+                    indexes=[
+                        IndexInfo(name="idx_created", columns=["created_at"], is_unique=False),
+                        IndexInfo(name="uq_id", columns=["id"], is_unique=True),
+                    ],
+                ),
+            ],
+            db_type="postgresql",
+        )
+        detail = get_table_detail("events", schema)
+        assert "Indexes:" in detail
+        assert "idx_created" in detail
+        assert "UNIQUE" in detail
+
+
 class TestListAllTablesSummary:
     def test_all_tables_listed(self):
         schema = _make_schema()

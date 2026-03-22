@@ -196,6 +196,22 @@ class TestCompleteStep:
     async def test_missing_checkpoint_is_noop(self, db):
         await svc.complete_step(db, "nonexistent", "fetch")
 
+    @pytest.mark.asyncio
+    async def test_updates_last_sha(self, db):
+        proj = await _make_project(db)
+        cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
+        await svc.complete_step(db, cp.id, "fetch", last_sha="sha-prev")
+        await db.refresh(cp)
+        assert cp.last_sha == "sha-prev"
+
+    @pytest.mark.asyncio
+    async def test_updates_total_docs(self, db):
+        proj = await _make_project(db)
+        cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
+        await svc.complete_step(db, cp.id, "embed", total_docs=42)
+        await db.refresh(cp)
+        assert cp.total_docs == 42
+
 
 class TestMarkDocProcessed:
     @pytest.mark.asyncio
@@ -218,6 +234,10 @@ class TestMarkDocProcessed:
         await db.refresh(cp)
         paths = json.loads(cp.processed_doc_paths)
         assert paths.count("docs/a.md") == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_checkpoint_is_noop(self, db):
+        await svc.mark_doc_processed(db, "nonexistent-id", "a.md")
 
 
 class TestMarkDocsBatchProcessed:
@@ -253,6 +273,10 @@ class TestMarkDocsBatchProcessed:
         assert paths.count("a.md") == 1
         assert "b.md" in paths
 
+    @pytest.mark.asyncio
+    async def test_missing_checkpoint_is_noop(self, db):
+        await svc.mark_docs_batch_processed(db, "nonexistent-id", ["a.md"])
+
 
 class TestMarkFailed:
     @pytest.mark.asyncio
@@ -275,6 +299,10 @@ class TestMarkFailed:
         await svc.mark_failed(db, cp.id, "embed", long_error)
         await db.refresh(cp)
         assert len(cp.error_detail) == 4000
+
+    @pytest.mark.asyncio
+    async def test_missing_checkpoint_is_noop(self, db):
+        await svc.mark_failed(db, "nonexistent-id", "embed", "error")
 
 
 class TestDelete:
@@ -343,3 +371,26 @@ class TestStaticMethods:
             project_id="p", workflow_id="w", head_sha="s", changed_files_json="[]"
         )
         assert CheckpointService.get_changed_files(cp) == []
+
+
+class TestCleanupStale:
+    @pytest.mark.asyncio
+    async def test_deletes_stale_checkpoints(self, db):
+        from datetime import UTC, datetime, timedelta
+
+        proj = await _make_project(db)
+        cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
+        cp.updated_at = datetime.now(UTC) - timedelta(hours=48)
+        await db.commit()
+
+        count = await svc.cleanup_stale(db, max_age_hours=24)
+        assert count == 1
+        result = await svc.get_active(db, proj.id)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_stale_checkpoints(self, db):
+        proj = await _make_project(db)
+        await svc.create(db, proj.id, "wf-1", "sha-abc")
+        count = await svc.cleanup_stale(db, max_age_hours=24)
+        assert count == 0

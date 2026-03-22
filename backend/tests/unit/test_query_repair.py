@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.core.query_repair import QueryRepairer
+from app.llm.base import Message
 
 
 class TestQueryRepairer:
@@ -60,3 +61,25 @@ class TestQueryRepairer:
         )
         assert "error" in result
         assert "LLM" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repair_with_chat_history(self):
+        mock_router = MagicMock()
+        mock_response = MagicMock()
+        mock_tc = MagicMock()
+        mock_tc.name = "execute_query"
+        mock_tc.arguments = {"query": "SELECT 1", "explanation": "ok"}
+        mock_response.tool_calls = [mock_tc]
+        mock_router.complete = AsyncMock(return_value=mock_response)
+
+        history = [Message(role="user", content=f"msg {i}") for i in range(10)]
+        repairer = QueryRepairer(mock_router)
+        result = await repairer.repair(
+            repair_context="ctx",
+            db_type="postgresql",
+            chat_history=history,
+        )
+        assert result["query"] == "SELECT 1"
+        call_args = mock_router.complete.call_args
+        msgs = call_args.kwargs.get("messages") or call_args[0][0]
+        assert len([m for m in msgs if m.role == "user"]) >= 2

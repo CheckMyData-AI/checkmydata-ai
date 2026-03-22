@@ -105,3 +105,14 @@ class TestPreValidator:
         assert not result.is_valid
         assert result.error is not None
         assert len(result.error.suggested_tables) > 0
+
+
+class TestAmbiguousColumns:
+    def test_alias_resolution(self):
+        """Table alias should be resolved correctly."""
+        v = PreValidator(_schema())
+        result = v.validate(
+            "SELECT u.username FROM users u",
+            "postgresql",
+        )
+        assert result.is_valid

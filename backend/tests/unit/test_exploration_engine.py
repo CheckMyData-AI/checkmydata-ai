@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.exploration_engine import ExplorationEngine, Finding
+from app.core.exploration_engine import ExplorationEngine, Finding, _safe_float
 
 
 class TestExplorationEngine(unittest.TestCase):
@@ -252,6 +252,21 @@ class TestExplorationEngine(unittest.TestCase):
         )
         assert report.data_coverage["insights_scanned"] == 1
         assert report.data_coverage["anomaly_reports"] == 1
+
+
+class TestSafeFloat(unittest.TestCase):
+    def test_none_returns_default(self) -> None:
+        assert _safe_float(None) == 0.0
+        assert _safe_float(None, 5.0) == 5.0
+
+    def test_invalid_string_returns_default(self) -> None:
+        assert _safe_float("not_a_number") == 0.0
+        assert _safe_float("abc", -1.0) == -1.0
+
+    def test_valid_values(self) -> None:
+        assert _safe_float(3.14) == 3.14
+        assert _safe_float("2.5") == 2.5
+        assert _safe_float(0) == 0.0
 
 
 if __name__ == "__main__":

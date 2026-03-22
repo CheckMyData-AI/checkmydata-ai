@@ -667,3 +667,57 @@ class TestSyncToResponse:
         result = CodeDbSyncService.sync_to_response([], s)
         assert result["summary"]["total_tables"] == 5
         assert result["summary"]["global_notes"] == "notes"
+
+
+class TestSyncToPromptContextEdgeCases:
+    def test_with_summary_datetime(self):
+        """Cover line 323: summary with synced_at."""
+        from datetime import UTC, datetime
+
+        s = _stub_summary(
+            synced_at=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            global_notes="Project uses UTC timestamps",
+            data_conventions="All amounts in cents",
+            query_guidelines="Always use LIMIT",
+        )
+        entries = [_stub_entry(table_name="orders", sync_status="matched")]
+        result = CodeDbSyncService.sync_to_prompt_context(entries, s)
+        assert "Code-DB Sync (analyzed 2026-03-01" in result
+        assert "Project uses UTC timestamps" in result
+        assert "All amounts in cents" in result
+        assert "Always use LIMIT" in result
+
+    def test_prompt_with_warnings(self):
+        entries = [_stub_entry(table_name="orders", conversion_warnings="Amount stored in cents!")]
+        result = CodeDbSyncService.sync_to_prompt_context(entries, None)
+        assert "CRITICAL" in result
+        assert "Amount stored in cents!" in result
+
+    def test_prompt_with_code_only_tables(self):
+        entries = [
+            _stub_entry(table_name="a", sync_status="code_only"),
+            _stub_entry(table_name="b", sync_status="db_only"),
+        ]
+        result = CodeDbSyncService.sync_to_prompt_context(entries, None)
+        assert "code-only" in result
+        assert "DB-only" in result
+
+
+class TestTableSyncToDetailEdgeCases:
+    def test_bad_column_sync_notes_json(self):
+        """Cover lines 408-409: invalid column notes JSON."""
+        entry = _stub_entry(
+            table_name="orders",
+            column_sync_notes_json="not valid json!!!",
+        )
+        result = CodeDbSyncService.table_sync_to_detail(entry)
+        assert "orders" in result
+
+    def test_bad_used_in_files_json(self):
+        """Cover lines 416-417: invalid files JSON."""
+        entry = _stub_entry(
+            table_name="orders",
+            used_in_files_json="not valid json!!!",
+        )
+        result = CodeDbSyncService.table_sync_to_detail(entry)
+        assert "orders" in result

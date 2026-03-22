@@ -5,7 +5,7 @@ import pytest
 from app.pipelines.base import DataSourcePipeline
 from app.pipelines.database_pipeline import DatabasePipeline
 from app.pipelines.mcp_pipeline import MCPPipeline
-from app.pipelines.registry import PIPELINE_REGISTRY, get_pipeline
+from app.pipelines.registry import PIPELINE_REGISTRY, get_pipeline, register_pipeline
 
 
 class TestGetPipeline:
@@ -36,3 +36,12 @@ class TestRegistryEntries:
     def test_all_entries_are_datasource_pipelines(self):
         for key, cls in PIPELINE_REGISTRY.items():
             assert issubclass(cls, DataSourcePipeline), f"{key} → {cls} is not a DataSourcePipeline"
+
+
+class TestRegisterPipeline:
+    def test_register_new_pipeline(self):
+        register_pipeline("dummy", DatabasePipeline)
+        assert PIPELINE_REGISTRY["dummy"] is DatabasePipeline
+        p = get_pipeline("dummy")
+        assert isinstance(p, DatabasePipeline)
+        del PIPELINE_REGISTRY["dummy"]

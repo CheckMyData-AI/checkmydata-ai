@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.core.workflow_tracker import (
@@ -245,3 +247,38 @@ class TestWorkflowTracker:
 
         await t.end(wf_id, "db_index")
         t.unsubscribe(queue)
+
+    @pytest.mark.asyncio
+    async def test_end_handles_broadcast_failure(self):
+        t = WorkflowTracker()
+        wf_id = await t.begin("test")
+        side_fx = RuntimeError("fail")
+        with patch.object(t, "_broadcast", new_callable=AsyncMock, side_effect=side_fx):
+            await t.end(wf_id, "test")
+        assert workflow_id_var.get() is None
+
+    @pytest.mark.asyncio
+    async def test_broadcast_tolerates_already_removed_subscriber(self):
+        """Lines 199-200: dead subscriber already removed before cleanup."""
+        t = WorkflowTracker()
+        queue = t.subscribe()
+        for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
+            queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
+
+        class _RemoveOnceList(list):
+            """First remove succeeds, second raises ValueError."""
+
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                self._removed = set()
+
+            def remove(self, item):
+                if id(item) in self._removed:
+                    raise ValueError("already removed")
+                self._removed.add(id(item))
+                super().remove(item)
+
+        subs = _RemoveOnceList(t._subscribers)
+        subs.append(queue)
+        t._subscribers = subs
+        await t.emit("wf", "step", "started")

@@ -217,3 +217,165 @@ def test_pick_interesting_column_none():
     entry = _make_db_index(column_distinct_values_json="{}", column_notes_json="{}")
     col = SuggestionEngine._pick_interesting_column(entry)
     assert col is None
+
+
+def test_make_variation_returns_prefixed_unchanged():
+    result = SuggestionEngine._make_variation("Show me all the orders")
+    assert result == "Show me all the orders"
+
+
+def test_make_variation_strips_question_mark():
+    result = SuggestionEngine._make_variation("What happened?")
+    assert result == "What happened"
+
+
+def test_make_variation_no_prefix():
+    result = SuggestionEngine._make_variation("Monthly revenue breakdown")
+    assert result == "Monthly revenue breakdown"
+
+
+@pytest.mark.asyncio
+async def test_history_skips_null_meta(engine):
+    rows = [("Some content.", None)]
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+    suggestions = await engine.history_based_suggestions(db, "u1", "p1")
+    assert suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_history_skips_invalid_json(engine):
+    rows = [("Content.", "not json!!!")]
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+    suggestions = await engine.history_based_suggestions(db, "u1", "p1")
+    assert suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_history_skips_short_question(engine):
+    rows = [("Content.", json.dumps({"query": "SELECT 1", "question": "Short"}))]
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+    suggestions = await engine.history_based_suggestions(db, "u1", "p1")
+    assert suggestions == []
+
+
+def test_pick_interesting_column_bad_distinct_json():
+    entry = _make_db_index(column_distinct_values_json="not json")
+    col = SuggestionEngine._pick_interesting_column(entry)
+    assert col == "status"
+
+
+def test_pick_interesting_column_bad_notes_json():
+    entry = _make_db_index(column_distinct_values_json="{}", column_notes_json="not json")
+    col = SuggestionEngine._pick_interesting_column(entry)
+    assert col is None
+
+
+@pytest.mark.asyncio
+async def test_schema_suggestions_limit_reached(engine):
+    """Cover line 78/95: limit reached during iteration."""
+    import random
+
+    random.seed(42)
+    entries = [
+        _make_db_index(id=f"e{i}", table_name=f"table_{i}", relevance_score=5)
+        for i in range(10)
+    ]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = entries
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    suggestions = await engine.schema_based_suggestions(db, "conn-1", limit=2)
+    assert len(suggestions) <= 2
+    random.seed()
+
+
+@pytest.mark.asyncio
+async def test_schema_no_interesting_column(engine):
+    """Cover line 80: template with {column} but no interesting column."""
+    entries = [
+        _make_db_index(
+            column_distinct_values_json="{}",
+            column_notes_json="{}",
+        )
+    ]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = entries
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    suggestions = await engine.schema_based_suggestions(db, "conn-1", limit=5)
+    for s in suggestions:
+        assert "{column}" not in s["text"]
+
+
+@pytest.mark.asyncio
+async def test_history_limit_reached(engine):
+    """Cover line 125: history_based_suggestions reaching limit."""
+    rows = [
+        (
+            f"Content {i}.",
+            json.dumps(
+                {
+                    "query": f"SELECT * FROM t{i}",
+                    "question": f"Show me all records from table number {i} please",
+                }
+            ),
+        )
+        for i in range(10)
+    ]
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    suggestions = await engine.history_based_suggestions(db, "u1", "p1", limit=2)
+    assert len(suggestions) <= 2
+
+
+@pytest.mark.asyncio
+async def test_history_deduplicates_variations(engine):
+    """Cover line 142: duplicate variation detection."""
+    rows = [
+        (
+            "Content 1.",
+            json.dumps(
+                {
+                    "query": "SELECT * FROM orders",
+                    "question": "Show me all orders from the database",
+                }
+            ),
+        ),
+        (
+            "Content 2.",
+            json.dumps(
+                {
+                    "query": "SELECT * FROM orders",
+                    "question": "Show me all orders from the database",
+                }
+            ),
+        ),
+    ]
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    suggestions = await engine.history_based_suggestions(db, "u1", "p1")
+    texts = [s["text"] for s in suggestions]
+    assert len(texts) == len(set(texts))

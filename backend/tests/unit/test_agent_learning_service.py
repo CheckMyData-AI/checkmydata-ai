@@ -764,3 +764,225 @@ class TestInvalidateSummary:
         session = _mock_session(scalar_one_or_none=None)
         await svc._invalidate_summary(session, "conn-1")
         session.flush.assert_not_awaited()
+
+
+class TestResolveConflicts:
+    """Test the _resolve_conflicts private method."""
+
+    @pytest.mark.asyncio
+    async def test_no_existing_learnings(self, svc):
+        session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "always use orders_v2 table", 0.8,
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_conflict_indicators_in_new(self, svc):
+        session = AsyncMock()
+        old = _make_learning(lesson="something plain")
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "hello world test", 0.8,
+        )
+        assert old.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_negation_flip_deactivates_old(self, svc):
+        session = AsyncMock()
+        old = _make_learning(
+            lesson="always use column_a for filtering",
+            confidence=0.5,
+            is_active=True,
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "never use column_a for filtering queries in production environment", 0.8,
+        )
+        assert old.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_similar_lesson_skipped(self, svc):
+        session = AsyncMock()
+        old = _make_learning(
+            lesson="always use orders_v2 table",
+            confidence=0.5,
+            is_active=True,
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "always use orders_v2 table", 0.8,
+        )
+        assert old.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_no_shared_action_words_skipped(self, svc):
+        session = AsyncMock()
+        old = _make_learning(
+            lesson="avoid using table_x for joins",
+            confidence=0.5,
+            is_active=True,
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "not select from different_table in production context completely unrelated", 0.8,
+        )
+        assert old.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_old_higher_confidence_stays(self, svc):
+        session = AsyncMock()
+        old = _make_learning(
+            lesson="always use column_a for filtering",
+            confidence=0.9,
+            is_active=True,
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await svc._resolve_conflicts(
+            session, "conn-1", "table_preference", "orders",
+            "never use column_a for filtering queries in production environment", 0.5,
+        )
+        assert old.is_active is True
+
+
+class TestUpdateLearningNonLesson:
+    @pytest.mark.asyncio
+    async def test_update_non_lesson_field(self, svc):
+        session = AsyncMock()
+        entry = _make_learning(category="table_preference", subject="orders")
+        session.get = AsyncMock(return_value=entry)
+        session.flush = AsyncMock()
+
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock):
+            result = await svc.update_learning(session, "l1", category="schema_gotcha")
+
+        assert result is not None
+        assert result.category == "schema_gotcha"
+
+
+class TestGetCrossConnectionLearnings:
+    @pytest.mark.asyncio
+    async def test_returns_formatted_lines(self, svc):
+        session = AsyncMock()
+
+        proj_result = MagicMock()
+        proj_result.scalar_one_or_none.return_value = "proj-1"
+
+        sibling_result = MagicMock()
+        sibling_result.all.return_value = [("conn-2",), ("conn-3",)]
+
+        sibling_learning = _make_learning(
+            id="sl1",
+            connection_id="conn-2",
+            category="schema_gotcha",
+            lesson="Watch out for datetime timezone",
+            lesson_hash="hash-sibling",
+            confidence=0.8,
+        )
+        learning_result = MagicMock()
+        learning_result.scalars.return_value.all.return_value = [sibling_learning]
+
+        session.execute = AsyncMock(side_effect=[proj_result, sibling_result, learning_result])
+
+        lines = await svc._get_cross_connection_learnings(session, "conn-1", set())
+        assert len(lines) == 1
+        assert "[from sibling]" in lines[0]
+        assert "80% confidence" in lines[0]
+
+    @pytest.mark.asyncio
+    async def test_no_project_returns_empty(self, svc):
+        session = AsyncMock()
+        proj_result = MagicMock()
+        proj_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=proj_result)
+
+        lines = await svc._get_cross_connection_learnings(session, "conn-1", set())
+        assert lines == []
+
+    @pytest.mark.asyncio
+    async def test_no_siblings_returns_empty(self, svc):
+        session = AsyncMock()
+
+        proj_result = MagicMock()
+        proj_result.scalar_one_or_none.return_value = "proj-1"
+
+        sibling_result = MagicMock()
+        sibling_result.all.return_value = []
+
+        session.execute = AsyncMock(side_effect=[proj_result, sibling_result])
+
+        lines = await svc._get_cross_connection_learnings(session, "conn-1", set())
+        assert lines == []
+
+    @pytest.mark.asyncio
+    async def test_excludes_duplicate_hashes(self, svc):
+        session = AsyncMock()
+
+        proj_result = MagicMock()
+        proj_result.scalar_one_or_none.return_value = "proj-1"
+
+        sibling_result = MagicMock()
+        sibling_result.all.return_value = [("conn-2",)]
+
+        sibling_learning = _make_learning(
+            lesson_hash="already-seen-hash",
+            confidence=0.8,
+        )
+        learning_result = MagicMock()
+        learning_result.scalars.return_value.all.return_value = [sibling_learning]
+
+        session.execute = AsyncMock(side_effect=[proj_result, sibling_result, learning_result])
+
+        lines = await svc._get_cross_connection_learnings(
+            session, "conn-1", {"already-seen-hash"}
+        )
+        assert lines == []
+
+
+class TestCompilePromptCrossConnection:
+    @pytest.mark.asyncio
+    async def test_prompt_includes_cross_connection(self, svc):
+        session = AsyncMock()
+
+        learning = _make_learning()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [learning]
+
+        summary_result = MagicMock()
+        summary_result.scalar_one_or_none.return_value = None
+
+        session.execute = AsyncMock(side_effect=[mock_result, summary_result])
+
+        with patch.object(
+            svc,
+            "_get_cross_connection_learnings",
+            new_callable=AsyncMock,
+            return_value=["- [from sibling] Use ISO dates [80% confidence]"],
+        ):
+            prompt = await svc.compile_prompt(session, "conn-1")
+
+        assert "From Similar Connections" in prompt
+        assert "[from sibling]" in prompt

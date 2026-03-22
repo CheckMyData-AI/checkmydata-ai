@@ -64,6 +64,19 @@ class TestText:
         )
         assert result["type"] == "key_value"
 
+    def test_multi_row_fallback(self):
+        result = format_text(
+            QueryResult(
+                columns=["a", "b"],
+                rows=[["1", "2"], ["3", "4"]],
+                row_count=2,
+            ),
+            "Summary text",
+        )
+        assert result["type"] == "text"
+        assert result["content"] == "Summary text"
+        assert result["row_count"] == 2
+
 
 class TestChart:
     def test_bar_chart(self):
@@ -421,3 +434,126 @@ class TestRenderer:
     def test_unknown_falls_back_to_table(self):
         result = render(_sample_result(), "unknown_type")
         assert result["type"] == "table"
+
+
+class TestIsNumericEdgeCases:
+    def test_list_returns_false(self):
+        from app.viz.chart import _is_numeric
+
+        assert _is_numeric([1, 2]) is False
+
+    def test_dict_returns_false(self):
+        from app.viz.chart import _is_numeric
+
+        assert _is_numeric({"a": 1}) is False
+
+    def test_string_float(self):
+        from app.viz.chart import _is_numeric
+
+        assert _is_numeric("3.14") is True
+
+
+class TestDetectColumnTypesEdgeCases:
+    def test_all_null_column(self):
+        from app.viz.chart import _detect_column_types
+
+        result = QueryResult(columns=["x"], rows=[[None], [None]], row_count=2)
+        types = _detect_column_types(result)
+        assert types["x"] == "categorical"
+
+
+class TestSafeNumericEdgeCases:
+    def test_unknown_type(self):
+        assert _safe_numeric([1, 2, 3]) == 0
+
+
+class TestEmptyChartEdgeCases:
+    def test_bar_empty_columns(self):
+        result = QueryResult(columns=[], rows=[], row_count=0)
+        chart = generate_bar_chart(result, {})
+        assert chart["type"] == "bar"
+        assert chart["data"]["labels"] == []
+
+    def test_line_empty_columns(self):
+        result = QueryResult(columns=[], rows=[], row_count=0)
+        chart = generate_line_chart(result, {})
+        assert chart["type"] == "line"
+        assert chart["data"]["labels"] == []
+
+    def test_pie_single_column(self):
+        result = QueryResult(columns=["x"], rows=[["a"]], row_count=1)
+        chart = generate_pie_chart(result, {})
+        assert chart["type"] == "pie"
+        assert chart["data"]["labels"] == []
+
+    def test_scatter_single_column(self):
+        result = QueryResult(columns=["x"], rows=[[1]], row_count=1)
+        chart = generate_scatter(result, {})
+        assert chart["type"] == "scatter"
+        assert chart["data"]["labels"] == []
+
+
+class TestBuildSeriesEdgeCases:
+    def test_group_by_column_missing(self):
+        """When group_by column doesn't exist, should fall back to non-grouped."""
+        result = QueryResult(
+            columns=["month", "value"],
+            rows=[["Jan", 100], ["Feb", 200]],
+            row_count=2,
+        )
+        config = {
+            "labels_column": "month",
+            "data_columns": ["value"],
+            "group_by": "nonexistent",
+        }
+        chart = generate_bar_chart(result, config)
+        assert chart["type"] == "bar"
+        assert len(chart["data"]["labels"]) == 2
+
+    def test_all_data_columns_invalid_fallback(self):
+        """When all configured data columns are invalid, should fallback to auto-detection."""
+        result = QueryResult(
+            columns=["name", "amount"],
+            rows=[["A", 100], ["B", 200]],
+            row_count=2,
+        )
+        config = {"labels_column": "name", "data_columns": ["nonexist1", "nonexist2"]}
+        chart = generate_bar_chart(result, config)
+        assert len(chart["data"]["datasets"]) > 0
+
+
+class TestScatterEdgeCases:
+    def test_scatter_auto_detect_y(self):
+        """When y_column not specified, auto-detects."""
+        result = QueryResult(
+            columns=["age", "income"],
+            rows=[[25, 50000], [30, 60000]],
+            row_count=2,
+        )
+        chart = generate_scatter(result, {})
+        assert chart["type"] == "scatter"
+        assert len(chart["data"]["datasets"][0]["data"]) == 2
+
+    def test_scatter_with_only_categorical(self):
+        """Scatter with no numeric columns falls back."""
+        result = QueryResult(
+            columns=["name", "city"],
+            rows=[["Alice", "NYC"], ["Bob", "LA"]],
+            row_count=2,
+        )
+        chart = generate_scatter(result, {})
+        assert chart["type"] == "scatter"
+
+
+class TestPieChartEdgeCases:
+    def test_pie_with_data_columns_list(self):
+        """Pie chart resolves data_column from data_columns list."""
+        result = QueryResult(
+            columns=["name", "value"],
+            rows=[["X", 10], ["Y", 20]],
+            row_count=2,
+        )
+        config = {"labels_column": "name", "data_columns": ["value"]}
+        chart = generate_pie_chart(result, config)
+        assert chart["type"] == "pie"
+        assert chart["data"]["datasets"][0]["data"] == [10.0, 20.0]
