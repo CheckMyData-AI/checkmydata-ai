@@ -311,9 +311,7 @@ class TestCompleteInvestigationEdgeCases:
         sess = await _make_session(db, proj.id)
 
         inv = await svc.create_investigation(db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1")
-        completed = await svc.complete_investigation(
-            db, inv.id, benchmarks_updated=["b1", "b2"]
-        )
+        completed = await svc.complete_investigation(db, inv.id, benchmarks_updated=["b1", "b2"])
         assert completed is not None
         assert json.loads(completed.benchmarks_updated_json) == ["b1", "b2"]
 

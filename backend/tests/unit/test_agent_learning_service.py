@@ -777,8 +777,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "always use orders_v2 table", 0.8,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "always use orders_v2 table",
+            0.8,
         )
 
     @pytest.mark.asyncio
@@ -790,8 +794,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "hello world test", 0.8,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "hello world test",
+            0.8,
         )
         assert old.is_active is True
 
@@ -808,8 +816,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "never use column_a for filtering queries in production environment", 0.8,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "never use column_a for filtering queries in production environment",
+            0.8,
         )
         assert old.is_active is False
 
@@ -826,8 +838,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "always use orders_v2 table", 0.8,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "always use orders_v2 table",
+            0.8,
         )
         assert old.is_active is True
 
@@ -844,8 +860,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "not select from different_table in production context completely unrelated", 0.8,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "not select from different_table in production context completely unrelated",
+            0.8,
         )
         assert old.is_active is True
 
@@ -862,8 +882,12 @@ class TestResolveConflicts:
         session.execute = AsyncMock(return_value=mock_result)
 
         await svc._resolve_conflicts(
-            session, "conn-1", "table_preference", "orders",
-            "never use column_a for filtering queries in production environment", 0.5,
+            session,
+            "conn-1",
+            "table_preference",
+            "orders",
+            "never use column_a for filtering queries in production environment",
+            0.5,
         )
         assert old.is_active is True
 
@@ -956,9 +980,7 @@ class TestGetCrossConnectionLearnings:
 
         session.execute = AsyncMock(side_effect=[proj_result, sibling_result, learning_result])
 
-        lines = await svc._get_cross_connection_learnings(
-            session, "conn-1", {"already-seen-hash"}
-        )
+        lines = await svc._get_cross_connection_learnings(session, "conn-1", {"already-seen-hash"})
         assert lines == []
 
 

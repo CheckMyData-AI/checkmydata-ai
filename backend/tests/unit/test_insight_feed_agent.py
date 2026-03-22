@@ -157,7 +157,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -170,7 +173,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -199,7 +205,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert len(result) == 1
@@ -208,7 +217,8 @@ class TestAnalyzeTable:
         assert result[0]["confidence"] == 0.75
         assert result[0]["sample_size"] == 2
         agent._insight_gen.analyze.assert_called_once_with(
-            sample_rows, ["amount", "status"],
+            sample_rows,
+            ["amount", "status"],
         )
 
     @pytest.mark.asyncio
@@ -227,7 +237,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result[0]["severity"] == "warning"
@@ -243,7 +256,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -261,7 +277,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -278,7 +297,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -294,7 +316,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -310,7 +335,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result == []
@@ -326,13 +354,19 @@ class TestAnalyzeTable:
         connector = MagicMock()
         llm = MagicMock()
 
-        agent._llm_deep_analysis = AsyncMock(return_value=[
-            {"type": "observation", "title": "[orders] LLM insight", "description": "d"},
-        ])
+        agent._llm_deep_analysis = AsyncMock(
+            return_value=[
+                {"type": "observation", "title": "[orders] LLM insight", "description": "d"},
+            ]
+        )
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
-            connector=connector, llm=llm,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
+            connector=connector,
+            llm=llm,
         )
 
         agent._llm_deep_analysis.assert_awaited_once()
@@ -350,8 +384,12 @@ class TestAnalyzeTable:
         agent._llm_deep_analysis = AsyncMock()
 
         await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
-            connector=None, llm=MagicMock(),
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
+            connector=None,
+            llm=MagicMock(),
         )
 
         agent._llm_deep_analysis.assert_not_awaited()
@@ -369,7 +407,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         call_args = agent._insight_gen.analyze.call_args
@@ -389,7 +430,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         call_args = agent._insight_gen.analyze.call_args
@@ -411,7 +455,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert len(result) == 2
@@ -432,7 +479,10 @@ class TestAnalyzeTable:
         session = AsyncMock()
 
         result = await agent._analyze_table(
-            session, "proj-1", "conn-1", entry,
+            session,
+            "proj-1",
+            "conn-1",
+            entry,
         )
 
         assert result[0]["title"] == "[t] Pattern detected"
@@ -466,7 +516,10 @@ class TestRunScan:
         session = AsyncMock()
 
         await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         agent._load_db_index.assert_not_awaited()
@@ -488,19 +541,27 @@ class TestRunScan:
     async def test_insights_created_count(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {
-                "type": "trend", "title": "x", "description": "d",
-                "severity": "info", "confidence": 0.5,
-            },
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {
+                    "type": "trend",
+                    "title": "x",
+                    "description": "d",
+                    "severity": "info",
+                    "confidence": 0.5,
+                },
+            ]
+        )
         record = MagicMock()
         record.times_surfaced = 1
         agent._memory.store_insight.return_value = record
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         assert result.insights_created == 1
@@ -511,16 +572,21 @@ class TestRunScan:
     async def test_insights_updated_count(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {"type": "trend", "title": "x", "description": "d"},
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {"type": "trend", "title": "x", "description": "d"},
+            ]
+        )
         record = MagicMock()
         record.times_surfaced = 3
         agent._memory.store_insight.return_value = record
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         assert result.insights_created == 0
@@ -530,17 +596,22 @@ class TestRunScan:
     async def test_mixed_created_and_updated(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {"type": "a", "title": "new", "description": "d1"},
-            {"type": "b", "title": "old", "description": "d2"},
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {"type": "a", "title": "new", "description": "d1"},
+                {"type": "b", "title": "old", "description": "d2"},
+            ]
+        )
         new_record = MagicMock(times_surfaced=1)
         old_record = MagicMock(times_surfaced=5)
         agent._memory.store_insight.side_effect = [new_record, old_record]
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         assert result.insights_created == 1
@@ -554,7 +625,10 @@ class TestRunScan:
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         assert len(result.errors) == 1
@@ -565,14 +639,19 @@ class TestRunScan:
     async def test_exception_in_store_insight(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {"type": "trend", "title": "x", "description": "d"},
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {"type": "trend", "title": "x", "description": "d"},
+            ]
+        )
         agent._memory.store_insight.side_effect = ValueError("bad type")
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         assert len(result.errors) == 1
@@ -595,7 +674,9 @@ class TestRunScan:
         session = AsyncMock()
 
         result = await agent.run_scan(
-            session, "proj-1", "conn-1",
+            session,
+            "proj-1",
+            "conn-1",
             db_index_entries=[good_entry, bad_entry],
         )
 
@@ -611,7 +692,10 @@ class TestRunScan:
         session = AsyncMock()
 
         await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=entries,
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=entries,
         )
 
         assert agent._analyze_table.await_count == 10
@@ -620,24 +704,29 @@ class TestRunScan:
     async def test_store_insight_receives_correct_args(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {
-                "type": "anomaly",
-                "title": "[t] spike",
-                "description": "desc",
-                "severity": "warning",
-                "confidence": 0.85,
-                "action": "investigate",
-                "impact": "revenue",
-                "sample_size": 42,
-            },
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {
+                    "type": "anomaly",
+                    "title": "[t] spike",
+                    "description": "desc",
+                    "severity": "warning",
+                    "confidence": 0.85,
+                    "action": "investigate",
+                    "impact": "revenue",
+                    "sample_size": 42,
+                },
+            ]
+        )
         record = MagicMock(times_surfaced=1)
         agent._memory.store_insight.return_value = record
         session = AsyncMock()
 
         await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         agent._memory.store_insight.assert_awaited_once_with(
@@ -659,15 +748,20 @@ class TestRunScan:
     async def test_store_insight_default_optional_fields(self):
         agent = _make_agent()
         entry = _make_db_entry(table_name="t")
-        agent._analyze_table = AsyncMock(return_value=[
-            {"type": "trend", "title": "x", "description": "d"},
-        ])
+        agent._analyze_table = AsyncMock(
+            return_value=[
+                {"type": "trend", "title": "x", "description": "d"},
+            ]
+        )
         record = MagicMock(times_surfaced=1)
         agent._memory.store_insight.return_value = record
         session = AsyncMock()
 
         await agent.run_scan(
-            session, "proj-1", "conn-1", db_index_entries=[entry],
+            session,
+            "proj-1",
+            "conn-1",
+            db_index_entries=[entry],
         )
 
         call_kwargs = agent._memory.store_insight.call_args
@@ -687,7 +781,9 @@ class TestRunScan:
         llm = MagicMock()
 
         await agent.run_scan(
-            session, "proj-1", "conn-1",
+            session,
+            "proj-1",
+            "conn-1",
             db_index_entries=[entry],
             connector=connector,
             llm=llm,
@@ -745,21 +841,26 @@ class TestLlmDeepAnalysis:
     async def test_returns_parsed_insights(self):
         agent = _make_agent()
         llm = AsyncMock()
-        response_content = json.dumps([
-            {
-                "type": "opportunity",
-                "title": "High value segment",
-                "description": "Top customers spend 5x more",
-                "severity": "info",
-                "confidence": 0.9,
-                "action": "target this segment",
-                "impact": "revenue increase",
-            },
-        ])
+        response_content = json.dumps(
+            [
+                {
+                    "type": "opportunity",
+                    "title": "High value segment",
+                    "description": "Top customers spend 5x more",
+                    "severity": "info",
+                    "confidence": 0.9,
+                    "action": "target this segment",
+                    "impact": "revenue increase",
+                },
+            ]
+        )
         llm.complete.return_value = MagicMock(content=response_content)
 
         result = await agent._llm_deep_analysis(
-            "orders", {"amount": "total"}, [{"amount": 100}], llm,
+            "orders",
+            {"amount": "total"},
+            [{"amount": 100}],
+            llm,
         )
 
         assert len(result) == 1
@@ -770,13 +871,18 @@ class TestLlmDeepAnalysis:
     async def test_caps_confidence_at_07(self):
         agent = _make_agent()
         llm = AsyncMock()
-        response_content = json.dumps([
-            {"type": "trend", "title": "t1", "confidence": 0.95},
-        ])
+        response_content = json.dumps(
+            [
+                {"type": "trend", "title": "t1", "confidence": 0.95},
+            ]
+        )
         llm.complete.return_value = MagicMock(content=response_content)
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result[0]["confidence"] == 0.7
@@ -788,7 +894,10 @@ class TestLlmDeepAnalysis:
         llm.complete.return_value = MagicMock(content="No insights found.")
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result == []
@@ -800,7 +909,10 @@ class TestLlmDeepAnalysis:
         llm.complete.side_effect = RuntimeError("LLM down")
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result == []
@@ -812,7 +924,10 @@ class TestLlmDeepAnalysis:
         llm.complete.return_value = None
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result == []
@@ -824,7 +939,10 @@ class TestLlmDeepAnalysis:
         llm.complete.return_value = MagicMock(content=None)
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result == []
@@ -833,14 +951,19 @@ class TestLlmDeepAnalysis:
     async def test_skips_items_without_title(self):
         agent = _make_agent()
         llm = AsyncMock()
-        response_content = json.dumps([
-            {"type": "trend", "description": "no title"},
-            {"type": "trend", "title": "has title"},
-        ])
+        response_content = json.dumps(
+            [
+                {"type": "trend", "description": "no title"},
+                {"type": "trend", "title": "has title"},
+            ]
+        )
         llm.complete.return_value = MagicMock(content=response_content)
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert len(result) == 1
@@ -854,7 +977,10 @@ class TestLlmDeepAnalysis:
         llm.complete.return_value = MagicMock(content=json.dumps(items))
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert len(result) == 5
@@ -866,7 +992,10 @@ class TestLlmDeepAnalysis:
         llm.complete.return_value = MagicMock(content='{"not": "a list"}')
 
         result = await agent._llm_deep_analysis(
-            "tbl", {"c": "n"}, [{"c": 1}], llm,
+            "tbl",
+            {"c": "n"},
+            [{"c": 1}],
+            llm,
         )
 
         assert result == []

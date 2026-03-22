@@ -286,8 +286,7 @@ async def test_schema_suggestions_limit_reached(engine):
 
     random.seed(42)
     entries = [
-        _make_db_index(id=f"e{i}", table_name=f"table_{i}", relevance_score=5)
-        for i in range(10)
+        _make_db_index(id=f"e{i}", table_name=f"table_{i}", relevance_score=5) for i in range(10)
     ]
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = entries
