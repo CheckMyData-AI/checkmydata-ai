@@ -945,7 +945,7 @@ async def ask_stream(
 
     from app.config import settings as app_settings
 
-    limit_err = agent_limiter.acquire(user["user_id"])
+    limit_err = await agent_limiter.acquire(user["user_id"])
     if limit_err:
         raise HTTPException(status_code=429, detail=limit_err)
 
@@ -1059,13 +1059,13 @@ async def ask_stream(
                 ),
             }
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            agent_limiter.release(user["user_id"])
+            await agent_limiter.release(user["user_id"])
             return
         except Exception as exc:
             tracker.unsubscribe(queue)
             error_payload = _build_structured_error(exc)
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            agent_limiter.release(user["user_id"])
+            await agent_limiter.release(user["user_id"])
             return
         tracker.unsubscribe(queue)
         result = result_holder[0] if result_holder else None
@@ -1077,7 +1077,7 @@ async def ask_stream(
                 "user_message": "An unexpected error occurred. Please try again.",
             }
             yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            agent_limiter.release(user["user_id"])
+            await agent_limiter.release(user["user_id"])
             return
 
         viz_data = None
@@ -1207,7 +1207,7 @@ async def ask_stream(
             "suggested_followups": result.suggested_followups or [],
         }
         yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
-        agent_limiter.release(user["user_id"])
+        await agent_limiter.release(user["user_id"])
 
     return StreamingResponse(
         _generate(),

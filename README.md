@@ -2367,8 +2367,8 @@ make test-frontend    # frontend vitest
 - Backend unit tests: 1,952 across 128 test files
 - Backend integration tests: 411 across 47 test files
 - Frontend tests: 345 across 39 test files
-- **Grand total: 2,708 tests**
-- Backend coverage: 70%+ combined (70.03% unit-only; enforced CI minimum: 70%)
+- **Grand total: 3,005 tests**
+- Backend coverage: 72%+ (72.00% unit-only; enforced CI minimum: 72%)
 - Zero flaky tests, zero skipped tests
 - Performance smoke tests: 9 (latency budgets for health, auth, CRUD, list endpoints)
 

@@ -4,6 +4,30 @@ Changes made by the continuous improvement agent.
 
 ---
 
+## Cycle 4 — Unit Coverage Sprint — 2026-03-22
+
+### Summary
+Boosted backend unit-only coverage from ~70% to 72.00%, meeting the CI `cov-fail-under=72` threshold. Added 297 new unit tests across 24 test files (+2579 lines of test code). CI pipeline is fully green.
+
+### Key Modules Brought to 100%
+- agent_learning_service, benchmark_service, db_index_service
+- checkpoint_service, encryption, session_notes_service
+- ssh_key_service, workflow_tracker, pipeline_registry
+
+### New Test Files Created
+- test_config_settings.py, test_sql_prompt.py, test_stage_validator.py, test_tools.py
+
+### CI/CD
+- Coverage threshold: 72% (unit-only) — met at 72.00%
+- Total backend unit tests: 2181 → 2478 (+297)
+- All CI checks green: lint, format, type check, unit tests, integration tests, frontend build
+
+### Findings
+- `exploration_engine.py` line 326 is dead code (positive_count unreachable in summary)
+- `cli_output_parser.py` line 38 is dead code (csv.reader always produces rows for non-empty input)
+
+---
+
 ## Cycle 3 — Quality & Reliability — 2026-03-22
 
 ### UX Fixes

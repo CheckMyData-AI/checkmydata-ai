@@ -55,8 +55,8 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
       <table className="text-[10px] border-collapse w-full" aria-label="Query results">
         <thead className="sticky top-0 bg-surface-1">
           <tr className="border-b border-border-subtle">
-            {data.columns.map((col) => (
-              <th key={col} scope="col" className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
+            {data.columns.map((col, idx) => (
+              <th key={`${idx}-${col}`} scope="col" className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
                 {col}
               </th>
             ))}

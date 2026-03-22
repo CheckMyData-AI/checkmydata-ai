@@ -205,9 +205,9 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
       if (isSqlResult && message.query && sessionId) {
         const { activeProject, activeConnection } = useAppStore.getState();
-        if (activeProject) {
+        if (activeProject && activeConnection?.id) {
           api.dataValidation.validateData({
-            connection_id: activeConnection?.id ?? "",
+            connection_id: activeConnection.id,
             session_id: sessionId,
             message_id: message.id,
             query: message.query,

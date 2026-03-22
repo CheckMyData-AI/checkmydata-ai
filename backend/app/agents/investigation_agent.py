@@ -11,6 +11,7 @@ Systematically investigates query result errors through 4 phases:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,8 @@ from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
+
+_VALID_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.\"` \-]{0,200}$")
 
 
 @dataclass
@@ -213,15 +216,16 @@ class InvestigationAgent(BaseAgent):
         cfg = ctx.connection_config
         if cfg is None:
             return "Error: no database connection."
+        if not table_name or not _VALID_IDENTIFIER_RE.match(table_name):
+            return f"Error: invalid table name '{table_name}'."
+        if not column_name or not _VALID_IDENTIFIER_RE.match(column_name):
+            return f"Error: invalid column name '{column_name}'."
 
-        query = (
-            f"SELECT {column_name}, COUNT(*) as cnt "
-            f"FROM {table_name} "
-            f"GROUP BY {column_name} "
-            f"ORDER BY cnt DESC LIMIT 20"
-        )
         connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
         await connector.connect(cfg)
+        qt = connector._quote_identifier(table_name)
+        qc = connector._quote_identifier(column_name)
+        query = f"SELECT {qc}, COUNT(*) as cnt FROM {qt} GROUP BY {qc} ORDER BY cnt DESC LIMIT 20"
         try:
             result = await connector.execute_query(query)
             if result.error:
