@@ -32,21 +32,25 @@ class MongoDBConnector(BaseConnector):
     async def connect(self, config: ConnectionConfig) -> None:
         self._config = config
 
-        timeout_kwargs = {
-            "serverSelectionTimeoutMS": 10_000,
-            "connectTimeoutMS": 10_000,
-            "socketTimeoutMS": 120_000,
-        }
-
         if config.connection_string:
-            self._client = AsyncIOMotorClient(config.connection_string, **timeout_kwargs)
+            self._client = AsyncIOMotorClient(
+                config.connection_string,
+                serverSelectionTimeoutMS=10_000,
+                connectTimeoutMS=10_000,
+                socketTimeoutMS=120_000,
+            )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
             uri = "mongodb://"
             if config.db_user and config.db_password:
                 uri += f"{config.db_user}:{config.db_password}@"
             uri += f"{host}:{port}/{config.db_name}"
-            self._client = AsyncIOMotorClient(uri, **timeout_kwargs)
+            self._client = AsyncIOMotorClient(
+                uri,
+                serverSelectionTimeoutMS=10_000,
+                connectTimeoutMS=10_000,
+                socketTimeoutMS=120_000,
+            )
 
         self._db = self._client[config.db_name]
 
