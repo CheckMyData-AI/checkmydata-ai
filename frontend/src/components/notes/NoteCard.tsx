@@ -1,14 +1,21 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import dynamic from "next/dynamic";
 import type { SavedNote } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useNotesStore } from "@/stores/notes-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useAppStore } from "@/stores/app-store";
 import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import type { RawResult } from "@/stores/app-store";
+
+const VizRenderer = dynamic(
+  () => import("@/components/viz/VizRenderer").then((m) => m.VizRenderer),
+  { ssr: false, loading: () => <div className="h-48 bg-surface-2 rounded-lg animate-pulse" /> },
+);
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -51,6 +58,7 @@ export function NoteCard({ note }: NoteCardProps) {
 
   const [showSql, setShowSql] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [showViz, setShowViz] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -94,6 +102,21 @@ export function NoteCard({ note }: NoteCardProps) {
         });
         setShowResult(true);
         toast("Query executed successfully", "info");
+
+        const { activeSession, addMessage } = useAppStore.getState();
+        if (activeSession) {
+          const refreshedResult = parseResult(res.last_result_json);
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `[Refreshed] ${note.title}\n\n${note.answer_text || ""}`,
+            query: note.sql_query,
+            visualization: viz ?? undefined,
+            responseType: "sql_result",
+            rawResult: refreshedResult ?? undefined,
+            timestamp: Date.now(),
+          });
+        }
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Execution failed", "error");
@@ -266,6 +289,25 @@ export function NoteCard({ note }: NoteCardProps) {
           {showAnswer && (
             <div className="px-3 pb-2 text-[11px] text-text-secondary leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
               {note.answer_text}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Visualization toggle */}
+      {viz && vizType && vizType !== "text" && (
+        <div className="border-t border-border-subtle">
+          <button
+            onClick={() => setShowViz((v) => !v)}
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+          >
+            <Icon name={showViz ? "chevron-down" : "chevron-right"} size={10} />
+            <Icon name="bar-chart-2" size={10} />
+            Chart
+          </button>
+          {showViz && (
+            <div className="px-2 pb-2">
+              <VizRenderer data={viz} />
             </div>
           )}
         </div>

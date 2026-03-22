@@ -1,44 +1,119 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+
+type Placement = "top" | "bottom" | "right";
 
 interface TooltipProps {
   label: string;
-  position?: "top" | "bottom" | "right";
+  position?: Placement;
   children: React.ReactNode;
+}
+
+function getCoords(
+  trigger: DOMRect,
+  popup: DOMRect,
+  placement: Placement,
+  gap: number,
+): { top: number; left: number } {
+  let top = 0;
+  let left = 0;
+  switch (placement) {
+    case "top":
+      top = trigger.top - popup.height - gap;
+      left = trigger.left + trigger.width / 2 - popup.width / 2;
+      break;
+    case "right":
+      top = trigger.top + trigger.height / 2 - popup.height / 2;
+      left = trigger.right + gap;
+      break;
+    case "bottom":
+    default:
+      top = trigger.bottom + gap;
+      left = trigger.left + trigger.width / 2 - popup.width / 2;
+      break;
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const pad = 6;
+  if (left < pad) left = pad;
+  if (left + popup.width > vw - pad) left = vw - pad - popup.width;
+  if (top < pad) top = pad;
+  if (top + popup.height > vh - pad) top = vh - pad - popup.height;
+  return { top, left };
 }
 
 export function Tooltip({ label, position = "bottom", children }: TooltipProps) {
   const id = useId();
+  const [visible, setVisible] = useState(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const delayRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [style, setStyle] = useState<React.CSSProperties>({
+    position: "fixed",
+    zIndex: 9999,
+    top: 0,
+    left: 0,
+    visibility: "hidden",
+  });
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current;
+    const tip = tooltipRef.current;
+    if (!trigger || !tip) return;
+    const tRect = trigger.getBoundingClientRect();
+    const pRect = tip.getBoundingClientRect();
+    const coords = getCoords(tRect, pRect, position, 6);
+    setStyle({
+      position: "fixed",
+      zIndex: 9999,
+      top: coords.top,
+      left: coords.left,
+      visibility: "visible",
+    });
+  }, [position]);
+
+  useEffect(() => {
+    if (!visible) return;
+    reposition();
+  }, [visible, reposition]);
 
   if (!label) return <>{children}</>;
 
-  const positionClasses =
-    position === "top"
-      ? "bottom-full left-1/2 -translate-x-1/2 mb-1.5"
-      : position === "right"
-        ? "left-full top-1/2 -translate-y-1/2 ml-1.5"
-        : "top-full left-1/2 -translate-x-1/2 mt-1.5";
+  const show = () => {
+    clearTimeout(delayRef.current);
+    delayRef.current = setTimeout(() => setVisible(true), 200);
+  };
+  const hide = () => {
+    clearTimeout(delayRef.current);
+    setVisible(false);
+  };
 
   return (
-    <span className="relative inline-flex group/tooltip" aria-describedby={id}>
+    <span
+      ref={triggerRef}
+      className="relative inline-flex"
+      aria-describedby={visible ? id : undefined}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
+    >
       {children}
-      <span
-        id={id}
-        role="tooltip"
-        className={`
-          pointer-events-none absolute z-50 whitespace-nowrap
-          px-2 py-1 rounded-md text-[10px] font-medium leading-none
-          bg-surface-3 text-text-primary border border-border-default
-          opacity-0 scale-95
-          group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100
-          group-focus-within/tooltip:opacity-100 group-focus-within/tooltip:scale-100
-          transition-all duration-150 delay-200
-          ${positionClasses}
-        `}
-      >
-        {label}
-      </span>
+      {visible &&
+        createPortal(
+          <span
+            ref={tooltipRef}
+            id={id}
+            role="tooltip"
+            style={style}
+            className="pointer-events-none whitespace-nowrap px-2 py-1 rounded-md text-[10px] font-medium leading-none bg-surface-3 text-text-primary border border-border-default animate-tooltip-in"
+          >
+            {label}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }

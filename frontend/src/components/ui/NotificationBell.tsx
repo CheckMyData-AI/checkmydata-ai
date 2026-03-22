@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import type { AppNotification } from "@/lib/api";
 import { Icon } from "./Icon";
 import { toast } from "@/stores/toast-store";
+import { PopoverPortal } from "./PopoverPortal";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -22,7 +23,8 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const mountedRef = useRef(true);
 
@@ -94,9 +96,12 @@ export function NotificationBell() {
   useEffect(() => {
     if (!open) return;
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (
+        triggerRef.current?.contains(target) ||
+        panelRef.current?.contains(target)
+      ) return;
+      setOpen(false);
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
@@ -110,8 +115,9 @@ export function NotificationBell() {
   }, [open]);
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <button
+        ref={triggerRef}
         onClick={handleOpen}
         aria-label="Notifications"
         className="relative p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -125,62 +131,67 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden z-50 animate-fade-in">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
-            <span className="text-[11px] font-medium text-text-primary">Notifications</span>
-            {count > 0 && (
-              <button
-                onClick={handleMarkAllRead}
-                className="text-[10px] text-accent hover:text-accent-hover"
-              >
-                Mark all read
-              </button>
-            )}
-          </div>
-          <div className="overflow-y-auto max-h-64">
-            {loading ? (
-              <div className="px-3 py-4 text-center text-[11px] text-text-muted">Loading...</div>
-            ) : notifications.length === 0 ? (
-              <div className="px-3 py-4 text-center text-[11px] text-text-muted">
-                No notifications
-              </div>
-            ) : (
-              notifications.map((n) => (
+        <PopoverPortal triggerRef={triggerRef} placement="bottom-right" gap={6}>
+          <div
+            ref={panelRef}
+            className="w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden animate-fade-in"
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
+              <span className="text-[11px] font-medium text-text-primary">Notifications</span>
+              {count > 0 && (
                 <button
-                  key={n.id}
-                  onClick={() => !n.is_read && handleMarkRead(n.id)}
-                  className={`w-full text-left px-3 py-2 border-b border-border-subtle/50 hover:bg-surface-2 transition-colors ${
-                    n.is_read ? "opacity-60" : ""
-                  }`}
+                  onClick={handleMarkAllRead}
+                  className="text-[10px] text-accent hover:text-accent-hover"
                 >
-                  <div className="flex items-start gap-2">
-                    {!n.is_read && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-accent mt-1 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-medium text-text-primary truncate">
-                        {n.title}
-                      </p>
-                      {n.body && (
-                        <p className="text-[10px] text-text-secondary line-clamp-2 mt-0.5">
-                          {n.body}
-                        </p>
+                  Mark all read
+                </button>
+              )}
+            </div>
+            <div className="overflow-y-auto max-h-64">
+              {loading ? (
+                <div className="px-3 py-4 text-center text-[11px] text-text-muted">Loading...</div>
+              ) : notifications.length === 0 ? (
+                <div className="px-3 py-4 text-center text-[11px] text-text-muted">
+                  No notifications
+                </div>
+              ) : (
+                notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => !n.is_read && handleMarkRead(n.id)}
+                    className={`w-full text-left px-3 py-2 border-b border-border-subtle/50 hover:bg-surface-2 transition-colors ${
+                      n.is_read ? "opacity-60" : ""
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {!n.is_read && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent mt-1 shrink-0" />
                       )}
-                      {n.created_at && (
-                        <p className="text-[9px] text-text-muted mt-0.5">
-                          {timeAgo(n.created_at)}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] font-medium text-text-primary truncate">
+                          {n.title}
                         </p>
+                        {n.body && (
+                          <p className="text-[10px] text-text-secondary line-clamp-2 mt-0.5">
+                            {n.body}
+                          </p>
+                        )}
+                        {n.created_at && (
+                          <p className="text-[9px] text-text-muted mt-0.5">
+                            {timeAgo(n.created_at)}
+                          </p>
+                        )}
+                      </div>
+                      {n.type === "alert" && (
+                        <Icon name="alert-triangle" size={12} className="text-amber-400 shrink-0 mt-0.5" />
                       )}
                     </div>
-                    {n.type === "alert" && (
-                      <Icon name="alert-triangle" size={12} className="text-amber-400 shrink-0 mt-0.5" />
-                    )}
-                  </div>
-                </button>
-              ))
-            )}
+                  </button>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        </PopoverPortal>
       )}
     </div>
   );

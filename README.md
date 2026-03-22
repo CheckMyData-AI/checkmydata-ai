@@ -762,11 +762,12 @@ The **Notes** panel lets you save SQL queries from agent responses for quick ref
 2. **View notes**: Click the **bookmark button** in the header bar (top-right) to toggle the Notes panel on the right side. The panel shows all saved queries for the active project, sorted by most recently updated. Each card shows:
    - Title and time since last execution
    - Visualization type badge (e.g. "bar_chart", "table") when applicable
+   - Collapsible **Chart** section with interactive chart visualization (bar, line, pie, scatter) rendered from stored `visualization_json`
    - Collapsible **Agent Response** section with the full answer text
    - Collapsible **SQL Query** section with copy button
    - Collapsible **Result** section with data table
 
-3. **Refresh data**: Each saved note has a **🔄 Refresh** button (with label). Clicking it re-runs the SQL query against the original database connection and updates the stored result. This is useful for monitoring queries that you check regularly.
+3. **Refresh data**: Each saved note has a **🔄 Refresh** button (with label). Clicking it re-runs the SQL query against the original database connection and updates the stored result. The refreshed result is also posted as a message in the currently active chat session (prefixed with `[Refreshed]`) so you can see it in context alongside your conversation. This is useful for monitoring queries that you check regularly.
 
 4. **Edit & manage**:
    - Click on a note's comment area to **add or edit a comment** — useful for annotating what the query does

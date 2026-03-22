@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { PopoverPortal } from "@/components/ui/PopoverPortal";
 
 type View = "menu" | "password" | "delete";
 
@@ -13,67 +14,77 @@ export function AccountMenu() {
   const isGoogleOnly = user?.auth_provider === "google";
   const [view, setView] = useState<View>("menu");
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setView("menu");
-      }
+      const target = e.target as Node;
+      if (
+        triggerRef.current?.contains(target) ||
+        panelRef.current?.contains(target)
+      ) return;
+      setOpen(false);
+      setView("menu");
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  if (!open) {
-    return (
+  return (
+    <>
       <button
-        onClick={() => setOpen(true)}
+        ref={triggerRef}
+        onClick={() => setOpen((v) => !v)}
         className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors shrink-0"
         title="Account settings"
         aria-label="Account settings"
       >
         <Icon name="settings" size={14} />
       </button>
-    );
-  }
 
-  return (
-    <div ref={containerRef} className="absolute bottom-14 left-3 right-3 bg-surface-1 border border-border-subtle rounded-lg shadow-lg z-50 animate-fade-in">
-      {view === "menu" && (
-        <div className="py-1">
-          {!isGoogleOnly && (
-            <button
-              onClick={() => setView("password")}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
-            >
-              <Icon name="lock" size={12} />
-              Change Password
-            </button>
-          )}
-          <button
-            onClick={logout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
+      {open && (
+        <PopoverPortal triggerRef={triggerRef} placement="top-left" gap={8}>
+          <div
+            ref={panelRef}
+            className="w-56 bg-surface-1 border border-border-subtle rounded-lg shadow-lg animate-fade-in"
           >
-            <Icon name="log-out" size={12} />
-            Sign Out
-          </button>
-          <div className="border-t border-border-subtle my-1" />
-          <button
-            onClick={() => setView("delete")}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-error hover:bg-error/10 transition-colors"
-          >
-            <Icon name="trash" size={12} />
-            Delete Account
-          </button>
-        </div>
+            {view === "menu" && (
+              <div className="py-1">
+                {!isGoogleOnly && (
+                  <button
+                    onClick={() => setView("password")}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
+                  >
+                    <Icon name="lock" size={12} />
+                    Change Password
+                  </button>
+                )}
+                <button
+                  onClick={logout}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
+                >
+                  <Icon name="log-out" size={12} />
+                  Sign Out
+                </button>
+                <div className="border-t border-border-subtle my-1" />
+                <button
+                  onClick={() => setView("delete")}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-error hover:bg-error/10 transition-colors"
+                >
+                  <Icon name="trash" size={12} />
+                  Delete Account
+                </button>
+              </div>
+            )}
+
+            {view === "password" && <PasswordForm onClose={() => { setView("menu"); setOpen(false); }} />}
+            {view === "delete" && <DeleteConfirm onClose={() => { setView("menu"); setOpen(false); }} />}
+          </div>
+        </PopoverPortal>
       )}
-
-      {view === "password" && <PasswordForm onClose={() => { setView("menu"); setOpen(false); }} />}
-      {view === "delete" && <DeleteConfirm onClose={() => { setView("menu"); setOpen(false); }} />}
-    </div>
+    </>
   );
 }
 
