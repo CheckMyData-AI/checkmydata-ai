@@ -14,7 +14,7 @@
 | 2  | Autonomous Insight Feed | `done` | P0 | Task 1 | High |
 | 3  | Anomaly Intelligence (upgrade) | `done` | P0 | Tasks 1, 2 | Medium |
 | 4  | Opportunity Detector | `done` | P0 | Tasks 1, 2 | Medium |
-| 5  | Loss Detector | `pending` | P0 | Tasks 1, 2 | Medium |
+| 5  | Loss Detector | `done` | P0 | Tasks 1, 2 | Medium |
 | 6  | Insight → Action Engine | `pending` | P0 | Tasks 3, 4, 5 | Medium |
 | 7  | Cross-Source Reconciliation Engine | `pending` | P1 | Task 1 | High |
 | 8  | Semantic Layer Auto-Build | `pending` | P1 | Task 1 | High |

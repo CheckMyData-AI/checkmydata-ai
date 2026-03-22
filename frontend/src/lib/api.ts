@@ -599,6 +599,22 @@ export interface OpportunityDTO {
   severity: string;
 }
 
+export interface LossReportDTO {
+  loss_type: string;
+  title: string;
+  description: string;
+  metric: string;
+  current_value: number;
+  expected_value: number;
+  loss_amount: number;
+  loss_pct: number;
+  estimated_monthly_impact: string;
+  suggested_fix: string;
+  confidence: number;
+  evidence: string[];
+  severity: string;
+}
+
 export const api = {
   auth: {
     register: (email: string, password: string, displayName?: string) =>
@@ -1297,6 +1313,13 @@ export const api = {
         tables_scanned: number;
         insights_stored: number;
       }>(`/feed/${projectId}/opportunities/${connectionId}`, { method: "POST" }),
+    scanLosses: (projectId: string, connectionId: string) =>
+      request<{
+        ok: boolean;
+        losses: LossReportDTO[];
+        tables_scanned: number;
+        insights_stored: number;
+      }>(`/feed/${projectId}/losses/${connectionId}`, { method: "POST" }),
   },
 
   insights: {

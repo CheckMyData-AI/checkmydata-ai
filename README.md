@@ -2145,6 +2145,7 @@ src/
 | `POST` | `/api/feed/{project_id}/scan/{conn_id}` | Trigger autonomous insight scan for a connection |
 | `POST` | `/api/feed/{project_id}/scan` | Trigger full-project insight scan |
 | `POST` | `/api/feed/{project_id}/opportunities/{conn_id}` | Scan for growth opportunities |
+| `POST` | `/api/feed/{project_id}/losses/{conn_id}` | Scan for revenue leaks and conversion drops |
 
 ### Security Model
 
