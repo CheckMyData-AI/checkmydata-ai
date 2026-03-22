@@ -35,7 +35,7 @@ class BatchExecuteRequest(BaseModel):
     connection_id: str
     title: str = Field(max_length=200)
     queries: list[BatchQueryItem] = Field(default_factory=list)
-    note_ids: list[str] | None = None
+    note_ids: list[str] | None = Field(None, max_length=100)
 
 
 class BatchResponse(BaseModel):
@@ -133,7 +133,9 @@ async def list_batches(
 
 
 @router.delete("/{batch_id}")
+@limiter.limit("20/minute")
 async def delete_batch(
+    request: Request,
     batch_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -164,7 +166,9 @@ def _safe_sheet_name(title: str, idx: int) -> str:
 
 
 @router.post("/{batch_id}/export")
+@limiter.limit("10/minute")
 async def export_batch(
+    request: Request,
     batch_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

@@ -260,11 +260,13 @@ export function ChatPanel() {
     ) {
       suggestionsRequested.current = true;
       setSuggestionsLoading(true);
+      let cancelled = false;
       api.chat
         .suggestions(activeProject.id, activeConnection.id)
-        .then(setSuggestions)
-        .catch(() => setSuggestions([]))
-        .finally(() => setSuggestionsLoading(false));
+        .then((s) => { if (!cancelled) setSuggestions(s); })
+        .catch(() => { if (!cancelled) setSuggestions([]); })
+        .finally(() => { if (!cancelled) setSuggestionsLoading(false); });
+      return () => { cancelled = true; };
     }
     if (messages.length > 0) {
       setSuggestions([]);
@@ -282,10 +284,12 @@ export function ChatPanel() {
     const key = `${activeProject.id}:${activeConnection?.id ?? ""}`;
     if (key === estimateFetched.current) return;
     estimateFetched.current = key;
+    let cancelled = false;
     api.chat
       .estimate(activeProject.id, activeConnection?.id)
-      .then(setCostEstimate)
-      .catch(() => setCostEstimate(null));
+      .then((e) => { if (!cancelled) setCostEstimate(e); })
+      .catch(() => { if (!cancelled) setCostEstimate(null); });
+    return () => { cancelled = true; };
   }, [activeProject, activeConnection]);
 
   useEffect(() => {

@@ -104,8 +104,11 @@ async def list_models(
         try:
             return await _fetch_openrouter_models()
         except Exception:
-            logger.exception("Failed to fetch OpenRouter models")
-            return []
+            logger.warning("Failed to fetch OpenRouter models", exc_info=True)
+            cached = _cache.get("openrouter")
+            if cached:
+                return cached[1]
+            return STATIC_MODELS.get("openrouter", [])
 
     static = STATIC_MODELS.get(provider)
     if static is not None:

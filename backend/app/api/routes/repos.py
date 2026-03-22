@@ -1,10 +1,11 @@
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from git import Repo
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -202,7 +203,7 @@ async def _regenerate_overview(project_id: str) -> None:
             await svc.save_overview(session, project_id)
         logger.info("Project overview regenerated after repo index: project=%s", project_id[:8])
     except Exception:
-        logger.debug("Failed to regenerate project overview", exc_info=True)
+        logger.warning("Failed to regenerate project overview", exc_info=True)
 
 
 async def _run_index_background(
@@ -312,7 +313,9 @@ async def repo_status(
 
 
 @router.post("/{project_id}/check-updates")
+@limiter.limit("10/minute")
 async def check_for_updates(
+    request: Request,
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -447,11 +450,11 @@ async def get_doc(
 
 
 class AddRepoRequest(BaseModel):
-    name: str
-    repo_url: str
-    branch: str = "main"
-    provider: str = "git_ssh"
-    ssh_key_id: str | None = None
+    name: str = Field(max_length=200)
+    repo_url: str = Field(max_length=2000)
+    branch: str = Field("main", max_length=200)
+    provider: Literal["git_ssh", "git_https", "github", "gitlab", "bitbucket"] = "git_ssh"
+    ssh_key_id: str | None = Field(None, max_length=64)
 
 
 class RepoResponse(BaseModel):
@@ -467,7 +470,9 @@ class RepoResponse(BaseModel):
 
 
 @router.post("/{project_id}/repositories", response_model=RepoResponse, status_code=201)
+@limiter.limit("10/minute")
 async def add_repository(
+    request: Request,
     project_id: str,
     body: AddRepoRequest,
     db: AsyncSession = Depends(get_db),
@@ -503,13 +508,15 @@ async def list_repositories(
 
 
 class UpdateRepoRequest(BaseModel):
-    name: str | None = None
-    branch: str | None = None
-    ssh_key_id: str | None = None
+    name: str | None = Field(None, max_length=200)
+    branch: str | None = Field(None, max_length=200)
+    ssh_key_id: str | None = Field(None, max_length=64)
 
 
 @router.patch("/repositories/{repo_id}", response_model=RepoResponse)
+@limiter.limit("10/minute")
 async def update_repository(
+    request: Request,
     repo_id: str,
     body: UpdateRepoRequest,
     db: AsyncSession = Depends(get_db),
@@ -529,7 +536,9 @@ async def update_repository(
 
 
 @router.delete("/repositories/{repo_id}")
+@limiter.limit("10/minute")
 async def delete_repository(
+    request: Request,
     repo_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

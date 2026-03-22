@@ -106,7 +106,9 @@ async def list_invites(
 
 
 @router.delete("/{project_id}/invites/{invite_id}")
+@limiter.limit("20/minute")
 async def revoke_invite(
+    request: Request,
     project_id: str,
     invite_id: str,
     db: AsyncSession = Depends(get_db),
@@ -193,7 +195,9 @@ async def list_members(
 
 
 @router.delete("/{project_id}/members/{member_user_id}")
+@limiter.limit("10/minute")
 async def remove_member(
+    request: Request,
     project_id: str,
     member_user_id: str,
     db: AsyncSession = Depends(get_db),

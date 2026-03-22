@@ -47,9 +47,11 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
   const [showResults, setShowResults] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
@@ -114,8 +116,10 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
       setBatchId(res.batch_id);
 
       pollRef.current = setInterval(async () => {
+        if (!mountedRef.current) return;
         try {
           const batch = await api.batch.get(res.batch_id);
+          if (!mountedRef.current) return;
           const results = batch.results_json ? JSON.parse(batch.results_json) : [];
           setProgress({ current: results.length, total: validQueries.length });
 

@@ -197,7 +197,9 @@ async def get_connection(
 
 
 @router.patch("/{connection_id}", response_model=ConnectionResponse)
+@limiter.limit("20/minute")
 async def update_connection(
+    request: Request,
     connection_id: str,
     body: ConnectionUpdate,
     db: AsyncSession = Depends(get_db),
@@ -234,7 +236,9 @@ async def update_connection(
 
 
 @router.delete("/{connection_id}")
+@limiter.limit("10/minute")
 async def delete_connection(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -296,7 +300,9 @@ async def test_connection(
 
 
 @router.post("/{connection_id}/test-ssh")
+@limiter.limit("10/minute")
 async def test_ssh(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -311,7 +317,9 @@ async def test_ssh(
 
 
 @router.post("/{connection_id}/refresh-schema")
+@limiter.limit("10/minute")
 async def refresh_schema(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -344,7 +352,9 @@ async def refresh_schema(
 
 
 @router.post("/{connection_id}/index-db", status_code=202)
+@limiter.limit("5/minute")
 async def index_database(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -448,7 +458,9 @@ async def get_db_index(
 
 
 @router.delete("/{connection_id}/index-db")
+@limiter.limit("10/minute")
 async def delete_db_index(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -580,7 +592,9 @@ async def _run_data_probes(
 
 
 @router.post("/{connection_id}/sync", status_code=202)
+@limiter.limit("5/minute")
 async def trigger_sync(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -688,7 +702,9 @@ async def get_sync(
 
 
 @router.delete("/{connection_id}/sync")
+@limiter.limit("10/minute")
 async def delete_sync(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -821,7 +837,9 @@ class LearningUpdate(BaseModel):
 
 
 @router.patch("/{connection_id}/learnings/{learning_id}")
+@limiter.limit("20/minute")
 async def update_learning(
+    request: Request,
     connection_id: str,
     learning_id: str,
     body: LearningUpdate,
@@ -855,7 +873,9 @@ async def update_learning(
 
 
 @router.delete("/{connection_id}/learnings/{learning_id}")
+@limiter.limit("20/minute")
 async def delete_learning(
+    request: Request,
     connection_id: str,
     learning_id: str,
     db: AsyncSession = Depends(get_db),
@@ -881,7 +901,9 @@ async def delete_learning(
 
 
 @router.delete("/{connection_id}/learnings")
+@limiter.limit("5/minute")
 async def clear_learnings(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -898,7 +920,9 @@ async def clear_learnings(
 
 
 @router.post("/{connection_id}/learnings/recompile")
+@limiter.limit("5/minute")
 async def recompile_learnings(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

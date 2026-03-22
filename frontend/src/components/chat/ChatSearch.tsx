@@ -36,6 +36,12 @@ export function ChatSearch() {
     };
   }, []);
 
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const doSearch = useCallback(
     async (term: string) => {
       if (!activeProject || term.trim().length < 2) {
@@ -46,16 +52,18 @@ export function ChatSearch() {
       setLoading(true);
       try {
         const data = await api.chat.search(activeProject.id, term.trim());
+        if (!mountedRef.current) return;
         setResults(data);
         setSelectedIdx(0);
       } catch (err) {
+        if (!mountedRef.current) return;
         toast(
           err instanceof Error ? err.message : "Search failed",
           "error",
         );
         setResults([]);
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     },
     [activeProject],

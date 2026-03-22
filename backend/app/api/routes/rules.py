@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,20 +31,20 @@ async def _regenerate_overview_for_project(project_id: str | None) -> None:
             await svc.save_overview(session, project_id)
         logger.info("Project overview regenerated after rules change: project=%s", project_id[:8])
     except Exception:
-        logger.debug("Failed to regenerate project overview after rules change", exc_info=True)
+        logger.warning("Failed to regenerate project overview after rules change", exc_info=True)
 
 
 class RuleCreate(BaseModel):
     project_id: str | None = None
     name: str = Field(max_length=255)
     content: str = Field(max_length=50000)
-    format: str = "markdown"
+    format: Literal["markdown", "yaml", "text"] = "markdown"
 
 
 class RuleUpdate(BaseModel):
     name: str | None = Field(None, max_length=255)
     content: str | None = Field(None, max_length=50000)
-    format: str | None = None
+    format: Literal["markdown", "yaml", "text"] | None = None
 
 
 class RuleResponse(BaseModel):

@@ -45,11 +45,14 @@ export function SyncStatusIndicator() {
     if (!activeConnection || syncStatus?.sync_status !== "running") return;
 
     const connId = activeConnection.id;
+    let cancelled = false;
     pollRef.current = setInterval(() => {
-      api.connections.syncStatus(connId).then(setSyncStatus).catch(() => {});
+      if (cancelled) return;
+      api.connections.syncStatus(connId).then((s) => { if (!cancelled) setSyncStatus(s); }).catch(() => {});
     }, 5000);
 
     return () => {
+      cancelled = true;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;

@@ -115,26 +115,27 @@ class InviteService:
                     detail="This invite is for a different email address",
                 )
 
-        invite.status = "accepted"
-        invite.accepted_at = datetime.now(UTC)
+        async with db.begin_nested():
+            invite.status = "accepted"
+            invite.accepted_at = datetime.now(UTC)
 
-        existing = await db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == invite.project_id,
-                ProjectMember.user_id == user_id,
+            existing = await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == invite.project_id,
+                    ProjectMember.user_id == user_id,
+                )
             )
-        )
-        member = existing.scalar_one_or_none()
-        if member:
-            await db.commit()
-            return member
+            member = existing.scalar_one_or_none()
+            if member:
+                return member
 
-        member = ProjectMember(
-            project_id=invite.project_id,
-            user_id=user_id,
-            role=invite.role,
-        )
-        db.add(member)
+            member = ProjectMember(
+                project_id=invite.project_id,
+                user_id=user_id,
+                role=invite.role,
+            )
+            db.add(member)
+
         try:
             await db.commit()
             await db.refresh(member)

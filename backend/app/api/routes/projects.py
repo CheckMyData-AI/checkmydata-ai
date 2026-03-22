@@ -269,7 +269,7 @@ async def project_readiness(
                                 record.commit_sha,
                             )
                     except Exception:
-                        pass
+                        logger.debug("Readiness: git head check failed", exc_info=True)
                 is_stale = age > timedelta(days=7) and commits_behind > 0
         except Exception:
             logger.warning("Readiness: repo index check failed", exc_info=True)

@@ -156,16 +156,18 @@ export function ProjectSelector() {
   const [listLoading, setListLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     api.projects
       .list()
-      .then(setProjects)
+      .then((p) => { if (!cancelled) setProjects(p); })
       .catch((err) => {
-        toast(
+        if (!cancelled) toast(
           err instanceof Error ? err.message : "Failed to load projects",
           "error",
         );
       })
-      .finally(() => setListLoading(false));
+      .finally(() => { if (!cancelled) setListLoading(false); });
+    return () => { cancelled = true; };
   }, [setProjects]);
 
   const runAccessCheck = useCallback(

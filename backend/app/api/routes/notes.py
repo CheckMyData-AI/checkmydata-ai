@@ -30,9 +30,9 @@ class NoteCreate(BaseModel):
     title: str = Field(max_length=500)
     comment: str | None = Field(None, max_length=10000)
     sql_query: str = Field(max_length=50000)
-    answer_text: str | None = None
-    visualization_json: str | None = None
-    last_result_json: str | None = None
+    answer_text: str | None = Field(None, max_length=100_000)
+    visualization_json: str | None = Field(None, max_length=100_000)
+    last_result_json: str | None = Field(None, max_length=500_000)
 
 
 class NoteUpdate(BaseModel):
@@ -85,7 +85,9 @@ async def _require_note_owner(
 
 
 @router.post("", response_model=NoteResponse)
+@limiter.limit("30/minute")
 async def create_note(
+    request: Request,
     body: NoteCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -148,7 +150,9 @@ async def get_note(
 
 
 @router.patch("/{note_id}", response_model=NoteResponse)
+@limiter.limit("30/minute")
 async def update_note(
+    request: Request,
     note_id: str,
     body: NoteUpdate,
     db: AsyncSession = Depends(get_db),
@@ -183,7 +187,9 @@ async def update_note(
 
 
 @router.delete("/{note_id}")
+@limiter.limit("20/minute")
 async def delete_note(
+    request: Request,
     note_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
 import type { AppNotification } from "@/lib/api";
 import { Icon } from "./Icon";
+import { toast } from "@/stores/toast-store";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -23,18 +24,26 @@ export function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const fetchCount = useCallback(async () => {
     try {
       const { count: c } = await api.notifications.count();
-      setCount(c);
+      if (mountedRef.current) setCount(c);
     } catch {
-      /* silent */
+      // polling — silent on transient failures
     }
   }, []);
 
   useEffect(() => {
     fetchCount();
-    const interval = setInterval(fetchCount, 30_000);
+    const interval = setInterval(() => {
+      if (mountedRef.current) fetchCount();
+    }, 30_000);
     return () => clearInterval(interval);
   }, [fetchCount]);
 
@@ -47,33 +56,38 @@ export function NotificationBell() {
     setLoading(true);
     try {
       const data = await api.notifications.list(false);
-      setNotifications(data);
+      if (mountedRef.current) setNotifications(data);
     } catch {
-      setNotifications([]);
+      if (mountedRef.current) {
+        setNotifications([]);
+        toast("Failed to load notifications", "error");
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
   const handleMarkRead = async (id: string) => {
     try {
       await api.notifications.markRead(id);
+      if (!mountedRef.current) return;
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
       );
       setCount((c) => Math.max(0, c - 1));
     } catch {
-      /* silent */
+      toast("Failed to mark notification as read", "error");
     }
   };
 
   const handleMarkAllRead = async () => {
     try {
       await api.notifications.markAllRead();
+      if (!mountedRef.current) return;
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setCount(0);
     } catch {
-      /* silent */
+      toast("Failed to mark all as read", "error");
     }
   };
 
