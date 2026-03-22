@@ -248,7 +248,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
         {/* Progress bar */}
         {isRunning && (
-          <div className="shrink-0 px-5 py-3 border-t border-border-subtle">
+          <div className="shrink-0 px-5 py-3 border-t border-border-subtle" aria-live="polite" role="status">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] text-text-secondary">
                 Running queries...

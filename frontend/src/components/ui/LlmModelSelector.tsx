@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type LLMModel } from "@/lib/api";
+import { toast } from "@/stores/toast-store";
 
 export interface LlmPair {
   provider: string;
@@ -51,7 +52,11 @@ export function LlmModelSelector({
         if (!cancelled) setModels(m);
       })
       .catch(() => {
-        if (!cancelled) { setModels([]); setLoadError(true); }
+        if (!cancelled) {
+          setModels([]);
+          setLoadError(true);
+          toast("Could not load models — type model name manually", "error");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

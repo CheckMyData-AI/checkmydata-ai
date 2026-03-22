@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
 from app.models.data_validation import DataInvestigation
@@ -57,23 +58,30 @@ async def validate_data(
     val_svc = DataValidationService()
     pipeline = FeedbackPipeline()
 
-    feedback = await val_svc.record_validation(
-        db,
-        connection_id=body.connection_id,
-        session_id=body.session_id,
-        message_id=body.message_id,
-        query=body.query,
-        verdict=body.verdict,
-        metric_description=body.metric_description,
-        agent_value=body.agent_value,
-        user_expected_value=body.user_expected_value,
-        deviation_pct=body.deviation_pct,
-        rejection_reason=body.rejection_reason,
-    )
+    async with db.begin_nested():
+        feedback = await val_svc.record_validation(
+            db,
+            connection_id=body.connection_id,
+            session_id=body.session_id,
+            message_id=body.message_id,
+            query=body.query,
+            verdict=body.verdict,
+            metric_description=body.metric_description,
+            agent_value=body.agent_value,
+            user_expected_value=body.user_expected_value,
+            deviation_pct=body.deviation_pct,
+            rejection_reason=body.rejection_reason,
+        )
 
-    result = await pipeline.process(db, feedback, body.project_id)
+        result = await pipeline.process(db, feedback, body.project_id)
     await db.commit()
 
+    audit_log(
+        "data_validation.validate",
+        user_id=user["user_id"],
+        project_id=body.project_id,
+        detail=f"verdict={body.verdict}",
+    )
     return {
         "ok": True,
         "feedback_id": feedback.id,

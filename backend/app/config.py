@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_pool_overflow: int = 10
     db_pool_recycle: int = 3600
+    db_pool_timeout: int = 30
 
     @model_validator(mode="after")
     def _fix_database_url(self) -> "Settings":

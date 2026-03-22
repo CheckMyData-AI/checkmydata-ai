@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
@@ -10,6 +10,68 @@ import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 
 const VISIBLE_CAP = 5;
+
+interface SessionItemProps {
+  session: { id: string; title: string };
+  isActive: boolean;
+  isLoading: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (e: React.MouseEvent, id: string) => void;
+}
+
+const SessionItem = memo(function SessionItem({
+  session,
+  isActive,
+  isLoading,
+  onSelect,
+  onDelete,
+}: SessionItemProps) {
+  return (
+    <div
+      className={`group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+        isActive ? "bg-surface-1" : "hover:bg-surface-1"
+      }`}
+      onClick={() => onSelect(session.id)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(session.id);
+        }
+      }}
+    >
+      {isActive && (
+        <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
+      )}
+      <Icon
+        name="message-square"
+        size={12}
+        className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
+      />
+      <span
+        className={`flex-1 min-w-0 text-xs truncate ${
+          isActive ? "text-text-primary font-medium" : "text-text-secondary"
+        }`}
+      >
+        {isLoading ? (
+          <span className="animate-pulse text-text-muted">Loading...</span>
+        ) : (
+          session.title
+        )}
+      </span>
+      <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+        <ActionButton
+          icon="trash"
+          title="Delete session"
+          onClick={(e) => onDelete(e, session.id)}
+          variant="danger"
+          size="xs"
+        />
+      </div>
+    </div>
+  );
+});
 
 export function ChatSessionList() {
   const {
@@ -35,7 +97,7 @@ export function ChatSessionList() {
     );
   }
 
-  const handleSelect = async (sessionId: string) => {
+  const handleSelect = useCallback(async (sessionId: string) => {
     const session = chatSessions.find((s) => s.id === sessionId);
     if (!session) return;
 
@@ -84,9 +146,9 @@ export function ChatSessionList() {
     } finally {
       setLoadingSession(null);
     }
-  };
+  }, [chatSessions, connections, setActiveSession, setActiveConnection, setMessages, setLoadingSession]);
 
-  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
+  const handleDelete = useCallback(async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     if (!(await confirmAction("Delete this chat session?"))) return;
     try {
@@ -104,12 +166,12 @@ export function ChatSessionList() {
         "error",
       );
     }
-  };
+  }, [setChatSessions, setActiveSession, setMessages]);
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     setActiveSession(null);
     setMessages([]);
-  };
+  }, [setActiveSession, setMessages]);
 
   const visibleSessions = showAll
     ? chatSessions
@@ -128,55 +190,16 @@ export function ChatSessionList() {
         </button>
       </div>
       <div>
-        {visibleSessions.map((s) => {
-          const isActive = activeSession?.id === s.id;
-          return (
-            <div
-              key={s.id}
-              className={`group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md transition-colors cursor-pointer ${
-                isActive ? "bg-surface-1" : "hover:bg-surface-1"
-              }`}
-              onClick={() => handleSelect(s.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  handleSelect(s.id);
-                }
-              }}
-            >
-              {isActive && (
-                <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
-              )}
-              <Icon
-                name="message-square"
-                size={12}
-                className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
-              />
-              <span
-                className={`flex-1 min-w-0 text-xs truncate ${
-                  isActive ? "text-text-primary font-medium" : "text-text-secondary"
-                }`}
-              >
-                {loadingSession === s.id ? (
-                  <span className="animate-pulse text-text-muted">Loading...</span>
-                ) : (
-                  s.title
-                )}
-              </span>
-              <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
-                <ActionButton
-                  icon="trash"
-                  title="Delete session"
-                  onClick={(e) => handleDelete(e, s.id)}
-                  variant="danger"
-                  size="xs"
-                />
-              </div>
-            </div>
-          );
-        })}
+        {visibleSessions.map((s) => (
+          <SessionItem
+            key={s.id}
+            session={s}
+            isActive={activeSession?.id === s.id}
+            isLoading={loadingSession === s.id}
+            onSelect={handleSelect}
+            onDelete={handleDelete}
+          />
+        ))}
       </div>
       {hasMore && (
         <button

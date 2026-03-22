@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings
+from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import tracker
 from app.knowledge.doc_generator import DocGenerator
@@ -493,18 +494,27 @@ async def add_repository(
         provider=body.provider,
         ssh_key_id=body.ssh_key_id,
     )
+    audit_log(
+        "repo.create",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="repository",
+        resource_id=repo.id,
+    )
     return repo
 
 
 @router.get("/{project_id}/repositories", response_model=list[RepoResponse])
 async def list_repositories(
     project_id: str,
+    limit: int = 100,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """List all repositories for a project."""
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _repo_svc.list_by_project(db, project_id)
+    repos = await _repo_svc.list_by_project(db, project_id)
+    return repos[:limit]
 
 
 class UpdateRepoRequest(BaseModel):
@@ -532,6 +542,13 @@ async def update_repository(
     updated = await _repo_svc.update(db, repo_id, **update_data)
     if not updated:
         raise HTTPException(status_code=404, detail="Repository not found")
+    audit_log(
+        "repo.update",
+        user_id=user["user_id"],
+        project_id=repo.project_id,
+        resource_type="repository",
+        resource_id=repo_id,
+    )
     return updated
 
 
@@ -552,4 +569,11 @@ async def delete_repository(
     deleted = await _repo_svc.delete(db, repo_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Repository not found")
+    audit_log(
+        "repo.delete",
+        user_id=user["user_id"],
+        project_id=repo.project_id,
+        resource_type="repository",
+        resource_id=repo_id,
+    )
     return {"ok": True}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type SyncStatus } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { useTaskStore } from "@/stores/task-store";
+import { toast } from "@/stores/toast-store";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -86,7 +87,9 @@ export function SyncStatusIndicator() {
     prevRunningRef.current = running;
 
     if (newFinished || newRunning) {
-      api.connections.syncStatus(activeConnection.id).then(setSyncStatus).catch(() => {});
+      api.connections.syncStatus(activeConnection.id).then(setSyncStatus).catch(() => {
+        toast("Could not refresh sync status", "error");
+      });
     }
   }, [tasks, activeConnection]);
 

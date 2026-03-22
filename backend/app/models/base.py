@@ -21,6 +21,7 @@ if not settings.database_url.startswith("sqlite"):
         max_overflow=settings.db_pool_overflow,
         pool_pre_ping=True,
         pool_recycle=settings.db_pool_recycle,
+        pool_timeout=settings.db_pool_timeout,
     )
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)

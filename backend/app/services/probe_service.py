@@ -95,8 +95,10 @@ class ProbeService:
             entry["findings"].append(f"Skipped: invalid table name '{table}'")
             return entry
 
+        quoted = f'"{table}"' if '"' not in table else table
+
         try:
-            count_result = await connector.execute_query(f"SELECT COUNT(*) AS cnt FROM {table}")
+            count_result = await connector.execute_query(f"SELECT COUNT(*) AS cnt FROM {quoted}")
             if count_result.rows:
                 entry["row_count"] = count_result.rows[0][0]
                 if entry["row_count"] == 0:
@@ -108,7 +110,7 @@ class ProbeService:
 
         try:
             sample_result = await connector.execute_query(
-                f"SELECT * FROM {table} LIMIT {MAX_PROBE_ROWS}"
+                f"SELECT * FROM {quoted} LIMIT {MAX_PROBE_ROWS}"
             )
             if not sample_result.rows:
                 return entry

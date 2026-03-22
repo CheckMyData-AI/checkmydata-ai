@@ -612,7 +612,7 @@ export function ChatPanel() {
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4" aria-live="polite" aria-relevant="additions">
         {messages.length === 0 ? (
           <div className="text-center text-zinc-500 text-sm mt-20">
             <p className="text-lg font-medium mb-2">

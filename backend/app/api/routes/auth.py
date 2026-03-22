@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.auth_service import AuthService
 from app.services.invite_service import InviteService
@@ -62,6 +63,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
 
     await _invite_svc.auto_accept_for_user(db, user.id, user.email)
 
+    audit_log("auth.register", user_id=user.id, detail=user.email)
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
@@ -81,7 +83,9 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
 async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = await _auth.authenticate(db, body.email, body.password)
     if not user:
+        audit_log("auth.login_failed", detail=body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    audit_log("auth.login", user_id=user.id, detail=user.email)
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
@@ -124,6 +128,7 @@ async def google_login(
 
     await _invite_svc.auto_accept_for_user(db, user.id, user.email)
 
+    audit_log("auth.google", user_id=user.id, detail=user.email)
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
