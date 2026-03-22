@@ -599,6 +599,23 @@ export interface OpportunityDTO {
   severity: string;
 }
 
+export interface ActionRecommendationDTO {
+  action_type: string;
+  title: string;
+  description: string;
+  what_to_do: string;
+  expected_impact: string;
+  impact_metric: string;
+  impact_estimate_pct: number;
+  priority: string;
+  effort: string;
+  confidence: number;
+  prerequisites: string[];
+  risks: string[];
+  source_insight_type: string;
+  source_insight_title: string;
+}
+
 export interface LossReportDTO {
   loss_type: string;
   title: string;
@@ -1358,5 +1375,14 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ feedback: feedback || "" }),
       }),
+    getActions: (projectId: string, connectionId?: string, limit?: number) => {
+      const qs = new URLSearchParams();
+      if (connectionId) qs.set("connection_id", connectionId);
+      if (limit) qs.set("limit", String(limit));
+      const q = qs.toString();
+      return request<{ total: number; actions: ActionRecommendationDTO[] }>(
+        `/insights/${projectId}/actions${q ? `?${q}` : ""}`,
+      );
+    },
   },
 };

@@ -136,7 +136,7 @@
 
 ---
 
-### Task 6: Insight → Action Engine
+### Task 6: Insight → Action Engine ✅ `done`
 
 **Goal:** Every insight gets a concrete recommended action with expected impact.
 

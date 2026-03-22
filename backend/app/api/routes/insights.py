@@ -209,3 +209,47 @@ async def resolve_insight(
         raise HTTPException(status_code=404, detail="Insight not found")
     await db.commit()
     return {"status": record.status}
+
+
+@router.get("/{project_id}/actions")
+async def get_insight_actions(
+    project_id: str,
+    connection_id: str | None = None,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Generate prioritized actions from all active insights."""
+    project_id = validate_safe_id(project_id, "project_id")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+
+    from app.core.action_engine import ActionEngine
+
+    insights = await _insight_svc.get_insights(
+        db,
+        project_id,
+        connection_id=connection_id,
+        status="active",
+        limit=min(limit, 50),
+    )
+
+    insight_dicts = [
+        {
+            "insight_type": i.insight_type,
+            "severity": i.severity,
+            "title": i.title,
+            "description": i.description,
+            "confidence": i.confidence,
+            "recommended_action": i.recommended_action,
+            "expected_impact": i.expected_impact,
+        }
+        for i in insights
+    ]
+
+    engine = ActionEngine()
+    actions = engine.generate_actions(insight_dicts)
+
+    return {
+        "total": len(actions),
+        "actions": [a.to_dict() for a in actions[:limit]],
+    }

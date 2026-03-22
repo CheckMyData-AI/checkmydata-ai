@@ -2142,6 +2142,7 @@ src/
 | `PATCH` | `/api/insights/{project_id}/{id}/confirm` | Confirm an insight |
 | `PATCH` | `/api/insights/{project_id}/{id}/dismiss` | Dismiss an insight |
 | `PATCH` | `/api/insights/{project_id}/{id}/resolve` | Mark an insight as resolved |
+| `GET` | `/api/insights/{project_id}/actions` | Generate prioritized action recommendations from active insights |
 | `POST` | `/api/feed/{project_id}/scan/{conn_id}` | Trigger autonomous insight scan for a connection |
 | `POST` | `/api/feed/{project_id}/scan` | Trigger full-project insight scan |
 | `POST` | `/api/feed/{project_id}/opportunities/{conn_id}` | Scan for growth opportunities |
