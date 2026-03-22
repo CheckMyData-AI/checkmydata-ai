@@ -6,7 +6,7 @@
 
 ---
 
-## Sprint 1 — Active
+## Sprint 1 — Complete
 
 | #  | Task | Status | Priority | Dependencies | Est. Complexity |
 |----|------|--------|----------|--------------|-----------------|
@@ -15,11 +15,11 @@
 | 3  | Anomaly Intelligence (upgrade) | `done` | P0 | Tasks 1, 2 | Medium |
 | 4  | Opportunity Detector | `done` | P0 | Tasks 1, 2 | Medium |
 | 5  | Loss Detector | `done` | P0 | Tasks 1, 2 | Medium |
-| 6  | Insight → Action Engine | `pending` | P0 | Tasks 3, 4, 5 | Medium |
-| 7  | Cross-Source Reconciliation Engine | `pending` | P1 | Task 1 | High |
-| 8  | Semantic Layer Auto-Build | `pending` | P1 | Task 1 | High |
-| 9  | Query-less Exploration | `pending` | P1 | Tasks 1, 2 | Medium |
-| 10 | Temporal Intelligence Engine | `pending` | P1 | Task 1 | Medium |
+| 6  | Insight → Action Engine | `done` | P0 | Tasks 3, 4, 5 | Medium |
+| 7  | Cross-Source Reconciliation Engine | `done` | P1 | Task 1 | High |
+| 8  | Semantic Layer Auto-Build | `done` | P1 | Task 1 | High |
+| 9  | Query-less Exploration | `done` | P1 | Tasks 1, 2 | Medium |
+| 10 | Temporal Intelligence Engine | `done` | P1 | Task 1 | Medium |
 
 ---
 
@@ -304,7 +304,16 @@
 
 | # | Task | Completed Date | Notes |
 |---|------|---------------|-------|
-| — | — | — | Sprint 1 not yet started |
+| 1 | Foundation: Data Graph + Memory + Trust Layers | 2026-03-22 | Models, services, API, frontend panel |
+| 2 | Autonomous Insight Feed | 2026-03-22 | InsightFeedAgent, /api/feed/, InsightFeedPanel |
+| 3 | Anomaly Intelligence (upgrade) | 2026-03-22 | AnomalyIntelligenceEngine, AnomalyReportCard |
+| 4 | Opportunity Detector | 2026-03-22 | OpportunityDetector, OpportunityCard |
+| 5 | Loss Detector | 2026-03-22 | LossDetector, LossReportCard |
+| 6 | Insight → Action Engine | 2026-03-22 | ActionEngine, ActionCard |
+| 7 | Cross-Source Reconciliation Engine | 2026-03-22 | ReconciliationEngine, ReconciliationCard |
+| 8 | Semantic Layer Auto-Build | 2026-03-22 | SemanticLayerService, MetricCatalogPanel |
+| 9 | Query-less Exploration | 2026-03-22 | ExplorationEngine, ExplorationReport |
+| 10 | Temporal Intelligence Engine | 2026-03-22 | TemporalIntelligenceService, TemporalReport |
 
 ---
 
