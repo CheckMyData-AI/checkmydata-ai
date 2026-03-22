@@ -2785,6 +2785,22 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Path Traversal, Shutdown Cleanup, Project Uniqueness & UI Caps (Iteration 10)
+
+**Security:**
+- `validate_safe_id` rejects path-traversal in `project_id`/`connection_id` path params (regex: `[a-zA-Z0-9_-]{1,128}`)
+- Project creation uniqueness: `(owner_id, name)` duplicate check returns 409
+
+**Reliability:**
+- `VectorStore.close()` method + shutdown call to release ChromaDB resources
+- Stale `.git/index.lock` cleanup on app shutdown
+
+**Frontend UX:**
+- `DataValidationCard`: `maxLength` (200/500) + `aria-label` on inputs
+- `DataTable`: cap at 500 rendered rows with "show all" toggle
+- `LearningsPanel`: cap at 200 visible items
+- `ChatInput`: Cmd/Ctrl+K global shortcut to focus chat input
+
 ### 2026-03-22 — Audit Logging, Transaction Safety, SQL Quoting & Accessibility (Iteration 9)
 
 **Security & Compliance:**
