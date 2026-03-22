@@ -31,6 +31,19 @@ _sync_svc = CodeDbSyncService()
 
 _db_index_tasks: dict[str, asyncio.Task] = {}
 _sync_tasks: dict[str, asyncio.Task] = {}
+
+
+def _log_task_error(label: str, resource_id: str) -> callable:
+    def _cb(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("%s %s failed: %s", label, resource_id, exc, exc_info=exc)
+
+    return _cb
+
+
 _learning_svc = AgentLearningService()
 
 
@@ -81,27 +94,27 @@ class ConnectionCreate(BaseModel):
 
 
 class ConnectionUpdate(BaseModel):
-    name: str | None = None
-    db_type: str | None = None
-    source_type: str | None = None
-    ssh_host: str | None = None
+    name: str | None = Field(None, max_length=200)
+    db_type: str | None = Field(None, max_length=50)
+    source_type: str | None = Field(None, max_length=50)
+    ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int | None = None
-    ssh_user: str | None = None
-    ssh_key_id: str | None = None
-    db_host: str | None = None
+    ssh_user: str | None = Field(None, max_length=100)
+    ssh_key_id: str | None = Field(None, max_length=64)
+    db_host: str | None = Field(None, max_length=255)
     db_port: int | None = None
-    db_name: str | None = None
-    db_user: str | None = None
-    db_password: str | None = None
-    connection_string: str | None = None
+    db_name: str | None = Field(None, max_length=200)
+    db_user: str | None = Field(None, max_length=100)
+    db_password: str | None = Field(None, max_length=500)
+    connection_string: str | None = Field(None, max_length=2000)
     is_read_only: bool | None = None
     ssh_exec_mode: bool | None = None
-    ssh_command_template: str | None = None
+    ssh_command_template: str | None = Field(None, max_length=2000)
     ssh_pre_commands: list[str] | None = None
-    mcp_server_command: str | None = None
+    mcp_server_command: str | None = Field(None, max_length=500)
     mcp_server_args: list[str] | None = None
-    mcp_server_url: str | None = None
-    mcp_transport_type: str | None = None
+    mcp_server_url: str | None = Field(None, max_length=2000)
+    mcp_transport_type: str | None = Field(None, max_length=50)
     mcp_env: dict[str, str] | None = None
 
 
@@ -268,6 +281,7 @@ async def test_connection(
                     task = asyncio.create_task(
                         _run_db_index_background(connection_id, config, conn.project_id)
                     )
+                    task.add_done_callback(_log_task_error("DB index", connection_id))
                     _db_index_tasks[connection_id] = task
                     result["auto_indexing"] = True
                     logger.info(
@@ -361,6 +375,7 @@ async def index_database(
     await db.commit()
 
     task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
+    task.add_done_callback(_log_task_error("DB index", connection_id))
     _db_index_tasks[connection_id] = task
 
     logger.info(
@@ -601,6 +616,7 @@ async def trigger_sync(
 
     project_id = conn.project_id
     task = asyncio.create_task(_run_sync_background(connection_id, project_id))
+    task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
     _sync_tasks[connection_id] = task
 
     logger.info(

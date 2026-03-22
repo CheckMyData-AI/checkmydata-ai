@@ -139,6 +139,16 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
@@ -184,6 +194,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             raise
 
 
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(MetricsMiddleware)
@@ -543,10 +554,19 @@ async def _scheduler_loop() -> None:
                             status,
                             duration_ms / 1000,
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "Scheduler: unhandled error for schedule %s", schedule.id[:8]
                         )
+                        try:
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps({"error": str(exc)}),
+                            )
+                        except Exception:
+                            logger.warning("Failed to record schedule error", exc_info=True)
         except asyncio.CancelledError:
             break
         except Exception:

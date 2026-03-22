@@ -2785,6 +2785,41 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Memory Safety, Rate Limiting, and Error Boundaries (Iteration 5)
+
+**Security (backend):**
+- Add rate limiting to dashboard list/get/update and schedule create/delete routes
+- Add `max_length` validation to `cards_json` and `layout_json` in dashboard models
+
+**Reliability (frontend):**
+- Fix unmounted setState in `DashboardPage`, `DashboardBuilder`, `DashboardList`, `ScheduleManager`, `KnowledgeDocs`
+- Wrap dashboard cards in `SectionErrorBoundary` for crash isolation
+
+**Reliability (backend):**
+- Log backup failure recording errors instead of silently swallowing them
+
+### 2026-03-22 — Performance, Security, and Accessibility (Iteration 4)
+
+**Performance (backend):**
+- Fix N+1 queries in `project_overview_service` (batch IN queries instead of per-connection loops)
+
+**Security (backend):**
+- Add `done_callback` to `asyncio.create_task` for background tasks (investigation, batch)
+- Add `max_length` to `InvestigateRequest` string fields
+- Add rate limiting to backup, dashboards, rules, notifications, health_monitor routes
+
+**Accessibility (frontend):**
+- Add `aria-label` to `BatchRunner` inputs, buttons, and textareas
+- Add `aria-label` to `InviteManager` close button
+- Add `aria-label` and `scope="col"` to `ResultTable` for screen readers
+
+**UX (frontend):**
+- Add loading spinner to `KnowledgeDocs` document view
+- Guard `Dashboard handleRefreshAll` against overlapping refreshes
+
+**Error handling (backend):**
+- Log `on_retry` callback failures in `retry.py` and file-read failures in `project_profiler.py`
+
 ### 2026-03-22 — UX, Accessibility, and Security Improvements (Iteration 3)
 
 **Security (backend):**

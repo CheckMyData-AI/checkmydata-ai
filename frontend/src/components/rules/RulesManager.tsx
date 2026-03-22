@@ -46,12 +46,14 @@ export function RulesManager() {
     : null;
 
   useEffect(() => {
+    let cancelled = false;
     setListLoading(true);
     api.rules
       .list(activeProject?.id)
-      .then((data) => setRules(sortRules(data)))
-      .catch((err) => toast(err instanceof Error ? err.message : "Failed to load rules", "error"))
-      .finally(() => setListLoading(false));
+      .then((data) => { if (!cancelled) setRules(sortRules(data)); })
+      .catch((err) => { if (!cancelled) toast(err instanceof Error ? err.message : "Failed to load rules", "error"); })
+      .finally(() => { if (!cancelled) setListLoading(false); });
+    return () => { cancelled = true; };
   }, [activeProject?.id, rulesVersion]);
 
   const handleCreate = async () => {

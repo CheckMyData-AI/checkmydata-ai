@@ -1,10 +1,11 @@
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,9 @@ class UsageStatsResponse(BaseModel):
 
 
 @router.get("/stats", response_model=UsageStatsResponse)
+@limiter.limit("30/minute")
 async def get_usage_stats(
+    request: Request,
     days: int = Query(default=30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

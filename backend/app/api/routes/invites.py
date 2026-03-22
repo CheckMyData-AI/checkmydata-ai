@@ -1,5 +1,7 @@
 """REST routes for project invitations and membership management."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,7 @@ _membership_svc = MembershipService()
 
 class InviteCreate(BaseModel):
     email: EmailStr
-    role: str = "editor"
+    role: Literal["owner", "editor", "viewer"] = "editor"
 
 
 class InviteResponse(BaseModel):

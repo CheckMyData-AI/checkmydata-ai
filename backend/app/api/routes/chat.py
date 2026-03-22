@@ -6,6 +6,7 @@ import re
 import time
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -365,9 +366,9 @@ class ChatRequest(BaseModel):
     message: str = Field(max_length=20000)
     preferred_provider: str | None = None
     model: str | None = None
-    pipeline_action: str | None = None  # continue | modify | retry
+    pipeline_action: Literal["continue", "modify", "retry"] | None = None
     pipeline_run_id: str | None = None
-    modification: str | None = None
+    modification: str | None = Field(None, max_length=5000)
 
 
 class ChatResponse(BaseModel):

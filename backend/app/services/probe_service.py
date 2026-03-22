@@ -8,6 +8,7 @@ suspicious value distributions, empty tables).
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from app.connectors.base import ConnectionConfig
@@ -74,6 +75,8 @@ class ProbeService:
         await session.flush()
         return report
 
+    _VALID_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.\"` \-]{0,200}$")
+
     async def _probe_table(
         self,
         connector: Any,
@@ -87,6 +90,10 @@ class ProbeService:
             "row_count": None,
             "null_rates": {},
         }
+
+        if not self._VALID_TABLE_RE.match(table):
+            entry["findings"].append(f"Skipped: invalid table name '{table}'")
+            return entry
 
         try:
             count_result = await connector.execute_query(f"SELECT COUNT(*) AS cnt FROM {table}")

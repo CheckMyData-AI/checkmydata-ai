@@ -35,18 +35,20 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: { cancelled: boolean }) => {
     setLoading(true);
     setError(null);
     api.dataValidation
       .getFeedbackAnalytics(projectId)
-      .then((result) => setData(result))
-      .catch((err) => setError(String(err)))
-      .finally(() => setLoading(false));
+      .then((result) => { if (!signal?.cancelled) setData(result); })
+      .catch((err) => { if (!signal?.cancelled) setError(String(err)); })
+      .finally(() => { if (!signal?.cancelled) setLoading(false); });
   }, [projectId]);
 
   useEffect(() => {
-    load();
+    const signal = { cancelled: false };
+    load(signal);
+    return () => { signal.cancelled = true; };
   }, [load]);
 
   if (loading) {
@@ -61,7 +63,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
     return (
       <div className="px-2 py-1 text-[10px] text-red-400 flex items-center gap-2">
         <span>Failed to load analytics</span>
-        <button onClick={load} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
+        <button onClick={() => load()} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
       </div>
     );
   }

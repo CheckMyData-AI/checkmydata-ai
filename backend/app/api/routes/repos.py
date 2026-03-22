@@ -169,9 +169,17 @@ async def index_repo(
         },
     )
 
+    def _on_index_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("Repo index %s failed: %s", project_id, exc, exc_info=exc)
+
     task = asyncio.create_task(
         _run_index_background(project_id, project, body, wf_id, lock),
     )
+    task.add_done_callback(_on_index_done)
     _indexing_tasks[project_id] = task
 
     return JSONResponse(
