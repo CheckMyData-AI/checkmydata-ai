@@ -34,8 +34,11 @@ class BatchService:
     ) -> BatchQuery:
         if note_ids:
             result = await db.execute(select(SavedNote).where(SavedNote.id.in_(note_ids)))
-            for note in result.scalars().all():
-                queries.append({"sql": note.sql_query, "title": note.title})
+            notes_by_id = {n.id: n for n in result.scalars().all()}
+            for nid in note_ids:
+                note = notes_by_id.get(nid)
+                if note:
+                    queries.append({"sql": note.sql_query, "title": note.title})
 
         batch = BatchQuery(
             user_id=user_id,
