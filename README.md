@@ -2785,6 +2785,19 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Silent Exceptions, Config & Final Mounted Guards (Iteration 8)
+
+**Reliability (backend):**
+- Fixed silent `except Exception` in `learning_analyzer.py`, `entity_extractor.py`, `code_db_sync_pipeline.py` with proper logging
+- Added `Literal["openrouter", "openai", "anthropic"]` validation to models route provider param
+- Moved hardcoded timeouts to `config.py`: `model_cache_ttl_seconds`, `health_degraded_latency_ms`, `ssh_connect_timeout`, `ssh_command_timeout`
+
+**Reliability (frontend):**
+- `CostEstimator`: cancelled flag prevents unmounted setState
+- `SshKeyManager`: cancelled flag on SSH key list fetch
+- `ReadinessBanner`: guard catch with `bannerMountedRef`
+- `OnboardingWizard`: toast on repo update failure instead of silent catch
+
 ### 2026-03-22 — Race Conditions, Input Validation & Mounted Guards (Iteration 7)
 
 **Reliability (backend):**
