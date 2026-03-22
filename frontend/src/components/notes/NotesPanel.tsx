@@ -92,8 +92,14 @@ export function NotesPanel() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll p-3 space-y-2">
         {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="p-3 space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="animate-pulse rounded-lg bg-surface-2 p-3 space-y-2">
+                <div className="h-3 bg-surface-3 rounded w-2/5" />
+                <div className="h-2.5 bg-surface-3 rounded w-full" />
+                <div className="h-2.5 bg-surface-3 rounded w-3/4" />
+              </div>
+            ))}
           </div>
         ) : notes.length === 0 ? (
           <div className="text-center py-8 px-4">

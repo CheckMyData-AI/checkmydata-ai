@@ -158,7 +158,20 @@ export function ScheduleManager() {
   };
 
   const handleSave = async () => {
-    if (!activeProject || !title.trim() || !sqlQuery.trim()) return;
+    if (!activeProject) return;
+    if (!title.trim()) {
+      toast("Please enter a schedule title", "error");
+      return;
+    }
+    const trimmedSql = sqlQuery.trim();
+    if (!trimmedSql) {
+      toast("Please enter a SQL query", "error");
+      return;
+    }
+    if (trimmedSql.length < 7) {
+      toast("SQL query is too short", "error");
+      return;
+    }
     const cron = cronMode === "preset" ? cronPreset : cronCustom.trim();
     if (!cron) {
       toast("Please enter a cron expression", "error");

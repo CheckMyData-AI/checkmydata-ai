@@ -2818,6 +2818,23 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Observability, Retry, Cancellation & UX Polish (Iteration 11)
+
+**Backend:**
+- Replace silent `except: pass` in cost estimate helpers with `logger.debug` for observability (#86)
+- Add retry logic (2 retries with exponential backoff) to LLM doc generation for transient 429/5xx (#87)
+
+**Frontend — Reliability:**
+- Add `cancelled` flag to ConnectionSelector status fetches to prevent stale state on rapid switches (#88)
+- Fix silent `.catch` in SyncStatusIndicator initial load and poll — now shows toast on failure (#89)
+- Fix silent `.catch` in ReadinessGate readiness check — now shows toast on failure (#90)
+- Fix silent `.catch` on ChatPanel suggestions and cost estimate — now shows toast on failure (#91)
+- Add `mountedRef` cancellation guard to PendingInvites useEffect load (#92)
+
+**Frontend — UX:**
+- Replace plain "Loading…" text with animated skeleton placeholders in LearningsPanel and NotesPanel (#93)
+- Add SQL query validation in ScheduleManager before save — shows toast for empty/too-short queries (#94)
+
 ### 2026-03-22 — Path Traversal, Shutdown Cleanup, Project Uniqueness & UI Caps (Iteration 10)
 
 **Security:**

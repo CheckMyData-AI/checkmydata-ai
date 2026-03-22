@@ -155,23 +155,38 @@ class DocGenerator:
             Message(role="user", content=prompt),
         ]
 
-        try:
-            response = await self._llm.complete(
-                messages=messages,
-                temperature=0.0,
-                max_tokens=2048,
-                preferred_provider=preferred_provider,
-                model=model,
-            )
-            generated = response.content.strip()
-            if generated:
-                return generated
-        except Exception:
-            logger.warning(
-                "LLM doc generation failed for %s, using raw content",
-                file_path,
-                exc_info=True,
-            )
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._llm.complete(
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=2048,
+                    preferred_provider=preferred_provider,
+                    model=model,
+                )
+                generated = response.content.strip()
+                if generated:
+                    return generated
+                break
+            except Exception:
+                if attempt < max_retries:
+                    import asyncio
+
+                    await asyncio.sleep(2**attempt)
+                    logger.debug(
+                        "LLM doc gen retry %d/%d for %s",
+                        attempt + 1,
+                        max_retries,
+                        file_path,
+                    )
+                    continue
+                logger.warning(
+                    "LLM doc generation failed for %s after %d attempts, using raw content",
+                    file_path,
+                    max_retries + 1,
+                    exc_info=True,
+                )
 
         if _is_binary_content(content):
             logger.warning("Skipping binary-looking fallback content for %s", file_path)

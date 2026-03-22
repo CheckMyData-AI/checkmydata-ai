@@ -145,7 +145,7 @@ async def estimate_cost(
             table_map = svc.build_table_map(entries)
             schema_tokens = _estimate_tokens(table_map)
         except Exception:
-            pass
+            logger.debug("Cost estimate: schema lookup failed", exc_info=True)
 
     from app.api.deps import validate_safe_id
 
@@ -159,7 +159,7 @@ async def estimate_cost(
         db_rules = await rules_engine.load_db_rules(project_id=project_id)
         rules_text = rules_engine.rules_to_context(file_rules + db_rules)
     except Exception:
-        pass
+        logger.debug("Cost estimate: rules loading failed", exc_info=True)
     rules_tokens = _estimate_tokens(rules_text)
 
     learnings_tokens = 0
@@ -180,7 +180,7 @@ async def estimate_cost(
                 text = "\n".join(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}" for lrn in top)
                 learnings_tokens = _estimate_tokens(text)
         except Exception:
-            pass
+            logger.debug("Cost estimate: learnings lookup failed", exc_info=True)
 
     overview_tokens = 0
     try:
@@ -193,7 +193,7 @@ async def estimate_cost(
         if isinstance(overview, str) and overview:
             overview_tokens = _estimate_tokens(overview)
     except Exception:
-        pass
+        logger.debug("Cost estimate: overview lookup failed", exc_info=True)
 
     max_budget = app_settings.max_history_tokens
     used_context = schema_tokens + rules_tokens + learnings_tokens + overview_tokens
@@ -215,7 +215,7 @@ async def estimate_cost(
         if row.avg_comp:
             avg_completion = int(row.avg_comp)
     except Exception:
-        pass
+        logger.debug("Cost estimate: avg completion lookup failed", exc_info=True)
 
     total_tokens = total_prompt + avg_completion
     utilization = round((used_context / max_budget * 100) if max_budget > 0 else 0, 1)

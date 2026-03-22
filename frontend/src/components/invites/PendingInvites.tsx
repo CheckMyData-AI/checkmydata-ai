@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type ProjectInvite } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
@@ -11,22 +11,24 @@ export function PendingInvites() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const setProjects = useAppStore((s) => s.setProjects);
+  const mountedRef = useRef(true);
 
   const load = async () => {
     try {
       const pending = await api.invites.listPending();
-      setInvites(pending);
+      if (mountedRef.current) setInvites(pending);
     } catch (err) {
-      if (err instanceof Error && !err.message.includes("401") && !err.message.includes("Session expired")) {
+      if (mountedRef.current && err instanceof Error && !err.message.includes("401") && !err.message.includes("Session expired")) {
         toast(err.message, "error");
       }
     } finally {
-      setListLoading(false);
+      if (mountedRef.current) setListLoading(false);
     }
   };
 
   useEffect(() => {
     load();
+    return () => { mountedRef.current = false; };
   }, []);
 
   const handleAccept = async (inviteId: string) => {

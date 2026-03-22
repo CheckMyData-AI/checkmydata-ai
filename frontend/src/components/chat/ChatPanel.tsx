@@ -264,7 +264,7 @@ export function ChatPanel() {
       api.chat
         .suggestions(activeProject.id, activeConnection.id)
         .then((s) => { if (!cancelled) setSuggestions(s); })
-        .catch(() => { if (!cancelled) setSuggestions([]); })
+        .catch(() => { if (!cancelled) { setSuggestions([]); toast("Could not load suggestions", "error"); } })
         .finally(() => { if (!cancelled) setSuggestionsLoading(false); });
       return () => { cancelled = true; };
     }
@@ -288,7 +288,7 @@ export function ChatPanel() {
     api.chat
       .estimate(activeProject.id, activeConnection?.id)
       .then((e) => { if (!cancelled) setCostEstimate(e); })
-      .catch(() => { if (!cancelled) setCostEstimate(null); });
+      .catch(() => { if (!cancelled) { setCostEstimate(null); toast("Could not load cost estimate", "error"); } });
     return () => { cancelled = true; };
   }, [activeProject, activeConnection]);
 

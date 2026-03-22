@@ -349,6 +349,7 @@ export function ReadinessBanner({ projectId }: { projectId: string }) {
     }).catch(() => {
       if (bannerMountedRef.current) {
         setMissing([]);
+        toast("Could not check project readiness", "error");
       }
     });
   }, [projectId]);

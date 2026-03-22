@@ -291,11 +291,12 @@ export function ConnectionSelector() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     connections.forEach((c) => {
       api.connections
         .indexDbStatus(c.id)
         .then((s) => {
-          if (mountedRef.current) {
+          if (!cancelled && mountedRef.current) {
             setIndexStatus((prev) => ({
               ...prev,
               [c.id]: {
@@ -311,11 +312,11 @@ export function ConnectionSelector() {
             }
           }
         })
-        .catch(() => { /* frequent polling — transient failures expected */ });
+        .catch(() => {});
       api.connections
         .syncStatus(c.id)
         .then((s) => {
-          if (mountedRef.current) {
+          if (!cancelled && mountedRef.current) {
             setSyncStatus((prev) => ({
               ...prev,
               [c.id]: {
@@ -332,19 +333,20 @@ export function ConnectionSelector() {
             }
           }
         })
-        .catch(() => { /* frequent polling — transient failures expected */ });
+        .catch(() => {});
       api.connections
         .learningsStatus(c.id)
         .then((s) => {
-          if (mountedRef.current) {
+          if (!cancelled && mountedRef.current) {
             setLearningsCount((prev) => ({ ...prev, [c.id]: s.total_active }));
             if (s.categories) {
               setLearningsCategories((prev) => ({ ...prev, [c.id]: s.categories }));
             }
           }
         })
-        .catch(() => { /* frequent polling — transient failures expected */ });
+        .catch(() => {});
     });
+    return () => { cancelled = true; };
   }, [connections, startIndexPoll, startSyncPoll]);
 
   const resetForm = () => {

@@ -33,7 +33,10 @@ export function SyncStatusIndicator() {
     }
     let cancelled = false;
     const connId = activeConnection.id;
-    api.connections.syncStatus(connId).then((s) => { if (!cancelled) setSyncStatus(s); }).catch(() => {});
+    api.connections
+      .syncStatus(connId)
+      .then((s) => { if (!cancelled) setSyncStatus(s); })
+      .catch(() => { if (!cancelled) toast("Could not load sync status", "error"); });
     return () => { cancelled = true; };
   }, [activeConnection]);
 
@@ -47,9 +50,13 @@ export function SyncStatusIndicator() {
 
     const connId = activeConnection.id;
     let cancelled = false;
+    let pollFailures = 0;
     pollRef.current = setInterval(() => {
       if (cancelled) return;
-      api.connections.syncStatus(connId).then((s) => { if (!cancelled) setSyncStatus(s); }).catch(() => {});
+      api.connections
+        .syncStatus(connId)
+        .then((s) => { if (!cancelled) { setSyncStatus(s); pollFailures = 0; } })
+        .catch(() => { if (!cancelled && ++pollFailures >= 3) toast("Sync status polling failing", "error"); });
     }, 5000);
 
     return () => {

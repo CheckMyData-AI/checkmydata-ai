@@ -243,7 +243,15 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
 
       <div className="max-h-80 overflow-y-auto overflow-x-hidden sidebar-scroll">
         {loading ? (
-          <div className="p-4 text-center text-text-muted text-xs">Loading...</div>
+          <div className="p-4 space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="animate-pulse space-y-2">
+                <div className="h-3 bg-surface-2 rounded w-1/3" />
+                <div className="h-2.5 bg-surface-2 rounded w-full" />
+                <div className="h-2.5 bg-surface-2 rounded w-2/3" />
+              </div>
+            ))}
+          </div>
         ) : learnings.length === 0 ? (
           <div className="p-4 text-center text-text-muted text-xs">
             No learnings yet. The agent will automatically learn from query outcomes.
