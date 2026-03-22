@@ -147,9 +147,7 @@ class ProbeService:
                     rows=rows_as_dicts,
                     columns=sample_result.columns,
                 )
-                entry["anomaly_reports"] = [
-                    r.to_dict() for r in reports
-                ]
+                entry["anomaly_reports"] = [r.to_dict() for r in reports]
 
         except Exception as exc:
             entry["findings"].append(f"Probe query failed for '{table}': {exc}")

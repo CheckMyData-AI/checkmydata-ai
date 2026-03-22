@@ -376,7 +376,8 @@ class TestLLMRouterErrorClassification:
         assert result.content == "recovered"
 
     @pytest.mark.asyncio
-    async def test_token_limit_error_stops_fallback(self):
+    async def test_token_limit_error_falls_back_to_next_provider(self):
+        """LLMTokenLimitError now falls back to a potentially larger-context provider."""
         router = LLMRouter()
 
         failing = MagicMock()
@@ -384,7 +385,12 @@ class TestLLMRouterErrorClassification:
         router._instances["openai"] = failing
 
         fallback = MagicMock()
-        fallback.complete = AsyncMock(return_value=LLMResponse(content="should not reach"))
+        fallback.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="recovered",
+                provider="anthropic",
+            )
+        )
         router._instances["anthropic"] = fallback
 
         with patch("app.llm.router.settings") as mock_settings:
@@ -392,12 +398,12 @@ class TestLLMRouterErrorClassification:
             mock_settings.openai_api_key = "sk-openai"
             mock_settings.anthropic_api_key = "sk-anthropic"
             mock_settings.openrouter_api_key = ""
-            with pytest.raises(LLMAllProvidersFailedError):
-                await router.complete(
-                    messages=[Message(role="user", content="hi")],
-                    preferred_provider="openai",
-                )
-        fallback.complete.assert_not_called()
+            result = await router.complete(
+                messages=[Message(role="user", content="hi")],
+                preferred_provider="openai",
+            )
+        assert result.content == "recovered"
+        fallback.complete.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_content_filter_error_stops_fallback(self):

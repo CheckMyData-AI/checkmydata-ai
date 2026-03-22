@@ -92,7 +92,7 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
                 </div>
               )}
               {explanation && (
-                <div className="text-xs text-zinc-300 leading-relaxed prose prose-invert prose-xs max-w-none">
+                <div className="text-xs text-zinc-300 leading-relaxed prose prose-invert prose-xs max-w-none overflow-hidden break-words">
                   <ReactMarkdown>{explanation}</ReactMarkdown>
                 </div>
               )}

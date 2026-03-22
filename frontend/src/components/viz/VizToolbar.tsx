@@ -54,7 +54,7 @@ function VizIcon({ type }: { type: string }) {
 
 export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizToolbarProps) {
   return (
-    <div className="flex items-center gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg w-fit">
+    <div className="flex items-center flex-wrap gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg w-fit">
       {VIZ_TYPES.map((vt) => {
         const isActive = activeType === vt.key;
         return (

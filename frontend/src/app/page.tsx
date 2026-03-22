@@ -89,7 +89,7 @@ export default function Home() {
                 <Sidebar />
               )}
             </SectionErrorBoundary>
-            <div id="main-content" className="flex-1 flex flex-col min-h-0 relative">
+            <div id="main-content" className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
               {/* Desktop content header - hidden on mobile */}
               <header className="hidden md:flex border-b border-border-subtle px-6 py-2.5 items-center justify-between bg-surface-0">
                 <div className="flex items-center gap-3 min-w-0">

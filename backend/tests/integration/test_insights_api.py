@@ -86,9 +86,7 @@ class TestDataGraphAPI:
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_metric(self, auth_client: AsyncClient, project_id: str):
-        resp = await auth_client.delete(
-            f"/api/data-graph/{project_id}/metrics/nonexistent-id"
-        )
+        resp = await auth_client.delete(f"/api/data-graph/{project_id}/metrics/nonexistent-id")
         assert resp.status_code == 404
 
 

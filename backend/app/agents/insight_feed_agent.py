@@ -144,10 +144,13 @@ class InsightFeedAgent:
         from app.models.db_index import DbIndex
 
         result = await session.execute(
-            select(DbIndex).where(
+            select(DbIndex)
+            .where(
                 DbIndex.connection_id == connection_id,
                 DbIndex.is_active.is_(True),
-            ).order_by(DbIndex.relevance_score.desc()).limit(10)
+            )
+            .order_by(DbIndex.relevance_score.desc())
+            .limit(10)
         )
         return list(result.scalars().all())
 
@@ -185,23 +188,23 @@ class InsightFeedAgent:
                 raw_insights = self._insight_gen.analyze(rows, columns)
                 for raw in raw_insights:
                     insight_type = self._map_insight_type(raw.get("type", ""))
-                    insights.append({
-                        "type": insight_type,
-                        "title": f"[{table_name}] {raw.get('title', 'Pattern detected')}",
-                        "description": raw.get("description", ""),
-                        "severity": self._map_severity(
-                            raw.get("type", ""), raw.get("confidence", 0.5)
-                        ),
-                        "confidence": raw.get("confidence", 0.5),
-                        "sample_size": len(rows),
-                        "action": "",
-                        "impact": "",
-                    })
+                    insights.append(
+                        {
+                            "type": insight_type,
+                            "title": f"[{table_name}] {raw.get('title', 'Pattern detected')}",
+                            "description": raw.get("description", ""),
+                            "severity": self._map_severity(
+                                raw.get("type", ""), raw.get("confidence", 0.5)
+                            ),
+                            "confidence": raw.get("confidence", 0.5),
+                            "sample_size": len(rows),
+                            "action": "",
+                            "impact": "",
+                        }
+                    )
 
         if connector and llm:
-            llm_insights = await self._llm_deep_analysis(
-                table_name, col_notes, sample_data, llm
-            )
+            llm_insights = await self._llm_deep_analysis(table_name, col_notes, sample_data, llm)
             insights.extend(llm_insights)
 
         return insights
@@ -243,16 +246,18 @@ class InsightFeedAgent:
                         valid = []
                         for item in parsed[:5]:
                             if isinstance(item, dict) and "title" in item:
-                                valid.append({
-                                    "type": item.get("type", "observation"),
-                                    "title": f"[{table_name}] {item['title']}",
-                                    "description": item.get("description", ""),
-                                    "severity": item.get("severity", "info"),
-                                    "confidence": min(0.7, float(item.get("confidence", 0.5))),
-                                    "action": item.get("action", ""),
-                                    "impact": item.get("impact", ""),
-                                    "sample_size": len(content),
-                                })
+                                valid.append(
+                                    {
+                                        "type": item.get("type", "observation"),
+                                        "title": f"[{table_name}] {item['title']}",
+                                        "description": item.get("description", ""),
+                                        "severity": item.get("severity", "info"),
+                                        "confidence": min(0.7, float(item.get("confidence", 0.5))),
+                                        "action": item.get("action", ""),
+                                        "impact": item.get("impact", ""),
+                                        "sample_size": len(content),
+                                    }
+                                )
                         return valid
         except Exception as exc:
             logger.debug("LLM deep analysis failed for %s: %s", table_name, exc)

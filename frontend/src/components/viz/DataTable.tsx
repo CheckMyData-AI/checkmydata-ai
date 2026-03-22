@@ -60,7 +60,7 @@ export function DataTable({ data }: DataTableProps) {
           ))}
         </div>
       </div>
-      <div className="overflow-x-auto max-h-96">
+      <div className="overflow-x-auto max-h-96 data-table-scroll">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-zinc-800">

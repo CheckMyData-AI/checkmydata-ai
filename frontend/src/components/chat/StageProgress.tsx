@@ -102,6 +102,7 @@ export function StageProgress({
                   className={`font-medium truncate ${
                     stage.status === "pending" ? "text-zinc-500" : "text-zinc-200"
                   }`}
+                  title={stage.description}
                 >
                   {stage.description}
                 </span>
@@ -123,11 +124,11 @@ export function StageProgress({
               )}
 
               {stage.status === "failed" && stage.error && (
-                <div className="text-xs text-red-400/80 mt-0.5 truncate">{stage.error}</div>
+                <div className="text-xs text-red-400/80 mt-0.5 truncate" title={stage.error}>{stage.error}</div>
               )}
 
               {stage.warnings && stage.warnings.length > 0 && (
-                <div className="text-xs text-amber-400/70 mt-0.5">
+                <div className="text-xs text-amber-400/70 mt-0.5 break-words">
                   {stage.warnings.join("; ")}
                 </div>
               )}

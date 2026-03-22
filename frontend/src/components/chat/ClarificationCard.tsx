@@ -33,7 +33,7 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
   }
 
   return (
-    <div className="mt-3 p-4 rounded-lg border border-blue-800/40 bg-blue-950/20">
+    <div className="mt-3 p-3 rounded-lg border border-blue-800/40 bg-blue-950/20">
       {data.context && (
         <p className="text-xs text-zinc-400 mb-2">{data.context}</p>
       )}

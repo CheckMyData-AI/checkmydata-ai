@@ -764,10 +764,7 @@ class SQLAgent(BaseAgent):
         engine = AnomalyIntelligenceEngine()
         checker = DataSanityChecker()
 
-        rows_as_dicts = [
-            dict(zip(results.columns, row))
-            for row in results.rows
-        ]
+        rows_as_dicts = [dict(zip(results.columns, row)) for row in results.rows]
 
         reports = engine.analyze(
             rows=rows_as_dicts,
@@ -797,9 +794,7 @@ class SQLAgent(BaseAgent):
         ctx: AgentContext,
     ) -> None:
         """Persist critical/warning anomalies as insight records."""
-        significant = [
-            r for r in reports if r.severity in ("critical", "warning")
-        ]
+        significant = [r for r in reports if r.severity in ("critical", "warning")]
         if not significant or not ctx.project_id:
             return
         try:
@@ -807,11 +802,7 @@ class SQLAgent(BaseAgent):
             from app.models.base import async_session_factory
 
             svc = InsightMemoryService()
-            conn_id = (
-                ctx.connection_config.connection_id
-                if ctx.connection_config
-                else None
-            )
+            conn_id = ctx.connection_config.connection_id if ctx.connection_config else None
             async with async_session_factory() as session:
                 for report in significant[:5]:
                     await svc.store_insight(
@@ -822,9 +813,7 @@ class SQLAgent(BaseAgent):
                         severity=report.severity,
                         title=report.title,
                         description=report.description,
-                        actions_json=(
-                            f'{{"action": "{report.recommended_action}"}}'
-                        ),
+                        actions_json=(f'{{"action": "{report.recommended_action}"}}'),
                         confidence=report.confidence,
                     )
                 await session.commit()

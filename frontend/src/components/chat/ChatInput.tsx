@@ -39,7 +39,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
   const nearLimit = remaining <= 200;
 
   return (
-    <div className="sticky bottom-0 py-4 px-4 md:px-6 flex justify-center bg-surface-0">
+    <div className="sticky bottom-0 py-4 px-4 md:px-6 flex justify-center bg-surface-0" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
       <div className="flex flex-col gap-1 max-w-2xl w-full">
         <div className="flex gap-2 items-end">
           <textarea
@@ -57,7 +57,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
             rows={1}
             maxLength={MAX_LENGTH}
             aria-label="Message input"
-            className="flex-1 resize-none bg-transparent border border-zinc-700/50 rounded-xl px-4 py-3 text-base md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500/40 focus:border-zinc-500/40 disabled:opacity-50 transition-colors"
+            className="flex-1 resize-none max-h-40 overflow-y-auto bg-transparent border border-zinc-700/50 rounded-xl px-4 py-3 text-base md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500/40 focus:border-zinc-500/40 disabled:opacity-50 transition-colors"
           />
           <button
             onClick={handleSend}

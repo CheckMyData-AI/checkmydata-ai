@@ -47,18 +47,18 @@ export function ResultDiffView({
             {categoryLabel}
           </span>
         </div>
-        <p className="text-xs">{rootCause}</p>
+        <p className="text-xs break-words">{rootCause}</p>
       </div>
 
       {/* Queries comparison */}
-      <div className="grid grid-cols-2 gap-2">
-        <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="min-w-0">
           <div className="text-[10px] font-medium text-red-400 mb-1">Original Query</div>
           <pre className="p-2 rounded bg-red-950/20 border border-red-900/20 text-[10px] text-zinc-400 overflow-x-auto max-h-32">
             {originalQuery || "N/A"}
           </pre>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-[10px] font-medium text-emerald-400 mb-1">Corrected Query</div>
           <pre className="p-2 rounded bg-emerald-950/20 border border-emerald-900/20 text-[10px] text-zinc-300 overflow-x-auto max-h-32">
             {correctedQuery || "Generating..."}

@@ -10,7 +10,7 @@ from app.core.context_budget import (
 
 class TestEstimate:
     def test_empty_string(self):
-        assert _estimate("") == 1
+        assert _estimate("") == 0
 
     def test_short_string(self):
         assert _estimate("ab") == 1

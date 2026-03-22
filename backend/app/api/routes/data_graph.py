@@ -69,8 +69,12 @@ class AddRelationshipRequest(BaseModel):
     metric_a_id: str
     metric_b_id: str
     relationship_type: Literal[
-        "correlation", "dependency", "causation_hypothesis",
-        "foreign_key", "derived_from", "same_entity",
+        "correlation",
+        "dependency",
+        "causation_hypothesis",
+        "foreign_key",
+        "derived_from",
+        "same_entity",
     ]
     strength: float = Field(0.0, ge=0.0, le=1.0)
     direction: Literal["bidirectional", "a_to_b", "b_to_a"] = "bidirectional"

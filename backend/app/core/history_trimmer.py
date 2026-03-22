@@ -116,7 +116,7 @@ async def _summarise(
     model: str | None = None,
 ) -> str:
     non_tool = [m for m in messages if m.role != "tool"]
-    conversation = "\n".join(f"{m.role}: {m.content[:300]}" for m in non_tool)
+    conversation = "\n".join(f"{m.role}: {(m.content or '')[:300]}" for m in non_tool)
     prompt_messages = [
         Message(
             role="system",
@@ -146,3 +146,91 @@ def _fallback_summary(messages: list[Message]) -> str:
     user_msgs = [m for m in messages if m.role == "user"]
     topics = [m.content[:80] for m in user_msgs[-3:]]
     return "Previous topics discussed: " + "; ".join(topics)
+
+
+# ---------------------------------------------------------------------------
+# In-loop message trimming (for agent tool-calling loops)
+# ---------------------------------------------------------------------------
+
+_TRIM_THRESHOLD = 0.80
+_WRAP_UP_THRESHOLD = 0.70
+
+
+def _summarise_pair(assistant_msg: Message, tool_msgs: list[Message]) -> str:
+    """Build a compact one-liner from an assistant + tool result pair."""
+    snippet = assistant_msg.content[:120].replace("\n", " ").strip()
+    tool_summaries: list[str] = []
+    for tm in tool_msgs:
+        name = tm.name or "tool"
+        preview = tm.content[:80].replace("\n", " ").strip()
+        tool_summaries.append(f"{name}→{preview}")
+    return f"[{snippet}] {'; '.join(tool_summaries)}"
+
+
+def trim_loop_messages(
+    messages: list[Message],
+    max_tokens: int,
+) -> tuple[list[Message], bool]:
+    """Trim an agent's in-loop message list to stay within *max_tokens*.
+
+    Preserves: system prompt (index 0) and the last user message.
+    Strategy:
+    1. Condense older tool results (> 500 chars).
+    2. If still over budget, collapse oldest assistant+tool pairs into a
+       single system summary message.
+
+    Returns ``(trimmed_messages, did_trim)`` so callers can emit events.
+    """
+    if not messages or len(messages) < 3:
+        return messages, False
+
+    total = estimate_messages_tokens(messages)
+    threshold = int(max_tokens * _TRIM_THRESHOLD)
+    if total <= threshold:
+        return messages, False
+
+    system_msg = messages[0]
+    last_user_idx = max(
+        (i for i, m in enumerate(messages) if m.role == "user"),
+        default=1,
+    )
+
+    middle = list(messages[1:last_user_idx])
+    tail = list(messages[last_user_idx:])
+
+    condensed_middle = condense_tool_results(middle)
+    candidate = [system_msg, *condensed_middle, *tail]
+    total = estimate_messages_tokens(candidate)
+    if total <= threshold:
+        return candidate, True
+
+    summaries: list[str] = []
+    keep_middle: list[Message] = []
+    i = 0
+    while i < len(condensed_middle):
+        m = condensed_middle[i]
+        if m.role == "assistant":
+            tool_msgs: list[Message] = []
+            j = i + 1
+            while j < len(condensed_middle) and condensed_middle[j].role == "tool":
+                tool_msgs.append(condensed_middle[j])
+                j += 1
+            summaries.append(_summarise_pair(m, tool_msgs))
+            i = j
+        else:
+            keep_middle.append(m)
+            i += 1
+
+    if summaries:
+        summary_text = "[Earlier analysis summary]\n" + "\n".join(summaries)
+        summary_msg = Message(role="system", content=summary_text)
+        candidate = [system_msg, summary_msg, *keep_middle, *tail]
+    else:
+        candidate = [system_msg, *keep_middle, *tail]
+
+    return candidate, True
+
+
+def should_wrap_up(messages: list[Message], max_tokens: int) -> bool:
+    """Return True when context usage exceeds the wrap-up threshold."""
+    return estimate_messages_tokens(messages) > int(max_tokens * _WRAP_UP_THRESHOLD)

@@ -534,7 +534,7 @@ export function ChatPanel() {
   if (showReadinessGate) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4">
           <ReadinessGate
             projectId={activeProject.id}
             connectionId={activeConnection?.id ?? null}
@@ -612,7 +612,7 @@ export function ChatPanel() {
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4" aria-live="polite" aria-relevant="additions">
+      <div className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4 chat-scroll" aria-live="polite" aria-relevant="additions" aria-atomic="false">
         {messages.length === 0 ? (
           <div className="text-center text-zinc-500 text-sm mt-20">
             <p className="text-lg font-medium mb-2">
@@ -652,7 +652,7 @@ export function ChatPanel() {
         })}
         {/* Pipeline stage progress (visible even after thinking finishes for checkpoints) */}
         {pipelineStages.length > 0 && (
-          <div className="bg-zinc-800/80 rounded-xl px-4 py-3">
+          <div className="bg-zinc-800/80 rounded-xl px-4 py-3 overflow-hidden">
             <StageProgress
               stages={pipelineStages}
               pipelineRunId={pipelineRunId}
@@ -676,8 +676,8 @@ export function ChatPanel() {
         {isThinking && (
           <div className="flex gap-3">
             {streamingText ? (
-              <div className="bg-zinc-800 rounded-xl px-4 py-3 max-w-3xl">
-                <p className="text-zinc-200 text-sm whitespace-pre-wrap">{streamingText}<span className="inline-block w-1.5 h-4 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" /></p>
+              <div className="bg-zinc-800 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
+                <p className="text-zinc-200 text-sm whitespace-pre-wrap break-words">{streamingText}<span className="inline-block w-1.5 h-4 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" /></p>
                 <button
                   onClick={handleStop}
                   className="mt-2 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -687,7 +687,7 @@ export function ChatPanel() {
                 </button>
               </div>
             ) : (
-              <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-lg">
+              <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-[95%] md:max-w-[80%] overflow-hidden">
                 {thinkingLog.length > 0 ? (
                   <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
                 ) : (

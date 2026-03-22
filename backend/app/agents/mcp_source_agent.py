@@ -17,6 +17,7 @@ from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.mcp_prompt import build_mcp_source_system_prompt
 from app.config import settings
 from app.connectors.mcp_client import MCPClientAdapter
+from app.core.history_trimmer import trim_loop_messages
 from app.llm.base import LLMResponse, Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
 
@@ -144,7 +145,11 @@ class MCPSourceAgent(BaseAgent):
         tool_calls_made: list[dict[str, Any]] = []
         raw_results: list[dict[str, Any]] = []
 
+        mcp_tool_cap = 4000
+        mcp_loop_budget = self._llm.get_context_window(context.model)
+
         for _iteration in range(settings.max_mcp_iterations):
+            messages, _ = trim_loop_messages(messages, mcp_loop_budget)
             llm_resp: LLMResponse = await self._llm.complete(
                 messages=messages,
                 tools=tools,
@@ -172,6 +177,12 @@ class MCPSourceAgent(BaseAgent):
 
             for tc in llm_resp.tool_calls:
                 result_text = await self._adapter.call_tool(tc.name, tc.arguments)
+
+                if len(result_text) > mcp_tool_cap:
+                    result_text = (
+                        result_text[:mcp_tool_cap]
+                        + f"\n... (truncated, {len(result_text)} chars total)"
+                    )
 
                 tool_calls_made.append(
                     {

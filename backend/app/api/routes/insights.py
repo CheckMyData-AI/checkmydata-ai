@@ -49,8 +49,14 @@ class InsightFeedbackRequest(BaseModel):
 class CreateInsightRequest(BaseModel):
     connection_id: str | None = None
     insight_type: Literal[
-        "anomaly", "opportunity", "loss", "trend", "pattern",
-        "reconciliation_mismatch", "data_quality", "observation",
+        "anomaly",
+        "opportunity",
+        "loss",
+        "trend",
+        "pattern",
+        "reconciliation_mismatch",
+        "data_quality",
+        "observation",
     ]
     severity: Literal["critical", "warning", "info", "positive"] = "info"
     title: str = Field(..., min_length=1, max_length=500)

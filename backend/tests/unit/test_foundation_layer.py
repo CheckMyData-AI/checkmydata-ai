@@ -29,21 +29,15 @@ class TestTrustService:
         assert score == 0.65
 
     def test_compute_confidence_user_confirmations(self):
-        score = TrustService.compute_confidence(
-            base_confidence=0.5, user_confirmations=2
-        )
+        score = TrustService.compute_confidence(base_confidence=0.5, user_confirmations=2)
         assert score == 0.7
 
     def test_compute_confidence_user_dismissals(self):
-        score = TrustService.compute_confidence(
-            base_confidence=0.5, user_dismissals=2
-        )
+        score = TrustService.compute_confidence(base_confidence=0.5, user_dismissals=2)
         assert score == 0.2
 
     def test_compute_confidence_stale_data(self):
-        score = TrustService.compute_confidence(
-            base_confidence=0.5, data_freshness_hours=200
-        )
+        score = TrustService.compute_confidence(base_confidence=0.5, data_freshness_hours=200)
         assert score == 0.4
 
     def test_compute_confidence_clamped(self):
@@ -57,9 +51,7 @@ class TestTrustService:
         assert score == 1.0
 
     def test_compute_confidence_clamped_low(self):
-        score = TrustService.compute_confidence(
-            base_confidence=0.1, user_dismissals=5
-        )
+        score = TrustService.compute_confidence(base_confidence=0.1, user_dismissals=5)
         assert score == 0.0
 
     def test_build_trusted_insight(self):
@@ -112,29 +104,45 @@ class TestTrustService:
 
     def test_trusted_insight_freshness_labels(self):
         real_time = TrustService.build_trusted_insight(
-            insight_id="x", title="t", description="d",
-            insight_type="trend", severity="info", confidence=0.5,
+            insight_id="x",
+            title="t",
+            description="d",
+            insight_type="trend",
+            severity="info",
+            confidence=0.5,
             data_freshness_hours=0.5,
         )
         assert real_time.freshness_label == "real_time"
 
         recent = TrustService.build_trusted_insight(
-            insight_id="x", title="t", description="d",
-            insight_type="trend", severity="info", confidence=0.5,
+            insight_id="x",
+            title="t",
+            description="d",
+            insight_type="trend",
+            severity="info",
+            confidence=0.5,
             data_freshness_hours=12,
         )
         assert recent.freshness_label == "recent"
 
         this_week = TrustService.build_trusted_insight(
-            insight_id="x", title="t", description="d",
-            insight_type="trend", severity="info", confidence=0.5,
+            insight_id="x",
+            title="t",
+            description="d",
+            insight_type="trend",
+            severity="info",
+            confidence=0.5,
             data_freshness_hours=72,
         )
         assert this_week.freshness_label == "this_week"
 
         stale = TrustService.build_trusted_insight(
-            insight_id="x", title="t", description="d",
-            insight_type="trend", severity="info", confidence=0.5,
+            insight_id="x",
+            title="t",
+            description="d",
+            insight_type="trend",
+            severity="info",
+            confidence=0.5,
             data_freshness_hours=200,
         )
         assert stale.freshness_label == "stale"

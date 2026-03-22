@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     backup_retention_days: int = 7
     backup_dir: str = "./data/backups"
 
+    # Context window budget
+    max_context_tokens: int = 16000
+
     # Request limits
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
     max_concurrent_agent_calls: int = 3

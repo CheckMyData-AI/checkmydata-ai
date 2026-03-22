@@ -187,7 +187,7 @@ export function ChartRenderer({ config }: ChartRendererProps) {
 
   return (
     <ChartErrorBoundary chartType={chartType}>
-      <div className="bg-zinc-900 rounded-lg p-4 min-h-[18rem] max-h-96">
+      <div className="bg-zinc-900 rounded-lg p-4 min-h-[18rem] max-h-96 min-w-0 w-full">
         {chartType === "bar" && (
           <Bar data={data as never} options={options as never} />
         )}

@@ -109,7 +109,10 @@ class TestFallbackChain:
         assert mock.complete.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_token_limit_not_retried(self, router):
+    async def test_token_limit_not_retried_but_falls_back(self, router):
+        """LLMTokenLimitError is not retried on the same provider but
+        does fall back to the next provider (which may have a larger
+        context window)."""
         mock = AsyncMock()
         mock.complete = AsyncMock(side_effect=LLMTokenLimitError("too big"))
         with (
@@ -118,7 +121,7 @@ class TestFallbackChain:
             pytest.raises(LLMAllProvidersFailedError),
         ):
             await router.complete(_msg())
-        assert mock.complete.call_count == 1
+        assert mock.complete.call_count == 3
 
 
 class TestRetryBehavior:

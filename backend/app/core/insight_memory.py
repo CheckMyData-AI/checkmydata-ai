@@ -290,18 +290,19 @@ class InsightMemoryService:
     ) -> InsightRecord | None:
         """Check if a similar insight already exists."""
         result = await session.execute(
-            select(InsightRecord).where(
+            select(InsightRecord)
+            .where(
                 InsightRecord.project_id == project_id,
                 InsightRecord.status == "active",
-            ).order_by(InsightRecord.detected_at.desc()).limit(100)
+            )
+            .order_by(InsightRecord.detected_at.desc())
+            .limit(100)
         )
         candidates = result.scalars().all()
         title_lower = title.strip().lower()
 
         for candidate in candidates:
-            ratio = SequenceMatcher(
-                None, candidate.title.strip().lower(), title_lower
-            ).ratio()
+            ratio = SequenceMatcher(None, candidate.title.strip().lower(), title_lower).ratio()
             if ratio >= DEDUP_SIMILARITY_THRESHOLD:
                 return candidate
         return None

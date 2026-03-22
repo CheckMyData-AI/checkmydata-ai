@@ -57,14 +57,14 @@ export function ToolCallIndicator({ events }: ToolCallIndicatorProps) {
   if (recentStarted.length <= 1) {
     const label = resolveLabel(latest);
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
+      <div className="flex items-center gap-2 text-xs text-zinc-400 min-w-0">
         {isActive && (
-          <span className="relative flex h-2 w-2">
+          <span className="relative flex h-2 w-2 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
           </span>
         )}
-        <span>{label}…</span>
+        <span className="truncate">{label}…</span>
       </div>
     );
   }

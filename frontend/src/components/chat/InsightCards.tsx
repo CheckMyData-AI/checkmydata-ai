@@ -115,7 +115,7 @@ export function InsightCards({ insights, onDrillDown }: InsightCardsProps) {
               className={`flex items-center gap-1.5 px-2 py-1 text-[11px] ${cfg.color} w-full text-left`}
             >
               {cfg.icon}
-              <span className="font-medium truncate max-w-[200px]">{insight.title}</span>
+              <span className="font-medium truncate max-w-[200px]" title={insight.title}>{insight.title}</span>
             </button>
             {isExpanded && (
               <div className="px-2 pb-1.5 space-y-1">

@@ -38,7 +38,13 @@ from app.agents.validation import AgentResultValidator
 from app.agents.viz_agent import VizAgent, VizResult
 from app.config import settings
 from app.connectors.base import ConnectionConfig, QueryResult, connector_key
-from app.core.history_trimmer import trim_history
+from app.core.context_budget import ContextBudgetManager
+from app.core.history_trimmer import (
+    estimate_messages_tokens,
+    should_wrap_up,
+    trim_history,
+    trim_loop_messages,
+)
 from app.core.types import RAGSource
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
@@ -49,6 +55,7 @@ from app.llm.errors import (
     RETRYABLE_LLM_ERRORS,
     LLMAllProvidersFailedError,
     LLMError,
+    LLMTokenLimitError,
 )
 from app.llm.router import LLMRouter
 
@@ -69,6 +76,14 @@ class _ClarificationRequestError(Exception):
 
 
 PROMPT_VERSION = "v2.1"
+
+
+def _is_token_limit_error(exc: BaseException) -> bool:
+    """Return True if *exc* (or its __cause__) is a token limit error."""
+    if isinstance(exc, LLMTokenLimitError):
+        return True
+    cause = getattr(exc, "__cause__", None)
+    return isinstance(cause, LLMTokenLimitError)
 
 
 @dataclass
@@ -202,15 +217,36 @@ class OrchestratorAgent(BaseAgent):
             project_overview = await self._load_project_overview(context.project_id)
             recent_learnings = await self._load_recent_learnings(context)
 
+            context_window = self._llm.get_context_window(context.model)
+            budget_mgr = ContextBudgetManager(
+                total_budget=min(settings.max_context_tokens, context_window),
+            )
+            base_prompt = build_orchestrator_system_prompt(
+                project_name=context.project_name,
+                db_type=db_type,
+                has_connection=has_connection,
+                has_knowledge_base=has_kb,
+                table_map="",
+                current_datetime=get_current_datetime_str(),
+                project_overview="",
+                recent_learnings="",
+            )
+            allocation = budget_mgr.allocate(
+                system_prompt=base_prompt,
+                schema_text=table_map,
+                learnings_text=recent_learnings or "",
+                overview_text=project_overview or "",
+            )
+
             system_prompt = build_orchestrator_system_prompt(
                 project_name=context.project_name,
                 db_type=db_type,
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
-                table_map=table_map,
+                table_map=allocation.schema_text,
                 current_datetime=get_current_datetime_str(),
-                project_overview=project_overview,
-                recent_learnings=recent_learnings,
+                project_overview=allocation.overview_text,
+                recent_learnings=allocation.learnings_text,
             )
 
             tools = get_orchestrator_tools(
@@ -238,26 +274,111 @@ class OrchestratorAgent(BaseAgent):
             used_provider = ""
             used_model = ""
 
+            loop_budget = context_window
+            wrap_up_injected = False
+
             max_iter = settings.max_orchestrator_iterations
             for iteration in range(max_iter):
+                messages, did_trim = trim_loop_messages(messages, loop_budget)
+                if did_trim:
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Compacting earlier analysis to free context space…",
+                    )
+
+                if not wrap_up_injected and should_wrap_up(messages, loop_budget):
+                    messages.append(
+                        Message(
+                            role="system",
+                            content=(
+                                "IMPORTANT: You are running low on context space. "
+                                "Do NOT make any more tool calls. Compose your "
+                                "final answer now using the data you have "
+                                "gathered so far."
+                            ),
+                        )
+                    )
+                    wrap_up_injected = True
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Approaching context limit, finishing with available data…",
+                    )
+
+                pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
+                if pct > 50:
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        f"Context usage: ~{pct}% of model limit",
+                    )
+
                 await self._tracker.emit(
                     wf_id,
                     "thinking",
                     "in_progress",
                     f"Analyzing request (step {iteration + 1}/{max_iter})…",
                 )
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:llm_call",
-                    f"Orchestrator LLM ({iteration + 1}/{max_iter})",
-                ):
-                    llm_resp = await self._llm_call_with_retry(
-                        messages=messages,
-                        tools=tools if tools else None,
-                        preferred_provider=context.preferred_provider,
-                        model=context.model,
-                        wf_id=wf_id,
-                    )
+                try:
+                    async with self._tracker.step(
+                        wf_id,
+                        "orchestrator:llm_call",
+                        f"Orchestrator LLM ({iteration + 1}/{max_iter})",
+                    ):
+                        llm_resp = await self._llm_call_with_retry(
+                            messages=messages,
+                            tools=tools if tools else None,
+                            preferred_provider=context.preferred_provider,
+                            model=context.model,
+                            wf_id=wf_id,
+                        )
+                except (LLMAllProvidersFailedError, LLMTokenLimitError) as exc:
+                    if _is_token_limit_error(exc):
+                        await self._tracker.emit(
+                            wf_id,
+                            "thinking",
+                            "in_progress",
+                            "Hit context limit, retrying with compressed context…",
+                        )
+                        aggressive = int(loop_budget * 0.6)
+                        messages, _ = trim_loop_messages(messages, aggressive)
+                        try:
+                            async with self._tracker.step(
+                                wf_id,
+                                "orchestrator:llm_call",
+                                "Orchestrator LLM (recovery)",
+                            ):
+                                llm_resp = await self._llm_call_with_retry(
+                                    messages=messages,
+                                    tools=tools if tools else None,
+                                    preferred_provider=context.preferred_provider,
+                                    model=context.model,
+                                    wf_id=wf_id,
+                                )
+                        except LLMError:
+                            partial = [
+                                "Note: This answer is based on partial analysis. "
+                                "The conversation context was too large to "
+                                "analyze everything."
+                            ]
+                            if last_sql_result and last_sql_result.results:
+                                rc = last_sql_result.results.row_count
+                                partial.append(f"I found {rc} rows from the database.")
+                            if knowledge_sources:
+                                partial.append(
+                                    f"I found {len(knowledge_sources)} relevant document(s)."
+                                )
+                            partial.append(
+                                "Consider starting a new conversation for further questions."
+                            )
+                            final_text = " ".join(partial)
+                            break
+                    else:
+                        raise
 
                 if not used_provider:
                     used_provider = llm_resp.provider or ""
@@ -465,7 +586,11 @@ class OrchestratorAgent(BaseAgent):
             )
 
         except LLMError as llm_exc:
-            user_msg = llm_exc.user_message
+            if _is_token_limit_error(llm_exc):
+                cause = llm_exc.__cause__ if llm_exc.__cause__ else llm_exc
+                user_msg = getattr(cause, "user_message", str(cause))
+            else:
+                user_msg = llm_exc.user_message
             logger.error(
                 "Orchestrator LLM error [%s]: %s",
                 type(llm_exc).__name__,

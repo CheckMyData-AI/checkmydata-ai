@@ -41,6 +41,7 @@ class BackupManager:
         rules_size = await self._backup_rules(dest / "rules", manifest)
 
         manifest["total_size_bytes"] = db_size + chroma_size + rules_size
+        manifest["backup_path"] = str(dest)
 
         manifest_path = dest / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str))

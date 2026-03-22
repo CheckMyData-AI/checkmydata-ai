@@ -519,8 +519,8 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-text-primary truncate leading-tight">{user.display_name || user.email.split("@")[0]}</p>
-                  <p className="text-[10px] text-text-muted truncate leading-tight">{user.email}</p>
+                  <p className="text-xs text-text-primary truncate leading-tight">{user.display_name || user.email?.split("@")[0] || "User"}</p>
+                  <p className="text-[10px] text-text-muted truncate leading-tight">{user.email || ""}</p>
                 </div>
                 <AccountMenu />
               </div>
@@ -812,10 +812,10 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             )}
             <div className="flex-1 min-w-0">
               <p className="text-xs text-text-primary truncate leading-tight">
-                {user.display_name || user.email.split("@")[0]}
+                {user.display_name || user.email?.split("@")[0] || "User"}
               </p>
               <p className="text-[10px] text-text-muted truncate leading-tight">
-                {user.email}
+                {user.email || ""}
               </p>
             </div>
             <AccountMenu />

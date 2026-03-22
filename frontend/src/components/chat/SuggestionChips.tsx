@@ -35,7 +35,8 @@ export function SuggestionChips({ suggestions, loading, onSelect }: SuggestionCh
 
   return (
     <div className="px-6 pb-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-1">
+      <div className="relative">
+      <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-1" role="group" aria-label="Suggested questions">
         <svg
           className="w-3.5 h-3.5 text-amber-400/70 shrink-0"
           fill="none"
@@ -61,6 +62,8 @@ export function SuggestionChips({ suggestions, loading, onSelect }: SuggestionCh
           </button>
         ))}
       </div>
+      <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-surface-0 to-transparent" />
+      </div>
     </div>
   );
 }
@@ -74,7 +77,7 @@ export function FollowupChips({ followups, onSelect }: FollowupChipsProps) {
   if (!followups.length) return null;
 
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5 animate-in fade-in duration-200">
+    <div className="mt-2 flex flex-wrap gap-1.5 animate-in fade-in duration-200" role="group" aria-label="Follow-up questions">
       {followups.map((text, i) => (
         <button
           key={i}

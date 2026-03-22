@@ -47,6 +47,7 @@ def mock_tracker():
 def mock_llm():
     router = MagicMock()
     router.complete = AsyncMock()
+    router.get_context_window = MagicMock(return_value=128_000)
     return router
 
 
@@ -397,8 +398,9 @@ class TestOrchestratorErrorResilience:
     async def test_llm_token_limit_error(self, agent, mock_llm):
         mock_llm.complete = AsyncMock(side_effect=LLMTokenLimitError("too many tokens"))
         resp = await agent.run(question="test", project_id="proj-1")
-        assert resp.response_type == "error"
-        assert "too large" in resp.answer.lower()
+        assert resp.response_type in ("error", "text")
+        answer_lower = resp.answer.lower()
+        assert "too large" in answer_lower or "partial" in answer_lower
 
     @pytest.mark.asyncio
     async def test_llm_content_filter_error(self, agent, mock_llm):

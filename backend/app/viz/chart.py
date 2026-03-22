@@ -195,7 +195,7 @@ def _resolve_col_idx(col_name: str, result: QueryResult, fallback_idx: int = 0) 
     for i, c in enumerate(result.columns):
         if c.lower() == lower:
             return i
-    return min(fallback_idx, len(result.columns) - 1)
+    return min(fallback_idx, max(0, len(result.columns) - 1))
 
 
 def _pivot_grouped(
@@ -353,7 +353,7 @@ def generate_pie_chart(result: QueryResult, config: dict) -> dict[str, Any]:
         data_col = (
             data_cols[0]
             if data_cols and isinstance(data_cols, list)
-            else (auto_data[0] if auto_data else result.columns[1])
+            else (auto_data[0] if auto_data else result.columns[min(1, len(result.columns) - 1)])
         )
 
     labels_idx = _resolve_col_idx(labels_col, result, 0)
@@ -385,7 +385,7 @@ def generate_scatter(result: QueryResult, config: dict) -> dict[str, Any]:
         if "data_columns" in cfg and cfg["data_columns"]:
             y_col = cfg["data_columns"][0]
         else:
-            y_col = auto_data[0] if auto_data else result.columns[1]
+            y_col = auto_data[0] if auto_data else result.columns[min(1, len(result.columns) - 1)]
 
     x_idx = _resolve_col_idx(x_col, result, 0)
     y_idx = _resolve_col_idx(y_col, result, 1)

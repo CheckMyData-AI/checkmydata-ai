@@ -346,10 +346,31 @@ class DataGraphService:
 
         discovered: list[MetricDefinition] = []
         metric_hints = {
-            "revenue", "sales", "amount", "price", "cost", "total", "count",
-            "quantity", "rate", "ratio", "score", "balance", "profit", "fee",
-            "users", "views", "clicks", "conversions", "orders", "visits",
-            "sessions", "signups", "churned", "active", "retention",
+            "revenue",
+            "sales",
+            "amount",
+            "price",
+            "cost",
+            "total",
+            "count",
+            "quantity",
+            "rate",
+            "ratio",
+            "score",
+            "balance",
+            "profit",
+            "fee",
+            "users",
+            "views",
+            "clicks",
+            "conversions",
+            "orders",
+            "visits",
+            "sessions",
+            "signups",
+            "churned",
+            "active",
+            "retention",
         }
 
         for entry in db_entries:

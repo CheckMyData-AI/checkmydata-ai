@@ -32,9 +32,25 @@ _NON_RETRYABLE_PER_PROVIDER: tuple[type[LLMError], ...] = (
     LLMTokenLimitError,
 )
 
+_STOP_FALLBACK_ERRORS: tuple[type[LLMError], ...] = (LLMAuthError,)
+
 
 _HEALTH_CHECK_INTERVAL = 60.0
 _HEALTH_UNHEALTHY_TTL = 120.0
+
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4": 8_192,
+    "gpt-3.5-turbo": 16_385,
+    "claude-sonnet-4-20250514": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-haiku-20240307": 200_000,
+    "claude-3-opus-20240229": 200_000,
+}
+
+_DEFAULT_CONTEXT_WINDOW = 16_000
 
 
 class LLMRouter:
@@ -86,6 +102,14 @@ class LLMRouter:
 
     def mark_healthy(self, provider: str) -> None:
         self._unhealthy.pop(provider, None)
+
+    def get_context_window(self, model: str | None = None) -> int:
+        """Return the context window size for *model* (or a safe default)."""
+        if model:
+            for key, size in MODEL_CONTEXT_WINDOWS.items():
+                if key in model or model in key:
+                    return size
+        return _DEFAULT_CONTEXT_WINDOW
 
     async def start_health_checks(self) -> None:
         """Start background health check loop (called from app lifespan)."""
@@ -220,6 +244,10 @@ class LLMRouter:
                     e,
                 )
                 last_error = e
+                if isinstance(e, _STOP_FALLBACK_ERRORS):
+                    break
+                if isinstance(e, LLMTokenLimitError):
+                    continue
                 if not e.is_retryable:
                     break
                 continue
@@ -276,6 +304,10 @@ class LLMRouter:
                     e,
                 )
                 last_error = e
+                if isinstance(e, _STOP_FALLBACK_ERRORS):
+                    break
+                if isinstance(e, LLMTokenLimitError):
+                    continue
                 if not e.is_retryable:
                     break
                 continue

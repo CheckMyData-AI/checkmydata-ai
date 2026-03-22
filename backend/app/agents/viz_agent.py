@@ -110,14 +110,16 @@ class VizAgent(BaseAgent):
         if viz_type in ("bar_chart", "line_chart"):
             return {"labels_column": labels_col, "data_columns": data_cols}
         if viz_type == "pie_chart":
+            fallback = results.columns[min(1, len(results.columns) - 1)]
             return {
                 "labels_column": labels_col,
-                "data_column": data_cols[0] if data_cols else results.columns[1],
+                "data_column": data_cols[0] if data_cols else fallback,
             }
         if viz_type == "scatter":
+            fallback = results.columns[min(1, len(results.columns) - 1)]
             return {
                 "x_column": labels_col,
-                "y_column": data_cols[0] if data_cols else results.columns[1],
+                "y_column": data_cols[0] if data_cols else fallback,
             }
         return {}
 
@@ -240,14 +242,16 @@ class VizAgent(BaseAgent):
             if viz_type in ("bar_chart", "line_chart"):
                 return {"labels_column": labels_col, "data_columns": data_cols}
             if viz_type == "pie_chart":
+                fb = results.columns[min(1, len(results.columns) - 1)]
                 return {
                     "labels_column": labels_col,
-                    "data_column": data_cols[0] if data_cols else results.columns[1],
+                    "data_column": data_cols[0] if data_cols else fb,
                 }
             if viz_type == "scatter":
+                fb = results.columns[min(1, len(results.columns) - 1)]
                 return {
                     "x_column": labels_col,
-                    "y_column": data_cols[0] if data_cols else results.columns[1],
+                    "y_column": data_cols[0] if data_cols else fb,
                 }
 
         return viz_config

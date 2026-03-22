@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 4
 
 
-def _estimate(text: str) -> int:
+def _estimate(text: str | None) -> int:
+    if not text:
+        return 0
     return max(1, len(text) // CHARS_PER_TOKEN)
 
 
@@ -83,7 +85,7 @@ class ContextBudgetManager:
     @staticmethod
     def _truncate(text: str, budget_tokens: int) -> str:
         if not text:
-            return text
+            return ""
         max_chars = budget_tokens * CHARS_PER_TOKEN
         if len(text) <= max_chars:
             return text

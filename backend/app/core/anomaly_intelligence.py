@@ -122,8 +122,7 @@ class AnomalyIntelligenceEngine:
         if warning.check_type == "negative_value":
             col = warning.column or ""
             neg_count = sum(
-                1 for r in rows
-                if col in r and isinstance(r[col], (int, float)) and r[col] < 0
+                1 for r in rows if col in r and isinstance(r[col], (int, float)) and r[col] < 0
             )
             if neg_count > len(rows) * 0.1:
                 return "warning"
@@ -149,8 +148,7 @@ class AnomalyIntelligenceEngine:
         if warning.check_type == "negative_value" and warning.column:
             col = warning.column
             negatives = [
-                r[col] for r in rows
-                if col in r and isinstance(r[col], (int, float)) and r[col] < 0
+                r[col] for r in rows if col in r and isinstance(r[col], (int, float)) and r[col] < 0
             ]
             if negatives:
                 total_neg = sum(negatives)
@@ -260,20 +258,16 @@ class AnomalyIntelligenceEngine:
                 "consider filtering or flagging them."
             ),
             "future_dates": (
-                "Add a date filter (WHERE date <= CURRENT_DATE) or "
-                "investigate timezone handling."
+                "Add a date filter (WHERE date <= CURRENT_DATE) or investigate timezone handling."
             ),
             "date_range_mismatch": (
-                "Add or fix the date range filter in the query to match "
-                "the intended time period."
+                "Add or fix the date range filter in the query to match the intended time period."
             ),
             "duplicate_keys": (
-                "Review the GROUP BY clause. Add missing dimensions or "
-                "deduplicate source data."
+                "Review the GROUP BY clause. Add missing dimensions or deduplicate source data."
             ),
             "percentage_sum": (
-                "Verify this is a percentage breakdown. If cumulative, "
-                "adjust the presentation."
+                "Verify this is a percentage breakdown. If cumulative, adjust the presentation."
             ),
             "single_row_for_breakdown": (
                 "Add a GROUP BY clause or broaden the date/category filter."
@@ -281,10 +275,7 @@ class AnomalyIntelligenceEngine:
         }
         return actions.get(
             warning.check_type,
-            (
-                "Investigate the data quality issue and verify the "
-                "query logic."
-            ),
+            ("Investigate the data quality issue and verify the query logic."),
         )
 
     def _count_affected_rows(
@@ -300,13 +291,11 @@ class AnomalyIntelligenceEngine:
             return sum(1 for r in rows if r.get(col) is None)
         if warning.check_type == "negative_value":
             return sum(
-                1 for r in rows
-                if col in r and isinstance(r[col], (int, float)) and r[col] < 0
+                1 for r in rows if col in r and isinstance(r[col], (int, float)) and r[col] < 0
             )
         if warning.check_type == "all_zero":
             return sum(
-                1 for r in rows
-                if col in r and isinstance(r[col], (int, float)) and r[col] == 0
+                1 for r in rows if col in r and isinstance(r[col], (int, float)) and r[col] == 0
             )
         return len(rows)
 

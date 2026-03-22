@@ -742,7 +742,10 @@ async def scan_connection_anomalies(
 ):
     """Scan a connection's tables for anomalies using probes."""
     await _membership_svc.require_role(
-        db, project_id, user["user_id"], "viewer",
+        db,
+        project_id,
+        user["user_id"],
+        "viewer",
     )
 
     from app.models.connection import Connection
@@ -763,9 +766,11 @@ async def scan_connection_anomalies(
     cfg = await conn_svc.to_config(db, conn)
 
     idx_result = await db.execute(
-        select(DbIndex.table_name).where(
+        select(DbIndex.table_name)
+        .where(
             DbIndex.connection_id == connection_id,
-        ).limit(10)
+        )
+        .limit(10)
     )
     tables = [r[0] for r in idx_result.all()]
     if not tables:

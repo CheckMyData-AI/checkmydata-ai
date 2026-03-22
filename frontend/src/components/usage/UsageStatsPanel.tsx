@@ -164,7 +164,7 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
       {stats.daily_breakdown.length > 0 && (
         <div>
-          <div className="text-[10px] text-zinc-500 mb-1">Daily tokens (30d)</div>
+          <div className="text-[10px] text-zinc-500 mb-1">Daily tokens ({stats.period_days}d)</div>
           <MiniBarChart data={stats.daily_breakdown} />
           <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
             <span>{stats.daily_breakdown[0]?.date}</span>

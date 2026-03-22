@@ -16,6 +16,7 @@ from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.knowledge_prompt import build_knowledge_system_prompt
 from app.agents.tools.knowledge_tools import get_knowledge_tools
 from app.config import settings
+from app.core.history_trimmer import trim_loop_messages
 from app.core.types import RAGSource
 from app.knowledge.entity_extractor import ProjectKnowledge
 from app.knowledge.vector_store import VectorStore
@@ -79,7 +80,10 @@ class KnowledgeAgent(BaseAgent):
 
         tracker = context.tracker
         wf_id = context.workflow_id
+        kb_loop_budget = context.llm_router.get_context_window(context.model)
+
         for iteration in range(self.MAX_ITERATIONS):
+            messages, _ = trim_loop_messages(messages, kb_loop_budget)
             await tracker.emit(
                 wf_id,
                 "thinking",
@@ -206,14 +210,24 @@ class KnowledgeAgent(BaseAgent):
         if not filtered:
             return "No sufficiently relevant documents found in the knowledge base."
 
+        doc_cap = 2000
+        total_cap = 8000
         parts: list[str] = []
+        total_len = 0
         for r in filtered:
             meta = r.get("metadata", {})
             source = meta.get("source_path", "unknown")
             doc = r.get("document", "")
+            if len(doc) > doc_cap:
+                doc = doc[:doc_cap] + "… (truncated)"
             distance = r.get("distance")
             sim = f" (similarity: {1 - distance:.2f})" if distance is not None else ""
-            parts.append(f"### {source}{sim}\n{doc}")
+            chunk = f"### {source}{sim}\n{doc}"
+            if total_len + len(chunk) > total_cap:
+                parts.append("... (remaining documents omitted to save context)")
+                break
+            parts.append(chunk)
+            total_len += len(chunk)
 
         await ctx.tracker.emit(
             ctx.workflow_id,

@@ -60,9 +60,7 @@ async def trigger_full_scan(
     from app.agents.insight_feed_agent import InsightFeedAgent
     from app.models.connection import Connection
 
-    result_conn = await db.execute(
-        select(Connection.id).where(Connection.project_id == project_id)
-    )
+    result_conn = await db.execute(select(Connection.id).where(Connection.project_id == project_id))
     connection_ids = [r[0] for r in result_conn.all()]
 
     if not connection_ids:
