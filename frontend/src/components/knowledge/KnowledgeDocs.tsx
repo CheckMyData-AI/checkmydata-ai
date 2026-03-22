@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { Spinner } from "@/components/ui/Spinner";
@@ -35,6 +35,11 @@ export function KnowledgeDocs() {
     source_path: string;
   } | null>(null);
   const [docLoadingId, setDocLoadingId] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!activeProject) {
@@ -60,18 +65,20 @@ export function KnowledgeDocs() {
     setDocLoadingId(doc.id);
     try {
       const full = await api.repos.doc(activeProject.id, doc.id);
+      if (!mountedRef.current) return;
       setViewingDoc({
         id: full.id,
         content: full.content,
         source_path: full.source_path,
       });
     } catch (err) {
+      if (!mountedRef.current) return;
       toast(
         err instanceof Error ? err.message : "Failed to load doc",
         "error",
       );
     } finally {
-      setDocLoadingId(null);
+      if (mountedRef.current) setDocLoadingId(null);
     }
   };
 

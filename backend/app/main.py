@@ -597,7 +597,7 @@ async def _backup_cron_loop() -> None:
                     session.add(BackupRecord(reason="scheduled", status="failed"))
                     await session.commit()
             except Exception:
-                pass
+                logger.warning("Failed to record backup failure", exc_info=True)
             await asyncio.sleep(60)
 
 

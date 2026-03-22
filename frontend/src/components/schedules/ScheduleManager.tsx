@@ -89,21 +89,25 @@ export function ScheduleManager() {
 
   const confirm = useConfirmStore((s) => s.show);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: { cancelled: boolean }) => {
     if (!activeProject) return;
     setLoading(true);
     try {
       const data = await api.schedules.list(activeProject.id);
+      if (signal?.cancelled) return;
       setSchedules(data);
-    } catch {
-      /* silent */
+    } catch (err) {
+      if (signal?.cancelled) return;
+      toast(err instanceof Error ? err.message : "Failed to load schedules", "error");
     } finally {
-      setLoading(false);
+      if (!signal?.cancelled) setLoading(false);
     }
   }, [activeProject]);
 
   useEffect(() => {
-    load();
+    const signal = { cancelled: false };
+    load(signal);
+    return () => { signal.cancelled = true; };
   }, [load]);
 
   const resetForm = () => {

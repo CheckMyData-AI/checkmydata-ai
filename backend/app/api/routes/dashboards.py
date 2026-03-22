@@ -19,17 +19,17 @@ _membership_svc = MembershipService()
 
 
 class DashboardCreate(BaseModel):
-    project_id: str
+    project_id: str = Field(..., max_length=64)
     title: str = Field(max_length=200)
-    layout_json: str | None = None
-    cards_json: str | None = None
+    layout_json: str | None = Field(None, max_length=100_000)
+    cards_json: str | None = Field(None, max_length=500_000)
     is_shared: bool = True
 
 
 class DashboardUpdate(BaseModel):
     title: str | None = Field(None, max_length=200)
-    layout_json: str | None = None
-    cards_json: str | None = None
+    layout_json: str | None = Field(None, max_length=100_000)
+    cards_json: str | None = Field(None, max_length=500_000)
     is_shared: bool | None = None
 
 
@@ -76,7 +76,9 @@ async def create_dashboard(
 
 
 @router.get("", response_model=list[DashboardResponse])
+@limiter.limit("60/minute")
 async def list_dashboards(
+    request: Request,
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -86,7 +88,9 @@ async def list_dashboards(
 
 
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
+@limiter.limit("60/minute")
 async def get_dashboard(
+    request: Request,
     dashboard_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -101,7 +105,9 @@ async def get_dashboard(
 
 
 @router.patch("/{dashboard_id}", response_model=DashboardResponse)
+@limiter.limit("30/minute")
 async def update_dashboard(
+    request: Request,
     dashboard_id: str,
     body: DashboardUpdate,
     db: AsyncSession = Depends(get_db),

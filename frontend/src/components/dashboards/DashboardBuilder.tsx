@@ -46,7 +46,12 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
 
   useEffect(() => {
     if (!activeProject) return;
-    api.notes.list(activeProject.id, "all").then(setNotes).catch((err) => toast(err instanceof Error ? err.message : "Failed to load notes", "error"));
+    let cancelled = false;
+    api.notes
+      .list(activeProject.id, "all")
+      .then((data) => { if (!cancelled) setNotes(data); })
+      .catch((err) => { if (!cancelled) toast(err instanceof Error ? err.message : "Failed to load notes", "error"); });
+    return () => { cancelled = true; };
   }, [activeProject]);
 
   const noteMap = Object.fromEntries(notes.map((n) => [n.id, n]));

@@ -16,21 +16,25 @@ export function DashboardList() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: { cancelled: boolean }) => {
     if (!activeProject) return;
     setLoading(true);
     try {
       const list = await api.dashboards.list(activeProject.id);
+      if (signal?.cancelled) return;
       setDashboards(list);
     } catch {
+      if (signal?.cancelled) return;
       setDashboards([]);
     } finally {
-      setLoading(false);
+      if (!signal?.cancelled) setLoading(false);
     }
   }, [activeProject]);
 
   useEffect(() => {
-    load();
+    const signal = { cancelled: false };
+    load(signal);
+    return () => { signal.cancelled = true; };
   }, [load]);
 
   const handleCreated = (d: Dashboard) => {

@@ -75,7 +75,9 @@ class RunResponse(BaseModel):
 
 
 @router.post("", response_model=ScheduleResponse)
+@limiter.limit("10/minute")
 async def create_schedule(
+    request: Request,
     body: ScheduleCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -167,7 +169,9 @@ async def update_schedule(
 
 
 @router.delete("/{schedule_id}")
+@limiter.limit("10/minute")
 async def delete_schedule(
+    request: Request,
     schedule_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

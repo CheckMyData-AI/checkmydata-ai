@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import { toast } from "@/stores/toast-store";
 import { DashboardBuilder } from "@/components/dashboards/DashboardBuilder";
+import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 import { useAuthStore } from "@/stores/auth-store";
 
 function parseCards(json: string | null): DashboardCard[] {
@@ -92,10 +93,12 @@ export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const mountedRef = useRef(true);
 
   const loadDashboard = useCallback(async () => {
     try {
       const d = await api.dashboards.get(id);
+      if (!mountedRef.current) return;
       setDashboard(d);
       const cards = parseCards(d.cards_json);
       const noteIds = cards.map((c) => c.note_id);
@@ -109,20 +112,23 @@ export default function DashboardPage() {
           }
         }),
       );
+      if (!mountedRef.current) return;
       const map = new Map<string, SavedNote>();
       for (const entry of noteEntries) {
         if (entry) map.set(entry[0], entry[1]);
       }
       setNotes(map);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
+      if (mountedRef.current) toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadDashboard();
+    return () => { mountedRef.current = false; };
   }, [loadDashboard]);
 
   useEffect(() => {
@@ -290,21 +296,23 @@ export default function DashboardPage() {
               }
               const result = parseResult(note.last_result_json);
               return (
-                <div key={card.note_id} className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
-                  <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
-                    <h3 className="text-xs font-medium text-text-primary truncate">{note.title}</h3>
-                    <span className="text-[10px] text-text-muted shrink-0 ml-2">
-                      {timeAgo(note.last_executed_at)}
-                    </span>
+                <SectionErrorBoundary key={card.note_id} sectionName={note.title}>
+                  <div className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+                      <h3 className="text-xs font-medium text-text-primary truncate">{note.title}</h3>
+                      <span className="text-[10px] text-text-muted shrink-0 ml-2">
+                        {timeAgo(note.last_executed_at)}
+                      </span>
+                    </div>
+                    <div className="p-3">
+                      {result ? (
+                        <ResultTable data={result} />
+                      ) : (
+                        <p className="text-[11px] text-text-muted py-4 text-center">No data</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="p-3">
-                    {result ? (
-                      <ResultTable data={result} />
-                    ) : (
-                      <p className="text-[11px] text-text-muted py-4 text-center">No data</p>
-                    )}
-                  </div>
-                </div>
+                </SectionErrorBoundary>
               );
             })}
           </div>
