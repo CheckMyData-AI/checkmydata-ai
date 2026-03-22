@@ -813,7 +813,8 @@ class SQLAgent(BaseAgent):
                         severity=report.severity,
                         title=report.title,
                         description=report.description,
-                        actions_json=(f'{{"action": "{report.recommended_action}"}}'),
+                        recommended_action=report.recommended_action,
+                        expected_impact=report.expected_impact,
                         confidence=report.confidence,
                     )
                 await session.commit()

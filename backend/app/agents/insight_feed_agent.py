@@ -175,7 +175,7 @@ class InsightFeedAgent:
         except (json.JSONDecodeError, TypeError):
             col_notes = {}
 
-        sample_data = []
+        sample_data: list[Any] = []
         try:
             sample_data = json.loads(db_entry.sample_data_json) if db_entry.sample_data_json else []
         except (json.JSONDecodeError, TypeError):
