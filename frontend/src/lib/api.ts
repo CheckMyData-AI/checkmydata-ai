@@ -616,6 +616,34 @@ export interface ActionRecommendationDTO {
   source_insight_title: string;
 }
 
+export interface CatalogMetricDTO {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  source_table: string | null;
+  source_column: string | null;
+  aggregation: string;
+  formula: string;
+  unit: string;
+  data_type: string;
+  confidence: number;
+  connection_id: string | null;
+  discovery_source: string;
+  times_referenced: number;
+}
+
+export interface NormalizationResultDTO {
+  canonical_name: string;
+  display_name: string;
+  variants: { name: string; connection_id: string; source_table: string; source_column: string }[];
+  category: string;
+  aggregation: string;
+  unit: string;
+  confidence: number;
+}
+
 export interface ReconciliationDiscrepancyDTO {
   discrepancy_type: string;
   severity: string;
@@ -1411,6 +1439,28 @@ export const api = {
       const q = qs.toString();
       return request<{ total: number; actions: ActionRecommendationDTO[] }>(
         `/insights/${projectId}/actions${q ? `?${q}` : ""}`,
+      );
+    },
+  },
+
+  semanticLayer: {
+    buildCatalog: (projectId: string, connectionId: string) =>
+      request<{ connection_id: string; metrics_discovered: number; metrics: CatalogMetricDTO[] }>(
+        `/semantic-layer/${projectId}/build/${connectionId}`,
+        { method: "POST" },
+      ),
+    normalize: (projectId: string) =>
+      request<{ canonical_metrics: number; cross_connection: number; results: NormalizationResultDTO[] }>(
+        `/semantic-layer/${projectId}/normalize`,
+        { method: "POST" },
+      ),
+    getCatalog: (projectId: string, connectionId?: string, category?: string) => {
+      const qs = new URLSearchParams();
+      if (connectionId) qs.set("connection_id", connectionId);
+      if (category) qs.set("category", category);
+      const q = qs.toString();
+      return request<{ total: number; metrics: CatalogMetricDTO[] }>(
+        `/semantic-layer/${projectId}/catalog${q ? `?${q}` : ""}`,
       );
     },
   },

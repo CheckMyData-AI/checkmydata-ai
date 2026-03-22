@@ -2151,6 +2151,9 @@ src/
 | `POST` | `/api/reconciliation/{project_id}/values` | Compare aggregate metric values between two sources |
 | `POST` | `/api/reconciliation/{project_id}/schemas` | Compare table schemas between two sources |
 | `POST` | `/api/reconciliation/{project_id}/full` | Full reconciliation (counts + values + schemas) |
+| `POST` | `/api/semantic-layer/{project_id}/build/{conn_id}` | Build semantic catalog from DB index |
+| `POST` | `/api/semantic-layer/{project_id}/normalize` | Normalize metrics across all connections |
+| `GET` | `/api/semantic-layer/{project_id}/catalog` | Browse the metric catalog |
 
 ### Security Model
 

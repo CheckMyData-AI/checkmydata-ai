@@ -9,10 +9,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, validate_safe_id
 from app.core.reconciliation_engine import ReconciliationEngine
 from app.services.membership_service import MembershipService
-from app.utils.safe_id import validate_safe_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])

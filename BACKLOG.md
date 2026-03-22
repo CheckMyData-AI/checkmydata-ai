@@ -179,7 +179,7 @@
 
 ---
 
-### Task 8: Semantic Layer Auto-Build
+### Task 8: Semantic Layer Auto-Build ✅ `done`
 
 **Goal:** Auto-discover metrics, normalize definitions, replace tribal knowledge.
 
