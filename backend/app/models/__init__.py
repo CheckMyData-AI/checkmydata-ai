@@ -9,7 +9,9 @@ from app.models.connection import Connection  # noqa: F401
 from app.models.custom_rule import CustomRule  # noqa: F401
 from app.models.db_index import DbIndex  # noqa: F401
 from app.models.indexing_checkpoint import IndexingCheckpoint  # noqa: F401
+from app.models.insight_record import InsightRecord, TrustScore  # noqa: F401
 from app.models.knowledge_doc import KnowledgeDoc  # noqa: F401
+from app.models.metric_definition import MetricDefinition, MetricRelationship  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.pipeline_run import PipelineRun  # noqa: F401
 from app.models.project import Project  # noqa: F401

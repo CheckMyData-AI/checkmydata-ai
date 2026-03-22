@@ -525,6 +525,64 @@ export interface BatchQueryDTO {
   completed_at: string | null;
 }
 
+export interface DataGraphMetric {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  source_table: string | null;
+  source_column: string | null;
+  aggregation: string;
+  unit: string;
+  confidence: number;
+  times_referenced: number;
+  connection_id: string | null;
+}
+
+export interface DataGraphRelationship {
+  id: string;
+  metric_a_id: string;
+  metric_b_id: string;
+  relationship_type: string;
+  strength: number;
+  direction: string;
+  description: string;
+  confidence: number;
+}
+
+export interface InsightDTO {
+  id: string;
+  insight_type: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommended_action: string;
+  expected_impact: string;
+  confidence: number;
+  status: string;
+  user_verdict: string | null;
+  times_surfaced: number;
+  times_confirmed: number;
+  connection_id: string | null;
+  detected_at: string;
+}
+
+export interface AnomalyReportDTO {
+  check_type: string;
+  title: string;
+  description: string;
+  severity: string;
+  business_impact: string;
+  root_cause_hypothesis: string;
+  affected_metrics: string[];
+  affected_rows: number;
+  confidence: number;
+  recommended_action: string;
+  expected_impact: string;
+  related_anomalies: string[];
+}
+
 export const api = {
   auth: {
     register: (email: string, password: string, displayName?: string) =>
@@ -784,7 +842,7 @@ export const api = {
         }
       }).catch((err) => {
         if (idleTimer) clearTimeout(idleTimer);
-        if (err.name === "AbortError" || (err instanceof DOMException && err.name === "AbortError")) {
+        if ((err instanceof DOMException && err.name === "AbortError") || (err && typeof err === "object" && "name" in err && (err as { name: string }).name === "AbortError")) {
           if (String(err.message || err).includes("idle timeout")) {
             onError({ error: "Stream timed out", error_type: "timeout", is_retryable: true, user_message: "The response timed out. Please try again." });
           }
@@ -1061,6 +1119,39 @@ export const api = {
         `/data-validation/investigate/${investigationId}/confirm-fix`,
         { method: "POST", body: JSON.stringify(body) },
       ),
+
+    runAnomalyAnalysis: (body: {
+      project_id: string;
+      connection_id: string;
+      query?: string;
+      question?: string;
+      rows: Record<string, unknown>[];
+      columns: string[];
+    }) =>
+      request<{
+        ok: boolean;
+        total: number;
+        reports: AnomalyReportDTO[];
+        summary: string;
+      }>("/data-validation/anomaly-analysis", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+
+    scanConnectionAnomalies: (connectionId: string, projectId: string) =>
+      request<{
+        ok: boolean;
+        tables_scanned: number;
+        results: Array<{
+          table: string;
+          findings: string[];
+          anomaly_reports: AnomalyReportDTO[];
+          row_count: number | null;
+          null_rates: Record<string, number>;
+        }>;
+      }>(`/data-validation/anomaly-scan/${connectionId}?project_id=${projectId}`, {
+        method: "POST",
+      }),
   },
 
   usage: {
@@ -1139,5 +1230,87 @@ export const api = {
   demo: {
     setup: () =>
       request<{ project_id: string; connection_id: string }>("/demo/setup", { method: "POST" }),
+  },
+
+  dataGraph: {
+    summary: (projectId: string) =>
+      request<{ total_metrics: number; total_relationships: number; categories: Record<string, number> }>(
+        `/data-graph/${projectId}/summary`
+      ),
+    metrics: (projectId: string, params?: { connection_id?: string; category?: string }) => {
+      const qs = new URLSearchParams();
+      if (params?.connection_id) qs.set("connection_id", params.connection_id);
+      if (params?.category) qs.set("category", params.category);
+      const q = qs.toString();
+      return request<DataGraphMetric[]>(`/data-graph/${projectId}/metrics${q ? `?${q}` : ""}`);
+    },
+    upsertMetric: (projectId: string, data: { name: string; description?: string; category?: string; connection_id?: string }) =>
+      request<{ id: string; name: string }>(`/data-graph/${projectId}/metrics`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    relationships: (projectId: string, metricId?: string) => {
+      const qs = metricId ? `?metric_id=${metricId}` : "";
+      return request<DataGraphRelationship[]>(`/data-graph/${projectId}/relationships${qs}`);
+    },
+    discover: (projectId: string, connectionId: string) =>
+      request<{ discovered_count: number }>(`/data-graph/${projectId}/discover/${connectionId}`, {
+        method: "POST",
+      }),
+    deleteMetric: (projectId: string, metricId: string) =>
+      request<{ deleted: boolean }>(`/data-graph/${projectId}/metrics/${metricId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  feed: {
+    scan: (projectId: string, connectionId: string) =>
+      request<{ insights_created: number; insights_updated: number; queries_run: number; errors: string[] }>(
+        `/feed/${projectId}/scan/${connectionId}`,
+        { method: "POST" },
+      ),
+    scanAll: (projectId: string) =>
+      request<{ total_insights_created: number; total_insights_updated: number; connections_scanned: number }>(
+        `/feed/${projectId}/scan`,
+        { method: "POST" },
+      ),
+  },
+
+  insights: {
+    list: (projectId: string, params?: {
+      connection_id?: string;
+      insight_type?: string;
+      severity?: string;
+      status?: string;
+      limit?: number;
+    }) => {
+      const qs = new URLSearchParams();
+      if (params?.connection_id) qs.set("connection_id", params.connection_id);
+      if (params?.insight_type) qs.set("insight_type", params.insight_type);
+      if (params?.severity) qs.set("severity", params.severity);
+      if (params?.status) qs.set("status", params.status || "active");
+      if (params?.limit) qs.set("limit", String(params.limit));
+      const q = qs.toString();
+      return request<InsightDTO[]>(`/insights/${projectId}${q ? `?${q}` : ""}`);
+    },
+    summary: (projectId: string) =>
+      request<{ total_active: number; by_type: Record<string, number>; by_severity: Record<string, number> }>(
+        `/insights/${projectId}/summary`
+      ),
+    confirm: (projectId: string, insightId: string, feedback?: string) =>
+      request<{ status: string; confidence: number }>(`/insights/${projectId}/${insightId}/confirm`, {
+        method: "PATCH",
+        body: JSON.stringify({ feedback: feedback || "" }),
+      }),
+    dismiss: (projectId: string, insightId: string, feedback?: string) =>
+      request<{ status: string; confidence: number }>(`/insights/${projectId}/${insightId}/dismiss`, {
+        method: "PATCH",
+        body: JSON.stringify({ feedback: feedback || "" }),
+      }),
+    resolve: (projectId: string, insightId: string, feedback?: string) =>
+      request<{ status: string }>(`/insights/${projectId}/${insightId}/resolve`, {
+        method: "PATCH",
+        body: JSON.stringify({ feedback: feedback || "" }),
+      }),
   },
 };

@@ -23,6 +23,7 @@ Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](
 
 | Document | Description |
 |----------|-------------|
+| [vision.md](vision.md) | Product vision and guiding principles |
 | [INSTALLATION.md](INSTALLATION.md) | Setup and deployment instructions |
 | [USAGE.md](USAGE.md) | How to use the application |
 | [API.md](API.md) | REST API reference |
@@ -60,7 +61,7 @@ Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](
 │  │  API Layer  (/api/...)                                        │   │
 │  │  auth · projects · connections · ssh-keys · chat · notes      │   │
 │  │  repos · rules · visualizations · workflows · data-validation │   │
-│  │  batch · dashboards · usage · demo · health                   │   │
+│  │  batch · dashboards · usage · data-graph · insights · demo    │   │
 │  └──────────────────────────┬─────────────────────────────────────┘   │
 │                             │                                         │
 │  ┌──────────────────────────▼─────────────────────────────────────┐   │
@@ -1079,11 +1080,11 @@ Provider-specific exceptions (openai, anthropic, httpx) are caught in each adapt
 | `LLMTimeoutError` | Yes (2s backoff) | Request timeout |
 | `LLMConnectionError` | Yes (2s backoff) | Network failure |
 | `LLMAuthError` | No | 401/403, bad API key |
-| `LLMTokenLimitError` | No | Context/output token limit exceeded |
+| `LLMTokenLimitError` | No (per-provider); falls back to next provider | Context/output token limit exceeded |
 | `LLMContentFilterError` | No | Content policy refusal |
 | `LLMAllProvidersFailedError` | Yes (3s) | Every provider in the fallback chain failed |
 
-The `LLMRouter` retries each provider up to 3 times with exponential backoff before falling through to the next provider. Non-retryable errors (auth, token limit) skip retries and immediately try the next provider. The `OrchestratorAgent` adds a second retry layer around the router call itself, and maps all LLM errors to user-friendly messages (e.g., "The AI service is temporarily overloaded" instead of raw stack traces).
+The `LLMRouter` retries each provider up to 3 times with exponential backoff before falling through to the next provider. Non-retryable errors skip retries on the same provider: `LLMAuthError` stops the entire chain, while `LLMTokenLimitError` falls back to the next provider (which may have a larger context window). The `OrchestratorAgent` adds a second retry layer around the router call itself, catches token limit errors specifically for trim-and-retry recovery, and maps all LLM errors to user-friendly messages.
 
 **Resource management & resilience:**
 
@@ -1094,6 +1095,7 @@ The `LLMRouter` retries each provider up to 3 times with exponential backoff bef
 - **Streaming timeout** — The SSE endpoint (`/ask/stream`) wraps the agent task in `asyncio.wait_for()` with a 120-second timeout. On timeout, a structured error event is sent and the stream closes gracefully. An inner safety timeout (150s) in the event loop itself prevents indefinite hangs even if `pipeline_end` is lost.
 - **Structured SSE error events** — Error events sent via SSE include `error_type`, `is_retryable`, and `user_message` fields so the frontend can display appropriate UI (retry buttons for retryable errors, no retry for permanent ones like auth or content policy violations).
 - **Error toast duration** — Error toasts persist for 10 seconds (vs. 4 seconds for success/info) to ensure users can read the message.
+- **Context window resilience** — A `ContextBudgetManager` allocates token budgets for system prompt, schema, rules, learnings, and overview (configured via `max_context_tokens`). Before each LLM call, `trim_loop_messages()` condenses old tool results and collapses assistant+tool pairs into summaries. When usage exceeds 70%, a wrap-up instruction is injected. On `LLMTokenLimitError`, the router falls back to providers with larger context windows and the orchestrator trims aggressively and retries once. `MODEL_CONTEXT_WINDOWS` maps model names to their context sizes.
 - **Tracker failure isolation** — All `_tracker.end()` calls in orchestrator error handlers are wrapped in `try/except` so a tracker broadcast failure never prevents the `AgentResponse` from being returned to the user.
 - **Sub-agent error containment** — All sub-agent handlers (`_handle_query_database`, `_handle_search_codebase`, `_handle_manage_rules`, `_handle_query_mcp_source`) catch exceptions and return error strings as tool results to the LLM, preventing tool dispatch failures from crashing the orchestrator loop.
 - **Degraded context warnings** — When context helpers (`_has_mcp_sources`, `_build_table_map`, `_check_staleness`) fail, the orchestrator emits `orchestrator:warning` events via SSE so users can see that certain features are temporarily unavailable.
@@ -1120,6 +1122,9 @@ Every sub-agent result passes through `AgentResultValidator` before being return
 | `backend/app/agents/mcp_source_agent.py` | `MCPSourceAgent` — LLM loop for external MCP tool calls |
 | `backend/app/agents/investigation_agent.py` | `InvestigationAgent` — diagnoses data accuracy issues with diagnostic queries |
 | `backend/app/agents/validation.py` | `AgentResultValidator` — validates sub-agent outputs |
+| `backend/app/core/context_budget.py` | `ContextBudgetManager` — priority-based token budget allocation for system prompt elements |
+| `backend/app/core/history_trimmer.py` | `trim_history()` for chat history, `trim_loop_messages()` for in-loop context management |
+| `backend/app/llm/router.py` | `LLMRouter` — provider fallback chain, health checks, `get_context_window()`, `MODEL_CONTEXT_WINDOWS` |
 
 **Agent hierarchy:**
 
@@ -2113,6 +2118,8 @@ src/
 | `POST` | `/api/data-validation/investigate` | Start "Wrong Data" investigation |
 | `GET` | `/api/data-validation/investigate/{id}` | Poll investigation status and progress |
 | `POST` | `/api/data-validation/investigate/{id}/confirm-fix` | Accept or reject investigation fix |
+| `POST` | `/api/data-validation/anomaly-analysis` | Run Anomaly Intelligence on provided data |
+| `POST` | `/api/data-validation/anomaly-scan/{cid}` | Scan connection tables for anomalies |
 | `POST` | `/api/visualizations/render` | Render visualization |
 | `POST` | `/api/visualizations/export` | Export data (CSV/JSON/XLSX) |
 | `GET` | `/api/workflows/events` | SSE workflow progress |
@@ -2122,6 +2129,19 @@ src/
 | `POST` | `/api/backup/trigger` | Trigger a manual backup |
 | `GET` | `/api/backup/list` | List available backups from disk |
 | `GET` | `/api/backup/history` | List backup records from database |
+| `GET` | `/api/data-graph/{project_id}/summary` | Data Graph summary (metric/relationship counts) |
+| `GET` | `/api/data-graph/{project_id}/metrics` | List discovered metrics |
+| `POST` | `/api/data-graph/{project_id}/metrics` | Create or update a metric definition |
+| `DELETE` | `/api/data-graph/{project_id}/metrics/{id}` | Delete a metric |
+| `GET` | `/api/data-graph/{project_id}/relationships` | List metric relationships |
+| `POST` | `/api/data-graph/{project_id}/relationships` | Add a metric relationship |
+| `POST` | `/api/data-graph/{project_id}/discover/{conn_id}` | Auto-discover metrics from DB index |
+| `GET` | `/api/insights/{project_id}` | List active insights |
+| `GET` | `/api/insights/{project_id}/summary` | Insight summary (counts by type/severity) |
+| `POST` | `/api/insights/{project_id}` | Create an insight record |
+| `PATCH` | `/api/insights/{project_id}/{id}/confirm` | Confirm an insight |
+| `PATCH` | `/api/insights/{project_id}/{id}/dismiss` | Dismiss an insight |
+| `PATCH` | `/api/insights/{project_id}/{id}/resolve` | Mark an insight as resolved |
 
 ### Security Model
 
@@ -2817,6 +2837,38 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-22 — Context Window Resilience
+
+**Problem:** When the orchestrator's context window was exhausted during a complex multi-step analysis, the user saw a generic "AI service is temporarily unavailable" error. The agent stopped completely — no partial results, no recovery, no explanation.
+
+**Solution — proactive budget enforcement, in-loop trimming, and graceful recovery:**
+
+- **`ContextBudgetManager` wired into orchestrator:** The existing budget allocator is now actively used to truncate schema, learnings, and project overview before building the system prompt. Configurable via `max_context_tokens` setting.
+- **In-loop message trimming:** Before each LLM call in the orchestrator, SQL agent, Knowledge agent, and MCP agent, messages are automatically trimmed. Old tool results are condensed, and if still over budget, oldest assistant+tool pairs are collapsed into a summary.
+- **Proactive wrap-up:** When context usage exceeds 70% of the model limit, a system instruction is injected telling the LLM to compose its final answer immediately instead of making more tool calls.
+- **LLM router fallback on token limit:** `LLMTokenLimitError` now falls back to the next provider in the chain (which may have a larger context window, e.g. Claude 200K vs GPT-4o 128K) instead of stopping immediately.
+- **Catch-and-trim recovery:** If a token limit error occurs mid-loop, the orchestrator aggressively trims messages to 60% of budget and retries once. If recovery also fails, a partial answer is composed from data gathered so far.
+- **User transparency:** Thinking events show context pressure (>50%), compacting notices, wrap-up alerts, and recovery attempts. Partial answers include an explanatory note.
+- **Tool result caps:** SQL agent tools capped at 2000–4000 chars per result. Knowledge agent documents capped at 2000 chars each (8000 total). MCP agent tool results capped at 4000 chars.
+- **`MODEL_CONTEXT_WINDOWS` mapping:** Maps model names to context window sizes so the system knows the actual budget. `LLMRouter.get_context_window()` returns the right size for any configured model.
+- **17 new unit tests** covering trim behaviour, router fallback, budget allocation, and threshold detection.
+
+### 2026-03-22 — Chat UI Layout Hardening (Iteration 12)
+
+**Frontend — Layout & Overflow (50 improvements):**
+- Prevent horizontal scroll: `overflow-x: hidden` on html/body, `#main-content`, and chat scroll area
+- Harden inner component overflow: TextViz (number/key_value/text), ResultDiffView, StageProgress warnings/errors
+- Remove double `overflow-x-auto` wrapper on DataTable in ChatMessage
+- Streaming & thinking bubbles: add `overflow-hidden`, `min-w-0`, consistent `max-w-[95%] md:max-w-[80%]`
+- Markdown hardening: `break-words` on headings/blockquotes/user messages, `break-all` on inline code/links, `max-w-full` on pre blocks
+- Mobile responsive: ResultDiffView stacks on mobile (`grid-cols-1 md:grid-cols-2`), VizToolbar wraps, touch targets enforced, textarea max-height capped
+- Layout consistency: standardized padding/border-radius on nested cards, min-w-0 audit, title attributes on all truncated text, ChartRenderer width containment
+- Custom thin scrollbars for chat area, DataTable, and code blocks; scroll indicator shadows on DataTable
+- Safe-area inset padding on sticky ChatInput for mobile keyboards
+- SuggestionChips right-edge gradient hint for scroll discovery
+- Accessibility: `aria-expanded`/`aria-pressed` on toggles and feedback buttons, `role="group"` on chip containers, `aria-atomic="false"` on messages area, color contrast bumped from `text-zinc-600` to `text-zinc-500` on interactive elements
+- Define `.scrollbar-thin` CSS utility for ThinkingLog and general use
 
 ### 2026-03-22 — Observability, Retry, Cancellation & UX Polish (Iteration 11)
 

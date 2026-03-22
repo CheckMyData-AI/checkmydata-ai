@@ -21,6 +21,18 @@
 - [ ] Snowflake connector
 - [ ] DuckDB connector
 
+### AI Chief Data Brain (Active — see BACKLOG.md)
+- [x] Foundation Layer: Data Graph, Insight Memory, Trust Layer
+- [ ] Autonomous Insight Feed (proactive analysis)
+- [ ] Anomaly Intelligence (root cause + severity)
+- [ ] Opportunity Detector (growth segments, undermonetized users)
+- [ ] Loss Detector (revenue leaks, conversion drops)
+- [ ] Insight → Action Engine (recommended actions with expected impact)
+- [ ] Cross-Source Reconciliation Engine
+- [ ] Semantic Layer Auto-Build
+- [ ] Query-less Exploration ("what's wrong?")
+- [ ] Temporal Intelligence Engine (trends, seasonality, lags)
+
 ### AI Improvements
 - [ ] Query result caching with invalidation
 - [ ] Multi-turn conversation memory improvements

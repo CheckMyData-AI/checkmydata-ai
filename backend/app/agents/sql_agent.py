@@ -31,6 +31,7 @@ from app.connectors.base import (
 from app.connectors.registry import get_connector
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
+from app.core.history_trimmer import trim_loop_messages
 from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
 from app.core.query_validation import ValidationConfig
@@ -45,6 +46,20 @@ from app.llm.router import LLMRouter
 from app.services.project_cache_service import ProjectCacheService
 
 logger = logging.getLogger(__name__)
+
+_SQL_TOOL_CAPS: dict[str, int] = {
+    "get_query_context": 4000,
+    "get_db_index": 4000,
+    "get_sync_context": 2000,
+}
+_SQL_TOOL_DEFAULT_CAP = 6000
+
+
+def _cap_tool_result(tool_name: str, text: str) -> str:
+    cap = _SQL_TOOL_CAPS.get(tool_name, _SQL_TOOL_DEFAULT_CAP)
+    if len(text) <= cap:
+        return text
+    return text[:cap] + f"\n... (truncated, {len(text)} chars total)"
 
 
 def _extract_warning_tag(warnings_text: str) -> str:
@@ -206,8 +221,12 @@ class SQLAgent(BaseAgent):
         provider = context.sql_provider or context.preferred_provider
         model = context.sql_model or context.model
 
+        sql_loop_budget = self._llm.get_context_window(model)
+
         max_sql_iter = settings.max_sql_iterations
         for iteration in range(max_sql_iter):
+            messages, _ = trim_loop_messages(messages, sql_loop_budget)
+
             await tracker.emit(
                 wf_id,
                 "thinking",
@@ -261,6 +280,8 @@ class SQLAgent(BaseAgent):
                         context,
                         wf_id,
                     )
+
+                result_text = _cap_tool_result(tc.name, result_text)
 
                 tool_call_log.append(
                     {
@@ -733,17 +754,22 @@ class SQLAgent(BaseAgent):
         query: str,
         ctx: AgentContext,
     ) -> str:
-        """Run data sanity checks on query results, return warning text if any."""
+        """Run enriched anomaly intelligence on query results."""
         if not results.rows or not results.columns:
             return ""
 
+        from app.core.anomaly_intelligence import AnomalyIntelligenceEngine
         from app.core.data_sanity_checker import DataSanityChecker
 
+        engine = AnomalyIntelligenceEngine()
         checker = DataSanityChecker()
 
-        rows_as_dicts = [dict(zip(results.columns, row)) for row in results.rows]
+        rows_as_dicts = [
+            dict(zip(results.columns, row))
+            for row in results.rows
+        ]
 
-        warnings = checker.check(
+        reports = engine.analyze(
             rows=rows_as_dicts,
             columns=results.columns,
             query=query,
@@ -757,10 +783,56 @@ class SQLAgent(BaseAgent):
             ctx,
         )
 
-        text = checker.format_warnings(warnings)
+        text = engine.format_report(reports)
+
+        await self._store_anomaly_insights(reports, ctx)
+
         if benchmark_text:
             text += benchmark_text
         return text
+
+    async def _store_anomaly_insights(
+        self,
+        reports: list,
+        ctx: AgentContext,
+    ) -> None:
+        """Persist critical/warning anomalies as insight records."""
+        significant = [
+            r for r in reports if r.severity in ("critical", "warning")
+        ]
+        if not significant or not ctx.project_id:
+            return
+        try:
+            from app.core.insight_memory import InsightMemoryService
+            from app.models.base import async_session_factory
+
+            svc = InsightMemoryService()
+            conn_id = (
+                ctx.connection_config.connection_id
+                if ctx.connection_config
+                else None
+            )
+            async with async_session_factory() as session:
+                for report in significant[:5]:
+                    await svc.store_insight(
+                        session,
+                        project_id=ctx.project_id,
+                        connection_id=conn_id,
+                        insight_type="anomaly",
+                        severity=report.severity,
+                        title=report.title,
+                        description=report.description,
+                        actions_json=(
+                            f'{{"action": "{report.recommended_action}"}}'
+                        ),
+                        confidence=report.confidence,
+                    )
+                await session.commit()
+        except Exception:
+            logger.debug(
+                "Failed to store anomaly insights (non-critical)",
+                exc_info=True,
+            )
 
     async def _check_benchmarks(
         self,

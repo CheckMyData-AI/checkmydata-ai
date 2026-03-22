@@ -21,9 +21,12 @@ from app.api.routes import (
     chat,
     connections,
     dashboards,
+    data_graph,
     data_validation,
     demo,
+    feed,
     health_monitor,
+    insights,
     invites,
     metrics,
     models,
@@ -173,13 +176,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > settings.max_request_body_bytes:
-            from starlette.responses import JSONResponse
+        if content_length:
+            try:
+                if int(content_length) > settings.max_request_body_bytes:
+                    from starlette.responses import JSONResponse
 
-            return JSONResponse(
-                status_code=413,
-                content={"detail": "Request body too large"},
-            )
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large"},
+                    )
+            except ValueError:
+                pass
         return await call_next(request)
 
 
@@ -250,6 +257,9 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(batch.router, prefix="/api/batch", tags=["batch"])
 app.include_router(dashboards.router, prefix="/api/dashboards", tags=["dashboards"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
+app.include_router(data_graph.router, prefix="/api/data-graph", tags=["data-graph"])
+app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
+app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
 
 
 async def _check_alembic_head() -> None:

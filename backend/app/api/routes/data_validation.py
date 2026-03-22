@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -689,3 +689,102 @@ def _extract_table_from_query(query: str) -> str:
     if match:
         return match.group(1)
     return "unknown_table"
+
+
+# ------------------------------------------------------------------
+# Anomaly Intelligence endpoints
+# ------------------------------------------------------------------
+
+
+class AnomalyAnalysisRequest(BaseModel):
+    project_id: str = Field(..., max_length=64)
+    connection_id: str = Field(..., max_length=64)
+    query: str = Field("", max_length=10000)
+    question: str = Field("", max_length=2000)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+
+
+@router.post("/anomaly-analysis")
+@limiter.limit("30/minute")
+async def run_anomaly_analysis(
+    request: Request,
+    body: AnomalyAnalysisRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Run Anomaly Intelligence Engine on provided data."""
+    from app.core.anomaly_intelligence import AnomalyIntelligenceEngine
+
+    engine = AnomalyIntelligenceEngine()
+    reports = engine.analyze(
+        rows=body.rows,
+        columns=body.columns,
+        query=body.query,
+        question=body.question,
+    )
+
+    return {
+        "ok": True,
+        "total": len(reports),
+        "reports": [r.to_dict() for r in reports],
+        "summary": engine.format_report(reports),
+    }
+
+
+@router.post("/anomaly-scan/{connection_id}")
+@limiter.limit("5/minute")
+async def scan_connection_anomalies(
+    request: Request,
+    connection_id: str,
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Scan a connection's tables for anomalies using probes."""
+    await _membership_svc.require_role(
+        db, project_id, user["user_id"], "viewer",
+    )
+
+    from app.models.connection import Connection
+    from app.models.db_index import DbIndex
+    from app.services.connection_service import ConnectionService
+
+    conn_svc = ConnectionService()
+    result = await db.execute(
+        select(Connection).where(
+            Connection.id == connection_id,
+            Connection.project_id == project_id,
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+
+    cfg = await conn_svc.to_config(db, conn)
+
+    idx_result = await db.execute(
+        select(DbIndex.table_name).where(
+            DbIndex.connection_id == connection_id,
+        ).limit(10)
+    )
+    tables = [r[0] for r in idx_result.all()]
+    if not tables:
+        return {"ok": True, "tables_scanned": 0, "results": []}
+
+    from app.services.probe_service import ProbeService
+
+    probe_svc = ProbeService()
+    report = await probe_svc.run_probes(
+        session=db,
+        connection_id=connection_id,
+        project_id=project_id,
+        cfg=cfg,
+        table_names=tables,
+    )
+    await db.commit()
+
+    return {
+        "ok": True,
+        "tables_scanned": len(report),
+        "results": report,
+    }

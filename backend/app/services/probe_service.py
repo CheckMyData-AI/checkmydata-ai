@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.connectors.base import ConnectionConfig
 from app.connectors.registry import get_connector
+from app.core.anomaly_intelligence import AnomalyIntelligenceEngine
 from app.core.data_sanity_checker import DataSanityChecker
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ class ProbeService:
 
         notes_svc = SessionNotesService()
         checker = DataSanityChecker()
+        anomaly_engine = AnomalyIntelligenceEngine()
         report: list[dict[str, Any]] = []
 
         tables_to_probe = table_names[:MAX_PROBE_TABLES]
@@ -56,6 +58,7 @@ class ProbeService:
                     connector,
                     table,
                     checker,
+                    anomaly_engine,
                 )
                 report.append(entry)
 
@@ -82,11 +85,13 @@ class ProbeService:
         connector: Any,
         table: str,
         checker: DataSanityChecker,
+        anomaly_engine: AnomalyIntelligenceEngine | None = None,
     ) -> dict[str, Any]:
         """Run diagnostics on a single table."""
         entry: dict[str, Any] = {
             "table": table,
             "findings": [],
+            "anomaly_reports": [],
             "row_count": None,
             "null_rates": {},
         }
@@ -136,6 +141,15 @@ class ProbeService:
             )
             for w in warnings:
                 entry["findings"].append(f"[{w.check_type}] {w.message}")
+
+            if anomaly_engine:
+                reports = anomaly_engine.analyze(
+                    rows=rows_as_dicts,
+                    columns=sample_result.columns,
+                )
+                entry["anomaly_reports"] = [
+                    r.to_dict() for r in reports
+                ]
 
         except Exception as exc:
             entry["findings"].append(f"Probe query failed for '{table}': {exc}")
