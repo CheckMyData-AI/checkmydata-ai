@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ _db_index_tasks: dict[str, asyncio.Task] = {}
 _sync_tasks: dict[str, asyncio.Task] = {}
 
 
-def _log_task_error(label: str, resource_id: str) -> callable:
+def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], None]:
     def _cb(t: asyncio.Task) -> None:
         if t.cancelled():
             return
