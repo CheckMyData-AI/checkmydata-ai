@@ -207,6 +207,8 @@ async def update_connection(
         )
 
     conn = await _svc.update(db, connection_id, **updates)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
     audit_log(
         "connection.update",
         user_id=user["user_id"],
