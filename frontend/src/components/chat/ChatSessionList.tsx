@@ -88,15 +88,6 @@ export function ChatSessionList() {
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  if (!activeProject) return null;
-  if (chatSessions.length === 0) {
-    return (
-      <div className="px-3 py-4 text-center">
-        <p className="text-xs text-text-muted">No chats yet</p>
-      </div>
-    );
-  }
-
   const handleSelect = useCallback(async (sessionId: string) => {
     const session = chatSessions.find((s) => s.id === sessionId);
     if (!session) return;
@@ -172,6 +163,15 @@ export function ChatSessionList() {
     setActiveSession(null);
     setMessages([]);
   }, [setActiveSession, setMessages]);
+
+  if (!activeProject) return null;
+  if (chatSessions.length === 0) {
+    return (
+      <div className="px-3 py-4 text-center">
+        <p className="text-xs text-text-muted">No chats yet</p>
+      </div>
+    );
+  }
 
   const visibleSessions = showAll
     ? chatSessions
