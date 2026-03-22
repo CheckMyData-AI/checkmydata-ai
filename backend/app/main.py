@@ -41,6 +41,7 @@ from app.api.routes import (
     semantic_layer,
     ssh_keys,
     tasks,
+    temporal,
     usage,
     visualizations,
     workflows,
@@ -266,6 +267,7 @@ app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
 app.include_router(reconciliation.router, prefix="/api/reconciliation", tags=["reconciliation"])
 app.include_router(semantic_layer.router, prefix="/api/semantic-layer", tags=["semantic-layer"])
 app.include_router(exploration.router, prefix="/api/explore", tags=["explore"])
+app.include_router(temporal.router, prefix="/api/temporal", tags=["temporal"])
 
 
 async def _check_alembic_head() -> None:

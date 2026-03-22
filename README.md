@@ -2155,6 +2155,8 @@ src/
 | `POST` | `/api/semantic-layer/{project_id}/normalize` | Normalize metrics across all connections |
 | `GET` | `/api/semantic-layer/{project_id}/catalog` | Browse the metric catalog |
 | `POST` | `/api/explore/{project_id}` | Autonomous investigation — "What's wrong?" |
+| `POST` | `/api/temporal/{project_id}/analyze` | Time series analysis (trend, seasonality, anomalies) |
+| `POST` | `/api/temporal/{project_id}/lag` | Detect lag/lead between two time series |
 
 ### Security Model
 

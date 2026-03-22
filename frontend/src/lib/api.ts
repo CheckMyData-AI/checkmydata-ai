@@ -616,6 +616,41 @@ export interface ActionRecommendationDTO {
   source_insight_title: string;
 }
 
+export interface TemporalTrendDTO {
+  direction: string;
+  slope: number;
+  slope_pct_per_period: number;
+  strength: number;
+  description: string;
+  start_value: number;
+  end_value: number;
+  periods: number;
+}
+
+export interface TemporalSeasonalityDTO {
+  detected: boolean;
+  period: number;
+  amplitude: number;
+  description: string;
+  peak_positions: number[];
+  trough_positions: number[];
+}
+
+export interface TemporalReportDTO {
+  metric_name: string;
+  total_points: number;
+  trend: TemporalTrendDTO | null;
+  seasonality: TemporalSeasonalityDTO | null;
+  recent_anomalies: { position: number; value: number; z_score: number; direction: string; description: string }[];
+  context_note: string;
+}
+
+export interface LagResultDTO {
+  lag_periods: number;
+  correlation: number;
+  description: string;
+}
+
 export interface ExplorationFindingDTO {
   category: string;
   severity: string;
@@ -1464,6 +1499,35 @@ export const api = {
         `/insights/${projectId}/actions${q ? `?${q}` : ""}`,
       );
     },
+  },
+
+  temporal: {
+    analyze: (projectId: string, values: number[], metricName?: string, periodLabel?: string) =>
+      request<TemporalReportDTO>(
+        `/temporal/${projectId}/analyze`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            project_id: projectId,
+            values,
+            metric_name: metricName || "metric",
+            period_label: periodLabel || "day",
+          }),
+        },
+      ),
+    detectLag: (projectId: string, seriesA: number[], seriesB: number[], maxLag?: number) =>
+      request<LagResultDTO>(
+        `/temporal/${projectId}/lag`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            project_id: projectId,
+            series_a: seriesA,
+            series_b: seriesB,
+            max_lag: maxLag || 14,
+          }),
+        },
+      ),
   },
 
   explore: {
