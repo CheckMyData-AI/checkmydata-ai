@@ -2785,6 +2785,24 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Audit Logging, Transaction Safety, SQL Quoting & Accessibility (Iteration 9)
+
+**Security & Compliance:**
+- Audit logging on auth routes (register, login, google), repo mutations (create/update/delete), and data validation
+- SQL identifier quoting in `probe_service.py` to prevent injection via table names
+
+**Reliability:**
+- Explicit `begin_nested` transaction boundary in `validate_data` route
+- `db_pool_timeout` (30s default) added to connection pool to prevent indefinite hangs
+- Pagination `limit` param on `list_repositories` endpoint
+
+**Frontend UX & Accessibility:**
+- `SyncStatusIndicator`: toast on task-triggered sync refresh failure
+- `LlmModelSelector`: toast on model list load failure
+- `ChatPanel`: `aria-live="polite"` on messages container for screen readers
+- `BatchRunner`: `aria-live` + `role="status"` on progress bar
+- `ChatSessionList`: memoized `SessionItem` with `React.memo` + `useCallback` handlers
+
 ### 2026-03-22 — Silent Exceptions, Config & Final Mounted Guards (Iteration 8)
 
 **Reliability (backend):**
