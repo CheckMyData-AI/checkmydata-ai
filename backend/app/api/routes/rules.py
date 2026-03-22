@@ -1,11 +1,12 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.membership_service import MembershipService
 from app.services.rule_service import RuleService
 
@@ -57,7 +58,9 @@ class RuleResponse(BaseModel):
 
 
 @router.post("", response_model=RuleResponse)
+@limiter.limit("20/minute")
 async def create_rule(
+    request: Request,
     body: RuleCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -129,7 +132,9 @@ async def update_rule(
 
 
 @router.delete("/{rule_id}")
+@limiter.limit("20/minute")
 async def delete_rule(
+    request: Request,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

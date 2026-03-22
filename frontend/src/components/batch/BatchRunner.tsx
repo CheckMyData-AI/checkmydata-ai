@@ -170,11 +170,13 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             value={batchTitle}
             onChange={(e) => setBatchTitle(e.target.value)}
             placeholder="Batch title..."
+            aria-label="Batch title"
             className="flex-1 text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
           />
           <select
             value={selectedConnId}
             onChange={(e) => setSelectedConnId(e.target.value)}
+            aria-label="Select connection"
             className="text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
           >
             <option value="">Select connection...</option>
@@ -195,6 +197,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                   value={q.title}
                   onChange={(e) => updateQuery(q.id, "title", e.target.value)}
                   placeholder="Query title..."
+                  aria-label={`Query ${idx + 1} title`}
                   className="flex-1 text-xs bg-surface-0 border border-border-default rounded px-2 py-1 text-text-primary focus:outline-none focus:border-accent"
                 />
                 <div className="flex gap-0.5 shrink-0">
@@ -203,6 +206,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                     disabled={idx === 0}
                     className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors disabled:opacity-30"
                     title="Move up"
+                    aria-label={`Move query ${idx + 1} up`}
                   >
                     <Icon name="arrow-up" size={11} />
                   </button>
@@ -211,6 +215,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                     disabled={idx === queries.length - 1}
                     className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors disabled:opacity-30"
                     title="Move down"
+                    aria-label={`Move query ${idx + 1} down`}
                   >
                     <Icon name="arrow-down" size={11} />
                   </button>
@@ -219,6 +224,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                     disabled={queries.length <= 1}
                     className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors disabled:opacity-30"
                     title="Remove"
+                    aria-label={`Remove query ${idx + 1}`}
                   >
                     <Icon name="trash" size={11} />
                   </button>
@@ -228,6 +234,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                 value={q.sql}
                 onChange={(e) => updateQuery(q.id, "sql", e.target.value)}
                 placeholder="SELECT ..."
+                aria-label={`Query ${idx + 1} SQL`}
                 rows={3}
                 className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus:border-accent leading-relaxed"
               />

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings
 from app.core.backup_manager import BackupManager
+from app.core.rate_limit import limiter
 from app.models.backup_record import BackupRecord
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,9 @@ _mgr = BackupManager()
 
 
 @router.post("/trigger")
+@limiter.limit("3/minute")
 async def trigger_backup(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):

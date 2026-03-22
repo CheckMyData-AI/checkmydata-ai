@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.connectors.registry import get_connector
 from app.core.health_monitor import health_monitor
+from app.core.rate_limit import limiter
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 
@@ -64,7 +65,9 @@ async def get_all_connections_health(
 
 
 @router.post("/{connection_id}/reconnect")
+@limiter.limit("10/minute")
 async def reconnect_connection(
+    request: Request,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

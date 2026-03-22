@@ -6,7 +6,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -314,14 +314,14 @@ async def get_analytics_summary(
 
 
 class InvestigateRequest(BaseModel):
-    project_id: str
-    connection_id: str
-    session_id: str
-    message_id: str
-    complaint_type: str  # numbers_too_high, numbers_too_low, etc.
-    complaint_detail: str | None = None
-    expected_value: str | None = None
-    problematic_column: str | None = None
+    project_id: str = Field(..., max_length=64)
+    connection_id: str = Field(..., max_length=64)
+    session_id: str = Field(..., max_length=64)
+    message_id: str = Field(..., max_length=64)
+    complaint_type: str = Field(..., max_length=100)
+    complaint_detail: str | None = Field(None, max_length=2000)
+    expected_value: str | None = Field(None, max_length=500)
+    problematic_column: str | None = Field(None, max_length=200)
 
 
 @router.post("/investigate")
@@ -369,7 +369,14 @@ async def start_investigation(
     )
     await db.commit()
 
-    asyncio.create_task(
+    def _on_task_done(t: asyncio.Task[None]) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("Investigation %s failed: %s", investigation.id, exc, exc_info=exc)
+
+    task = asyncio.create_task(
         _run_investigation_background(
             investigation_id=investigation.id,
             project_id=body.project_id,
@@ -382,6 +389,7 @@ async def start_investigation(
             problematic_column=body.problematic_column or "",
         )
     )
+    task.add_done_callback(_on_task_done)
 
     return {
         "ok": True,

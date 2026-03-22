@@ -92,6 +92,7 @@ export function InviteManager({ projectId, onClose }: Props) {
         </h4>
         <button
           onClick={onClose}
+          aria-label="Close access manager"
           className="text-xs text-zinc-500 hover:text-zinc-300"
         >
           ✕

@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.models.notification import Notification
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,9 @@ async def mark_read(
 
 
 @router.post("/read-all")
+@limiter.limit("30/minute")
 async def mark_all_read(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):

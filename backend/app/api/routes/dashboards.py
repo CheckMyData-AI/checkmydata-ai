@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
+from app.core.rate_limit import limiter
 from app.services.dashboard_service import DashboardService
 from app.services.membership_service import MembershipService
 
@@ -47,7 +48,9 @@ class DashboardResponse(BaseModel):
 
 
 @router.post("", response_model=DashboardResponse)
+@limiter.limit("20/minute")
 async def create_dashboard(
+    request: Request,
     body: DashboardCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -124,7 +127,9 @@ async def update_dashboard(
 
 
 @router.delete("/{dashboard_id}")
+@limiter.limit("20/minute")
 async def delete_dashboard(
+    request: Request,
     dashboard_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

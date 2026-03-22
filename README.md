@@ -2785,6 +2785,25 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — UX, Accessibility, and Security Improvements (Iteration 3)
+
+**Security (backend):**
+- Validate MongoDB collection names with regex to prevent NoSQL injection (`mongodb.py`)
+- Add null-check guard before audit log on connection update (`connections.py`)
+
+**Accessibility (frontend):**
+- Add keyboard focus trap and Escape handler to `ConfirmModal`
+- Add Escape key dismiss and viewport overflow fix to `NotificationBell` dropdown
+
+**UX (frontend):**
+- Add "No chats yet" empty state to `ChatSessionList`
+- Add inline password validation (min 8 chars) to `AuthGate` registration
+- Fix `DashboardBuilder` grid to be responsive on mobile (1-col → 2-col)
+- Add "Retrying..." loading state to ChatPanel connection reconnect button
+
+**Tests:**
+- Update `ChatSessionList` test to match new empty state behavior
+
 ### 2026-03-22 — Reliability, UX, and Accessibility Improvements (Iteration 2)
 
 **Security (backend):**

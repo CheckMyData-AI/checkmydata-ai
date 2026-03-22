@@ -34,6 +34,7 @@ export function KnowledgeDocs() {
     content: string;
     source_path: string;
   } | null>(null);
+  const [docLoadingId, setDocLoadingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeProject) {
@@ -56,6 +57,7 @@ export function KnowledgeDocs() {
       setViewingDoc(null);
       return;
     }
+    setDocLoadingId(doc.id);
     try {
       const full = await api.repos.doc(activeProject.id, doc.id);
       setViewingDoc({
@@ -68,6 +70,8 @@ export function KnowledgeDocs() {
         err instanceof Error ? err.message : "Failed to load doc",
         "error",
       );
+    } finally {
+      setDocLoadingId(null);
     }
   };
 
@@ -109,11 +113,15 @@ export function KnowledgeDocs() {
               {isViewing && (
                 <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
               )}
-              <Icon
-                name={iconName}
-                size={12}
-                className={`shrink-0 ${isViewing ? "text-accent" : "text-text-muted"}`}
-              />
+              {docLoadingId === d.id ? (
+                <div className="w-3 h-3 shrink-0 border border-text-muted border-t-accent rounded-full animate-spin" />
+              ) : (
+                <Icon
+                  name={iconName}
+                  size={12}
+                  className={`shrink-0 ${isViewing ? "text-accent" : "text-text-muted"}`}
+                />
+              )}
               <div className="flex-1 min-w-0 flex items-center gap-1.5">
                 <span className="text-[8px] text-text-muted uppercase font-mono shrink-0 leading-none">
                   {d.doc_type}

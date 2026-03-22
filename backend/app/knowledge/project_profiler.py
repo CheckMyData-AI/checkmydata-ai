@@ -165,7 +165,9 @@ def _detect_markers(repo_dir: Path, profile: ProjectProfile) -> None:
                 if all(p.lower() in text.lower() for p in content_pats):
                     profile.frameworks.append(fw_name)
             except Exception:
-                pass
+                logger.debug(
+                    "Failed to read %s for framework detection", marker_path, exc_info=True
+                )
 
     for orm_name, marker, content_pats in ORM_MARKERS:
         marker_path = repo_dir / marker
@@ -178,7 +180,7 @@ def _detect_markers(repo_dir: Path, profile: ProjectProfile) -> None:
                 if all(p.lower() in text.lower() for p in content_pats):
                     profile.orms.append(orm_name)
             except Exception:
-                pass
+                logger.debug("Failed to read %s for ORM detection", marker_path, exc_info=True)
 
     profile.frameworks = list(dict.fromkeys(profile.frameworks))
     profile.orms = list(dict.fromkeys(profile.orms))

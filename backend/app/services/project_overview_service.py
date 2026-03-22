@@ -248,105 +248,106 @@ class ProjectOverviewService:
         return list(result.scalars().all())
 
     async def _build_db_section(self, db: AsyncSession, connection_ids: list[str]) -> str:
+        if not connection_ids:
+            return ""
         parts: list[str] = ["## Database Structure"]
 
-        for conn_id in connection_ids:
-            summary_row = await db.execute(
-                select(DbIndexSummary).where(DbIndexSummary.connection_id == conn_id)
+        summary_rows = await db.execute(
+            select(DbIndexSummary).where(DbIndexSummary.connection_id.in_(connection_ids))
+        )
+        for summary in summary_rows.scalars().all():
+            parts.append(
+                f"Tables: {summary.total_tables} total, "
+                f"{summary.active_tables} active, "
+                f"{summary.empty_tables} empty"
             )
-            summary = summary_row.scalar_one_or_none()
-            if summary:
-                parts.append(
-                    f"Tables: {summary.total_tables} total, "
-                    f"{summary.active_tables} active, "
-                    f"{summary.empty_tables} empty"
-                )
 
-            idx_rows = await db.execute(
-                select(DbIndex)
-                .where(DbIndex.connection_id == conn_id, DbIndex.is_active.is_(True))
-                .order_by(DbIndex.relevance_score.desc(), DbIndex.row_count.desc())
-                .limit(MAX_KEY_TABLES)
+        idx_rows = await db.execute(
+            select(DbIndex)
+            .where(
+                DbIndex.connection_id.in_(connection_ids),
+                DbIndex.is_active.is_(True),
             )
-            tables = list(idx_rows.scalars().all())
-            if not tables:
-                continue
+            .order_by(DbIndex.relevance_score.desc(), DbIndex.row_count.desc())
+            .limit(MAX_KEY_TABLES * len(connection_ids))
+        )
+        tables = list(idx_rows.scalars().all())
 
-            for tbl in tables:
-                row_str = f"~{tbl.row_count:,}" if tbl.row_count else "?"
-                line = f"- **{tbl.table_name}** ({row_str} rows, rel={tbl.relevance_score})"
-                if tbl.business_description:
-                    desc = tbl.business_description[:100]
-                    line += f": {desc}"
-                parts.append(line)
+        for tbl in tables:
+            row_str = f"~{tbl.row_count:,}" if tbl.row_count else "?"
+            line = f"- **{tbl.table_name}** ({row_str} rows, rel={tbl.relevance_score})"
+            if tbl.business_description:
+                desc = tbl.business_description[:100]
+                line += f": {desc}"
+            parts.append(line)
 
-                distinct_raw = tbl.column_distinct_values_json or "{}"
-                try:
-                    distinct = json.loads(distinct_raw)
-                    for col, vals in list(distinct.items())[:5]:
-                        display = ", ".join(str(v) for v in vals[:8])
-                        parts.append(f"  - `{col}`: [{display}]")
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            distinct_raw = tbl.column_distinct_values_json or "{}"
+            try:
+                distinct = json.loads(distinct_raw)
+                for col, vals in list(distinct.items())[:5]:
+                    display = ", ".join(str(v) for v in vals[:8])
+                    parts.append(f"  - `{col}`: [{display}]")
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         return "\n".join(parts) if len(parts) > 1 else ""
 
     async def _build_sync_section(self, db: AsyncSession, connection_ids: list[str]) -> str:
+        if not connection_ids:
+            return ""
         parts: list[str] = ["## Data Conventions (Code-DB Sync)"]
         has_content = False
 
-        for conn_id in connection_ids:
-            sum_row = await db.execute(
-                select(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id == conn_id)
-            )
-            summary = sum_row.scalar_one_or_none()
-            if summary:
-                if summary.data_conventions:
-                    parts.append(f"**Conventions:** {summary.data_conventions[:300]}")
-                    has_content = True
-                if summary.query_guidelines:
-                    parts.append(f"**Query guidelines:** {summary.query_guidelines[:300]}")
-                    has_content = True
+        sum_rows = await db.execute(
+            select(CodeDbSyncSummary).where(CodeDbSyncSummary.connection_id.in_(connection_ids))
+        )
+        for summary in sum_rows.scalars().all():
+            if summary.data_conventions:
+                parts.append(f"**Conventions:** {summary.data_conventions[:300]}")
+                has_content = True
+            if summary.query_guidelines:
+                parts.append(f"**Query guidelines:** {summary.query_guidelines[:300]}")
+                has_content = True
 
-            sync_rows = await db.execute(
-                select(CodeDbSync)
-                .where(CodeDbSync.connection_id == conn_id)
-                .order_by(CodeDbSync.confidence_score.desc())
-            )
-            syncs = list(sync_rows.scalars().all())
+        sync_rows = await db.execute(
+            select(CodeDbSync)
+            .where(CodeDbSync.connection_id.in_(connection_ids))
+            .order_by(CodeDbSync.confidence_score.desc())
+        )
+        syncs = list(sync_rows.scalars().all())
 
-            filters_found = False
-            mappings_found = False
-            for s in syncs:
-                rf = s.required_filters_json or "{}"
-                try:
-                    filters = json.loads(rf)
-                    if filters:
-                        if not filters_found:
-                            parts.append("**Required filters:**")
-                            filters_found = True
-                            has_content = True
-                        for col, filt in filters.items():
-                            parts.append(f"- `{s.table_name}.{col}`: {filt}")
-                except (json.JSONDecodeError, TypeError):
-                    pass
+        filters_found = False
+        mappings_found = False
+        for s in syncs:
+            rf = s.required_filters_json or "{}"
+            try:
+                filters = json.loads(rf)
+                if filters:
+                    if not filters_found:
+                        parts.append("**Required filters:**")
+                        filters_found = True
+                        has_content = True
+                    for col, filt in filters.items():
+                        parts.append(f"- `{s.table_name}.{col}`: {filt}")
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-                vm = s.column_value_mappings_json or "{}"
-                try:
-                    mappings = json.loads(vm)
-                    if mappings:
-                        if not mappings_found:
-                            parts.append("**Column value mappings:**")
-                            mappings_found = True
-                            has_content = True
-                        for col, mapping in mappings.items():
-                            parts.append(f"- `{s.table_name}.{col}`: {mapping}")
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            vm = s.column_value_mappings_json or "{}"
+            try:
+                mappings = json.loads(vm)
+                if mappings:
+                    if not mappings_found:
+                        parts.append("**Column value mappings:**")
+                        mappings_found = True
+                        has_content = True
+                    for col, mapping in mappings.items():
+                        parts.append(f"- `{s.table_name}.{col}`: {mapping}")
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-                if s.conversion_warnings:
-                    parts.append(f"- **Warning** ({s.table_name}): {s.conversion_warnings[:150]}")
-                    has_content = True
+            if s.conversion_warnings:
+                parts.append(f"- **Warning** ({s.table_name}): {s.conversion_warnings[:150]}")
+                has_content = True
 
         return "\n".join(parts) if has_content else ""
 

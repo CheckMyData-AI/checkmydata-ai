@@ -51,11 +51,11 @@ function timeAgo(iso: string | null): string {
 function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; total_rows: number } }) {
   return (
     <div className="overflow-x-auto max-h-64 overflow-y-auto">
-      <table className="text-[10px] border-collapse w-full">
+      <table className="text-[10px] border-collapse w-full" aria-label="Query results">
         <thead className="sticky top-0 bg-surface-1">
           <tr className="border-b border-border-subtle">
             {data.columns.map((col) => (
-              <th key={col} className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
+              <th key={col} scope="col" className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
                 {col}
               </th>
             ))}
@@ -160,19 +160,22 @@ export default function DashboardPage() {
   }, [dashboard]);
 
   const handleRefreshAll = useCallback(async () => {
-    if (!dashboard) return;
+    if (!dashboard || refreshing) return;
     const cards = parseCards(dashboard.cards_json);
     setRefreshing(true);
-    for (const card of cards) {
-      try {
-        await api.notes.execute(card.note_id);
-        const n = await api.notes.get(card.note_id);
-        setNotes((prev) => new Map(prev).set(card.note_id, n));
-      } catch { /* */ }
+    try {
+      for (const card of cards) {
+        try {
+          await api.notes.execute(card.note_id);
+          const n = await api.notes.get(card.note_id);
+          setNotes((prev) => new Map(prev).set(card.note_id, n));
+        } catch { /* */ }
+      }
+      toast("All cards refreshed", "info");
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
-    toast("All cards refreshed", "info");
-  }, [dashboard]);
+  }, [dashboard, refreshing]);
 
   const handleSaveEdit = (updated: Dashboard) => {
     setDashboard(updated);

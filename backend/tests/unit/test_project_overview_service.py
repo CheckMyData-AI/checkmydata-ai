@@ -39,7 +39,7 @@ class TestBuildDbSection:
         session, results = _mock_session_factory()
 
         summary_result = MagicMock()
-        summary_result.scalar_one_or_none.return_value = None
+        summary_result.scalars.return_value.all.return_value = []
         results.append(summary_result)
 
         idx_result = MagicMock()
@@ -58,7 +58,7 @@ class TestBuildDbSection:
         summary.active_tables = 8
         summary.empty_tables = 2
         summary_result = MagicMock()
-        summary_result.scalar_one_or_none.return_value = summary
+        summary_result.scalars.return_value.all.return_value = [summary]
         results.append(summary_result)
 
         table = MagicMock()
@@ -85,7 +85,7 @@ class TestBuildSyncSection:
         session, results = _mock_session_factory()
 
         sum_result = MagicMock()
-        sum_result.scalar_one_or_none.return_value = None
+        sum_result.scalars.return_value.all.return_value = []
         results.append(sum_result)
 
         sync_result = MagicMock()
@@ -103,7 +103,7 @@ class TestBuildSyncSection:
         summary.data_conventions = "Amounts stored in cents"
         summary.query_guidelines = "Always use UTC timestamps"
         sum_result = MagicMock()
-        sum_result.scalar_one_or_none.return_value = summary
+        sum_result.scalars.return_value.all.return_value = [summary]
         results.append(sum_result)
 
         sync_entry = MagicMock()

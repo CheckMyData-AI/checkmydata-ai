@@ -92,7 +92,17 @@ async def execute_batch(
         resource_id=batch.id,
     )
 
-    asyncio.create_task(_svc.execute_batch(batch.id, body.connection_id, user_id=user["user_id"]))
+    def _on_batch_done(t: asyncio.Task[None]) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("Batch %s failed: %s", batch.id, exc, exc_info=exc)
+
+    task = asyncio.create_task(
+        _svc.execute_batch(batch.id, body.connection_id, user_id=user["user_id"])
+    )
+    task.add_done_callback(_on_batch_done)
 
     return {"batch_id": batch.id, "status": "pending"}
 

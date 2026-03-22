@@ -52,7 +52,7 @@ def retry(
                         try:
                             on_retry(attempt, exc)
                         except Exception:
-                            pass
+                            logger.warning("on_retry callback failed", exc_info=True)
                     await asyncio.sleep(delay)
                     delay *= backoff_multiplier
             if last_exc is None:  # pragma: no cover
