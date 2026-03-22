@@ -185,6 +185,7 @@ class TestSerializeValue:
 
     def test_decimal(self):
         from decimal import Decimal
+
         assert serialize_value(Decimal("19.99")) == 19.99
 
     def test_bytes(self):
@@ -192,6 +193,7 @@ class TestSerializeValue:
 
     def test_fallback_to_str(self):
         from datetime import date
+
         assert serialize_value(date(2026, 1, 1)) == "2026-01-01"
 
 
