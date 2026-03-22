@@ -5,12 +5,13 @@ import json
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
 from app.models.data_validation import DataInvestigation
 from app.services.membership_service import MembershipService
@@ -41,7 +42,9 @@ class ValidateDataRequest(BaseModel):
 
 
 @router.post("/validate-data")
+@limiter.limit("20/minute")
 async def validate_data(
+    request: Request,
     body: ValidateDataRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -322,7 +325,9 @@ class InvestigateRequest(BaseModel):
 
 
 @router.post("/investigate")
+@limiter.limit("5/minute")
 async def start_investigation(
+    request: Request,
     body: InvestigateRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

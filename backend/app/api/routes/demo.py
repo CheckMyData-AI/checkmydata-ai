@@ -1,9 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
@@ -19,7 +20,9 @@ _rule_svc = RuleService()
 
 
 @router.post("/setup")
+@limiter.limit("3/minute")
 async def demo_setup(
+    request: Request,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

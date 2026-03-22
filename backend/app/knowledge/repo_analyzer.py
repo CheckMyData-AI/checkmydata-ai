@@ -236,6 +236,7 @@ class RepoAnalyzer:
                     agent_out = subprocess.check_output(
                         ["ssh-agent", "-s"],
                         text=True,
+                        timeout=30,
                     )
                     for line in agent_out.splitlines():
                         if "SSH_AUTH_SOCK" in line:
@@ -252,7 +253,7 @@ class RepoAnalyzer:
                             stderr=subprocess.PIPE,
                             env=add_env,
                         )
-                        proc.communicate(input=unprotected_pem.encode())
+                        proc.communicate(input=unprotected_pem.encode(), timeout=30)
                         env["SSH_AUTH_SOCK"] = agent_sock
                         env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
                 except Exception:
@@ -368,6 +369,7 @@ class RepoAnalyzer:
                     agent_out = subprocess.check_output(
                         ["ssh-agent", "-s"],
                         text=True,
+                        timeout=30,
                     )
                     for line in agent_out.splitlines():
                         if "SSH_AUTH_SOCK" in line:
@@ -387,7 +389,7 @@ class RepoAnalyzer:
                             stderr=subprocess.PIPE,
                             env=add_env,
                         )
-                        proc.communicate(input=unprotected_pem.encode())
+                        proc.communicate(input=unprotected_pem.encode(), timeout=30)
                         env["SSH_AUTH_SOCK"] = agent_sock
                         env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
                 except Exception:

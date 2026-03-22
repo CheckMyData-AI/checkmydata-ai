@@ -277,19 +277,19 @@ async def _reset_stale_indexing_statuses() -> None:
         from app.models.db_index import DbIndexSummary
 
         async with async_session_factory() as session:
-            idx_result = await session.execute(
-                update(DbIndexSummary)
-                .where(DbIndexSummary.indexing_status == "running")
-                .values(indexing_status="failed")
-            )
-            sync_result = await session.execute(
-                update(CodeDbSyncSummary)
-                .where(CodeDbSyncSummary.sync_status == "running")
-                .values(sync_status="failed")
-            )
+            async with session.begin():
+                idx_result = await session.execute(
+                    update(DbIndexSummary)
+                    .where(DbIndexSummary.indexing_status == "running")
+                    .values(indexing_status="failed")
+                )
+                sync_result = await session.execute(
+                    update(CodeDbSyncSummary)
+                    .where(CodeDbSyncSummary.sync_status == "running")
+                    .values(sync_status="failed")
+                )
             total = (idx_result.rowcount or 0) + (sync_result.rowcount or 0)  # type: ignore[attr-defined]
             if total:
-                await session.commit()
                 logger.info(
                     "Startup: reset stale 'running' statuses — %d indexing, %d sync",
                     idx_result.rowcount or 0,  # type: ignore[attr-defined]

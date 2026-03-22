@@ -446,6 +446,11 @@ class TestStartupStaleReset:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
+        mock_tx = AsyncMock()
+        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+        mock_tx.__aexit__ = AsyncMock(return_value=False)
+        mock_session.begin = MagicMock(return_value=mock_tx)
+
         idx_result = MagicMock(rowcount=2)
         sync_result = MagicMock(rowcount=1)
         mock_session.execute = AsyncMock(side_effect=[idx_result, sync_result])
@@ -454,7 +459,6 @@ class TestStartupStaleReset:
             await _reset_stale_indexing_statuses()
 
         assert mock_session.execute.call_count == 2
-        mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_commit_when_no_stale(self):
@@ -463,6 +467,11 @@ class TestStartupStaleReset:
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_tx = AsyncMock()
+        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+        mock_tx.__aexit__ = AsyncMock(return_value=False)
+        mock_session.begin = MagicMock(return_value=mock_tx)
 
         idx_result = MagicMock(rowcount=0)
         sync_result = MagicMock(rowcount=0)

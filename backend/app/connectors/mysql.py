@@ -45,6 +45,7 @@ class MySQLConnector(BaseConnector):
                 minsize=1,
                 maxsize=5,
                 autocommit=True,
+                connect_timeout=30,
             )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
@@ -57,6 +58,7 @@ class MySQLConnector(BaseConnector):
                 minsize=1,
                 maxsize=5,
                 autocommit=True,
+                connect_timeout=30,
             )
 
     async def disconnect(self) -> None:

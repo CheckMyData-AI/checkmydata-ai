@@ -30,6 +30,12 @@ export function ChatSearch() {
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const doSearch = useCallback(
     async (term: string) => {
       if (!activeProject || term.trim().length < 2) {

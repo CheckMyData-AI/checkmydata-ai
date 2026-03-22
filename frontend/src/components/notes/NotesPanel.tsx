@@ -30,7 +30,7 @@ export function NotesPanel() {
   if (!activeProject || !isOpen) return null;
 
   return (
-    <aside className="shrink-0 w-80 border-l border-border-subtle bg-surface-0 flex flex-col h-full overflow-hidden transition-all duration-200 ease-out">
+    <aside className="shrink-0 w-full md:w-80 max-w-[100vw] border-l border-border-subtle bg-surface-0 flex flex-col h-full overflow-hidden transition-all duration-200 ease-out">
       {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b border-border-subtle flex items-center justify-between">
         <div className="flex items-center gap-2">

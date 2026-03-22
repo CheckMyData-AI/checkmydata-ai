@@ -207,6 +207,13 @@ async def update_connection(
         )
 
     conn = await _svc.update(db, connection_id, **updates)
+    audit_log(
+        "connection.update",
+        user_id=user["user_id"],
+        project_id=conn.project_id,
+        resource_type="connection",
+        resource_id=connection_id,
+    )
     return conn
 
 

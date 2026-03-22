@@ -2785,6 +2785,31 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Reliability, UX, and Accessibility Improvements (Iteration 2)
+
+**Security (backend):**
+
+- **data_validation.py, demo.py, repos.py, visualizations.py:** Added `@limiter.limit()` rate limiting to previously unprotected mutation routes (investigations, demo setup, repo index, export).
+- **connections.py:** Added `audit_log` call to `update_connection` for consistency with create/delete.
+
+**Reliability (backend):**
+
+- **postgres.py:** Added `command_timeout=120` to asyncpg connection pools to prevent indefinite query hangs.
+- **mysql.py:** Added `connect_timeout=30` to aiomysql connection pools.
+- **repo_analyzer.py:** Added `timeout=30` to all `subprocess.check_output` and `Popen.communicate` calls for ssh-agent operations.
+- **main.py:** Wrapped `_reset_stale_indexing_statuses` in `session.begin()` for proper atomicity.
+
+**UX (frontend):**
+
+- **DataTable.tsx:** Added "No data returned" empty state message when query returns zero rows.
+- **UsageStatsPanel, FeedbackAnalyticsPanel:** Added Retry buttons to error states.
+- **NotesPanel.tsx:** Changed fixed `w-80` to `w-full md:w-80 max-w-[100vw]` for responsive width on small screens.
+- **ChatSearch.tsx:** Added debounce timer cleanup on unmount to prevent memory leaks.
+
+**Accessibility (frontend):**
+
+- **layout.tsx, page.tsx:** Added skip-to-content link for keyboard/screen reader users with `id="main-content"` target.
+
 ### 2026-03-22 — Security, Reliability, and UX Hardening (Iteration 1)
 
 **Security fixes (backend):**

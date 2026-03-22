@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from git import Repo
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings
+from app.core.rate_limit import limiter
 from app.core.workflow_tracker import tracker
 from app.knowledge.doc_generator import DocGenerator
 from app.knowledge.doc_store import DocStore
@@ -69,7 +70,9 @@ class RepoCheckResponse(BaseModel):
 
 
 @router.post("/check-access", response_model=RepoCheckResponse)
+@limiter.limit("10/minute")
 async def check_access(
+    request: Request,
     body: RepoCheckRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -110,7 +113,9 @@ class IndexResponse(BaseModel):
 
 
 @router.post("/{project_id}/index", status_code=202)
+@limiter.limit("5/minute")
 async def index_repo(
+    request: Request,
     project_id: str,
     body: IndexRequest | None = None,
     db: AsyncSession = Depends(get_db),

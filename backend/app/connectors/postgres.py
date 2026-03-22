@@ -35,7 +35,12 @@ class PostgresConnector(BaseConnector):
         self._config = config
 
         if config.connection_string:
-            self._pool = await asyncpg.create_pool(config.connection_string, min_size=1, max_size=5)
+            self._pool = await asyncpg.create_pool(
+                config.connection_string,
+                min_size=1,
+                max_size=5,
+                command_timeout=120,
+            )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
             self._pool = await asyncpg.create_pool(
@@ -46,6 +51,7 @@ class PostgresConnector(BaseConnector):
                 password=config.db_password,
                 min_size=1,
                 max_size=5,
+                command_timeout=120,
             )
 
     async def disconnect(self) -> None:

@@ -70,7 +70,13 @@ export function DataTable({ data }: DataTableProps) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length || 1} className="px-4 py-8 text-center text-zinc-500 text-xs">
+                  No data returned
+                </td>
+              </tr>
+            ) : rows.map((row, i) => (
               <tr key={`${i}-${columns.length > 0 ? String(row[columns[0]] ?? "") : i}`} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
                 {columns.map((col) => (
                   <td key={col} className="px-4 py-2 text-zinc-300 whitespace-nowrap">

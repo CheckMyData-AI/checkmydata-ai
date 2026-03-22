@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
 interface AnalyticsData {
@@ -35,25 +35,19 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
     setLoading(true);
     setError(null);
-
     api.dataValidation
       .getFeedbackAnalytics(projectId)
-      .then((result) => {
-        if (!cancelled) setData(result);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => { cancelled = true; };
+      .then((result) => setData(result))
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoading(false));
   }, [projectId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   if (loading) {
     return (
@@ -65,8 +59,9 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-red-400">
-        Failed to load analytics
+      <div className="px-2 py-1 text-[10px] text-red-400 flex items-center gap-2">
+        <span>Failed to load analytics</span>
+        <button onClick={load} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
       </div>
     );
   }

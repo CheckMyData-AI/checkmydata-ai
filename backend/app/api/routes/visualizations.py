@@ -1,11 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user
 from app.connectors.base import QueryResult
+from app.core.rate_limit import limiter
 from app.viz.export import export_csv, export_json, export_xlsx
 from app.viz.renderer import render
 
@@ -37,7 +38,12 @@ async def render_visualization(body: RenderRequest, user: dict = Depends(get_cur
 
 
 @router.post("/export")
-async def export_data(body: ExportRequest, user: dict = Depends(get_current_user)):
+@limiter.limit("20/minute")
+async def export_data(
+    request: Request,
+    body: ExportRequest,
+    user: dict = Depends(get_current_user),
+):
     result = QueryResult(
         columns=body.columns,
         rows=body.rows,

@@ -85,8 +85,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-red-400">
-        {error}
+      <div className="px-2 py-1 text-[10px] text-red-400 flex items-center gap-2">
+        <span>{error}</span>
+        <button onClick={load} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
       </div>
     );
   }
