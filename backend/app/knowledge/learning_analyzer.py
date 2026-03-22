@@ -59,6 +59,7 @@ async def _load_sync_warnings_for_dedup(
             if e.conversion_warnings
         }
     except Exception:
+        logger.debug("Failed to load sync warnings for connection %s", connection_id, exc_info=True)
         return {}
 
 

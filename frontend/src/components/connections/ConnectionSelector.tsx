@@ -311,7 +311,7 @@ export function ConnectionSelector() {
             }
           }
         })
-        .catch(() => {});
+        .catch(() => { /* frequent polling — transient failures expected */ });
       api.connections
         .syncStatus(c.id)
         .then((s) => {
@@ -332,7 +332,7 @@ export function ConnectionSelector() {
             }
           }
         })
-        .catch(() => {});
+        .catch(() => { /* frequent polling — transient failures expected */ });
       api.connections
         .learningsStatus(c.id)
         .then((s) => {
@@ -343,7 +343,7 @@ export function ConnectionSelector() {
             }
           }
         })
-        .catch(() => {});
+        .catch(() => { /* frequent polling — transient failures expected */ });
     });
   }, [connections, startIndexPoll, startSyncPoll]);
 

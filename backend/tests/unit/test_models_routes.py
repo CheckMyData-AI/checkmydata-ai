@@ -154,10 +154,9 @@ class TestModelsEndpoint:
         ids = [m["id"] for m in data]
         assert "claude-sonnet-4-20250514" in ids
 
-    def test_unknown_provider_returns_empty(self, client):
+    def test_unknown_provider_returns_422(self, client):
         resp = client.get("/api/models?provider=unknown")
-        assert resp.status_code == 200
-        assert resp.json() == []
+        assert resp.status_code == 422
 
     def test_default_provider_is_openrouter(self, client):
         instance = self._make_mock_client({"data": []})

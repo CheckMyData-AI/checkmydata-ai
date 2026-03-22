@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -12,7 +13,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-CACHE_TTL_SECONDS = 3600  # 1 hour
+CACHE_TTL_SECONDS = settings.model_cache_ttl_seconds
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
@@ -96,7 +97,7 @@ async def _fetch_openrouter_models() -> list[dict]:
 
 @router.get("", response_model=list[ModelInfo])
 async def list_models(
-    provider: str = Query(default="openrouter"),
+    provider: Literal["openrouter", "openai", "anthropic"] = Query(default="openrouter"),
     _user: dict = Depends(get_current_user),
 ):
     """Return available models for the given LLM provider."""

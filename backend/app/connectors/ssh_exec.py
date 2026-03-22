@@ -12,6 +12,7 @@ from typing import Any
 
 import asyncssh
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -30,8 +31,8 @@ from app.connectors.exec_templates import (
 
 logger = logging.getLogger(__name__)
 
-SSH_CONNECT_TIMEOUT = 30
-SSH_COMMAND_TIMEOUT = 60
+SSH_CONNECT_TIMEOUT = settings.ssh_connect_timeout
+SSH_COMMAND_TIMEOUT = settings.ssh_command_timeout
 
 
 class SSHExecConnector(BaseConnector):

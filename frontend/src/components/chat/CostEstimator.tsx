@@ -17,11 +17,13 @@ export function CostEstimator({ projectId, connectionId }: CostEstimatorProps) {
     const key = `${projectId}:${connectionId ?? ""}`;
     if (key === fetchedKey.current) return;
     fetchedKey.current = key;
+    let cancelled = false;
 
     api.chat
       .estimate(projectId, connectionId)
-      .then(setEstimate)
-      .catch(() => setEstimate(null));
+      .then((e) => { if (!cancelled) setEstimate(e); })
+      .catch(() => { if (!cancelled) setEstimate(null); });
+    return () => { cancelled = true; };
   }, [projectId, connectionId]);
 
   if (!estimate) return null;

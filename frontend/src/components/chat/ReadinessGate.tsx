@@ -346,7 +346,11 @@ export function ReadinessBanner({ projectId }: { projectId: string }) {
       if (r.is_stale) {
         setStaleInfo({ is_stale: r.is_stale, commits_behind: r.commits_behind });
       }
-    }).catch(() => {});
+    }).catch(() => {
+      if (bannerMountedRef.current) {
+        setMissing([]);
+      }
+    });
   }, [projectId]);
 
   if (missing.length === 0 && !staleInfo?.is_stale) return null;

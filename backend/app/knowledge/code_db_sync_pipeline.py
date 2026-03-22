@@ -330,7 +330,7 @@ class CodeDbSyncPipeline:
                     await self._sync_svc.set_sync_status(session, connection_id, "failed")
                     await session.commit()
             except Exception:
-                pass
+                logger.warning("Failed to set sync status to failed", exc_info=True)
             return {"status": "failed", "error": str(exc), "workflow_id": wf_id}
 
     # ------------------------------------------------------------------

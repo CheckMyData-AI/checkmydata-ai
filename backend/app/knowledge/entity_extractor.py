@@ -389,6 +389,7 @@ def _full_scan(
         try:
             content = fp.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            logger.debug("Could not read %s", fp, exc_info=True)
             continue
 
         _scan_table_usage(rel_path, content, knowledge)
@@ -483,6 +484,7 @@ def _incremental_update(
         try:
             content = fp.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            logger.debug("Could not read %s", fp, exc_info=True)
             continue
 
         _scan_table_usage(rel_path, content, knowledge)

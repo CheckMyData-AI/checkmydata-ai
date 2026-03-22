@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     max_concurrent_agent_calls: int = 3
     max_agent_calls_per_hour: int = 100
 
+    # External service settings
+    model_cache_ttl_seconds: int = 3600
+    health_degraded_latency_ms: int = 3000
+    ssh_connect_timeout: int = 30
+    ssh_command_timeout: int = 60
+
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
         """Prevent insecure defaults from being used in production."""

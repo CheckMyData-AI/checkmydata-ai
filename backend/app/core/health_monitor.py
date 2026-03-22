@@ -14,11 +14,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 HealthStatus = Literal["healthy", "degraded", "down"]
 
-DEGRADED_LATENCY_MS = 3000
+DEGRADED_LATENCY_MS = settings.health_degraded_latency_ms
 MAX_CONSECUTIVE_FAILURES = 2
 CHECK_TIMEOUT_SECONDS = 10
 

@@ -600,7 +600,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
           repo_url: repoUrl,
           ssh_key_id: sshKeyId || null,
         })
-        .catch(() => {});
+        .catch(() => toast("Failed to save repository settings", "error"));
     }
     if (step === TOTAL_STEPS - 1) {
       handleComplete();
