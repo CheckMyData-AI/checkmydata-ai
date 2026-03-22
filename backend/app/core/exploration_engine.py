@@ -14,6 +14,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class Finding:
     """A single investigation finding."""
@@ -171,7 +180,7 @@ class ExplorationEngine:
                     title=ins.get("title", "Untitled insight"),
                     description=ins.get("description", ""),
                     recommended_action=ins.get("recommended_action", ""),
-                    confidence=float(ins.get("confidence", 0.5)),
+                    confidence=_safe_float(ins.get("confidence", 0.5), 0.5),
                     source="insight_memory",
                 )
             )
@@ -191,7 +200,7 @@ class ExplorationEngine:
                     description=anomaly.get("description", ""),
                     evidence=anomaly.get("root_cause", ""),
                     recommended_action=anomaly.get("recommended_action", ""),
-                    confidence=float(anomaly.get("confidence", 0.6)),
+                    confidence=_safe_float(anomaly.get("confidence", 0.6), 0.6),
                     source="anomaly_scan",
                 )
             )
@@ -200,7 +209,7 @@ class ExplorationEngine:
     def _analyze_opportunities(self, opportunities: list[dict[str, Any]]) -> list[Finding]:
         findings: list[Finding] = []
         for opp in opportunities:
-            impact = float(opp.get("impact_estimate_pct", 0))
+            impact = _safe_float(opp.get("impact_estimate_pct", 0))
             if impact < 5:
                 continue
             findings.append(
@@ -211,7 +220,7 @@ class ExplorationEngine:
                     description=opp.get("description", ""),
                     evidence=(f"Estimated impact: {impact:.0f}%" if impact else ""),
                     recommended_action=opp.get("recommended_action", ""),
-                    confidence=float(opp.get("confidence", 0.5)),
+                    confidence=_safe_float(opp.get("confidence", 0.5), 0.5),
                     source="live_analysis",
                 )
             )
@@ -229,7 +238,7 @@ class ExplorationEngine:
                     description=loss.get("description", ""),
                     evidence=loss.get("evidence", ""),
                     recommended_action=loss.get("recommended_action", ""),
-                    confidence=float(loss.get("confidence", 0.6)),
+                    confidence=_safe_float(loss.get("confidence", 0.6), 0.6),
                     source="live_analysis",
                 )
             )

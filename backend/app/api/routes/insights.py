@@ -164,6 +164,13 @@ async def confirm_insight(
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+
+    from app.models.insight_record import InsightRecord
+
+    existing = await db.get(InsightRecord, insight_id)
+    if not existing or existing.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Insight not found")
+
     record = await _insight_svc.confirm_insight(db, insight_id, body.feedback)
     if not record:
         raise HTTPException(status_code=404, detail="Insight not found")
@@ -184,6 +191,13 @@ async def dismiss_insight(
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+
+    from app.models.insight_record import InsightRecord
+
+    existing = await db.get(InsightRecord, insight_id)
+    if not existing or existing.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Insight not found")
+
     record = await _insight_svc.dismiss_insight(db, insight_id, body.feedback)
     if not record:
         raise HTTPException(status_code=404, detail="Insight not found")
@@ -204,6 +218,13 @@ async def resolve_insight(
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+
+    from app.models.insight_record import InsightRecord
+
+    existing = await db.get(InsightRecord, insight_id)
+    if not existing or existing.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Insight not found")
+
     record = await _insight_svc.resolve_insight(db, insight_id, body.feedback)
     if not record:
         raise HTTPException(status_code=404, detail="Insight not found")

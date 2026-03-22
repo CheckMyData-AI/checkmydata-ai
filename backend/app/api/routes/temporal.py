@@ -14,7 +14,7 @@ from app.core.temporal_intelligence import TemporalIntelligenceService
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/temporal", tags=["temporal"])
+router = APIRouter(tags=["temporal"])
 
 _membership_svc = MembershipService()
 _svc = TemporalIntelligenceService()

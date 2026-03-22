@@ -33,6 +33,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New API endpoint: `GET /api/insights/{project_id}/actions` (generate prioritized action recommendations from active insights)
 - BACKLOG.md for iterative development tracking
 
+### Fixed
+- **Critical: Router prefix duplication** — Sprint 1 routes (reconciliation, semantic-layer, explore, temporal) had double-prefixed paths (e.g. `/api/reconciliation/reconciliation/...`) causing 404s from frontend. Removed redundant router-level prefix.
+- **Security: Cross-project insight access** — confirm/dismiss/resolve insight endpoints now verify the insight belongs to the target project before mutation, preventing cross-project data manipulation.
+- **Feed API empty responses** — `scan_opportunities` and `scan_losses` now return `insights_stored: 0` when no DB entries exist, matching frontend DTO expectations.
+- **Next.js viewport metadata deprecation** — moved `themeColor` and `viewport` from `metadata` export to proper `viewport` export per Next.js 15 API, eliminating build warnings.
+- **Float conversion safety** — added `_safe_float` utility in action_engine and exploration_engine to handle `None`, non-numeric, and string confidence values without crashing.
+- **Reconciliation schema handling** — `reconcile_schemas` now handles `None` column lists gracefully with `set(schema.get(table) or [])`.
+- **Feed HTTPException consistency** — replaced inline `from fastapi import HTTPException` with top-level import and keyword args for consistency.
+
+### Changed
+- Test coverage increased from 68.90% to 71.03%
+- Added integration tests for Sprint 1 route path reachability (reconciliation, semantic-layer, explore, temporal)
+- Added integration test for cross-project insight access prevention
+- Added unit tests for `_safe_float` edge cases and `None`/non-numeric confidence handling
+
 ## [0.10.0] - 2026-03-22
 
 ### Security

@@ -13,7 +13,7 @@ from app.core.semantic_layer import SemanticLayerService
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/semantic-layer", tags=["semantic-layer"])
+router = APIRouter(tags=["semantic-layer"])
 
 _membership_svc = MembershipService()
 _semantic_svc = SemanticLayerService()

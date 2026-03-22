@@ -1,6 +1,6 @@
 """Tests for the Insight -> Action Engine."""
 
-from app.core.action_engine import ActionEngine, ActionRecommendation
+from app.core.action_engine import ActionEngine, ActionRecommendation, _safe_float
 
 
 class TestActionEngine:
@@ -166,3 +166,51 @@ class TestActionEngine:
     def test_priority_determination(self):
         assert ActionEngine._determine_priority("critical", 20, 0.9) == "critical"
         assert ActionEngine._determine_priority("info", 1, 0.3) == "low"
+
+    def test_none_confidence_handled(self):
+        insights = [
+            {
+                "insight_type": "anomaly",
+                "severity": "warning",
+                "title": "Test",
+                "description": "Test with None confidence",
+                "confidence": None,
+            }
+        ]
+        actions = self.engine.generate_actions(insights)
+        assert len(actions) == 1
+        assert actions[0].confidence >= 0
+
+    def test_non_numeric_confidence_handled(self):
+        insights = [
+            {
+                "insight_type": "anomaly",
+                "severity": "warning",
+                "title": "Test",
+                "description": "Test with string confidence",
+                "confidence": "high",
+            }
+        ]
+        actions = self.engine.generate_actions(insights)
+        assert len(actions) == 1
+
+
+class TestSafeFloat:
+    def test_valid_float(self):
+        assert _safe_float(3.14) == 3.14
+
+    def test_valid_int(self):
+        assert _safe_float(42) == 42.0
+
+    def test_valid_string_number(self):
+        assert _safe_float("0.5") == 0.5
+
+    def test_none_returns_default(self):
+        assert _safe_float(None) == 0.0
+        assert _safe_float(None, 0.5) == 0.5
+
+    def test_invalid_string_returns_default(self):
+        assert _safe_float("high", 0.5) == 0.5
+
+    def test_dict_returns_default(self):
+        assert _safe_float({"a": 1}, 0.3) == 0.3

@@ -243,8 +243,8 @@ class ReconciliationEngine:
         common_tables = set(schema_a.keys()) & set(schema_b.keys())
 
         for table in sorted(common_tables):
-            cols_a = set(schema_a[table])
-            cols_b = set(schema_b[table])
+            cols_a = set(schema_a.get(table) or [])
+            cols_b = set(schema_b.get(table) or [])
 
             only_in_a = cols_a - cols_b
             only_in_b = cols_b - cols_a

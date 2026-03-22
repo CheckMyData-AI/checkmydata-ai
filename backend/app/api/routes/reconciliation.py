@@ -14,7 +14,7 @@ from app.core.reconciliation_engine import ReconciliationEngine
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
+router = APIRouter(tags=["reconciliation"])
 
 _membership_svc = MembershipService()
 

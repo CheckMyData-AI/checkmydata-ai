@@ -13,6 +13,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class ActionRecommendation:
     """A concrete, actionable recommendation derived from an insight."""
@@ -125,7 +134,7 @@ class ActionEngine:
         severity = insight.get("severity", "info")
         title = insight.get("title", "")
         description = insight.get("description", "")
-        confidence = float(insight.get("confidence", 0.5))
+        confidence = _safe_float(insight.get("confidence", 0.5), 0.5)
         rec_action = insight.get("recommended_action", "")
         exp_impact = insight.get("expected_impact", "")
 

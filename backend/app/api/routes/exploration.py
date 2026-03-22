@@ -13,7 +13,7 @@ from app.core.exploration_engine import ExplorationEngine
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/explore", tags=["explore"])
+router = APIRouter(tags=["explore"])
 
 _membership_svc = MembershipService()
 _engine = ExplorationEngine()

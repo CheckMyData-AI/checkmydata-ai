@@ -213,3 +213,86 @@ class TestInsightsAPI:
             },
         )
         assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_cross_project_insight_access_blocked(
+        self, auth_client: AsyncClient, project_id: str
+    ):
+        """Verify that insight operations are scoped to the correct project."""
+        create_resp = await auth_client.post(
+            f"/api/insights/{project_id}",
+            json={
+                "insight_type": "anomaly",
+                "severity": "info",
+                "title": "Cross-project test",
+                "description": "Insight for project A",
+                "confidence": 0.5,
+            },
+        )
+        assert create_resp.status_code == 200
+        insight_id = create_resp.json()["id"]
+
+        other = await auth_client.post(
+            "/api/projects",
+            json={"name": "other-project", "description": "other"},
+        )
+        assert other.status_code == 200
+        other_project_id = other.json()["id"]
+
+        resp = await auth_client.patch(
+            f"/api/insights/{other_project_id}/{insight_id}/confirm",
+            json={},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_actions_empty(self, auth_client: AsyncClient, project_id: str):
+        resp = await auth_client.get(f"/api/insights/{project_id}/actions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["actions"] == []
+
+
+class TestSprintOneRoutePaths:
+    """Verify Sprint 1 API routes are reachable at correct paths (no prefix duplication)."""
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_route_reachable(self, auth_client: AsyncClient, project_id: str):
+        resp = await auth_client.post(
+            f"/api/reconciliation/{project_id}/row-counts",
+            json={
+                "source_a_connection_id": "fake-a",
+                "source_b_connection_id": "fake-b",
+                "counts_a": {},
+                "counts_b": {},
+            },
+        )
+        assert resp.status_code != 404
+
+    @pytest.mark.asyncio
+    async def test_semantic_layer_route_reachable(self, auth_client: AsyncClient, project_id: str):
+        resp = await auth_client.get(f"/api/semantic-layer/{project_id}/catalog")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_explore_route_reachable(self, auth_client: AsyncClient, project_id: str):
+        resp = await auth_client.post(
+            f"/api/explore/{project_id}",
+            json={},
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_temporal_analyze_route_reachable(
+        self, auth_client: AsyncClient, project_id: str
+    ):
+        resp = await auth_client.post(
+            f"/api/temporal/{project_id}/analyze",
+            json={
+                "project_id": project_id,
+                "values": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                "metric_name": "test_metric",
+            },
+        )
+        assert resp.status_code == 200

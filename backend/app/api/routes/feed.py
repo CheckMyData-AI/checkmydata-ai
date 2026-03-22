@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
@@ -122,9 +122,7 @@ async def scan_opportunities(
     )
     conn = result.scalar_one_or_none()
     if not conn:
-        from fastapi import HTTPException
-
-        raise HTTPException(404, "Connection not found")
+        raise HTTPException(status_code=404, detail="Connection not found")
 
     cfg = await conn_svc.to_config(db, conn)
 
@@ -134,7 +132,7 @@ async def scan_opportunities(
     db_entries = idx_result.scalars().all()
 
     if not db_entries:
-        return {"ok": True, "opportunities": [], "tables_scanned": 0}
+        return {"ok": True, "opportunities": [], "tables_scanned": 0, "insights_stored": 0}
 
     detector = OpportunityDetector()
     all_opportunities: list[dict] = []
@@ -239,9 +237,7 @@ async def scan_losses(
     )
     conn = result.scalar_one_or_none()
     if not conn:
-        from fastapi import HTTPException
-
-        raise HTTPException(404, "Connection not found")
+        raise HTTPException(status_code=404, detail="Connection not found")
 
     cfg = await conn_svc.to_config(db, conn)
 
@@ -251,7 +247,7 @@ async def scan_losses(
     db_entries = idx_result.scalars().all()
 
     if not db_entries:
-        return {"ok": True, "losses": [], "tables_scanned": 0}
+        return {"ok": True, "losses": [], "tables_scanned": 0, "insights_stored": 0}
 
     detector = LossDetector()
     all_losses: list[dict] = []
