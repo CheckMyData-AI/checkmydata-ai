@@ -2785,6 +2785,30 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 
 ## Changelog
 
+### 2026-03-22 — Race Conditions, Input Validation & Mounted Guards (Iteration 7)
+
+**Reliability (backend):**
+- VectorStore: added `threading.Lock` to protect shared `_collections` dict from concurrent access
+- `invite_service.accept_invite`: wrapped invite status update + member creation in `db.begin_nested()` for atomicity
+- MongoDB connector: added `serverSelectionTimeoutMS`, `connectTimeoutMS`, `socketTimeoutMS` to prevent indefinite hangs
+- Replaced silent `except Exception: pass/debug` with `logger.warning` in `models.py`, `projects.py`, `repos.py`, `mongodb.py` index listing
+
+**Security (backend):**
+- `AddRepoRequest`: added `max_length` to all fields, `Literal` validation for `provider`
+- `UpdateRepoRequest`: added `max_length` to `name`, `branch`, `ssh_key_id`
+- `NoteCreate`: added `max_length` to `answer_text` (100K), `visualization_json` (100K), `last_result_json` (500K)
+- `BatchExecuteRequest.note_ids`: limited list to 100 items
+- `RuleCreate`/`RuleUpdate`: enforced `format` with `Literal["markdown", "yaml", "text"]`
+- Rate limiting added to all remaining mutating endpoints: connections (12 endpoints), repos (4), notes (3), batch (2), invites (2)
+
+**Reliability (frontend):**
+- `BatchRunner`: `mountedRef` guard on polling interval callback
+- `SyncStatusIndicator`: `cancelled` flag on sync status polling
+- `NotificationBell`: `mountedRef` guard + replaced silent `.catch` with toast notifications
+- `ChatPanel`: `cancelled` flags on suggestions and cost estimate `useEffect` hooks
+- `ProjectSelector`: `cancelled` flag on initial project list fetch
+- `ChatSearch`: `mountedRef` guard on debounced search results
+
 ### 2026-03-22 — Memory Safety, Rate Limiting, and Error Boundaries (Iteration 5)
 
 **Security (backend):**
