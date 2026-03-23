@@ -683,6 +683,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         placeholder="Connection name"
         aria-label="Connection name"
         className={inputCls}
+        maxLength={255}
       />
       <select
         value={form.db_type}
@@ -743,6 +744,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 placeholder="Command (e.g. npx -y @anthropic/mcp-server)"
                 aria-label="MCP server command"
                 className={inputCls}
+                maxLength={500}
               />
               <input
                 value={form.mcp_server_args}
@@ -752,6 +754,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 placeholder="Arguments (space-separated)"
                 aria-label="MCP server arguments"
                 className={inputCls}
+                maxLength={1000}
               />
             </>
           ) : (
@@ -763,6 +766,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               placeholder="Server URL (e.g. http://localhost:8100/sse)"
               aria-label="MCP server URL"
               className={inputCls}
+              maxLength={500}
             />
           )}
 
@@ -799,6 +803,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               placeholder="postgresql://user:pass@host:5432/dbname"
               aria-label="Connection string"
               className={inputCls}
+              maxLength={500}
             />
           ) : (
             <>
@@ -811,6 +816,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   placeholder="Host"
                   aria-label="Database host"
                   className={halfInputCls}
+                  maxLength={255}
                 />
                 <input
                   value={form.db_port}
@@ -820,6 +826,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   placeholder="Port"
                   aria-label="Database port"
                   className={halfInputCls}
+                  maxLength={5}
                 />
               </div>
               <input
@@ -830,6 +837,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 placeholder="Database name"
                 aria-label="Database name"
                 className={inputCls}
+                maxLength={128}
               />
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -840,6 +848,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   placeholder="Username"
                   aria-label="Database username"
                   className={halfInputCls}
+                  maxLength={128}
                 />
                 <input
                   type="password"
@@ -852,6 +861,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   }
                   aria-label="Database password"
                   className={halfInputCls}
+                  maxLength={255}
                 />
               </div>
             </>
@@ -873,6 +883,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               placeholder="SSH Host (optional)"
               aria-label="SSH host"
               className={halfInputCls}
+              maxLength={255}
             />
             <input
               value={form.ssh_port}
@@ -880,6 +891,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               placeholder="SSH Port"
               aria-label="SSH port"
               className={halfInputCls}
+              maxLength={5}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -889,6 +901,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               placeholder="SSH User"
               aria-label="SSH user"
               className={halfInputCls}
+              maxLength={128}
             />
             <select
               value={form.ssh_key_id}

@@ -287,6 +287,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   placeholder="127.0.0.1"
+                  maxLength={255}
                 />
               </div>
               <div>
@@ -296,6 +297,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={port}
                   onChange={(e) => setPort(e.target.value)}
                   placeholder={DEFAULT_PORTS[dbType]}
+                  maxLength={5}
                 />
               </div>
             </div>
@@ -309,6 +311,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={dbName}
                 onChange={(e) => setDbName(e.target.value)}
                 placeholder="my_database"
+                maxLength={128}
               />
             </div>
 
@@ -322,6 +325,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={dbUser}
                   onChange={(e) => setDbUser(e.target.value)}
                   placeholder="postgres"
+                  maxLength={128}
                 />
               </div>
               <div>
@@ -334,6 +338,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={dbPassword}
                   onChange={(e) => setDbPassword(e.target.value)}
                   placeholder="********"
+                  maxLength={255}
                 />
               </div>
             </div>
@@ -362,6 +367,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       value={sshHost}
                       onChange={(e) => setSshHost(e.target.value)}
                       placeholder="ssh.example.com"
+                      maxLength={255}
                     />
                   </div>
                   <div>
@@ -373,6 +379,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       value={sshPort}
                       onChange={(e) => setSshPort(e.target.value)}
                       placeholder="22"
+                      maxLength={5}
                     />
                   </div>
                 </div>
@@ -385,6 +392,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     value={sshUser}
                     onChange={(e) => setSshUser(e.target.value)}
                     placeholder="ubuntu"
+                    maxLength={128}
                   />
                 </div>
                 {sshKeys.length > 0 && (
@@ -522,6 +530,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 placeholder="git@github.com:org/repo.git"
+                maxLength={500}
               />
             </div>
             {sshKeys.length > 0 && (
@@ -562,6 +571,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 placeholder="e.g. Show me revenue by month"
+                maxLength={2000}
               />
             </div>
             <p className="text-xs text-text-muted">
