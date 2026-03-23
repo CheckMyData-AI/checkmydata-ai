@@ -32,6 +32,12 @@ class ClickHouseConnector(BaseConnector):
         return "clickhouse"
 
     async def connect(self, config: ConnectionConfig) -> None:
+        if self._client:
+            try:
+                await asyncio.to_thread(self._client.close)
+            except Exception:
+                logger.debug("ClickHouse: error closing existing client before reconnect", exc_info=True)
+            self._client = None
         self._config = config
 
         if config.connection_string:

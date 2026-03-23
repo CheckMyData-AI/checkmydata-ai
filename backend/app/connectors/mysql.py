@@ -33,6 +33,13 @@ class MySQLConnector(BaseConnector):
         return "mysql"
 
     async def connect(self, config: ConnectionConfig) -> None:
+        if self._pool:
+            try:
+                self._pool.close()
+                await self._pool.wait_closed()
+            except Exception:
+                logger.debug("MySQL: error closing existing pool before reconnect", exc_info=True)
+            self._pool = None
         self._config = config
 
         if config.connection_string:

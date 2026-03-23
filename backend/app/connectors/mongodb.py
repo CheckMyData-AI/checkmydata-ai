@@ -32,6 +32,13 @@ class MongoDBConnector(BaseConnector):
         return "mongodb"
 
     async def connect(self, config: ConnectionConfig) -> None:
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:
+                logger.debug("MongoDB: error closing existing client before reconnect", exc_info=True)
+            self._client = None
+            self._db = None
         self._config = config
 
         if config.connection_string:

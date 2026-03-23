@@ -32,6 +32,12 @@ class PostgresConnector(BaseConnector):
         return "postgres"
 
     async def connect(self, config: ConnectionConfig) -> None:
+        if self._pool:
+            try:
+                await self._pool.close()
+            except Exception:
+                logger.debug("Postgres: error closing existing pool before reconnect", exc_info=True)
+            self._pool = None
         self._config = config
 
         if config.connection_string:
