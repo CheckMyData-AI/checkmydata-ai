@@ -152,6 +152,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
   const [checking, setChecking] = useState(false);
   const [selectingId, setSelectingId] = useState<string | null>(null);
+  const selectSeqRef = useRef(0);
   const [accessResult, setAccessResult] = useState<RepoCheckResult | null>(
     null,
   );
@@ -342,6 +343,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   };
 
   const handleSelect = async (project: Project) => {
+    const seq = ++selectSeqRef.current;
     setSelectingId(project.id);
     setActiveProject(project);
     setUserRole(project.user_role || null);
@@ -355,10 +357,12 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         api.connections.listByProject(project.id),
         api.chat.listSessions(project.id),
       ]);
+      if (seq !== selectSeqRef.current) return;
       setConnections(conns);
       setActiveConnection(conns[0] || null);
       setChatSessions(sessions);
     } catch (err) {
+      if (seq !== selectSeqRef.current) return;
       setConnections([]);
       setActiveConnection(null);
       setChatSessions([]);
@@ -367,7 +371,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         "error",
       );
     } finally {
-      setSelectingId(null);
+      if (seq === selectSeqRef.current) setSelectingId(null);
     }
   };
 

@@ -742,6 +742,18 @@ async def _health_check_loop() -> None:
 
 @app.get("/api/health")
 async def health_check():
+    from starlette.responses import JSONResponse
+
+    try:
+        from app.models.base import async_session_factory
+
+        async with async_session_factory() as session:
+            await session.execute(__import__("sqlalchemy").text("SELECT 1"))
+    except Exception:
+        return JSONResponse(
+            {"status": "unhealthy", "detail": "database unreachable"},
+            status_code=503,
+        )
     return {"status": "ok"}
 
 

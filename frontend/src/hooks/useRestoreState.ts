@@ -31,12 +31,16 @@ export function useRestoreState(isAuthenticated: boolean) {
     const store = useAppStore.getState();
     store.setRestoringState(true);
 
+    const signal = { cancelled: false };
+
     (async () => {
       try {
         const [projects, project] = await Promise.all([
           api.projects.list(),
           api.projects.get(projectId).catch(() => null),
         ]);
+
+        if (signal.cancelled) return;
 
         store.setProjects(projects);
 
@@ -55,6 +59,8 @@ export function useRestoreState(isAuthenticated: boolean) {
           api.chat.listSessions(project.id),
         ]);
 
+        if (signal.cancelled) return;
+
         store.setConnections(conns);
         store.setChatSessions(sessions);
 
@@ -68,6 +74,7 @@ export function useRestoreState(isAuthenticated: boolean) {
             store.setActiveSession(session);
             try {
               const msgs = await api.chat.getMessages(sessionId);
+              if (signal.cancelled) return;
               const mapped: ChatMessage[] = msgs.map((m) => {
                 let meta: Record<string, unknown> = {};
                 try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
@@ -97,6 +104,7 @@ export function useRestoreState(isAuthenticated: boolean) {
           }
         }
       } catch (err) {
+        if (signal.cancelled) return;
         if (isAccessError(err)) {
           toast("You no longer have access to the previous project", "error");
           localStorage.removeItem("active_project_id");
@@ -110,8 +118,12 @@ export function useRestoreState(isAuthenticated: boolean) {
           ran.current = false;
         }
       } finally {
-        store.setRestoringState(false);
+        if (!signal.cancelled) {
+          store.setRestoringState(false);
+        }
       }
     })();
+
+    return () => { signal.cancelled = true; };
   }, [isAuthenticated]);
 }
