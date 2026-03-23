@@ -1459,6 +1459,28 @@ async def chat_websocket(
                         tool_calls_json=ws_tool_calls_str,
                     )
 
+                    ws_usage = result.token_usage or {}
+                    try:
+                        await _usage_svc.record_usage(
+                            db,
+                            user_id=user_id,
+                            project_id=project_id,
+                            session_id=session_id,
+                            message_id=ws_assistant_msg.id,
+                            provider=result.llm_provider or "unknown",
+                            model=result.llm_model or "unknown",
+                            prompt_tokens=ws_usage.get("prompt_tokens", 0),
+                            completion_tokens=ws_usage.get("completion_tokens", 0),
+                            total_tokens=ws_usage.get("total_tokens", 0),
+                            estimated_cost_usd=_estimate_cost(
+                                result.llm_model,
+                                ws_usage.get("prompt_tokens", 0),
+                                ws_usage.get("completion_tokens", 0),
+                            ),
+                        )
+                    except Exception:
+                        logger.warning("WS: Failed to record token usage", exc_info=True)
+
                 await websocket.send_json(
                     {
                         "type": "response",
