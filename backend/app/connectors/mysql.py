@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import aiomysql
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -94,7 +95,7 @@ class MySQLConnector(BaseConnector):
         converted = re.sub(r":(\w+)", _replacer, query)
         return converted, tuple(ordered)
 
-    _QUERY_TIMEOUT_S = 120
+    _QUERY_TIMEOUT_S = settings.query_timeout_seconds
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._pool:

@@ -15,6 +15,7 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
+from app.config import settings
 from app.connectors.ssh_tunnel import SSHTunnelManager
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class PostgresConnector(BaseConnector):
                 config.connection_string,
                 min_size=1,
                 max_size=5,
-                command_timeout=120,
+                command_timeout=settings.query_timeout_seconds,
             )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
@@ -57,7 +58,7 @@ class PostgresConnector(BaseConnector):
                 password=config.db_password,
                 min_size=1,
                 max_size=5,
-                command_timeout=120,
+                command_timeout=settings.query_timeout_seconds,
             )
 
     async def disconnect(self) -> None:
