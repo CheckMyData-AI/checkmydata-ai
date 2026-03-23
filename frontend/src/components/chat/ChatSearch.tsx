@@ -221,6 +221,7 @@ export function ChatSearch() {
             if (query.trim().length >= 2) setOpen(true);
           }}
           onKeyDown={handleKeyDown}
+          aria-label="Search chats"
           placeholder="Search chats..."
           className="w-full pl-7 pr-10 py-1.5 text-xs bg-surface-1 border border-border-subtle rounded-md text-text-primary placeholder:text-text-muted/60 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-colors"
         />

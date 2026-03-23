@@ -158,6 +158,7 @@ export function KnowledgeDocs() {
             </span>
             <button
               onClick={() => setViewingDoc(null)}
+              aria-label="Close document viewer"
               className="p-0.5 rounded text-text-muted hover:text-text-primary transition-colors ml-2"
             >
               <Icon name="x" size={12} />

@@ -193,6 +193,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
           )}
           <button
             onClick={onClose}
+            aria-label="Close learnings panel"
             className="p-0.5 rounded hover:bg-surface-3 transition-colors text-text-muted hover:text-text-primary"
           >
             <Icon name="x" size={14} />

@@ -163,7 +163,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}>
-      <div className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl">
+      <div role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl">
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between">
           <div className="flex items-center gap-2">
