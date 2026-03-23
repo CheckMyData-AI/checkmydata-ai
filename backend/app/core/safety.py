@@ -23,8 +23,10 @@ DANGEROUS_PATTERNS_SQL = [
 
 DML_PATTERNS_SQL = [
     re.compile(r"\b(INSERT)\s+INTO\b", re.IGNORECASE),
-    re.compile(r"\b(UPDATE)\s+\w+\s+SET\b", re.IGNORECASE),
+    re.compile(r"\b(UPDATE)\s+[\w.\"'`]+(\s*\.\s*[\w\"'`]+)*\s+SET\b", re.IGNORECASE),
     re.compile(r"\b(DELETE)\s+FROM\b", re.IGNORECASE),
+    re.compile(r"\b(MERGE)\s+INTO\b", re.IGNORECASE),
+    re.compile(r"\b(UPSERT)\s+INTO\b", re.IGNORECASE),
 ]
 
 

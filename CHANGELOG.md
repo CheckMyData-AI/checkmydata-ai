@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Mobile sidebar missing Dashboards** — Added Dashboards section to mobile sidebar drawer, matching desktop feature parity
 - **DashboardBuilder JSON.parse crash** — Wrapped `visualization_json` parse in try/catch to prevent builder crash on malformed data
 - **Investigation IDOR** — `get_investigation` and `confirm-fix` endpoints now verify the investigation's connection belongs to the requested project, preventing cross-project data access
+- **SQL safety guard bypass** — UPDATE pattern now matches qualified table names (`schema.table`, `"schema"."table"`) and added MERGE/UPSERT DML patterns to read-only guard
+- **Backend container runs as root** — Dockerfile.backend now creates a non-root `appuser` and runs the application with reduced privileges
+- **Auth store localStorage consistency** — `storeAuth` now uses the safe-storage module matching the rest of the auth store, preventing partial state on Safari private mode
 
 ### Security
 - **Auth register error sanitization** — Register endpoint no longer exposes internal ValueError messages; returns static "already exists" message while logging details server-side

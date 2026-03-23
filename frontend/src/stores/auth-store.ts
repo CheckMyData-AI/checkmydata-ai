@@ -19,12 +19,8 @@ interface AuthState {
 }
 
 function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; user: AuthUser }) {
-  try {
-    localStorage.setItem("auth_token", res.token);
-    localStorage.setItem("auth_user", JSON.stringify(res.user));
-  } catch {
-    /* QuotaExceededError — auth still works for this session via state */
-  }
+  storage.setItem("auth_token", res.token);
+  storage.setItem("auth_user", JSON.stringify(res.user));
   set({ user: res.user, token: res.token, isLoading: false });
 }
 

@@ -11,7 +11,12 @@ RUN pip install --no-cache-dir "."
 
 COPY backend/ .
 
-RUN mkdir -p data rules
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --ingroup appgroup appuser && \
+    mkdir -p data rules && \
+    chown -R appuser:appgroup /app
+
+USER appuser
 
 EXPOSE 8000
 
