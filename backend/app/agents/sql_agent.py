@@ -1073,6 +1073,7 @@ class SQLAgent(BaseAgent):
                     ttl_hours=app_settings.db_index_ttl_hours,
                 )
         except Exception:
+            logger.debug("_is_db_index_stale failed", exc_info=True)
             return False
 
     async def _has_code_db_sync(self, cfg: ConnectionConfig) -> bool:
@@ -1086,6 +1087,7 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 return await svc.is_synced(session, cfg.connection_id)
         except Exception:
+            logger.debug("_has_code_db_sync failed", exc_info=True)
             return False
 
     async def _has_learnings(self, cfg: ConnectionConfig) -> bool:
@@ -1099,6 +1101,7 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 return await svc.has_learnings(session, cfg.connection_id)
         except Exception:
+            logger.debug("_has_learnings failed", exc_info=True)
             return False
 
     async def _build_table_map(self, connection_id: str, has_sync: bool = False) -> str:
@@ -1128,6 +1131,7 @@ class SQLAgent(BaseAgent):
 
             return _build_enriched_table_map(entries, sync_warnings_map)
         except Exception:
+            logger.debug("_build_table_map failed", exc_info=True)
             return ""
 
     async def _load_learnings_prompt(self, connection_id: str) -> str:
@@ -1139,6 +1143,7 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 return await svc.get_or_compile_summary(session, connection_id)
         except Exception:
+            logger.debug("_load_learnings_prompt failed", exc_info=True)
             return ""
 
     async def _load_sync_for_prompt(self, connection_id: str) -> tuple[str, str]:
@@ -1164,6 +1169,7 @@ class SQLAgent(BaseAgent):
 
             return conventions, warnings_text
         except Exception:
+            logger.debug("_load_sync_for_prompt failed", exc_info=True)
             return "", ""
 
     async def _load_notes_prompt(self, connection_id: str) -> str:
@@ -1175,6 +1181,7 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 return await svc.compile_notes_prompt(session, connection_id)
         except Exception:
+            logger.debug("_load_notes_prompt failed", exc_info=True)
             return ""
 
     async def _load_sync_filters_and_mappings(self, connection_id: str) -> tuple[str, str]:
@@ -1215,6 +1222,7 @@ class SQLAgent(BaseAgent):
 
             return "\n".join(filters_lines), "\n".join(mappings_lines)
         except Exception:
+            logger.debug("_load_sync_filters_and_mappings failed", exc_info=True)
             return "", ""
 
     async def _resolve_connection_id(self, project_id: str, cfg: ConnectionConfig) -> str | None:
@@ -1246,6 +1254,7 @@ class SQLAgent(BaseAgent):
                 return ""
             return svc.index_to_prompt_context(entries, summary)
         except Exception:
+            logger.debug("_load_db_index_hints failed", exc_info=True)
             return ""
 
     async def _load_sync_for_repair(self, cfg: ConnectionConfig) -> tuple[str, str]:
@@ -1272,6 +1281,7 @@ class SQLAgent(BaseAgent):
                     tips.append(f"- {e.table_name} (logic): {e.business_logic_notes[:150]}")
             return "\n".join(warnings), "\n".join(tips)
         except Exception:
+            logger.debug("_load_sync_for_repair failed", exc_info=True)
             return "", ""
 
     async def _load_rules_for_repair(self, project_id: str) -> str:
@@ -1281,6 +1291,7 @@ class SQLAgent(BaseAgent):
             db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
             return self._rules_engine.rules_to_context(file_rules + db_rules)
         except Exception:
+            logger.debug("_load_rules_for_repair failed", exc_info=True)
             return ""
 
     async def _load_distinct_values(self, cfg: ConnectionConfig) -> dict[str, dict[str, list[str]]]:
@@ -1305,6 +1316,7 @@ class SQLAgent(BaseAgent):
                         pass
             return result
         except Exception:
+            logger.debug("_load_distinct_values failed", exc_info=True)
             return {}
 
     async def _load_learnings_for_repair(self, cfg: ConnectionConfig) -> str:
@@ -1329,6 +1341,7 @@ class SQLAgent(BaseAgent):
                 lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}")
             return "\n".join(lines)
         except Exception:
+            logger.debug("_load_learnings_for_repair failed", exc_info=True)
             return ""
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
