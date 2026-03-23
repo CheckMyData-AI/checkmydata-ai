@@ -86,6 +86,13 @@ async def lifespan(app: FastAPI):
     _scheduler_task = asyncio.create_task(_scheduler_loop())
     _health_check_task = asyncio.create_task(_health_check_loop())
 
+    try:
+        llm_router_startup = chat._agent._orchestrator._llm
+        await llm_router_startup.start_health_checks()
+        logger.info("LLM health checks started")
+    except Exception:
+        logger.debug("Could not start LLM health checks", exc_info=True)
+
     yield
 
     for task in (_backup_task, _scheduler_task, _health_check_task):

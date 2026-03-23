@@ -250,10 +250,12 @@ class LLMRouter:
                     continue
                 if not e.is_retryable:
                     break
+                self.mark_unhealthy(provider_name)
                 continue
             except Exception as e:
                 logger.warning("Provider %s failed: %s", provider_name, e)
                 last_error = e
+                self.mark_unhealthy(provider_name)
                 continue
 
         raise LLMAllProvidersFailedError(
