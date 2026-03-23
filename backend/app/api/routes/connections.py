@@ -47,6 +47,20 @@ def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], No
     return _cb
 
 
+async def cancel_background_tasks() -> None:
+    """Cancel all in-flight indexing and sync tasks (called on shutdown)."""
+    for tasks in (_db_index_tasks, _sync_tasks):
+        for task in tasks.values():
+            if not task.done():
+                task.cancel()
+        for task in tasks.values():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        tasks.clear()
+
+
 _learning_svc = AgentLearningService()
 
 

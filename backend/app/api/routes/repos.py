@@ -60,6 +60,19 @@ _pipeline_runner = IndexingPipelineRunner(
 )
 
 
+async def cancel_background_tasks() -> None:
+    """Cancel all in-flight repo indexing tasks (called on shutdown)."""
+    for task in _indexing_tasks.values():
+        if not task.done():
+            task.cancel()
+    for task in _indexing_tasks.values():
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _indexing_tasks.clear()
+
+
 class RepoCheckRequest(BaseModel):
     repo_url: str
     ssh_key_id: str | None = None

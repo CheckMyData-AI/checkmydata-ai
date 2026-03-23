@@ -21,24 +21,28 @@ function toLogEntry(ev: WorkflowEvent) {
   };
 }
 
-function seedActiveTasks() {
-  api.tasks.getActive().then(
-    (tasks) => useTaskStore.getState().seedFromApi(tasks),
-    () => {},
-  );
-}
-
 export function useGlobalEvents(enabled: boolean) {
   const attemptRef = useRef(0);
   const unsubRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeRef = useRef(false);
 
   useEffect(() => {
     if (!enabled) {
       unsubRef.current?.();
       unsubRef.current = null;
+      activeRef.current = false;
       useLogStore.getState().setConnected(false);
       return;
+    }
+
+    activeRef.current = true;
+
+    function seedActiveTasks() {
+      api.tasks.getActive().then(
+        (tasks) => { if (activeRef.current) useTaskStore.getState().seedFromApi(tasks); },
+        () => {},
+      );
     }
 
     function scheduleReconnect() {
@@ -74,6 +78,7 @@ export function useGlobalEvents(enabled: boolean) {
     connect();
 
     return () => {
+      activeRef.current = false;
       unsubRef.current?.();
       unsubRef.current = null;
       if (timerRef.current) clearTimeout(timerRef.current);

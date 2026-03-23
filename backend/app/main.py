@@ -94,6 +94,13 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+
+    from app.api.routes.connections import cancel_background_tasks as cancel_conn_tasks
+    from app.api.routes.repos import cancel_background_tasks as cancel_repo_tasks
+
+    await cancel_conn_tasks()
+    await cancel_repo_tasks()
+
     logger.info("Shutting down: closing LLM clients")
     try:
         llm_router = chat._agent._orchestrator._llm

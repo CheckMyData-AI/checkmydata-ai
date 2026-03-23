@@ -19,6 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Rate limiting** — Added rate limits to `/visualizations/render`, `/exploration`, `/semantic-layer`, `/reconciliation`, `/temporal` endpoints
 
 ### Fixed
+- **Connector disconnect safety** — All 6 connectors (postgres, mysql, mongodb, clickhouse, mcp, ssh_exec) now use try/finally in disconnect() to always clear handles even when teardown throws
+- **Keyboard shortcut conflict** — Removed duplicate Cmd/Ctrl+K handler from ChatInput; ChatSearch now exclusively owns the shortcut
+- **localStorage quota safety** — Wrapped localStorage.setItem calls in auth-store and app-store with try/catch to handle QuotaExceededError gracefully
+- **useRestoreState race** — Added cancellation flag to prevent stale async restore results from overwriting store after unmount or auth change
+- **ProjectSelector race** — Added sequence counter to discard out-of-order API responses when rapidly switching projects
+- **Health endpoint depth** — /api/health now verifies DB connectivity (SELECT 1), returns 503 when database is unreachable
+- **Graceful shutdown** — Indexing and sync background tasks from connections/repos routes are now cancelled during shutdown
+- **seedActiveTasks race** — useGlobalEvents seedActiveTasks now checks active flag before writing to store, preventing stale seed after disconnect
 - Recreated backend venv to fix stale shebangs from old project path
 - **InsightFeedPanel** now shows "Couldn't load insights" with Retry when API fails (previously showed misleading empty state)
 - **DashboardList** now shows "Couldn't load dashboards" with Retry when API fails (previously showed misleading empty state)
