@@ -9,9 +9,10 @@ class TestNormalizePath:
         assert _normalize_path(path) == "/api/projects/:id/chat"
 
     def test_multiple_uuids(self):
-        path = "/api/projects/a1b2c3d4-e5f6-7890-abcd-ef1234567890/conn/f1e2d3c4-b5a6-7890-1234-567890abcdef"
-        result = _normalize_path(path)
-        assert result == "/api/projects/:id/conn/:id"
+        uid1 = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        uid2 = "f1e2d3c4-b5a6-7890-1234-567890abcdef"
+        path = f"/api/projects/{uid1}/conn/{uid2}"
+        assert _normalize_path(path) == "/api/projects/:id/conn/:id"
 
     def test_no_uuid_unchanged(self):
         assert _normalize_path("/api/health") == "/api/health"
