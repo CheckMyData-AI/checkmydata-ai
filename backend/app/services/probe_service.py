@@ -78,7 +78,13 @@ class ProbeService:
         await session.flush()
         return report
 
-    _VALID_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.\"` \-]{0,200}$")
+    _VALID_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_. \-]{0,200}$")
+
+    @staticmethod
+    def _quote_identifier(name: str) -> str:
+        """Double-quote an identifier, escaping any embedded double quotes."""
+        escaped = name.replace('"', '""')
+        return f'"{escaped}"'
 
     async def _probe_table(
         self,
@@ -100,7 +106,7 @@ class ProbeService:
             entry["findings"].append(f"Skipped: invalid table name '{table}'")
             return entry
 
-        quoted = f'"{table}"' if '"' not in table else table
+        quoted = self._quote_identifier(table)
 
         try:
             count_result = await connector.execute_query(f"SELECT COUNT(*) AS cnt FROM {quoted}")
