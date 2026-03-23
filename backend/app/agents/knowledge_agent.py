@@ -17,6 +17,7 @@ from app.agents.prompts.knowledge_prompt import build_knowledge_system_prompt
 from app.agents.tools.knowledge_tools import get_knowledge_tools
 from app.config import settings
 from app.core.history_trimmer import trim_loop_messages
+from app.core.ttl_cache import TTLCache
 from app.core.types import RAGSource
 from app.knowledge.entity_extractor import ProjectKnowledge
 from app.knowledge.vector_store import VectorStore
@@ -46,8 +47,7 @@ class KnowledgeAgent(BaseAgent):
     ) -> None:
         self._vector_store = vector_store or VectorStore()
         self._cache_svc = ProjectCacheService()
-        self._knowledge_cache: dict[str, tuple[float, ProjectKnowledge]] = {}
-        self._knowledge_cache_ttl = 300.0
+        self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
 
     @property
     def name(self) -> str:
@@ -264,20 +264,16 @@ class KnowledgeAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
-        import time
-
         cached = self._knowledge_cache.get(project_id)
         if cached is not None:
-            ts, knowledge = cached
-            if (time.monotonic() - ts) < self._knowledge_cache_ttl:
-                return knowledge
+            return cached
 
         from app.models.base import async_session_factory
 
         async with async_session_factory() as session:
             knowledge = await self._cache_svc.load_knowledge(session, project_id)
         if knowledge is not None:
-            self._knowledge_cache[project_id] = (time.monotonic(), knowledge)
+            self._knowledge_cache.put(project_id, knowledge)
         return knowledge
 
     # ------------------------------------------------------------------

@@ -36,6 +36,7 @@ from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
 from app.core.query_validation import ValidationConfig
 from app.core.retry_strategy import RetryStrategy
+from app.core.ttl_cache import TTLCache
 from app.core.types import RAGSource
 from app.core.validation_loop import ValidationLoop
 from app.knowledge.custom_rules import CustomRulesEngine
@@ -121,10 +122,11 @@ class SQLAgent(BaseAgent):
 
         self._connectors: dict[str, BaseConnector] = {}
         self._connector_lock = asyncio.Lock()
-        self._schema_cache: dict[str, tuple[SchemaInfo, float]] = {}
+        self._schema_cache: TTLCache[SchemaInfo] = TTLCache(
+            ttl=settings.schema_cache_ttl_seconds, max_size=128,
+        )
         self._query_cache = QueryCache()
-        self._knowledge_cache: dict[str, tuple[float, ProjectKnowledge]] = {}
-        self._knowledge_cache_ttl = 300.0
+        self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
 
     @property
     def name(self) -> str:
@@ -1012,13 +1014,11 @@ class SQLAgent(BaseAgent):
     async def _get_cached_schema(self, cfg: ConnectionConfig) -> SchemaInfo:
         key = connector_key(cfg)
         cached = self._schema_cache.get(key)
-        if cached:
-            schema, ts = cached
-            if time.monotonic() - ts < settings.schema_cache_ttl_seconds:
-                return schema
+        if cached is not None:
+            return cached
         conn = await self._get_or_create_connector(cfg)
         schema = await conn.introspect_schema()
-        self._schema_cache[key] = (schema, time.monotonic())
+        self._schema_cache.put(key, schema)
         return schema
 
     @staticmethod
@@ -1345,20 +1345,16 @@ class SQLAgent(BaseAgent):
             return ""
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
-        import time
-
         cached = self._knowledge_cache.get(project_id)
         if cached is not None:
-            ts, knowledge = cached
-            if (time.monotonic() - ts) < self._knowledge_cache_ttl:
-                return knowledge
+            return cached
 
         from app.models.base import async_session_factory
 
         async with async_session_factory() as session:
             knowledge = await self._cache_svc.load_knowledge(session, project_id)
         if knowledge is not None:
-            self._knowledge_cache[project_id] = (time.monotonic(), knowledge)
+            self._knowledge_cache.put(project_id, knowledge)
         return knowledge
 
     async def _track_applied_learnings(self, learnings: list) -> None:
