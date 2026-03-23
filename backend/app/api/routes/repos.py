@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from git import Repo
 from pydantic import BaseModel, Field
@@ -513,7 +513,7 @@ async def add_repository(
 @router.get("/{project_id}/repositories", response_model=list[RepoResponse])
 async def list_repositories(
     project_id: str,
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):

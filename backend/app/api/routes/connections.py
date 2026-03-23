@@ -56,11 +56,11 @@ class ConnectionCreate(BaseModel):
     db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] = Field(max_length=50)
     source_type: str = "database"
     ssh_host: str | None = Field(None, max_length=255)
-    ssh_port: int = 22
+    ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = Field(None, max_length=255)
     ssh_key_id: str | None = None
     db_host: str = Field(default="127.0.0.1", max_length=255)
-    db_port: int = 5432
+    db_port: int = Field(default=5432, ge=1, le=65535)
     db_name: str = ""
     db_user: str | None = Field(None, max_length=255)
     db_password: str | None = None
@@ -101,11 +101,11 @@ class ConnectionUpdate(BaseModel):
     db_type: str | None = Field(None, max_length=50)
     source_type: str | None = Field(None, max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
-    ssh_port: int | None = None
+    ssh_port: int | None = Field(None, ge=1, le=65535)
     ssh_user: str | None = Field(None, max_length=100)
     ssh_key_id: str | None = Field(None, max_length=64)
     db_host: str | None = Field(None, max_length=255)
-    db_port: int | None = None
+    db_port: int | None = Field(None, ge=1, le=65535)
     db_name: str | None = Field(None, max_length=200)
     db_user: str | None = Field(None, max_length=100)
     db_password: str | None = Field(None, max_length=500)

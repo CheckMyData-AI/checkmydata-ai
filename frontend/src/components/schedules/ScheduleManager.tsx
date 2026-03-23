@@ -427,6 +427,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Schedule title"
+            maxLength={255}
             className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
 
@@ -435,6 +436,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             onChange={(e) => setSqlQuery(e.target.value)}
             placeholder="SQL query"
             rows={3}
+            maxLength={10000}
             className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
           />
 

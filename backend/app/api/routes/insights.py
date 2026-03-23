@@ -43,7 +43,7 @@ class InsightSummaryResponse(BaseModel):
 
 
 class InsightFeedbackRequest(BaseModel):
-    feedback: str = ""
+    feedback: str = Field(default="", max_length=2000)
 
 
 class CreateInsightRequest(BaseModel):
@@ -60,9 +60,9 @@ class CreateInsightRequest(BaseModel):
     ]
     severity: Literal["critical", "warning", "info", "positive"] = "info"
     title: str = Field(..., min_length=1, max_length=500)
-    description: str = Field(..., min_length=1)
-    recommended_action: str = ""
-    expected_impact: str = ""
+    description: str = Field(..., min_length=1, max_length=5000)
+    recommended_action: str = Field(default="", max_length=2000)
+    expected_impact: str = Field(default="", max_length=2000)
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
 

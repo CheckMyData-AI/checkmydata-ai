@@ -248,6 +248,7 @@ export function NoteCard({ note }: NoteCardProps) {
               value={commentDraft}
               onChange={(e) => setCommentDraft(e.target.value)}
               rows={2}
+              maxLength={5000}
               className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-secondary resize-none focus:outline-none focus:border-accent"
               placeholder="Add a comment..."
             />

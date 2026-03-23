@@ -85,6 +85,7 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
             onChange={(e) => setAnswer(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="Type your answer..."
+            maxLength={2000}
             className="flex-1 px-3 py-1.5 rounded-md text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-600"
           />
           <button

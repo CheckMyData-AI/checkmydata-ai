@@ -27,17 +27,17 @@ _sync_svc = CodeDbSyncService()
 
 
 class ProjectCreate(BaseModel):
-    name: str = Field(min_length=1)
-    description: str = ""
-    repo_url: str | None = None
-    repo_branch: str = "main"
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=2000)
+    repo_url: str | None = Field(default=None, max_length=1000)
+    repo_branch: str = Field(default="main", max_length=255)
     ssh_key_id: str | None = None
-    indexing_llm_provider: str | None = None
-    indexing_llm_model: str | None = None
-    agent_llm_provider: str | None = None
-    agent_llm_model: str | None = None
-    sql_llm_provider: str | None = None
-    sql_llm_model: str | None = None
+    indexing_llm_provider: str | None = Field(default=None, max_length=100)
+    indexing_llm_model: str | None = Field(default=None, max_length=200)
+    agent_llm_provider: str | None = Field(default=None, max_length=100)
+    agent_llm_model: str | None = Field(default=None, max_length=200)
+    sql_llm_provider: str | None = Field(default=None, max_length=100)
+    sql_llm_model: str | None = Field(default=None, max_length=200)
 
     @field_validator("name", mode="before")
     @classmethod

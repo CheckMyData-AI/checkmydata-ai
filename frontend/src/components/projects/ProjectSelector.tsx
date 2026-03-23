@@ -418,6 +418,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
           }}
           placeholder="Project name"
           aria-label="Project name"
+          maxLength={255}
           className={`${inputCls} ${nameError ? "border-error ring-1 ring-error" : ""}`}
         />
         {nameError && (
