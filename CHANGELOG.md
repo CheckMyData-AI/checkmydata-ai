@@ -11,12 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Chat feedback redesign** — Removed quick-action chips, FollowupChips, DataValidationCard, and WrongDataModal from chat messages. Thumbs up/down now record data validation and thumbs down auto-triggers agent investigation in chat
 - **Sidebar "+New" redesign** — Moved all "+New" buttons from section content into section header "+" icons that appear only when expanded. Applies to Projects, Connections, Chat History, Rules, Schedules, and Dashboards
 
+### Security
+- **KnowledgeAgent cache isolation** — Fixed critical cross-project data leakage where cached knowledge could bleed between projects (single-slot cache → dict keyed by project_id)
+- **MCP connection IDOR** — Added project ownership check before using MCP connections in orchestrator
+- **SafetyGuard on diagnostic queries** — Investigation agent `run_diagnostic_query` now validates SQL through SafetyGuard before execution
+- **SafetyGuard on schedule run-now** — Manual schedule execution now applies the same safety checks as the cron scheduler
+- **Rate limiting** — Added rate limits to `/visualizations/render`, `/exploration`, `/semantic-layer`, `/reconciliation`, `/temporal` endpoints
+
 ### Fixed
 - Recreated backend venv to fix stale shebangs from old project path
 - **InsightFeedPanel** now shows "Couldn't load insights" with Retry when API fails (previously showed misleading empty state)
 - **DashboardList** now shows "Couldn't load dashboards" with Retry when API fails (previously showed misleading empty state)
 - **ConnectionSelector** now shows "No connections yet" empty state when no connections exist
 - **VizRenderer** now shows "Visualization data unavailable" instead of rendering nothing when payload is missing
+- **SSE stream completion guard** — Chat stream now fires `onError` if server ends without result/error event, preventing stuck loading state
+- **DataValidationCard** — Removed premature optimistic `setVerdict` before API confirmation; UI only updates on success
+- **AccountMenu** — Added Escape key handler for keyboard dismissal
+- **RetryStrategy** — Fixed empty repair hints when COLUMN_NOT_FOUND has no suggested columns
+- **Sidebar callbacks** — Replaced 11 inline lambdas with stable useCallback refs to prevent unnecessary child effect re-runs
+- **Notes store** — `loadNotes` failure now shows toast error instead of silent empty state
+- **Silent exceptions** — Added debug logging to 10+ previously silent `except: pass` blocks across chat, connectors, and agent modules
+- **Accessibility** — Added dialog semantics to BatchRunner, aria-labels to icon-only buttons and form inputs across 6 components
+- **Performance** — Narrowed Zustand selectors in 17+ components to prevent full-store re-renders
 - **test_alembic.py** — use `sys.executable -m alembic` instead of bare `alembic` CLI to avoid picking up system Python outside venv
 
 ### Tests
