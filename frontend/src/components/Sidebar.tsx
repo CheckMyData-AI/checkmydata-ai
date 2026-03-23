@@ -179,7 +179,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem("sidebar_main_collapsed", String(next));
+      try { localStorage.setItem("sidebar_main_collapsed", String(next)); } catch { /* */ }
       return next;
     });
   };
@@ -230,7 +230,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     if (target) {
       if (collapsed) {
         setCollapsed(false);
-        localStorage.setItem("sidebar_main_collapsed", "false");
+        try { localStorage.setItem("sidebar_main_collapsed", "false"); } catch { /* */ }
       }
       target.forceOpen();
       setTimeout(() => target.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);

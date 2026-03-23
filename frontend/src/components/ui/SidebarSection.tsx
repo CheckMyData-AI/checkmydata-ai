@@ -24,7 +24,7 @@ export function useSectionCollapse(id: string, defaultOpen = true) {
       const next = !prev;
       const saved = getCollapsed();
       saved[id] = !next;
-      localStorage.setItem("sidebar_collapsed", JSON.stringify(saved));
+      try { localStorage.setItem("sidebar_collapsed", JSON.stringify(saved)); } catch { /* */ }
       return next;
     });
   };
@@ -33,7 +33,7 @@ export function useSectionCollapse(id: string, defaultOpen = true) {
     setOpen(true);
     const saved = getCollapsed();
     saved[id] = false;
-    localStorage.setItem("sidebar_collapsed", JSON.stringify(saved));
+    try { localStorage.setItem("sidebar_collapsed", JSON.stringify(saved)); } catch { /* */ }
   };
 
   return { open, toggle, forceOpen };

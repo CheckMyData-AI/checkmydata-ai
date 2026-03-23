@@ -4,13 +4,18 @@ import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 
 function persistOpen(value: boolean) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem("notes_panel_open", String(value));
+  try {
+    if (typeof window !== "undefined") localStorage.setItem("notes_panel_open", String(value));
+  } catch { /* storage unavailable */ }
 }
 
 function getPersistedOpen(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("notes_panel_open") === "true";
+  try {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("notes_panel_open") === "true";
+  } catch {
+    return false;
+  }
 }
 
 type NoteScope = "mine" | "shared" | "all";

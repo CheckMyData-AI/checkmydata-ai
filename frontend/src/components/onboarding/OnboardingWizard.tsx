@@ -175,7 +175,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       await api.auth.completeOnboarding();
       const fresh = await api.auth.me();
       useAuthStore.setState({ user: fresh });
-      localStorage.setItem("auth_user", JSON.stringify(fresh));
+      try { localStorage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* */ }
 
       if (createdProject) {
         const projects = await api.projects.list();
@@ -202,7 +202,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       await api.auth.completeOnboarding();
       const fresh = await api.auth.me();
       useAuthStore.setState({ user: fresh });
-      localStorage.setItem("auth_user", JSON.stringify(fresh));
+      try { localStorage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* */ }
       onComplete();
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to skip onboarding", "error");
@@ -218,7 +218,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       await api.auth.completeOnboarding();
       const fresh = await api.auth.me();
       useAuthStore.setState({ user: fresh });
-      localStorage.setItem("auth_user", JSON.stringify(fresh));
+      try { localStorage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* */ }
 
       const projects = await api.projects.list();
       setProjects(projects);

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, type AuthUser } from "@/lib/api";
+import * as storage from "@/lib/safe-storage";
 import { toast } from "@/stores/toast-store";
 
 const REFRESH_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
@@ -48,7 +49,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
   if (refreshTimer) clearTimeout(refreshTimer);
-  const token = localStorage.getItem("auth_token");
+  const token = storage.getItem("auth_token");
   if (!token) return;
 
   const expMs = getTokenExpMs(token);
@@ -121,24 +122,24 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window !== "undefined" && window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("auth_user");
-    localStorage.removeItem("active_project_id");
-    localStorage.removeItem("active_connection_id");
-    localStorage.removeItem("active_session_id");
+    storage.removeItem("auth_token");
+    storage.removeItem("auth_user");
+    storage.removeItem("active_project_id");
+    storage.removeItem("active_connection_id");
+    storage.removeItem("active_session_id");
     set({ user: null, token: null });
   },
 
   restore: async () => {
     if (typeof window === "undefined") return;
-    const token = localStorage.getItem("auth_token");
-    const userStr = localStorage.getItem("auth_user");
+    const token = storage.getItem("auth_token");
+    const userStr = storage.getItem("auth_user");
     if (token && userStr) {
       try {
         const expMs = getTokenExpMs(token);
         if (expMs && expMs < Date.now()) {
-          localStorage.removeItem("auth_token");
-          localStorage.removeItem("auth_user");
+          storage.removeItem("auth_token");
+          storage.removeItem("auth_user");
           return;
         }
         set({ user: JSON.parse(userStr), token });
@@ -146,16 +147,16 @@ export const useAuthStore = create<AuthState>((set) => ({
 
         try {
           const fresh = await api.auth.me();
-          try { localStorage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* quota */ }
+          try { storage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* quota */ }
           set({ user: fresh });
         } catch {
-          localStorage.removeItem("auth_token");
-          localStorage.removeItem("auth_user");
+          storage.removeItem("auth_token");
+          storage.removeItem("auth_user");
           set({ user: null, token: null });
         }
       } catch {
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("auth_user");
+        storage.removeItem("auth_token");
+        storage.removeItem("auth_user");
       }
     }
   },

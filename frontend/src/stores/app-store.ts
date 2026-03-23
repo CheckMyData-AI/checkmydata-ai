@@ -51,8 +51,12 @@ function persistId(key: string, value: string | null) {
 }
 
 export function getPersistedId(key: string): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(key);
+  try {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 interface ReadinessCacheEntry {

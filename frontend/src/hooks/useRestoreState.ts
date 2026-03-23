@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import * as storage from "@/lib/safe-storage";
 import { useAppStore, getPersistedId } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
@@ -45,9 +46,9 @@ export function useRestoreState(isAuthenticated: boolean) {
         store.setProjects(projects);
 
         if (!project) {
-          localStorage.removeItem("active_project_id");
-          localStorage.removeItem("active_connection_id");
-          localStorage.removeItem("active_session_id");
+          storage.removeItem("active_project_id");
+          storage.removeItem("active_connection_id");
+          storage.removeItem("active_session_id");
           return;
         }
 
@@ -97,19 +98,19 @@ export function useRestoreState(isAuthenticated: boolean) {
               });
               store.setMessages(mapped);
             } catch {
-              localStorage.removeItem("active_session_id");
+              storage.removeItem("active_session_id");
             }
           } else {
-            localStorage.removeItem("active_session_id");
+            storage.removeItem("active_session_id");
           }
         }
       } catch (err) {
         if (signal.cancelled) return;
         if (isAccessError(err)) {
           toast("You no longer have access to the previous project", "error");
-          localStorage.removeItem("active_project_id");
-          localStorage.removeItem("active_connection_id");
-          localStorage.removeItem("active_session_id");
+          storage.removeItem("active_project_id");
+          storage.removeItem("active_connection_id");
+          storage.removeItem("active_session_id");
         } else {
           toast(
             "Failed to restore session — will retry on next refresh",
