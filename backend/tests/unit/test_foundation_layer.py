@@ -44,6 +44,14 @@ class TestTrustService:
         score = TrustService.compute_confidence(base_confidence=0.5, data_freshness_hours=48)
         assert score == 0.45
 
+    def test_compute_confidence_moderate_data_points(self):
+        score = TrustService.compute_confidence(base_confidence=0.5, data_points=50)
+        assert score == 0.55
+
+    def test_compute_confidence_two_sources(self):
+        score = TrustService.compute_confidence(base_confidence=0.5, sources_count=2)
+        assert score == 0.55
+
     def test_compute_confidence_clamped(self):
         score = TrustService.compute_confidence(
             base_confidence=0.9,

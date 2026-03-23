@@ -504,6 +504,18 @@ class TestValidateAndFixConfigEdgeCases:
             assert dc in results.columns
 
 
+class TestGenerateConfig:
+    def test_table_type_returns_empty(self):
+        results = _qr(columns=["a", "b"], rows=[["x", 1]])
+        cfg = VizAgent._generate_config(results, "table")
+        assert cfg == {}
+
+    def test_unknown_type_returns_empty(self):
+        results = _qr(columns=["a", "b"], rows=[["x", 1]])
+        cfg = VizAgent._generate_config(results, "unknown_viz")
+        assert cfg == {}
+
+
 class TestSummarizeResults:
     def test_empty_results(self):
         results = _qr(columns=["x"], rows=[])

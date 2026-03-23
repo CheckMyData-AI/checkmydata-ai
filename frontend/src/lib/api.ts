@@ -977,6 +977,8 @@ export const api = {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let gotResult = false;
+        let gotError = false;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -998,11 +1000,14 @@ export const api = {
               else if (eventType === "thinking") onThinking?.(parsed);
               else if (eventType === "step") onStep(parsed);
               else if (eventType === "tool_call") onToolCall?.(parsed);
-              else if (eventType === "result") onResult(parsed as ChatResponse);
-              else if (eventType === "error") onError(parsed as StreamError);
+              else if (eventType === "result") { gotResult = true; onResult(parsed as ChatResponse); }
+              else if (eventType === "error") { gotError = true; onError(parsed as StreamError); }
               else if (pipelineEvents.has(eventType)) onPipelineEvent?.(eventType, parsed);
             } catch { /* skip malformed */ }
           }
+        }
+        if (!gotResult && !gotError) {
+          onError({ error: "Stream ended unexpectedly", error_type: "network", is_retryable: true, user_message: "The response ended unexpectedly. Please try again." });
         }
       }).catch((err) => {
         if (idleTimer) clearTimeout(idleTimer);

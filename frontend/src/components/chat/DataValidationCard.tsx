@@ -19,7 +19,6 @@ export function DataValidationCard({ messageId, query, sessionId }: DataValidati
   const [submitting, setSubmitting] = useState(false);
 
   const handleQuickAction = async (v: "confirmed" | "approximate" | "unknown") => {
-    setVerdict(v);
     await submitValidation(v);
   };
 
