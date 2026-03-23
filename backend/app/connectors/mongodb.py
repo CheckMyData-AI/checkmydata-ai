@@ -127,13 +127,18 @@ class MongoDBConnector(BaseConnector):
                 if "_id" in doc:
                     doc["_id"] = str(doc["_id"])
 
-            columns = list(docs[0].keys())
-            rows = [list(d.get(c) for c in columns) for d in docs]
+            from app.connectors.base import MAX_RESULT_ROWS
+
+            truncated = len(docs) > MAX_RESULT_ROWS
+            capped = docs[:MAX_RESULT_ROWS] if truncated else docs
+            columns = list(capped[0].keys()) if capped else []
+            rows = [list(d.get(c) for c in columns) for d in capped]
             return QueryResult(
                 columns=columns,
                 rows=rows,
-                row_count=len(rows),
+                row_count=len(docs),
                 execution_time_ms=elapsed,
+                truncated=truncated,
             )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000

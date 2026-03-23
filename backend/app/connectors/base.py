@@ -84,6 +84,9 @@ class SchemaInfo:
     db_name: str = ""
 
 
+MAX_RESULT_ROWS = 10_000
+
+
 @dataclass
 class QueryResult:
     columns: list[str] = field(default_factory=list)
@@ -91,6 +94,7 @@ class QueryResult:
     row_count: int = 0
     execution_time_ms: float = 0.0
     error: str | None = None
+    truncated: bool = False
 
 
 # -----------------------------------------------------------------------

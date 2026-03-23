@@ -119,12 +119,17 @@ class MySQLConnector(BaseConnector):
                         return QueryResult(row_count=0, execution_time_ms=elapsed)
 
                     columns = list(rows[0].keys())
-                    data = [list(r.values()) for r in rows]
+                    from app.connectors.base import MAX_RESULT_ROWS
+
+                    truncated = len(rows) > MAX_RESULT_ROWS
+                    capped = rows[:MAX_RESULT_ROWS] if truncated else rows
+                    data = [list(r.values()) for r in capped]
                     return QueryResult(
                         columns=columns,
                         rows=data,
-                        row_count=len(data),
+                        row_count=len(rows),
                         execution_time_ms=elapsed,
+                        truncated=truncated,
                     )
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000

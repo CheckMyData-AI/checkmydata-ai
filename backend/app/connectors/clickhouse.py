@@ -84,12 +84,17 @@ class ClickHouseConnector(BaseConnector):
             elapsed = (time.monotonic() - start) * 1000
 
             columns = list(result.column_names) if result.column_names else []
-            rows = [list(row) for row in result.result_rows] if result.result_rows else []
+            all_rows = [list(row) for row in result.result_rows] if result.result_rows else []
+            from app.connectors.base import MAX_RESULT_ROWS
+
+            truncated = len(all_rows) > MAX_RESULT_ROWS
+            rows = all_rows[:MAX_RESULT_ROWS] if truncated else all_rows
             return QueryResult(
                 columns=columns,
                 rows=rows,
-                row_count=len(rows),
+                row_count=len(all_rows),
                 execution_time_ms=elapsed,
+                truncated=truncated,
             )
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
