@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/app-store";
 import { InviteManager } from "./InviteManager";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
+import { invalidateRestore } from "@/hooks/useRestoreState";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -343,6 +344,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   };
 
   const handleSelect = async (project: Project) => {
+    invalidateRestore();
     const seq = ++selectSeqRef.current;
     setSelectingId(project.id);
     setActiveProject(project);

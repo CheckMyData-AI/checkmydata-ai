@@ -12,6 +12,13 @@ function isAccessError(err: unknown): boolean {
   return err.message.includes("403") || err.message.includes("404");
 }
 
+let _restoreSeq = 0;
+
+/** Invalidate any in-flight restore (call when user explicitly switches project). */
+export function invalidateRestore() {
+  _restoreSeq++;
+}
+
 export function useRestoreState(isAuthenticated: boolean) {
   const ran = useRef(false);
 
@@ -32,7 +39,9 @@ export function useRestoreState(isAuthenticated: boolean) {
     const store = useAppStore.getState();
     store.setRestoringState(true);
 
+    const seq = ++_restoreSeq;
     const signal = { cancelled: false };
+    const isStale = () => signal.cancelled || seq !== _restoreSeq;
 
     (async () => {
       try {
@@ -41,7 +50,7 @@ export function useRestoreState(isAuthenticated: boolean) {
           api.projects.get(projectId).catch(() => null),
         ]);
 
-        if (signal.cancelled) return;
+        if (isStale()) return;
 
         store.setProjects(projects);
 
@@ -60,7 +69,7 @@ export function useRestoreState(isAuthenticated: boolean) {
           api.chat.listSessions(project.id),
         ]);
 
-        if (signal.cancelled) return;
+        if (isStale()) return;
 
         store.setConnections(conns);
         store.setChatSessions(sessions);
@@ -75,7 +84,7 @@ export function useRestoreState(isAuthenticated: boolean) {
             store.setActiveSession(session);
             try {
               const msgs = await api.chat.getMessages(sessionId);
-              if (signal.cancelled) return;
+              if (isStale()) return;
               const mapped: ChatMessage[] = msgs.map((m) => {
                 let meta: Record<string, unknown> = {};
                 try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
@@ -105,7 +114,7 @@ export function useRestoreState(isAuthenticated: boolean) {
           }
         }
       } catch (err) {
-        if (signal.cancelled) return;
+        if (isStale()) return;
         if (isAccessError(err)) {
           toast("You no longer have access to the previous project", "error");
           storage.removeItem("active_project_id");
@@ -119,7 +128,7 @@ export function useRestoreState(isAuthenticated: boolean) {
           ran.current = false;
         }
       } finally {
-        if (!signal.cancelled) {
+        if (!isStale()) {
           store.setRestoringState(false);
         }
       }
