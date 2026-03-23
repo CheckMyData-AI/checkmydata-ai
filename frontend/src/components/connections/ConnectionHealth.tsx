@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ConnectionHealthState } from "@/lib/api";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
+import { onEvent, type WorkflowEvent } from "@/lib/sse";
 import { toast } from "@/stores/toast-store";
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
@@ -60,7 +60,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
   }, [fetchHealth]);
 
   useEffect(() => {
-    const unsub = subscribeToAllEvents((event: WorkflowEvent) => {
+    const unsub = onEvent((event: WorkflowEvent) => {
       if (
         event.step === "connection_health" &&
         event.extra?.connection_id === connectionId

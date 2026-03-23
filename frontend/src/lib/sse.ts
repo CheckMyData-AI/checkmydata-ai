@@ -108,3 +108,18 @@ export function subscribeToAllEvents(
   const url = `${API_BASE}/workflows/events`;
   return createSSEStream(url, onEvent, onError, onEnd);
 }
+
+const _listeners = new Set<WorkflowEventHandler>();
+
+/** Broadcast an event to all local listeners (no new SSE stream). */
+export function broadcastEvent(event: WorkflowEvent): void {
+  for (const fn of _listeners) {
+    try { fn(event); } catch { /* listener error */ }
+  }
+}
+
+/** Subscribe to locally-broadcast events. Returns unsubscribe function. */
+export function onEvent(handler: WorkflowEventHandler): () => void {
+  _listeners.add(handler);
+  return () => { _listeners.delete(handler); };
+}

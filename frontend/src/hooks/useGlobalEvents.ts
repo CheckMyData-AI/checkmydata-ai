@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
+import { broadcastEvent, subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
 import { api } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
 import { useTaskStore } from "@/stores/task-store";
@@ -66,6 +66,7 @@ export function useGlobalEvents(enabled: boolean) {
           useLogStore.getState().setConnected(true);
           useLogStore.getState().addEntry(toLogEntry(event));
           useTaskStore.getState().processEvent(event);
+          broadcastEvent(event);
         },
         () => scheduleReconnect(),
         () => scheduleReconnect(),
