@@ -3,8 +3,8 @@ import logging
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -29,17 +29,41 @@ class ScheduleCreate(BaseModel):
     title: str = Field(max_length=200)
     sql_query: str = Field(max_length=50000)
     cron_expression: str = Field(max_length=100)
-    alert_conditions: str | None = None
-    notification_channels: str | None = None
+    alert_conditions: str | None = Field(None, max_length=10000)
+    notification_channels: str | None = Field(None, max_length=5000)
+
+    @field_validator("alert_conditions", mode="before")
+    @classmethod
+    def validate_alert_json(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, list):
+                    raise ValueError("alert_conditions must be a JSON array")
+            except json.JSONDecodeError:
+                raise ValueError("alert_conditions must be valid JSON")
+        return v
 
 
 class ScheduleUpdate(BaseModel):
     title: str | None = Field(None, max_length=200)
     sql_query: str | None = Field(None, max_length=50000)
     cron_expression: str | None = Field(None, max_length=100)
-    alert_conditions: str | None = None
-    notification_channels: str | None = None
+    alert_conditions: str | None = Field(None, max_length=10000)
+    notification_channels: str | None = Field(None, max_length=5000)
     is_active: bool | None = None
+
+    @field_validator("alert_conditions", mode="before")
+    @classmethod
+    def validate_alert_json(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, list):
+                    raise ValueError("alert_conditions must be a JSON array")
+            except json.JSONDecodeError:
+                raise ValueError("alert_conditions must be valid JSON")
+        return v
 
 
 class ScheduleResponse(BaseModel):
@@ -117,11 +141,13 @@ async def create_schedule(
 @router.get("", response_model=list[ScheduleResponse])
 async def list_schedules(
     project_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_schedules(db, project_id)
+    return await _svc.list_schedules(db, project_id, skip=skip, limit=limit)
 
 
 @router.get("/{schedule_id}", response_model=ScheduleResponse)
@@ -244,6 +270,7 @@ async def run_now(
     rows = getattr(result, "rows", []) or []
     serialized_rows = [[serialize_value(v) for v in row] for row in rows[:500]]
 
+    max_result_bytes = 1_000_000
     result_summary = json.dumps(
         {
             "columns": cols,
@@ -252,6 +279,17 @@ async def run_now(
         },
         default=str,
     )
+    if len(result_summary) > max_result_bytes:
+        serialized_rows = serialized_rows[:50]
+        result_summary = json.dumps(
+            {
+                "columns": cols,
+                "rows": serialized_rows,
+                "total_rows": getattr(result, "row_count", len(rows)),
+                "truncated": True,
+            },
+            default=str,
+        )
 
     alerts = AlertEvaluator.evaluate(serialized_rows, cols, schedule.alert_conditions)
     status = "alert_triggered" if alerts else "success"
@@ -292,6 +330,8 @@ async def run_now(
 @router.get("/{schedule_id}/history", response_model=list[RunResponse])
 async def get_history(
     schedule_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -299,4 +339,4 @@ async def get_history(
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
     await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "viewer")
-    return await _svc.get_run_history(db, schedule_id)
+    return await _svc.get_run_history(db, schedule_id, skip=skip, limit=limit)

@@ -4,13 +4,13 @@ Revision ID: c5f1d9e23a01
 Revises: b3c8f2a71e56
 Create Date: 2026-03-14
 """
-from typing import Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
+
 revision: str = 'c5f1d9e23a01'
-down_revision: Union[str, None] = 'b3c8f2a71e56'
+down_revision: str | None = 'b3c8f2a71e56'
 branch_labels = None
 depends_on = None
 

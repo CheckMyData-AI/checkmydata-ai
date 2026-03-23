@@ -12,6 +12,7 @@ import app.models.custom_rule  # noqa: F401
 import app.models.db_index  # noqa: F401
 import app.models.indexing_checkpoint  # noqa: F401
 import app.models.knowledge_doc  # noqa: F401
+import app.models.notification  # noqa: F401
 import app.models.project  # noqa: F401
 import app.models.project_cache  # noqa: F401
 import app.models.project_invite  # noqa: F401
@@ -19,10 +20,9 @@ import app.models.project_member  # noqa: F401
 import app.models.rag_feedback  # noqa: F401
 import app.models.repository  # noqa: F401
 import app.models.saved_note  # noqa: F401
+import app.models.scheduled_query  # noqa: F401
 import app.models.ssh_key  # noqa: F401
 import app.models.token_usage  # noqa: F401
-import app.models.notification  # noqa: F401
-import app.models.scheduled_query  # noqa: F401
 import app.models.user  # noqa: F401
 from alembic import context
 from app.config import settings

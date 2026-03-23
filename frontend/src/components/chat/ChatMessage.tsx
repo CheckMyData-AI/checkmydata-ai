@@ -239,9 +239,11 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   };
 
   const [noteSaving, setNoteSaving] = useState(false);
-  const [noteSaved, setNoteSaved] = useState(() =>
-    message.query ? useNotesStore.getState().hasSqlQuery(message.query) : false,
+  const noteSavedFromStore = useNotesStore((s) =>
+    message.query ? s.notes.some((n) => n.sql_query === message.query) : false,
   );
+  const [noteSavedLocal, setNoteSavedLocal] = useState(false);
+  const noteSaved = noteSavedFromStore || noteSavedLocal;
 
   const handleSaveToNotes = async () => {
     if (noteSaving || noteSaved) return;
@@ -266,7 +268,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
       });
       useNotesStore.getState().addNote(note);
       useNotesStore.getState().setOpen(true);
-      setNoteSaved(true);
+      setNoteSavedLocal(true);
       toast("Query saved to notes", "info");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to save note", "error");

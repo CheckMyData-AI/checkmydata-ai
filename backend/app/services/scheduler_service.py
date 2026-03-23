@@ -59,11 +59,15 @@ class SchedulerService:
         self,
         db: AsyncSession,
         project_id: str,
+        skip: int = 0,
+        limit: int = 50,
     ) -> list[ScheduledQuery]:
         result = await db.execute(
             select(ScheduledQuery)
             .where(ScheduledQuery.project_id == project_id)
             .order_by(ScheduledQuery.created_at.desc())
+            .offset(skip)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
@@ -152,12 +156,14 @@ class SchedulerService:
         self,
         db: AsyncSession,
         schedule_id: str,
+        skip: int = 0,
         limit: int = 50,
     ) -> list[ScheduleRun]:
         result = await db.execute(
             select(ScheduleRun)
             .where(ScheduleRun.schedule_id == schedule_id)
             .order_by(ScheduleRun.executed_at.desc())
+            .offset(skip)
             .limit(limit)
         )
         return list(result.scalars().all())

@@ -4,15 +4,15 @@ Revision ID: a3f7c8d912b4
 Revises: b2c3d4e5f6a7
 Create Date: 2026-03-17
 """
-from typing import Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "a3f7c8d912b4"
-down_revision: Union[str, None] = "b2c3d4e5f6a7"
-branch_labels: Union[str, None] = None
-depends_on: Union[str, None] = None
+down_revision: str | None = "b2c3d4e5f6a7"
+branch_labels: str | None = None
+depends_on: str | None = None
 
 
 def upgrade() -> None:

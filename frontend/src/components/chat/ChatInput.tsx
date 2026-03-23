@@ -21,7 +21,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
     inputRef.current?.focus();
   }, [value, disabled, onSend]);
 
-  const MAX_LENGTH = 4000;
+  const MAX_LENGTH = 20000;
   const remaining = MAX_LENGTH - value.length;
   const nearLimit = remaining <= 200;
 

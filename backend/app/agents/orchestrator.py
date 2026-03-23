@@ -210,9 +210,13 @@ class OrchestratorAgent(BaseAgent):
                 )
             if has_connection and not context.extra.get("_skip_complexity") and is_complex:
                 logger.info("Complex query detected — using multi-stage pipeline")
-                return await self._run_complex_pipeline(
+                result = await self._run_complex_pipeline(
                     context, wf_id, table_map, db_type, staleness_warning
                 )
+                await self._tracker.end(
+                    wf_id, "orchestrator", "completed", "complex_pipeline"
+                )
+                return result
 
             project_overview = await self._load_project_overview(context.project_id)
             recent_learnings = await self._load_recent_learnings(context)
@@ -785,7 +789,9 @@ class OrchestratorAgent(BaseAgent):
 
         await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
 
-        return self._build_pipeline_response(exec_result, wf_id, None, run_id)
+        result = self._build_pipeline_response(exec_result, wf_id, None, run_id)
+        await self._tracker.end(wf_id, "orchestrator", "completed", "pipeline_resume")
+        return result
 
     async def _create_pipeline_run(
         self,
@@ -1023,7 +1029,8 @@ class OrchestratorAgent(BaseAgent):
         elif isinstance(sub_result, KnowledgeResult):
             n = len(sub_result.sources)
             detail = f"{label}: {n} source(s) found"
-        asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
+        task = asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:

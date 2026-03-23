@@ -114,6 +114,7 @@ class BenchmarkService:
         session: AsyncSession,
         connection_id: str,
         min_confidence: float = 0.3,
+        limit: int = 500,
     ) -> list[DataBenchmark]:
         result = await session.execute(
             select(DataBenchmark)
@@ -122,5 +123,6 @@ class BenchmarkService:
                 DataBenchmark.confidence >= min_confidence,
             )
             .order_by(DataBenchmark.last_confirmed_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())

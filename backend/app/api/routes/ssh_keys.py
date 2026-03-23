@@ -14,7 +14,7 @@ _svc = SshKeyService()
 class SshKeyCreate(BaseModel):
     name: str = Field(max_length=255)
     private_key: str = Field(max_length=16000)
-    passphrase: str | None = None
+    passphrase: str | None = Field(None, max_length=1024)
 
 
 class SshKeyResponse(BaseModel):
@@ -112,7 +112,7 @@ async def delete_ssh_key(
     if not key:
         raise HTTPException(status_code=404, detail="SSH key not found")
     try:
-        deleted = await _svc.delete(db, key_id)
+        deleted = await _svc.delete(db, key_id, user_id=user["user_id"])
     except SshKeyInUseError as e:
         raise HTTPException(
             status_code=409,

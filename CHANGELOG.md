@@ -24,6 +24,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **SQL safety guard bypass** — UPDATE pattern now matches qualified table names (`schema.table`, `"schema"."table"`) and added MERGE/UPSERT DML patterns to read-only guard
 - **Backend container runs as root** — Dockerfile.backend now creates a non-root `appuser` and runs the application with reduced privileges
 - **Auth store localStorage consistency** — `storeAuth` now uses the safe-storage module matching the rest of the auth store, preventing partial state on Safari private mode
+- **Pipeline end event not emitted** — Complex query and pipeline resume paths now emit `pipeline_end` event, preventing SSE streams from hanging indefinitely
+- **SQL agent connector leak** — Connector cache now capped at 32 entries with LRU eviction and stale connector detection, preventing unbounded connection growth
+- **Session title generation MissingGreenlet** — `generate_session_title` now uses explicit async query instead of triggering lazy-loaded relationship
+- **Chat search LIKE injection** — Search term `%`, `_`, `\` characters now escaped before building LIKE pattern
+- **WebSocket error information leak** — Error handler now sends generic message instead of raw exception string
+- **SSE event regex mismatch** — Frontend SSE parser now matches hyphenated event names (e.g., `pipeline-end`)
+- **ChatInput max length mismatch** — Frontend char limit raised from 4000 to 20000 to match backend
+- **ChatMessage note state not reactive** — Note saved indicator now uses reactive Zustand subscription
+- **Learning IDOR** — `update_learning` now verifies ownership before mutating, preventing cross-connection learning edits
+- **MongoDB URI credential encoding** — Username and password now URL-encoded with `quote_plus` to handle special characters
+- **SSH tunnel race condition** — Per-key asyncio locks prevent concurrent tunnel creation for the same config
+- **ClickHouse password in process list** — Exec templates now pass password via environment variable instead of CLI argument
+- **SSH key delete without user_id** — `delete()` now called with `user_id` for ownership verification consistency
+- **Schedule pagination** — `list_schedules` and `get_history` endpoints now accept `skip`/`limit` query params
+- **Alert conditions validation** — `alert_conditions` JSON validated as array with max_length; `notification_channels` capped
+- **Result summary size cap** — Schedule run results truncated to 50 rows if JSON exceeds 1MB
+- **Benchmark query unbounded** — `get_all_for_connection` now limited to 500 results
+- **OpenRouter model fetch contention** — Double-check locking pattern reduces lock contention during cache misses
+- **Connection service default limit** — `list_by_project` default reduced from 2000 to 200
+- **Test connection error sanitization** — Error messages truncated to 500 chars to prevent internal detail leaks
+- **Input validation hardening** — Added `max_length` to `LearningUpdate.lesson`, `SshKeyCreate.passphrase`, `mcp_env` size limits
+- **Orchestrator fire-and-forget warning** — `ensure_future` callback now retrieves exceptions to suppress "Task exception was never retrieved" warnings
 
 ### Security
 - **Auth register error sanitization** — Register endpoint no longer exposes internal ValueError messages; returns static "already exists" message while logging details server-side

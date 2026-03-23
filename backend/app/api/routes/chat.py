@@ -267,7 +267,8 @@ async def search_messages(
     from app.models.chat_session import ChatMessage as ChatMessageModel
     from app.models.chat_session import ChatSession
 
-    term = f"%{q}%"
+    escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    term = f"%{escaped_q}%"
     stmt = (
         select(
             ChatMessageModel.id,
@@ -494,12 +495,22 @@ async def generate_session_title(
     from app.llm.base import Message as LLMMessage
     from app.llm.router import LLMRouter
 
-    session_obj = await _require_session_owner(db, session_id, user["user_id"])
+    await _require_session_owner(db, session_id, user["user_id"])
 
-    first_user = next(
-        (m.content for m in (session_obj.messages or []) if m.role == "user"),
-        None,
+    from sqlalchemy import select as sa_select
+
+    from app.models.chat_session import ChatMessage as ChatMessageModel
+
+    msg_result = await db.execute(
+        sa_select(ChatMessageModel.content)
+        .where(
+            ChatMessageModel.session_id == session_id,
+            ChatMessageModel.role == "user",
+        )
+        .order_by(ChatMessageModel.created_at)
+        .limit(1)
     )
+    first_user = msg_result.scalar_one_or_none()
     if not first_user:
         raise HTTPException(status_code=400, detail="No user messages in session")
 
@@ -1532,10 +1543,11 @@ async def chat_websocket(
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for project %s", project_id)
-    except Exception as e:
+    except Exception:
         logger.exception("WebSocket error")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            err_msg = "An internal error occurred. Please try again."
+            await websocket.send_json({"type": "error", "message": err_msg})
         except Exception:
             logger.debug("Failed to send error over WebSocket", exc_info=True)
 

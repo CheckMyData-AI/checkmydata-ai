@@ -90,6 +90,17 @@ class ConnectionCreate(BaseModel):
     mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
 
+    @field_validator("mcp_env", mode="before")
+    @classmethod
+    def validate_mcp_env(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            if len(v) > 50:
+                raise ValueError("mcp_env cannot have more than 50 entries")
+            for key, val in v.items():
+                if len(str(key)) > 255 or len(str(val)) > 4096:
+                    raise ValueError("mcp_env keys max 255 chars, values max 4096 chars")
+        return v
+
     @field_validator("name", "connection_string", mode="before")
     @classmethod
     def strip_strings(cls, v: str | None) -> str | None:
@@ -852,9 +863,9 @@ async def learnings_summary(
 
 
 class LearningUpdate(BaseModel):
-    lesson: str | None = None
+    lesson: str | None = Field(None, max_length=10000)
     is_active: bool | None = None
-    confidence: float | None = None
+    confidence: float | None = Field(None, ge=0.0, le=1.0)
 
 
 @router.patch("/{connection_id}/learnings/{learning_id}")
@@ -884,10 +895,14 @@ async def update_learning(
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    from app.models.agent_learning import AgentLearning
+
+    check = await db.get(AgentLearning, learning_id)
+    if not check or check.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
+
     entry = await _learning_svc.update_learning(db, learning_id, **kwargs)
     if not entry:
-        raise HTTPException(status_code=404, detail="Learning not found")
-    if entry.connection_id != connection_id:
         raise HTTPException(status_code=404, detail="Learning not found")
     await db.commit()
     return {"ok": True, "id": entry.id}

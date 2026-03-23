@@ -4,15 +4,14 @@ Revision ID: c7d2e8f31a45
 Revises: a3f7c8d912b4
 Create Date: 2026-03-17
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = 'c7d2e8f31a45'
-down_revision: Union[str, None] = 'a3f7c8d912b4'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'a3f7c8d912b4'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 FK_UPDATES = [
     ("knowledge_docs", "knowledge_docs_project_id_fkey", "project_id", "projects", "id"),

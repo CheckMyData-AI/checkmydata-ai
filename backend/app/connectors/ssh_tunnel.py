@@ -175,12 +175,18 @@ class SSHTunnelManager:
 
     def __init__(self):
         self._tunnels: dict[str, SSHTunnel] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     def _key(self, config: ConnectionConfig) -> str:
         return (
             f"{config.ssh_host}:{config.ssh_port}:{config.ssh_user}"
             f":{config.db_host}:{config.db_port}"
         )
+
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
 
     _RECONNECT_MAX_ATTEMPTS = 3
     _RECONNECT_BACKOFF_SECONDS = 2
@@ -190,40 +196,45 @@ class SSHTunnelManager:
             return config.db_host, config.db_port
 
         key = self._key(config)
-        tunnel = self._tunnels.get(key)
 
+        tunnel = self._tunnels.get(key)
         if tunnel and await tunnel.is_alive():
             return tunnel.local_host, tunnel.local_port
 
-        if tunnel:
-            logger.info("SSH tunnel for %s is dead, attempting reconnect", key)
-            await tunnel.stop()
+        async with self._get_lock(key):
+            tunnel = self._tunnels.get(key)
+            if tunnel and await tunnel.is_alive():
+                return tunnel.local_host, tunnel.local_port
 
-        last_exc: Exception | None = None
-        for attempt in range(1, self._RECONNECT_MAX_ATTEMPTS + 1):
-            try:
-                tunnel = SSHTunnel()
-                host, port = await tunnel.start(config)
-                self._tunnels[key] = tunnel
-                if attempt > 1:
-                    logger.info("SSH tunnel reconnected on attempt %d for %s", attempt, key)
-                return host, port
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(
-                    "SSH tunnel reconnect attempt %d/%d failed for %s: %s",
-                    attempt,
-                    self._RECONNECT_MAX_ATTEMPTS,
-                    key,
-                    exc,
-                )
-                if attempt < self._RECONNECT_MAX_ATTEMPTS:
-                    await asyncio.sleep(self._RECONNECT_BACKOFF_SECONDS * attempt)
+            if tunnel:
+                logger.info("SSH tunnel for %s is dead, attempting reconnect", key)
+                await tunnel.stop()
 
-        raise ConnectionError(
-            f"SSH tunnel reconnection failed after "
-            f"{self._RECONNECT_MAX_ATTEMPTS} attempts: {last_exc}"
-        ) from last_exc
+            last_exc: Exception | None = None
+            for attempt in range(1, self._RECONNECT_MAX_ATTEMPTS + 1):
+                try:
+                    tunnel = SSHTunnel()
+                    host, port = await tunnel.start(config)
+                    self._tunnels[key] = tunnel
+                    if attempt > 1:
+                        logger.info("SSH tunnel reconnected on attempt %d for %s", attempt, key)
+                    return host, port
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning(
+                        "SSH tunnel reconnect attempt %d/%d failed for %s: %s",
+                        attempt,
+                        self._RECONNECT_MAX_ATTEMPTS,
+                        key,
+                        exc,
+                    )
+                    if attempt < self._RECONNECT_MAX_ATTEMPTS:
+                        await asyncio.sleep(self._RECONNECT_BACKOFF_SECONDS * attempt)
+
+            raise ConnectionError(
+                f"SSH tunnel reconnection failed after "
+                f"{self._RECONNECT_MAX_ATTEMPTS} attempts: {last_exc}"
+            ) from last_exc
 
     async def close_for_config(self, config: ConnectionConfig) -> bool:
         """Close the tunnel for a specific connection config, if it exists."""

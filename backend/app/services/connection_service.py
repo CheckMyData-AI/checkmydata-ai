@@ -119,7 +119,7 @@ class ConnectionService:
         session: AsyncSession,
         project_id: str,
         skip: int = 0,
-        limit: int = 2000,
+        limit: int = 200,
     ) -> list[Connection]:
         result = await session.execute(
             select(Connection)
@@ -204,7 +204,10 @@ class ConnectionService:
                 conn.db_type,
                 e,
             )
-            return {"success": False, "error": str(e)}
+            error_msg = str(e)
+            if len(error_msg) > 500:
+                error_msg = error_msg[:500] + "..."
+            return {"success": False, "error": error_msg}
 
     async def test_ssh(
         self,

@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from typing import Any
+from urllib.parse import quote_plus
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -54,7 +55,7 @@ class MongoDBConnector(BaseConnector):
             host, port = await _tunnel_mgr.get_or_create(config)
             uri = "mongodb://"
             if config.db_user and config.db_password:
-                uri += f"{config.db_user}:{config.db_password}@"
+                uri += f"{quote_plus(config.db_user)}:{quote_plus(config.db_password)}@"
             uri += f"{host}:{port}/{config.db_name}"
             self._client = AsyncIOMotorClient(
                 uri,

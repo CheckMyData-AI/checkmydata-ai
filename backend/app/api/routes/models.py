@@ -61,12 +61,17 @@ def _sort_openrouter_models(models: list[dict]) -> list[dict]:
 
 
 async def _fetch_openrouter_models() -> list[dict]:
+    cached = _cache.get("openrouter")
+    if cached:
+        ts, data = cached
+        if time.monotonic() - ts < CACHE_TTL_SECONDS:
+            return data
+
     async with _fetch_lock:
-        now = time.monotonic()
         cached = _cache.get("openrouter")
         if cached:
             ts, data = cached
-            if now - ts < CACHE_TTL_SECONDS:
+            if time.monotonic() - ts < CACHE_TTL_SECONDS:
                 return data
 
         headers: dict[str, str] = {}
@@ -94,7 +99,7 @@ async def _fetch_openrouter_models() -> list[dict]:
             )
 
         sorted_models = _sort_openrouter_models(models)
-        _cache["openrouter"] = (now, sorted_models)
+        _cache["openrouter"] = (time.monotonic(), sorted_models)
         return sorted_models
 
 

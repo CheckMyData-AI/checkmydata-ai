@@ -4,15 +4,16 @@ Revision ID: h3i4j5k6l7m8
 Revises: g2h3i4j5k6l7
 Create Date: 2026-03-17
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "h3i4j5k6l7m8"
-down_revision: Union[str, None] = "g2h3i4j5k6l7"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "g2h3i4j5k6l7"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 naming_convention = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",

@@ -8,8 +8,9 @@ Create Date: 2026-03-18
 
 import uuid
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "q2r3s4t5u6v7"
 down_revision = "p1q2r3s4t5u6"

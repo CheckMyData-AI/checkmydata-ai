@@ -4,15 +4,16 @@ Revision ID: f1a2b3c4d5e6
 Revises: c7d2e8f31a45
 Create Date: 2026-03-17
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "f1a2b3c4d5e6"
-down_revision: Union[str, None] = "d4f015eb8a1c"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "d4f015eb8a1c"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 NEW_COLS = [
     ("indexing_llm_provider", sa.String(50)),

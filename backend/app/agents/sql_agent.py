@@ -1002,14 +1002,29 @@ class SQLAgent(BaseAgent):
     # Helpers — connector / schema cache
     # ------------------------------------------------------------------
 
+    _MAX_CONNECTORS = 32
+
     async def _get_or_create_connector(self, cfg: ConnectionConfig) -> BaseConnector:
         key = connector_key(cfg)
         async with self._connector_lock:
-            if key not in self._connectors:
-                conn = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
-                await conn.connect(cfg)
-                self._connectors[key] = conn
-            return self._connectors[key]
+            existing = self._connectors.get(key)
+            if existing is not None:
+                if not getattr(existing, "_closed", False):
+                    return existing
+                self._connectors.pop(key, None)
+
+            if len(self._connectors) >= self._MAX_CONNECTORS:
+                oldest_key = next(iter(self._connectors))
+                old_conn = self._connectors.pop(oldest_key)
+                try:
+                    await old_conn.disconnect()
+                except Exception:
+                    logger.debug("Failed to close evicted connector", exc_info=True)
+
+            conn = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
+            await conn.connect(cfg)
+            self._connectors[key] = conn
+            return conn
 
     async def _get_cached_schema(self, cfg: ConnectionConfig) -> SchemaInfo:
         key = connector_key(cfg)
