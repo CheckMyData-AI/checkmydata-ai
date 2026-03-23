@@ -63,13 +63,18 @@ class ClickHouseConnector(BaseConnector):
             finally:
                 self._client = None
 
+    _QUERY_TIMEOUT_S = 120
+
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._client:
             return QueryResult(error="Not connected")
 
         start = time.monotonic()
         try:
-            result = await asyncio.to_thread(self._client.query, query, parameters=params)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self._client.query, query, parameters=params),
+                timeout=self._QUERY_TIMEOUT_S,
+            )
             elapsed = (time.monotonic() - start) * 1000
 
             columns = list(result.column_names) if result.column_names else []
@@ -78,6 +83,12 @@ class ClickHouseConnector(BaseConnector):
                 columns=columns,
                 rows=rows,
                 row_count=len(rows),
+                execution_time_ms=elapsed,
+            )
+        except TimeoutError:
+            elapsed = (time.monotonic() - start) * 1000
+            return QueryResult(
+                error=f"Query timed out after {self._QUERY_TIMEOUT_S}s",
                 execution_time_ms=elapsed,
             )
         except Exception as e:

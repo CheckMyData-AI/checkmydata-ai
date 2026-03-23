@@ -455,7 +455,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   };
 
   const handleUpdate = async () => {
-    if (!editingId) return;
+    if (!editingId || saving) return;
     if (!form.name.trim()) {
       toast("Connection name is required.", "error");
       return;
@@ -526,6 +526,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       }
     }
 
+    setSaving(true);
     try {
       const updated = await api.connections.update(editingId, updates);
       useAppStore.setState((state) => ({
@@ -549,6 +550,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         err instanceof Error ? err.message : "Failed to update connection",
         "error",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -588,6 +591,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   };
 
   const handleIndexDb = async (id: string) => {
+    if (indexing === id) return;
     setIndexing(id);
     try {
       await api.connections.indexDb(id);
@@ -611,6 +615,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   };
 
   const handleSync = async (id: string) => {
+    if (syncing === id) return;
     setSyncing(id);
     try {
       await api.connections.triggerSync(id);

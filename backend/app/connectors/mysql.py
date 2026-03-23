@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any
@@ -86,6 +87,8 @@ class MySQLConnector(BaseConnector):
         converted = re.sub(r":(\w+)", _replacer, query)
         return converted, tuple(ordered)
 
+    _QUERY_TIMEOUT_S = 120
+
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._pool:
             return QueryResult(error="Not connected")
@@ -98,7 +101,10 @@ class MySQLConnector(BaseConnector):
                 exec_query, exec_params = self._dict_to_positional(query, params)
             async with self._pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
-                    await cur.execute(exec_query, exec_params)
+                    await asyncio.wait_for(
+                        cur.execute(exec_query, exec_params),
+                        timeout=self._QUERY_TIMEOUT_S,
+                    )
                     rows = await cur.fetchall()
                     elapsed = (time.monotonic() - start) * 1000
 
@@ -113,6 +119,12 @@ class MySQLConnector(BaseConnector):
                         row_count=len(data),
                         execution_time_ms=elapsed,
                     )
+        except TimeoutError:
+            elapsed = (time.monotonic() - start) * 1000
+            return QueryResult(
+                error=f"Query timed out after {self._QUERY_TIMEOUT_S}s",
+                execution_time_ms=elapsed,
+            )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(error=str(e), execution_time_ms=elapsed)

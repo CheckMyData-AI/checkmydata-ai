@@ -91,6 +91,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
   const [conditions, setConditions] = useState<AlertCondition[]>([]);
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const confirm = useConfirmStore((s) => s.show);
 
@@ -272,11 +273,15 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
   };
 
   const handleToggleActive = async (s: ScheduledQuery) => {
+    if (togglingId === s.id) return;
+    setTogglingId(s.id);
     try {
       const updated = await api.schedules.update(s.id, { is_active: !s.is_active });
       setSchedules((prev) => prev.map((item) => (item.id === s.id ? updated : item)));
     } catch (err) {
       toast(err instanceof Error ? err.message : "Toggle failed", "error");
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -344,8 +349,9 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             <div className="flex items-center gap-0.5 shrink-0">
               <button
                 onClick={() => handleToggleActive(s)}
+                disabled={togglingId === s.id}
                 title={s.is_active ? "Pause" : "Activate"}
-                className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
+                className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors disabled:opacity-50"
               >
                 <Icon name={s.is_active ? "pause" : "play"} size={11} />
               </button>
