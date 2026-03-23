@@ -127,6 +127,7 @@ class InviteService:
             )
             member = existing.scalar_one_or_none()
             if member:
+                await db.commit()
                 return member
 
             member = ProjectMember(

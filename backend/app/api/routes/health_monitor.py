@@ -78,14 +78,25 @@ async def reconnect_connection(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"])
 
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
-    connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+    try:
+        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+    except TypeError:
+        return {
+            "success": False,
+            "error": f"Connector type {conn.db_type!r} does not support health checks",
+        }
+
     try:
         await connector.connect(config)
         result = await health_monitor.check_connection(connection_id, connector)
         if result["status"] == "down":
-            await connector.disconnect()
             return {"success": False, "health": result}
         return {"success": True, "health": result}
     except Exception as exc:
         logger.warning("Reconnect failed for %s: %s", connection_id, exc)
         return {"success": False, "error": str(exc)}
+    finally:
+        try:
+            await connector.disconnect()
+        except Exception:
+            pass

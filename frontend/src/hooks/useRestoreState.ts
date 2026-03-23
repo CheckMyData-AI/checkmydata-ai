@@ -9,7 +9,14 @@ import { toast } from "@/stores/toast-store";
 
 function isAccessError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return err.message.includes("403") || err.message.includes("404");
+  const msg = err.message;
+  return (
+    msg.includes("403") ||
+    msg.includes("404") ||
+    msg.includes("don't have permission") ||
+    msg.includes("not found") ||
+    msg.includes("Not a member")
+  );
 }
 
 let _restoreSeq = 0;

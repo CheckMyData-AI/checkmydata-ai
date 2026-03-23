@@ -207,7 +207,22 @@ async def update_project(
     project = await _svc.update(db, project_id, **body.model_dump(exclude_unset=True))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return project
+    return ProjectResponse(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        repo_url=project.repo_url,
+        repo_branch=project.repo_branch,
+        ssh_key_id=project.ssh_key_id,
+        indexing_llm_provider=project.indexing_llm_provider,
+        indexing_llm_model=project.indexing_llm_model,
+        agent_llm_provider=project.agent_llm_provider,
+        agent_llm_model=project.agent_llm_model,
+        sql_llm_provider=project.sql_llm_provider,
+        sql_llm_model=project.sql_llm_model,
+        owner_id=project.owner_id,
+        user_role="owner",
+    )
 
 
 @router.delete("/{project_id}")

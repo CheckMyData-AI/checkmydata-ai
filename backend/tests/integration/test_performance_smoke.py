@@ -18,6 +18,7 @@ MAX_HEALTH_MS = 200
 MAX_AUTH_MS = 500
 MAX_CRUD_MS = 300
 MAX_LIST_MS = 300
+MAX_EXTERNAL_LIST_MS = 2000
 
 
 def _elapsed_ms(start: float) -> float:
@@ -33,10 +34,10 @@ class TestHealthPerformance:
         assert resp.status_code == 200
         assert ms < MAX_HEALTH_MS, f"/api/health took {ms:.0f}ms (limit {MAX_HEALTH_MS}ms)"
 
-    async def test_modules_health_responds(self, client: AsyncClient):
-        """Modules health may probe connectors; just verify it completes under 5s."""
+    async def test_modules_health_responds(self, auth_client: AsyncClient):
+        """Modules health requires auth; just verify it completes under 5s."""
         t0 = time.perf_counter()
-        resp = await client.get("/api/health/modules")
+        resp = await auth_client.get("/api/health/modules")
         ms = _elapsed_ms(t0)
         assert resp.status_code == 200
         assert ms < 5000, f"/api/health/modules took {ms:.0f}ms (limit 5000ms)"
@@ -139,7 +140,7 @@ class TestListEndpointPerformance:
         resp = await auth_client.get("/api/models")
         ms = _elapsed_ms(t0)
         assert resp.status_code in (200, 404)
-        assert ms < MAX_LIST_MS, f"Models list took {ms:.0f}ms (limit {MAX_LIST_MS}ms)"
+        assert ms < MAX_EXTERNAL_LIST_MS, f"Models list took {ms:.0f}ms (limit {MAX_EXTERNAL_LIST_MS}ms)"
 
     async def test_legal_pages_latency(self, client: AsyncClient):
         for path in ("/api/legal/terms", "/api/legal/privacy"):

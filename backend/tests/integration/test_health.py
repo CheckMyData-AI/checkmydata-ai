@@ -10,8 +10,8 @@ class TestHealth:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    async def test_module_health_returns_structure(self, client):
-        resp = await client.get("/api/health/modules")
+    async def test_module_health_returns_structure(self, auth_client):
+        resp = await auth_client.get("/api/health/modules")
         assert resp.status_code == 200
         data = resp.json()
         assert "status" in data

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -51,7 +52,12 @@ class AuthService:
             auth_provider="email",
         )
         session.add(user)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.warning("Registration race for %s: duplicate caught by DB constraint", email)
+            raise ValueError("Email already registered")
         await session.refresh(user)
         logger.info("User registered: %s", email)
         return user

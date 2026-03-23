@@ -453,7 +453,7 @@ async def list_sessions(
 
 
 class SessionUpdate(BaseModel):
-    title: str
+    title: str = Field(..., min_length=1, max_length=255)
 
 
 async def _require_session_owner(db: AsyncSession, session_id: str, user_id: str):
@@ -584,7 +584,7 @@ async def submit_feedback(
     msg.user_rating = max(-1, min(1, body.rating))
     await db.commit()
 
-    if body.rating == -1 and msg.metadata_json:
+    if msg.user_rating == -1 and msg.metadata_json:
         try:
             import json as _json
 
