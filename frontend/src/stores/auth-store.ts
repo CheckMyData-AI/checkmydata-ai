@@ -56,7 +56,11 @@ function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
   if (!expMs) return;
 
   const remaining = expMs - Date.now();
-  if (remaining <= 0) return;
+  if (remaining <= 0) {
+    toast("Your session has expired. Please log in again.", "error");
+    setTimeout(() => useAuthStore.getState().logout(), 0);
+    return;
+  }
 
   const refreshAt = Math.max(remaining - REFRESH_THRESHOLD_MS, 0);
 
