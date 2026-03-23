@@ -205,6 +205,13 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const [schedCreateReq, setSchedCreateReq] = useState(false);
   const [dashCreateReq, setDashCreateReq] = useState(false);
 
+  const onProjCreated = useCallback(() => setProjCreateReq(false), []);
+  const onConnCreated = useCallback(() => setConnCreateReq(false), []);
+  const onChatCreated = useCallback(() => setChatCreateReq(false), []);
+  const onRulesCreated = useCallback(() => setRulesCreateReq(false), []);
+  const onSchedCreated = useCallback(() => setSchedCreateReq(false), []);
+  const onDashCreated = useCallback(() => setDashCreateReq(false), []);
+
   const projectsRef = useRef<HTMLDivElement>(null);
   const repoRef = useRef<HTMLDivElement>(null);
   const connRef = useRef<HTMLDivElement>(null);
@@ -460,7 +467,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
             <div ref={projectsRef}>
               <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
-                <ProjectSelector createRequested={projCreateReq} onCreateHandled={() => setProjCreateReq(false)} />
+                <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
               </SidebarSection>
             </div>
 
@@ -481,7 +488,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
                 <div ref={connRef}>
                   <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}>
-                    <ConnectionSelector createRequested={connCreateReq} onCreateHandled={() => setConnCreateReq(false)} />
+                    <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
                     <SyncStatusIndicator />
                   </SidebarSection>
                 </div>
@@ -496,17 +503,17 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   ) : (
                     <>
                       {activeProject && <ChatSearch />}
-                      <ChatSessionList createRequested={chatCreateReq} onCreateHandled={() => setChatCreateReq(false)} />
+                      <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
                     </>
                   )}
                 </SidebarSection>
 
                 <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}>
-                  <RulesManager createRequested={rulesCreateReq} onCreateHandled={() => setRulesCreateReq(false)} />
+                  <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
                 </SidebarSection>
 
                 <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}>
-                  <ScheduleManager createRequested={schedCreateReq} onCreateHandled={() => setSchedCreateReq(false)} />
+                  <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
                 </SidebarSection>
 
                 <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
@@ -677,7 +684,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             collapsed={collapsed}
             action={{ label: "New project", onClick: () => setProjCreateReq(true) }}
           >
-            <ProjectSelector createRequested={projCreateReq} onCreateHandled={() => setProjCreateReq(false)} />
+            <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
           </SidebarSection>
         </div>
 
@@ -722,7 +729,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 collapsed={collapsed}
                 action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}
               >
-                <ConnectionSelector createRequested={connCreateReq} onCreateHandled={() => setConnCreateReq(false)} />
+                <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
                 <SyncStatusIndicator />
               </SidebarSection>
             </div>
@@ -744,7 +751,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               ) : (
                 <>
                   {!collapsed && activeProject && <ChatSearch />}
-                  <ChatSessionList createRequested={chatCreateReq} onCreateHandled={() => setChatCreateReq(false)} />
+                  <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
                 </>
               )}
             </SidebarSection>
@@ -757,7 +764,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               collapsed={collapsed}
               action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}
             >
-              <RulesManager createRequested={rulesCreateReq} onCreateHandled={() => setRulesCreateReq(false)} />
+              <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
             </SidebarSection>
 
             <SidebarSection
@@ -768,7 +775,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               collapsed={collapsed}
               action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}
             >
-              <ScheduleManager createRequested={schedCreateReq} onCreateHandled={() => setSchedCreateReq(false)} />
+              <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
             </SidebarSection>
 
             <SidebarSection
@@ -779,7 +786,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               collapsed={collapsed}
               action={{ label: "New dashboard", onClick: () => setDashCreateReq(true) }}
             >
-              <DashboardList createRequested={dashCreateReq} onCreateHandled={() => setDashCreateReq(false)} />
+              <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
             </SidebarSection>
 
             <SidebarSection

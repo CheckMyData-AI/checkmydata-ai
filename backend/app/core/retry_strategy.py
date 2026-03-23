@@ -45,8 +45,10 @@ class RetryStrategy:
                     parts.append("Did you mean one of these columns?")
                     for tbl, col, score in similar[:5]:
                         parts.append(f"  - {tbl}.{col} (similarity: {score})")
-                for tbl, col, _ in similar[:2]:
-                    parts.append(get_table_detail(tbl, schema))
+                    for tbl, col, _ in similar[:2]:
+                        parts.append(get_table_detail(tbl, schema))
+                else:
+                    parts.append("A column was not found. Check the schema for correct names.")
             else:
                 parts.append("A column was not found. Check the schema for correct names.")
 
