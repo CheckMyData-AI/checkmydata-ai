@@ -3,7 +3,7 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,8 +74,8 @@ async def list_insights(
     severity: str | None = None,
     status: str = "active",
     min_confidence: float = 0.0,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -89,7 +89,7 @@ async def list_insights(
         severity=severity,
         status=status,
         min_confidence=min_confidence,
-        limit=min(limit, 100),
+        limit=limit,
         offset=offset,
     )
     return [
@@ -236,7 +236,7 @@ async def resolve_insight(
 async def get_insight_actions(
     project_id: str,
     connection_id: str | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -251,7 +251,7 @@ async def get_insight_actions(
         project_id,
         connection_id=connection_id,
         status="active",
-        limit=min(limit, 50),
+        limit=limit,
     )
 
     insight_dicts = [

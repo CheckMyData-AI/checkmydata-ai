@@ -780,31 +780,24 @@ async def module_health():
     except Exception:
         results["connectors"] = {"status": "error", "detail": "Service unavailable"}
 
-    # LLM provider
+    # LLM provider (config check only — no live call to avoid cost/DoS)
     try:
-        import asyncio
-        import time
-
-        from app.llm.base import Message
-        from app.llm.router import LLMRouter
-
-        llm = LLMRouter()
-        start = time.monotonic()
-        await asyncio.wait_for(
-            llm.complete([Message(role="user", content="ping")], max_tokens=1),
-            timeout=5.0,
-        )
-        elapsed = round((time.monotonic() - start) * 1000, 1)
-        results["llm"] = {
-            "status": "ok",
-            "provider": settings.default_llm_provider,
-            "response_time_ms": elapsed,
+        key_map = {
+            "openai": bool(settings.openai_api_key),
+            "anthropic": bool(settings.anthropic_api_key),
+            "openrouter": bool(settings.openrouter_api_key),
         }
-        await llm.close()
-    except TimeoutError:
-        results["llm"] = {"status": "error", "detail": "Timeout (5s)"}
+        configured = [p for p, has_key in key_map.items() if has_key]
+        if not configured:
+            results["llm"] = {"status": "error", "detail": "No providers configured"}
+        else:
+            results["llm"] = {
+                "status": "ok",
+                "provider": settings.default_llm_provider,
+                "configured_providers": len(configured),
+            }
     except Exception:
-        results["llm"] = {"status": "error", "detail": "Service unavailable"}
+        results["llm"] = {"status": "error", "detail": "Configuration error"}
 
     overall = "ok" if all(r["status"] == "ok" for r in results.values()) else "degraded"
     return {"status": overall, "modules": results}

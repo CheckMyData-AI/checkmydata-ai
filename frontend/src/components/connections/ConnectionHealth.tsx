@@ -60,19 +60,21 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
         event.step === "connection_health" &&
         event.extra?.connection_id === connectionId
       ) {
-        const updated: ConnectionHealthState = {
-          status: event.status as HealthStatus,
-          latency_ms: (event.extra?.latency_ms as number) ?? 0,
-          last_check: new Date().toISOString(),
-          consecutive_failures: health?.consecutive_failures ?? 0,
-          last_error: (event.extra?.last_error as string) ?? null,
-        };
-        setHealth(updated);
-        onStatusChange?.(updated.status as HealthStatus);
+        setHealth((prev) => {
+          const updated: ConnectionHealthState = {
+            status: event.status as HealthStatus,
+            latency_ms: (event.extra?.latency_ms as number) ?? 0,
+            last_check: new Date().toISOString(),
+            consecutive_failures: prev?.consecutive_failures ?? 0,
+            last_error: (event.extra?.last_error as string) ?? null,
+          };
+          onStatusChange?.(updated.status as HealthStatus);
+          return updated;
+        });
       }
     });
     return unsub;
-  }, [connectionId, onStatusChange, health?.consecutive_failures]);
+  }, [connectionId, onStatusChange]);
 
   const handleReconnect = async (e: React.MouseEvent) => {
     e.stopPropagation();

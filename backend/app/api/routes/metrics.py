@@ -1,5 +1,6 @@
 """Lightweight application metrics endpoint (no external dependencies)."""
 
+import re
 import time
 from collections import defaultdict
 from threading import Lock
@@ -14,10 +15,23 @@ _metrics_lock = Lock()
 _request_counts: dict[str, int] = defaultdict(int)
 _request_latencies: dict[str, list[float]] = defaultdict(list)
 _error_counts: dict[str, int] = defaultdict(int)
+_MAX_PATHS = 500
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
+
+
+def _normalize_path(path: str) -> str:
+    return _UUID_RE.sub(":id", path)
 
 
 def record_request(path: str, latency_ms: float, is_error: bool = False) -> None:
+    path = _normalize_path(path)
     with _metrics_lock:
+        if path not in _request_counts and len(_request_counts) >= _MAX_PATHS:
+            return
         _request_counts[path] += 1
         _request_latencies[path].append(latency_ms)
         if len(_request_latencies[path]) > 1000:

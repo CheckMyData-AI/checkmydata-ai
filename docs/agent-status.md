@@ -4,11 +4,11 @@
 
 | Field | Value |
 |-------|-------|
-| Cycle | Cycle 6 — Reliability & Security Hardening |
+| Cycle | Cycle 7 — API Hardening & Frontend Cleanup |
 | Started | 2026-03-23 |
 | Status | Complete |
-| Tasks Planned | 5 |
-| Tasks Completed | 5 |
+| Tasks Planned | 6 |
+| Tasks Completed | 6 |
 
 ## Health Summary
 
@@ -21,37 +21,32 @@
 | Backend Ruff Lint | PASS | 0 violations |
 | Backend Ruff Format | PASS | 416 files formatted |
 | Backend Mypy | PASS | 0 errors |
-| Backend Unit Tests | PASS | 2482/2482 |
+| Backend Unit Tests | PASS | 2487/2487 |
 | Backend Integration Tests | PASS | 410/410 |
-| Backend Coverage (unit-only) | 72.00% | CI threshold: 72% |
+| Backend Coverage (unit-only) | 72.03% | CI threshold: 72% |
 | CI Pipeline | GREEN | All checks pass |
 
 ## Changes This Cycle
 
-5 reliability and security fixes:
+6 hardening and cleanup fixes:
 
-1. **SSE subscriber leak (P0)** — Wrapped entire SSE generator in `try/finally` to guarantee `tracker.unsubscribe()` and `agent_limiter.release()` even on client disconnect. Previously, subscriber cleanup was spread across 4 branches with gaps when the client dropped the connection.
-2. **WebSocket agent_limiter bypass (P0)** — Applied `agent_limiter.acquire/release` to the WebSocket chat handler. Previously only the REST `/ask/stream` endpoint enforced per-user rate limits; WebSocket was uncapped.
-3. **WebSocket message length cap (P1)** — Added 20,000 char limit to WebSocket messages, matching the REST `ChatRequest.message` `Field(max_length=20000)` validation.
-4. **Markdown link XSS prevention (P1)** — Sanitized `href` in ChatMessage and SQLExplainer markdown renderers to only allow `http://` and `https://` schemes, blocking `javascript:` and other dangerous URIs.
-5. **Dashboard load race condition (P1)** — Replaced shared `mountedRef` boolean with a monotonic request counter (`requestIdRef`) so that stale responses from slow API calls are discarded when the route `id` changes quickly.
-
-Additional: 4 new unit tests (retry_strategy EXPLAIN_WARNING, LLMError.user_message, chunker no-boundary split) to maintain 72% coverage.
+1. **Health /modules LLM removal (P0)** — Replaced live `LLMRouter().complete()` call (cost/DoS vector) with a zero-cost API key configuration check. The endpoint is unauthenticated and used by load balancers, so no tokens should be consumed.
+2. **Metrics path normalization (P1)** — Added UUID regex normalization to `record_request()` so paths like `/api/projects/<uuid>/...` collapse to `/api/projects/:id/...`. Added a hard cap of 500 distinct paths to prevent unbounded memory growth.
+3. **API limit/offset bounds (P1)** — Added `Query(ge=, le=)` constraints to `notifications.list_notifications` (le=200), `insights.list_insights` (limit le=100, offset ge=0), `insights.get_insight_actions` (le=50). Removed redundant `min()` clamps now that FastAPI validates.
+4. **AnomalyAnalysisRequest bounds (P1)** — Added `max_length=10000` to `rows` and `max_length=500` to `columns` in the Pydantic model to prevent payload-based CPU/memory abuse.
+5. **Cost estimate dedup (P2)** — Removed duplicate `api.chat.estimate` fetch from `ChatPanel` useEffect. `CostEstimator` now reports data back to parent via `onEstimate` callback, eliminating the double API call.
+6. **ConnectionHealth stale closure (P2)** — Replaced direct `health?.consecutive_failures` read with `setHealth(prev => ...)` functional update. Removed `health?.consecutive_failures` from the effect dependency array, preventing SSE re-subscription churn.
 
 ## Known Issues (Remaining)
 
 1. **`notes.md` credentials** — Still on disk. User should rotate.
-2. **Mypy untyped functions** — 23 `annotation-unchecked` notes across connector and LLM modules. Non-blocking.
-3. **Dead code** — `exploration_engine.py` line 326 (`positive_count` in summary) is unreachable. Consider removing.
-4. **Dead code** — `cli_output_parser.py` line 38 (`if not all_rows` after non-empty csv.reader) is unreachable.
-5. **Health /modules endpoint** — Unauthenticated, calls live LLM. Should require auth or be simplified.
-6. **Unbounded query params** — Several endpoints accept large `limit`/`offset` without strict bounds (notifications, insights).
-7. **Metrics keys unbounded** — MetricsMiddleware creates per-path entries; UUID paths cause slow growth.
+2. **Mypy untyped functions** — 4 `annotation-unchecked` notes. Non-blocking.
+3. **Dead code** — `exploration_engine.py` line 326, `cli_output_parser.py` line 38.
 
 ## Next Cycle Priorities
 
-1. Protect `/api/health/modules` (add auth or remove live LLM call)
-2. Clamp query param bounds (limit/offset) across API routes
-3. Cap MetricsMiddleware path cardinality
-4. Browser-based flow testing (onboarding, chat, insights)
-5. Continue coverage improvement toward 75% target
+1. Browser-based flow testing (onboarding, chat, insights)
+2. Performance profiling (frontend bundle, API response times)
+3. Mobile responsiveness audit
+4. Continue coverage improvement toward 75% target
+5. Dead code cleanup

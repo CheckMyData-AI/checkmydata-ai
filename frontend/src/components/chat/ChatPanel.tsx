@@ -53,7 +53,7 @@ export function ChatPanel() {
   const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null);
   const suggestionsRequested = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const estimateFetched = useRef("");
+  const handleEstimate = useCallback((e: CostEstimate | null) => setCostEstimate(e), []);
   const cachedReady = useAppStore((s) =>
     activeProject ? s.readinessCache[activeProject.id]?.ready : false
   );
@@ -278,19 +278,6 @@ export function ChatPanel() {
     setSuggestions([]);
     setConnHealthStatus("unknown");
   }, [activeConnection?.id]);
-
-  useEffect(() => {
-    if (!activeProject) return;
-    const key = `${activeProject.id}:${activeConnection?.id ?? ""}`;
-    if (key === estimateFetched.current) return;
-    estimateFetched.current = key;
-    let cancelled = false;
-    api.chat
-      .estimate(activeProject.id, activeConnection?.id)
-      .then((e) => { if (!cancelled) setCostEstimate(e); })
-      .catch(() => { if (!cancelled) { setCostEstimate(null); toast("Could not load cost estimate", "error"); } });
-    return () => { cancelled = true; };
-  }, [activeProject, activeConnection]);
 
   useEffect(() => {
     resetSessionUsage();
@@ -724,7 +711,7 @@ export function ChatPanel() {
       {activeConnection && (
         <div className="px-6 pb-2 flex flex-col gap-1 max-w-2xl mx-auto w-full">
           <div className="flex items-center gap-3">
-            <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} />
+            <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} onEstimate={handleEstimate} />
             {sessionTokens > 0 && (
               <span className="text-[11px] text-zinc-600 ml-auto">
                 Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens

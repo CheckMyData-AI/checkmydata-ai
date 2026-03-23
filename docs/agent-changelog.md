@@ -4,6 +4,23 @@ Changes made by the continuous improvement agent.
 
 ---
 
+## Cycle 7 — API Hardening & Frontend Cleanup (2026-03-23)
+
+### Backend
+- **fix(main.py):** Replaced live LLM ping in `/api/health/modules` with zero-cost API key configuration check
+- **fix(metrics.py):** Added UUID path normalization and 500-path cap to prevent unbounded memory growth
+- **fix(notifications.py):** Added `Query(ge=1, le=200)` bounds to `limit` parameter
+- **fix(insights.py):** Added `Query(ge=, le=)` bounds to `limit` and `offset` across all endpoints
+- **fix(data_validation.py):** Added `max_length` constraints to `AnomalyAnalysisRequest.rows` (10k) and `.columns` (500)
+- **test(test_metrics.py):** New tests for path normalization and recording
+
+### Frontend
+- **fix(CostEstimator.tsx):** Added `onEstimate` callback prop to report fetched data to parent
+- **fix(ChatPanel.tsx):** Removed duplicate `api.chat.estimate` useEffect; uses `CostEstimator` callback instead
+- **fix(ConnectionHealth.tsx):** Replaced stale `health` closure with `setHealth(prev => ...)` functional update; removed `health?.consecutive_failures` from deps to stop SSE re-subscription churn
+
+---
+
 ## Cycle 6 — Reliability & Security Hardening (2026-03-23)
 
 ### Backend

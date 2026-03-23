@@ -6,9 +6,10 @@ import { api, type CostEstimate } from "@/lib/api";
 interface CostEstimatorProps {
   projectId: string;
   connectionId?: string;
+  onEstimate?: (estimate: CostEstimate | null) => void;
 }
 
-export function CostEstimator({ projectId, connectionId }: CostEstimatorProps) {
+export function CostEstimator({ projectId, connectionId, onEstimate }: CostEstimatorProps) {
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const fetchedKey = useRef("");
@@ -21,10 +22,10 @@ export function CostEstimator({ projectId, connectionId }: CostEstimatorProps) {
 
     api.chat
       .estimate(projectId, connectionId)
-      .then((e) => { if (!cancelled) setEstimate(e); })
-      .catch(() => { if (!cancelled) setEstimate(null); });
+      .then((e) => { if (!cancelled) { setEstimate(e); onEstimate?.(e); } })
+      .catch(() => { if (!cancelled) { setEstimate(null); onEstimate?.(null); } });
     return () => { cancelled = true; };
-  }, [projectId, connectionId]);
+  }, [projectId, connectionId, onEstimate]);
 
   if (!estimate) return null;
 

@@ -701,8 +701,8 @@ class AnomalyAnalysisRequest(BaseModel):
     connection_id: str = Field(..., max_length=64)
     query: str = Field("", max_length=10000)
     question: str = Field("", max_length=2000)
-    rows: list[dict[str, Any]] = Field(default_factory=list)
-    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
+    columns: list[str] = Field(default_factory=list, max_length=500)
 
 
 @router.post("/anomaly-analysis")
