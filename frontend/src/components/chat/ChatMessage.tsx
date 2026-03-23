@@ -58,6 +58,7 @@ const mdComponents: Components = {
   th: ({ children }) => <th className="text-left px-2 py-1 text-zinc-400 font-medium">{children}</th>,
   td: ({ children }) => <td className="px-2 py-1 border-t border-zinc-800">{children}</td>,
   hr: () => <hr className="border-zinc-700 my-3" />,
+  img: () => null,
 };
 
 interface AttemptInfo {

@@ -1,15 +1,36 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
-import { LogPanel, PersistentLogToggle } from "@/components/log/LogPanel";
-import { NotesPanel } from "@/components/notes/NotesPanel";
-import { ActiveTasksWidget } from "@/components/tasks/ActiveTasksWidget";
-import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
-import { BatchRunner } from "@/components/batch/BatchRunner";
 import { useAppStore } from "@/stores/app-store";
+
+const LogPanel = dynamic(
+  () => import("@/components/log/LogPanel").then((m) => m.LogPanel),
+  { ssr: false },
+);
+const PersistentLogToggle = dynamic(
+  () => import("@/components/log/LogPanel").then((m) => m.PersistentLogToggle),
+  { ssr: false },
+);
+const NotesPanel = dynamic(
+  () => import("@/components/notes/NotesPanel").then((m) => m.NotesPanel),
+  { ssr: false },
+);
+const ActiveTasksWidget = dynamic(
+  () => import("@/components/tasks/ActiveTasksWidget").then((m) => m.ActiveTasksWidget),
+  { ssr: false },
+);
+const OnboardingWizard = dynamic(
+  () => import("@/components/onboarding/OnboardingWizard").then((m) => m.OnboardingWizard),
+  { ssr: false },
+);
+const BatchRunner = dynamic(
+  () => import("@/components/batch/BatchRunner").then((m) => m.BatchRunner),
+  { ssr: false },
+);
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";

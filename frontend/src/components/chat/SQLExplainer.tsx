@@ -97,7 +97,8 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
                     a: ({ href, children }) => {
                       const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined;
                       return <a href={safeHref} target="_blank" rel="noopener noreferrer">{children}</a>;
-                    }
+                    },
+                    img: () => null,
                   }}>{explanation}</ReactMarkdown>
                 </div>
               )}

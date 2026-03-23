@@ -275,7 +275,7 @@ export function ChatPanel() {
     suggestionsRequested.current = false;
     setSuggestions([]);
     setConnHealthStatus("unknown");
-  }, [activeConnection?.id]);
+  }, [activeProject?.id, activeConnection?.id]);
 
   useEffect(() => {
     resetSessionUsage();
