@@ -192,12 +192,14 @@ class TestSQLAgent:
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
 
-        with patch.object(agent, "_handle_execute_query", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = "Columns: id, name\nTotal rows: 2"
-            agent._last_query = "SELECT id, name FROM users"
-            agent._last_explanation = "Fetch all users"
-            agent._last_result = qr
+        async def fake_execute(*args, **kwargs):
+            run_state = kwargs.get("run_state", {})
+            run_state["last_query"] = "SELECT id, name FROM users"
+            run_state["last_explanation"] = "Fetch all users"
+            run_state["last_result"] = qr
+            return "Columns: id, name\nTotal rows: 2"
 
+        with patch.object(agent, "_handle_execute_query", side_effect=fake_execute):
             result = await agent.run(context)
 
         assert result.status == "success"
@@ -230,12 +232,14 @@ class TestSQLAgent:
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
 
-        with patch.object(agent, "_handle_execute_query", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = "Query failed after 3 attempt(s): relation does not exist"
-            agent._last_query = "SELECT * FROM nonexistent"
-            agent._last_explanation = "bad"
-            agent._last_result = err_qr
+        async def fake_execute(*args, **kwargs):
+            run_state = kwargs.get("run_state", {})
+            run_state["last_query"] = "SELECT * FROM nonexistent"
+            run_state["last_explanation"] = "bad"
+            run_state["last_result"] = err_qr
+            return "Query failed after 3 attempt(s): relation does not exist"
 
+        with patch.object(agent, "_handle_execute_query", side_effect=fake_execute):
             result = await agent.run(context)
 
         assert result.status == "error"
@@ -491,12 +495,14 @@ class TestSQLAgent:
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
 
-        with patch.object(agent, "_handle_execute_query", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = "Columns: month, revenue\nTotal rows: 2"
-            agent._last_query = "SELECT month, revenue FROM sales"
-            agent._last_explanation = "Monthly revenue"
-            agent._last_result = qr
+        async def fake_execute(*args, **kwargs):
+            run_state = kwargs.get("run_state", {})
+            run_state["last_query"] = "SELECT month, revenue FROM sales"
+            run_state["last_explanation"] = "Monthly revenue"
+            run_state["last_result"] = qr
+            return "Columns: month, revenue\nTotal rows: 2"
 
+        with patch.object(agent, "_handle_execute_query", side_effect=fake_execute):
             result = await agent.run(context)
 
         assert result.status == "success"

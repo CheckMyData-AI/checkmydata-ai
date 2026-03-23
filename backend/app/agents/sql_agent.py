@@ -125,10 +125,6 @@ class SQLAgent(BaseAgent):
         self._query_cache = QueryCache()
         self._knowledge_cache: dict[str, ProjectKnowledge] = {}
 
-        self._last_query: str | None = None
-        self._last_explanation: str | None = None
-        self._last_result: QueryResult | None = None
-
     @property
     def name(self) -> str:
         return "sql"
@@ -217,6 +213,7 @@ class SQLAgent(BaseAgent):
 
         result = SQLAgentResult()
         tool_call_log: list[dict[str, Any]] = []
+        run_state: dict[str, Any] = {}
 
         provider = context.sql_provider or context.preferred_provider
         model = context.sql_model or context.model
@@ -279,6 +276,7 @@ class SQLAgent(BaseAgent):
                         tc,
                         context,
                         wf_id,
+                        run_state,
                     )
 
                 result_text = _cap_tool_result(tc.name, result_text)
@@ -303,23 +301,27 @@ class SQLAgent(BaseAgent):
         result.token_usage = total_usage
         result.tool_call_log = tool_call_log
 
-        if self._last_query:
-            result.query = self._last_query
-            result.query_explanation = self._last_explanation
-            result.results = self._last_result
-            has_result = self._last_result and not self._last_result.error
-            result.status = "success" if has_result else "error"
-            if result.status == "error" and self._last_result:
-                result.error = self._last_result.error
+        last_query = run_state.get("last_query")
+        last_explanation = run_state.get("last_explanation")
+        last_result: QueryResult | None = run_state.get("last_result")
 
-            if has_result and self._last_result and self._last_result.rows:
+        if last_query:
+            result.query = last_query
+            result.query_explanation = last_explanation
+            result.results = last_result
+            has_result = last_result and not last_result.error
+            result.status = "success" if has_result else "error"
+            if result.status == "error" and last_result:
+                result.error = last_result.error
+
+            if has_result and last_result and last_result.rows:
                 try:
                     from app.core.insight_generator import InsightGenerator
 
                     result.insights = InsightGenerator.analyze(
-                        rows=self._last_result.rows,
-                        columns=self._last_result.columns,
-                        query=self._last_query,
+                        rows=last_result.rows,
+                        columns=last_result.columns,
+                        query=last_query,
                         question=question,
                     )
                 except Exception:
@@ -338,6 +340,7 @@ class SQLAgent(BaseAgent):
         tool_call: ToolCall,
         context: AgentContext,
         wf_id: str,
+        run_state: dict[str, Any] | None = None,
     ) -> str:
         handler = {
             "execute_query": self._handle_execute_query,
@@ -356,7 +359,8 @@ class SQLAgent(BaseAgent):
             return f"Error: unknown tool '{tool_call.name}'"
 
         try:
-            return await handler(tool_call.arguments, context, wf_id)
+            effective_state = run_state if run_state is not None else {}
+            return await handler(tool_call.arguments, context, wf_id, run_state=effective_state)
         except Exception as exc:
             logger.exception("SQL tool %s failed", tool_call.name)
             return f"Error executing {tool_call.name}: {exc}"
@@ -365,7 +369,9 @@ class SQLAgent(BaseAgent):
     # Tool handlers
     # ------------------------------------------------------------------
 
-    async def _handle_execute_query(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_execute_query(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         query: str = args.get("query", "")
         explanation: str = args.get("explanation", "")
         cfg = ctx.connection_config
@@ -445,9 +451,10 @@ class SQLAgent(BaseAgent):
             f"Query executed: {results.row_count} rows, {len(results.columns)} columns returned",
         )
 
-        self._last_query = loop_result.query
-        self._last_explanation = loop_result.explanation
-        self._last_result = results
+        run_state = kwargs.get("run_state", {})
+        run_state["last_query"] = loop_result.query
+        run_state["last_explanation"] = loop_result.explanation
+        run_state["last_result"] = results
 
         conn_key = connector_key(cfg)
         self._query_cache.put(conn_key, loop_result.query, results)
@@ -463,7 +470,9 @@ class SQLAgent(BaseAgent):
 
         return formatted
 
-    async def _handle_get_schema_info(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_schema_info(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         scope: str = args.get("scope", "overview")
         table_name: str | None = args.get("table_name")
         cfg = ctx.connection_config
@@ -489,7 +498,9 @@ class SQLAgent(BaseAgent):
             return self._format_table_detail(schema, table_name)
         return f"Error: unknown scope '{scope}'."
 
-    async def _handle_get_custom_rules(self, _args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_custom_rules(
+        self, _args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         async with ctx.tracker.step(wf_id, "sql:load_rules", "Loading custom rules"):
             file_rules = self._rules_engine.load_rules(
                 project_rules_dir=f"{settings.custom_rules_dir}/{ctx.project_id}",
@@ -500,7 +511,9 @@ class SQLAgent(BaseAgent):
         context = self._rules_engine.rules_to_context(file_rules + db_rules)
         return context or "No custom rules defined for this project."
 
-    async def _handle_get_db_index(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_db_index(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         scope: str = args.get("scope", "overview")
         table_name: str | None = args.get("table_name")
         cfg = ctx.connection_config
@@ -544,7 +557,9 @@ class SQLAgent(BaseAgent):
                     return "Database index not available. Run 'Index DB' first."
                 return svc.index_to_prompt_context(entries, summary)
 
-    async def _handle_get_sync_context(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_sync_context(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         scope: str = args.get("scope", "overview")
         table_name: str | None = args.get("table_name")
         cfg = ctx.connection_config
@@ -573,7 +588,9 @@ class SQLAgent(BaseAgent):
                     return "Code-DB sync not available."
                 return svc.sync_to_prompt_context(entries, summary)
 
-    async def _handle_get_query_context(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_query_context(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         question: str = args.get("question", "")
         table_names_raw: str | None = args.get("table_names")
         cfg = ctx.connection_config
@@ -585,7 +602,9 @@ class SQLAgent(BaseAgent):
         async with ctx.tracker.step(wf_id, "sql:get_query_ctx", "Building unified query context"):
             return await self._build_query_context(question, table_names_raw, cid, ctx)
 
-    async def _handle_get_agent_learnings(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_get_agent_learnings(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         scope: str = args.get("scope", "all")
         table_name: str | None = args.get("table_name")
         cfg = ctx.connection_config
@@ -627,7 +646,9 @@ class SQLAgent(BaseAgent):
             parts.append("")
         return "\n".join(parts)
 
-    async def _handle_record_learning(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_record_learning(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         category: str = args.get("category", "")
         subject: str = args.get("subject", "").strip()
         lesson: str = args.get("lesson", "").strip()
@@ -655,7 +676,7 @@ class SQLAgent(BaseAgent):
                     subject=subject,
                     lesson=lesson,
                     confidence=0.8,
-                    source_query=self._last_query,
+                    source_query=kwargs.get("run_state", {}).get("last_query"),
                 )
                 await session.commit()
 
@@ -671,7 +692,9 @@ class SQLAgent(BaseAgent):
     # Session notes handlers
     # ------------------------------------------------------------------
 
-    async def _handle_read_notes(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_read_notes(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         cfg = ctx.connection_config
         if cfg is None or not cfg.connection_id:
             return "No session notes available (no connection)."
@@ -706,7 +729,9 @@ class SQLAgent(BaseAgent):
             lines.append(f"- [{n.category}] {n.subject}: {n.note} ({conf}%{verified})")
         return "\n".join(lines)
 
-    async def _handle_write_note(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
+    async def _handle_write_note(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
         category: str = args.get("category", "")
         subject: str = args.get("subject", "").strip()
         note_text: str = args.get("note", "").strip()

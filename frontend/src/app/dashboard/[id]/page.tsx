@@ -86,7 +86,7 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
 export default function DashboardPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [notes, setNotes] = useState<Map<string, SavedNote>>(new Map());
   const [loading, setLoading] = useState(true);
