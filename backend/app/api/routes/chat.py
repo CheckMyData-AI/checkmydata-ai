@@ -91,7 +91,7 @@ def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int
                 completion_price = float(pricing.get("completion", "0"))
                 return round(prompt_tokens * prompt_price + completion_tokens * completion_price, 8)
     except Exception:
-        pass
+        logger.debug("Cost computation failed", exc_info=True)
     return None
 
 
@@ -305,7 +305,7 @@ async def search_messages(
                 meta = json.loads(row.metadata_json)
                 sql_query = meta.get("query")
             except Exception:
-                pass
+                logger.debug("Failed to parse message metadata", exc_info=True)
 
         results.append(
             ChatSearchResult(
@@ -1614,7 +1614,7 @@ async def summarize_message(
                         lines.append(" | ".join(str(v) for v in row))
                     data_preview = "\n".join(lines)
         except Exception:
-            pass
+            logger.debug("Failed to build data preview for summary", exc_info=True)
 
     from app.llm.base import Message as LLMMessage
     from app.llm.router import LLMRouter

@@ -28,7 +28,10 @@ class ExportRequest(BaseModel):
 
 
 @router.post("/render")
-async def render_visualization(body: RenderRequest, user: dict = Depends(get_current_user)):
+@limiter.limit("20/minute")
+async def render_visualization(
+    request: Request, body: RenderRequest, user: dict = Depends(get_current_user)
+):
     result = QueryResult(
         columns=body.columns,
         rows=body.rows,

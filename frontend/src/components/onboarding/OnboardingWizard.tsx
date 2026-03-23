@@ -65,9 +65,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [createdConnection, setCreatedConnection] = useState<Connection | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { sshKeys, setProjects, setActiveProject, setConnections, setActiveConnection } =
-    useAppStore();
-  const { user } = useAuthStore();
+  const sshKeys = useAppStore((s) => s.sshKeys);
+  const setProjects = useAppStore((s) => s.setProjects);
+  const setActiveProject = useAppStore((s) => s.setActiveProject);
+  const setConnections = useAppStore((s) => s.setConnections);
+  const setActiveConnection = useAppStore((s) => s.setActiveConnection);
+  const user = useAuthStore((s) => s.user);
 
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
