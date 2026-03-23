@@ -79,12 +79,17 @@ class SSHTunnel:
                 f"SSH tunnel connection failed after {SSH_MAX_RETRIES} attempts: {last_exc}"
             ) from last_exc
 
-        self._listener = await self._conn.forward_local_port(
-            self._local_host,
-            0,  # auto-assign port
-            config.db_host,
-            config.db_port,
-        )
+        try:
+            self._listener = await self._conn.forward_local_port(
+                self._local_host,
+                0,  # auto-assign port
+                config.db_host,
+                config.db_port,
+            )
+        except Exception:
+            self._conn.close()
+            self._conn = None
+            raise
         self._local_port = self._listener.get_port()
         logger.info(
             "SSH tunnel %s:%d -> %s:%d via %s:%d",

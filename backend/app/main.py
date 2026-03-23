@@ -549,6 +549,22 @@ async def _scheduler_loop() -> None:
                             continue
 
                         duration_ms = int((_time.monotonic() - start) * 1000)
+
+                        if getattr(result, "error", None):
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps({"error": result.error}, default=str),
+                                duration_ms=duration_ms,
+                            )
+                            logger.warning(
+                                "Scheduler: query error for schedule %s: %s",
+                                schedule.id[:8],
+                                result.error,
+                            )
+                            continue
+
                         cols = list(getattr(result, "columns", []))
                         rows = getattr(result, "rows", []) or []
                         serialized = [[serialize_value(v) for v in row] for row in rows[:500]]

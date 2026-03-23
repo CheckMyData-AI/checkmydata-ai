@@ -282,6 +282,23 @@ class TestUpdateSessionTitle:
         assert result is None
 
 
+class TestGetHistoryAsMessagesMalformed:
+    @pytest.mark.asyncio
+    async def test_with_malformed_metadata(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+        msg = await svc.add_message(db, chat.id, "assistant", "answer")
+        msg.metadata_json = "not-json{"
+        await db.commit()
+        msgs = await svc.get_history_as_messages(db, chat.id)
+        assert len(msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_session(self, db):
+        msgs = await svc.get_history_as_messages(db, "nonexistent-id")
+        assert msgs == []
+
+
 class TestDeleteSession:
     @pytest.mark.asyncio
     async def test_delete_success(self, db):

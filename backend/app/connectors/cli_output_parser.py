@@ -34,9 +34,6 @@ class CLIOutputParser:
 
         reader = csv.reader(io.StringIO(text))
         all_rows = list(reader)
-        if not all_rows:
-            return [], []
-
         columns = all_rows[0]
         rows = all_rows[1:]
         return columns, rows

@@ -192,6 +192,17 @@ class TestGetLastIndexedRecord:
         record = await tracker.get_last_indexed_record(session, "proj1")
         assert record is None
 
+    async def test_with_branch_filter(self, tracker):
+        mock_record = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_record
+
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        record = await tracker.get_last_indexed_record(session, "proj1", branch="main")
+        assert record is mock_record
+
 
 class TestCountCommitsAhead:
     async def test_counts_commits(self, tracker):

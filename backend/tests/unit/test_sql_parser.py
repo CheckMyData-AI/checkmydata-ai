@@ -101,3 +101,15 @@ class TestDetectAggregations:
     def test_none(self):
         aggs = detect_aggregations("SELECT * FROM users")
         assert aggs == []
+
+
+class TestExtractColumnTableSkipsKeywords:
+    def test_case_keyword_skipped(self):
+        pairs = extract_column_table_pairs(
+            "SELECT CASE WHEN u.active THEN 1 ELSE 0 END FROM users u"
+        )
+        keywords = {t.upper() for _, t in pairs}
+        assert "CASE" not in keywords
+        assert "WHEN" not in keywords
+        assert "THEN" not in keywords
+        assert "ELSE" not in keywords

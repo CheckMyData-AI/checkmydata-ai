@@ -550,6 +550,18 @@ class TestVisualizationRoutes:
         assert resp.status_code == 200
         assert "application/json" in resp.headers["content-type"]
 
+    def test_export_xlsx(self, client):
+        resp = client.post(
+            "/api/visualizations/export",
+            json={
+                "columns": ["name", "count"],
+                "rows": [["Alice", 10]],
+                "format": "xlsx",
+            },
+        )
+        assert resp.status_code == 200
+        assert "spreadsheetml" in resp.headers["content-type"]
+
     def test_export_unsupported_format(self, client):
         resp = client.post(
             "/api/visualizations/export",

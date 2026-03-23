@@ -322,6 +322,4 @@ class ExplorationEngine:
             parts.append(f"{report.critical_count} critical issue(s) need immediate attention.")
         if report.warning_count:
             parts.append(f"{report.warning_count} warning(s) to review.")
-        if report.positive_count:
-            parts.append(f"{report.positive_count} positive indicator(s).")
         return " ".join(parts)

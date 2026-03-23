@@ -36,9 +36,15 @@ class BackupManager:
             "errors": [],
         }
 
-        db_size = await self._backup_database(dest / "db", manifest)
-        chroma_size = await self._backup_chroma(dest / "chroma", manifest)
-        rules_size = await self._backup_rules(dest / "rules", manifest)
+        try:
+            db_size = await self._backup_database(dest / "db", manifest)
+            chroma_size = await self._backup_chroma(dest / "chroma", manifest)
+            rules_size = await self._backup_rules(dest / "rules", manifest)
+        except Exception:
+            import shutil
+
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
 
         manifest["total_size_bytes"] = db_size + chroma_size + rules_size
         manifest["backup_path"] = str(dest)
@@ -126,13 +132,21 @@ class BackupManager:
             )
             if pg.stdout:
                 pg.stdout.close()
-            gz_out, gz_err = gz.communicate(timeout=300)
-            pg.wait(timeout=10)
+            try:
+                gz_out, gz_err = gz.communicate(timeout=300)
+                pg.wait(timeout=10)
+            except (subprocess.TimeoutExpired, Exception):
+                pg.kill()
+                gz.kill()
+                pg.wait()
+                gz.wait()
+                raise
             backup_file.write_bytes(gz_out)
+            pg_stderr = pg.stderr.read() if pg.stderr else b""
             return subprocess.CompletedProcess(
                 args=["pg_dump"],
                 returncode=pg.returncode or gz.returncode,
-                stderr=(pg.stderr.read() if pg.stderr else b"") + (gz_err or b""),
+                stderr=pg_stderr + (gz_err or b""),
             )
 
         result = await asyncio.to_thread(_run_pg_dump)

@@ -146,3 +146,28 @@ class TestSSHTunnelManagerReuse:
         host, port = await mgr.get_or_create(cfg)
         assert host == "127.0.0.1"
         assert port == 9999
+
+
+class TestSSHTunnelPortForwardFailure:
+    @pytest.mark.asyncio
+    async def test_conn_closed_on_forward_failure(self):
+        tunnel = SSHTunnel()
+        fake_conn = MagicMock()
+        fake_conn.forward_local_port = AsyncMock(side_effect=OSError("port forward failed"))
+        fake_conn.close = MagicMock()
+
+        from app.connectors.base import ConnectionConfig
+
+        cfg = ConnectionConfig(
+            db_type="postgresql",
+            db_host="db.example.com",
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="user",
+        )
+        tunnel._conn = fake_conn
+        with pytest.raises(OSError, match="port forward"):
+            tunnel._listener = await fake_conn.forward_local_port(
+                "127.0.0.1", 0, cfg.db_host, cfg.db_port
+            )
