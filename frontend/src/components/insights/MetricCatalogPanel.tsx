@@ -75,6 +75,7 @@ export function MetricCatalogPanel({
       <input
         type="text"
         placeholder="Search metrics..."
+        aria-label="Search metrics"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="w-full px-2 py-1 text-[11px] bg-zinc-900 border border-zinc-800 rounded text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
