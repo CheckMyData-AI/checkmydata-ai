@@ -23,6 +23,11 @@ export class SectionErrorBoundary extends React.Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    const section = this.props.sectionName || "unknown";
+    console.error(`[SectionErrorBoundary:${section}]`, error, errorInfo.componentStack);
+  }
+
   private handleRetry = () => {
     this.setState({ hasError: false, error: null });
   };
