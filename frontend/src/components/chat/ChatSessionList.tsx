@@ -106,7 +106,7 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
     try {
       const msgs = await api.chat.getMessages(sessionId);
       const mapped: ChatMessage[] = msgs.map((m) => {
-        let meta: any = {};
+        let meta: Record<string, unknown> = {};
         try {
           meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
         } catch {
