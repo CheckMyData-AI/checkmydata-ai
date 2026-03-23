@@ -14,16 +14,16 @@ router = APIRouter()
 
 
 class RenderRequest(BaseModel):
-    columns: list[str]
-    rows: list[list[Any]]
+    columns: list[str] = Field(max_length=500)
+    rows: list[list[Any]] = Field(max_length=10_000)
     viz_type: str = Field(default="table", max_length=50)
     config: dict = {}
-    summary: str = ""
+    summary: str = Field(default="", max_length=5000)
 
 
 class ExportRequest(BaseModel):
-    columns: list[str]
-    rows: list[list[Any]]
+    columns: list[str] = Field(max_length=500)
+    rows: list[list[Any]] = Field(max_length=50_000)
     format: str = Field(default="csv", max_length=50)
 
 

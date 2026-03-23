@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Dashboard, DashboardCard, SavedNote } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
@@ -54,7 +54,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
     return () => { cancelled = true; };
   }, [activeProject]);
 
-  const noteMap = Object.fromEntries(notes.map((n) => [n.id, n]));
+  const noteMap = useMemo(() => Object.fromEntries(notes.map((n) => [n.id, n])), [notes]);
 
   const handleAddCard = (noteId: string) => {
     if (cards.some((c) => c.note_id === noteId)) {
@@ -109,16 +109,12 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
     const noteIds = cards.map((c) => c.note_id).filter((id) => noteMap[id]?.connection_id);
     if (!noteIds.length) return;
     setRefreshing(true);
+    const results = await Promise.allSettled(noteIds.map((id) => api.notes.execute(id)));
     let ok = 0;
     let fail = 0;
-    for (const id of noteIds) {
-      try {
-        const res = await api.notes.execute(id);
-        if (res.error) fail++;
-        else ok++;
-      } catch {
-        fail++;
-      }
+    for (const r of results) {
+      if (r.status === "fulfilled" && !r.value.error) ok++;
+      else fail++;
     }
     setRefreshing(false);
     if (activeProject) {
@@ -136,6 +132,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Dashboard title..."
+          maxLength={200}
           className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
         />
         <div className="flex items-center gap-1 bg-surface-1 border border-border-subtle rounded-lg p-0.5">

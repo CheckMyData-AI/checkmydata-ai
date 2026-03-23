@@ -242,7 +242,7 @@ export function NoteCard({ note }: NoteCardProps) {
 
       {/* Comment */}
       <div className="px-3 pb-2">
-        {editingComment ? (
+        {isOwner && editingComment ? (
           <div className="flex flex-col gap-1">
             <textarea
               ref={commentRef}
@@ -269,14 +269,16 @@ export function NoteCard({ note }: NoteCardProps) {
               </button>
             </div>
           </div>
-        ) : (
+        ) : isOwner ? (
           <button
             onClick={() => { setCommentDraft(note.comment ?? ""); setEditingComment(true); }}
             className="text-[11px] text-text-muted hover:text-text-secondary transition-colors text-left w-full"
           >
             {note.comment || "Add comment..."}
           </button>
-        )}
+        ) : note.comment ? (
+          <p className="text-[11px] text-text-muted">{note.comment}</p>
+        ) : null}
       </div>
 
       {/* Agent answer toggle */}

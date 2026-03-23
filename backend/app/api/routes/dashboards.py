@@ -116,6 +116,7 @@ async def update_dashboard(
     dashboard = await _svc.get(db, dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
+    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
     if dashboard.creator_id != user["user_id"]:
         raise HTTPException(status_code=403, detail="Only the creator can update this dashboard")
     updates = body.model_dump(exclude_unset=True)
@@ -143,6 +144,7 @@ async def delete_dashboard(
     dashboard = await _svc.get(db, dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
+    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
     if dashboard.creator_id != user["user_id"]:
         raise HTTPException(status_code=403, detail="Only the creator can delete this dashboard")
     await _svc.delete(db, dashboard.id)

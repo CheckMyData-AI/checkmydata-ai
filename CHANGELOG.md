@@ -46,6 +46,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Test connection error sanitization** — Error messages truncated to 500 chars to prevent internal detail leaks
 - **Input validation hardening** — Added `max_length` to `LearningUpdate.lesson`, `SshKeyCreate.passphrase`, `mcp_env` size limits
 - **Orchestrator fire-and-forget warning** — `ensure_future` callback now retrieves exceptions to suppress "Task exception was never retrieved" warnings
+- **Default rules protection** — Default rules (system-generated) now return 403 on update/delete attempts, preventing accidental corruption
+- **Shared notes access broken** — `get_note` and `execute_note` now use `_require_note_access` which allows project members to access shared notes (previously always returned 403)
+- **NoteCard comment editing for non-owners** — Comment section now read-only for non-owners, preventing guaranteed 403 failures
+- **Viz endpoint DoS** — `RenderRequest` rows capped at 10K, `ExportRequest` at 50K, columns at 500 to prevent server OOM
+- **Dashboard update/delete membership check** — Both endpoints now verify project membership before checking creator ownership
+- **Session notes unbounded queries** — `_find_similar` capped at 100 candidates, `get_notes_for_context` capped at 200 with 50-note default return
+- **Rules rate limiting** — Added rate limits to `list_rules` (60/min) and `update_rule` (20/min)
+- **Dashboard refresh parallelized** — `handleRefreshAll` now uses `Promise.allSettled` instead of sequential awaits
+- **DashboardBuilder noteMap memoization** — `noteMap` wrapped in `useMemo` to prevent needless re-renders
+- **Frontend input maxLength** — Added maxLength to RulesManager name/content, DashboardBuilder title inputs
+- **ChartRenderer unknown type fallback** — Shows descriptive message instead of blank rectangle for unsupported chart types
 
 ### Security
 - **Auth register error sanitization** — Register endpoint no longer exposes internal ValueError messages; returns static "already exists" message while logging details server-side

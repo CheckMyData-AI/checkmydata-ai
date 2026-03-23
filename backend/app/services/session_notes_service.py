@@ -117,6 +117,8 @@ class SessionNotesService:
                 SessionNote.subject == subject,
                 SessionNote.is_active.is_(True),
             )
+            .order_by(SessionNote.updated_at.desc())
+            .limit(100)
         )
         candidates = result.scalars().all()
         note_lower = note_text.strip().lower()
@@ -153,7 +155,7 @@ class SessionNotesService:
         stmt = stmt.order_by(
             SessionNote.confidence.desc(),
             SessionNote.updated_at.desc(),
-        )
+        ).limit(200)
         result = await session.execute(stmt)
         notes = list(result.scalars().all())
 
@@ -167,7 +169,7 @@ class SessionNotesService:
             ]
             return filtered if filtered else notes[:20]
 
-        return notes
+        return notes[:50]
 
     async def get_note_by_id(
         self,

@@ -84,6 +84,21 @@ async def _require_note_owner(
     return note
 
 
+async def _require_note_access(
+    db: AsyncSession,
+    note_id: str,
+    user_id: str,
+):
+    """Load note, verify project membership and visibility (owner or shared)."""
+    note = await _svc.get(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    await _membership_svc.require_role(db, note.project_id, user_id, "viewer")
+    if note.user_id != user_id and not note.is_shared:
+        raise HTTPException(status_code=403, detail="Note is private")
+    return note
+
+
 @router.post("", response_model=NoteResponse)
 @limiter.limit("30/minute")
 async def create_note(
@@ -146,7 +161,7 @@ async def get_note(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    return await _require_note_owner(db, note_id, user["user_id"])
+    return await _require_note_access(db, note_id, user["user_id"])
 
 
 @router.patch("/{note_id}", response_model=NoteResponse)
@@ -214,7 +229,7 @@ async def execute_note(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    note = await _require_note_owner(db, note_id, user["user_id"])
+    note = await _require_note_access(db, note_id, user["user_id"])
     if not note.connection_id:
         raise HTTPException(status_code=400, detail="Note has no connection — cannot execute")
 

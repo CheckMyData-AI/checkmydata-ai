@@ -161,6 +161,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             onChange={(e) => setName(e.target.value)}
             placeholder="Rule name"
             aria-label="Rule name"
+            maxLength={255}
             className={inputCls}
           />
           <textarea
@@ -169,6 +170,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             placeholder="Rule content (markdown)"
             aria-label="Rule content"
             rows={4}
+            maxLength={50000}
             className={inputCls + " resize-y min-h-[60px]"}
           />
           <div className="flex gap-2 pt-1">

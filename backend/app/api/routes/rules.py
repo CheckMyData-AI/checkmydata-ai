@@ -81,7 +81,9 @@ async def create_rule(
 
 
 @router.get("", response_model=list[RuleResponse])
+@limiter.limit("60/minute")
 async def list_rules(
+    request: Request,
     project_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -106,7 +108,9 @@ async def get_rule(
 
 
 @router.patch("/{rule_id}", response_model=RuleResponse)
+@limiter.limit("20/minute")
 async def update_rule(
+    request: Request,
     rule_id: str,
     body: RuleUpdate,
     db: AsyncSession = Depends(get_db),
@@ -117,6 +121,8 @@ async def update_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule.project_id:
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "editor")
+    elif rule.is_default:
+        raise HTTPException(status_code=403, detail="Default rules cannot be modified")
     updates = body.model_dump(exclude_unset=True)
     updated_rule = await _svc.update(db, rule_id, **updates)
     if not updated_rule:
@@ -145,6 +151,8 @@ async def delete_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule.project_id:
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
+    elif rule.is_default:
+        raise HTTPException(status_code=403, detail="Default rules cannot be deleted")
     project_id = rule.project_id
     await _svc.delete(db, rule_id)
     audit_log(

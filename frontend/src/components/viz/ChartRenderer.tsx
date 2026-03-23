@@ -200,6 +200,13 @@ export function ChartRenderer({ config }: ChartRendererProps) {
         {chartType === "scatter" && (
           <Scatter data={data as never} options={options as never} />
         )}
+        {!["bar", "line", "pie", "scatter"].includes(chartType) && (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm text-zinc-400">
+              Unsupported chart type: &ldquo;{chartType}&rdquo;. Try Table view.
+            </p>
+          </div>
+        )}
       </div>
     </ChartErrorBoundary>
   );
