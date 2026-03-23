@@ -14,7 +14,13 @@ const SCOPE_OPTIONS = [
 ] as const;
 
 export function NotesPanel() {
-  const { notes, isOpen, isLoading, scope, setOpen, setScope, loadNotes } = useNotesStore();
+  const notes = useNotesStore((s) => s.notes);
+  const isOpen = useNotesStore((s) => s.isOpen);
+  const isLoading = useNotesStore((s) => s.isLoading);
+  const scope = useNotesStore((s) => s.scope);
+  const setOpen = useNotesStore((s) => s.setOpen);
+  const setScope = useNotesStore((s) => s.setScope);
+  const loadNotes = useNotesStore((s) => s.loadNotes);
   const activeProject = useAppStore((s) => s.activeProject);
   const projectId = activeProject?.id;
   const [showBatchRunner, setShowBatchRunner] = useState(false);

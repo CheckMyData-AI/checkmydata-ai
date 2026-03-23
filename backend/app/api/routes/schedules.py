@@ -212,7 +212,13 @@ async def run_now(
     config = await _conn_svc.to_config(db, conn_model, user_id=user["user_id"])
 
     from app.connectors.registry import get_connector
+    from app.core.safety import SafetyGuard
     from app.viz.utils import serialize_value
+
+    guard = SafetyGuard()
+    safety = guard.validate(schedule.sql_query, conn_model.db_type)
+    if not safety.is_safe:
+        raise HTTPException(status_code=400, detail=f"Query blocked: {safety.reason}")
 
     connector = get_connector(conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode)
     start = time.monotonic()

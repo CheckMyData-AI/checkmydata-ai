@@ -36,7 +36,8 @@ interface RulesManagerProps {
 }
 
 export function RulesManager({ createRequested, onCreateHandled }: RulesManagerProps) {
-  const { activeProject, rulesVersion } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const rulesVersion = useAppStore((s) => s.rulesVersion);
   const { canDelete, canEdit } = usePermission();
   const [rules, setRules] = useState<Rule[]>([]);
   const [showCreate, setShowCreate] = useState(false);

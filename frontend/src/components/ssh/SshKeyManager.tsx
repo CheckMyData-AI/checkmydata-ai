@@ -129,7 +129,8 @@ function SshKeyHelp() {
 }
 
 export function SshKeyManager() {
-  const { sshKeys, setSshKeys } = useAppStore();
+  const sshKeys = useAppStore((s) => s.sshKeys);
+  const setSshKeys = useAppStore((s) => s.setSshKeys);
   const [showCreate, setShowCreate] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [form, setForm] = useState({

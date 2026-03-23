@@ -25,7 +25,7 @@ const DOC_TYPE_ICONS: Record<string, string> = {
 const VISIBLE_CAP = 5;
 
 export function KnowledgeDocs() {
-  const { activeProject } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);

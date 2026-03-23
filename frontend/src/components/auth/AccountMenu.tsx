@@ -10,7 +10,8 @@ import { PopoverPortal } from "@/components/ui/PopoverPortal";
 type View = "menu" | "password" | "delete";
 
 export function AccountMenu() {
-  const { logout, user } = useAuthStore();
+  const logout = useAuthStore((s) => s.logout);
+  const user = useAuthStore((s) => s.user);
   const isGoogleOnly = user?.auth_provider === "google";
   const [view, setView] = useState<View>("menu");
   const [open, setOpen] = useState(false);
@@ -169,7 +170,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
 function DeleteConfirm({ onClose }: { onClose: () => void }) {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
-  const { logout } = useAuthStore();
+  const logout = useAuthStore((s) => s.logout);
 
   const handleDelete = async () => {
     setLoading(true);

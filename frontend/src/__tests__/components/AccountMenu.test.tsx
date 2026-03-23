@@ -13,7 +13,8 @@ let authState: {
 };
 
 vi.mock("@/stores/auth-store", () => ({
-  useAuthStore: () => authState,
+  useAuthStore: (selector?: (s: typeof authState) => unknown) =>
+    selector ? selector(authState) : authState,
 }));
 
 vi.mock("@/components/ui/Icon", () => ({

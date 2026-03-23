@@ -11,14 +11,12 @@ import { Icon } from "@/components/ui/Icon";
 const DEBOUNCE_MS = 300;
 
 export function ChatSearch() {
-  const {
-    activeProject,
-    connections,
-    chatSessions,
-    setActiveSession,
-    setActiveConnection,
-    setMessages,
-  } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const connections = useAppStore((s) => s.connections);
+  const chatSessions = useAppStore((s) => s.chatSessions);
+  const setActiveSession = useAppStore((s) => s.setActiveSession);
+  const setActiveConnection = useAppStore((s) => s.setActiveConnection);
+  const setMessages = useAppStore((s) => s.setMessages);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ChatSearchResult[]>([]);

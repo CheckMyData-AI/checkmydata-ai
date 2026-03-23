@@ -20,7 +20,7 @@ function timeAgo(iso: string): string {
 const REFRESH_PIPELINES = new Set(["code_db_sync", "db_index"]);
 
 export function SyncStatusIndicator() {
-  const { activeConnection } = useAppStore();
+  const activeConnection = useAppStore((s) => s.activeConnection);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const tasks = useTaskStore((s) => s.tasks);
   const prevFinishedRef = useRef<Set<string>>(new Set());

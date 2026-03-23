@@ -133,18 +133,16 @@ interface ProjectSelectorProps {
 }
 
 export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSelectorProps) {
-  const {
-    sshKeys,
-    projects,
-    activeProject,
-    setProjects,
-    setActiveProject,
-    setConnections,
-    setActiveConnection,
-    clearMessages,
-    setChatSessions,
-    setActiveSession,
-  } = useAppStore();
+  const sshKeys = useAppStore((s) => s.sshKeys);
+  const projects = useAppStore((s) => s.projects);
+  const activeProject = useAppStore((s) => s.activeProject);
+  const setProjects = useAppStore((s) => s.setProjects);
+  const setActiveProject = useAppStore((s) => s.setActiveProject);
+  const setConnections = useAppStore((s) => s.setConnections);
+  const setActiveConnection = useAppStore((s) => s.setActiveConnection);
+  const clearMessages = useAppStore((s) => s.clearMessages);
+  const setChatSessions = useAppStore((s) => s.setChatSessions);
+  const setActiveSession = useAppStore((s) => s.setActiveSession);
   const setUserRole = useAppStore((s) => s.setUserRole);
   const triggerProjectEdit = useAppStore((s) => s.triggerProjectEdit);
   const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);

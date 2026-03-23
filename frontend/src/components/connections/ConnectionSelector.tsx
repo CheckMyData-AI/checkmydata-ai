@@ -121,13 +121,11 @@ interface ConnectionSelectorProps {
 }
 
 export function ConnectionSelector({ createRequested, onCreateHandled }: ConnectionSelectorProps) {
-  const {
-    activeProject,
-    connections,
-    activeConnection,
-    setActiveConnection,
-    sshKeys,
-  } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const connections = useAppStore((s) => s.connections);
+  const activeConnection = useAppStore((s) => s.activeConnection);
+  const setActiveConnection = useAppStore((s) => s.setActiveConnection);
+  const sshKeys = useAppStore((s) => s.sshKeys);
   const { canDelete } = usePermission();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
