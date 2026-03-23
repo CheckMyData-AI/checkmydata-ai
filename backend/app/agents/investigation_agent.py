@@ -20,6 +20,7 @@ from app.agents.prompts.investigation_prompt import INVESTIGATION_SYSTEM_PROMPT
 from app.agents.tools.investigation_tools import get_investigation_tools
 from app.config import settings
 from app.connectors.registry import get_connector
+from app.core.safety import SafetyGuard
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.router import LLMRouter
 
@@ -189,6 +190,11 @@ class InvestigationAgent(BaseAgent):
         cfg = ctx.connection_config
         if cfg is None:
             return "Error: no database connection."
+
+        guard = SafetyGuard()
+        safety = guard.validate(query, cfg.db_type)
+        if not safety.is_safe:
+            return f"Blocked: {safety.reason}"
 
         connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
         await connector.connect(cfg)

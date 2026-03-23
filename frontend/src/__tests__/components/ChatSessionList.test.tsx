@@ -65,7 +65,9 @@ function setupStore(overrides: Record<string, unknown> = {}) {
     setChatSessions: vi.fn(),
     ...overrides,
   };
-  mockedUseAppStore.mockReturnValue(base);
+  mockedUseAppStore.mockImplementation((selector?: (s: typeof base) => unknown) =>
+    selector ? selector(base) : base,
+  );
   return base;
 }
 

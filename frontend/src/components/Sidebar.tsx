@@ -55,9 +55,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarProps) {
-  const { activeProject, sshKeys, setSshKeys, projects, connections, restoringState } =
-    useAppStore();
-  const { user, logout } = useAuthStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const sshKeys = useAppStore((s) => s.sshKeys);
+  const setSshKeys = useAppStore((s) => s.setSshKeys);
+  const projects = useAppStore((s) => s.projects);
+  const connections = useAppStore((s) => s.connections);
+  const restoringState = useAppStore((s) => s.restoringState);
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const [collapsed, setCollapsed] = useState(isMobile ? false : getStoredCollapsed);
   const drawerRef = useRef<HTMLElement>(null);
 

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { SavedNote } from "@/lib/api";
 import { api } from "@/lib/api";
+import { toast } from "@/stores/toast-store";
 
 function persistOpen(value: boolean) {
   if (typeof window === "undefined") return;
@@ -72,6 +73,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     } catch {
       if (get().loadedProjectId === projectId) {
         set({ notes: [] });
+        toast("Failed to load saved queries", "error");
       }
     } finally {
       if (get().loadedProjectId === projectId) {

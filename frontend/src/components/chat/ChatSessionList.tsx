@@ -79,16 +79,14 @@ interface ChatSessionListProps {
 }
 
 export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessionListProps) {
-  const {
-    activeProject,
-    connections,
-    chatSessions,
-    activeSession,
-    setActiveSession,
-    setActiveConnection,
-    setMessages,
-    setChatSessions,
-  } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const connections = useAppStore((s) => s.connections);
+  const chatSessions = useAppStore((s) => s.chatSessions);
+  const activeSession = useAppStore((s) => s.activeSession);
+  const setActiveSession = useAppStore((s) => s.setActiveSession);
+  const setActiveConnection = useAppStore((s) => s.setActiveConnection);
+  const setMessages = useAppStore((s) => s.setMessages);
+  const setChatSessions = useAppStore((s) => s.setChatSessions);
 
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);

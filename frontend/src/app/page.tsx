@@ -21,9 +21,12 @@ import { NotificationBell } from "@/components/ui/NotificationBell";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 
 export default function Home() {
-  const { activeProject, activeConnection, projects } = useAppStore();
-  const { user } = useAuthStore();
-  const { isOpen: notesOpen, toggleOpen: toggleNotes } = useNotesStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const activeConnection = useAppStore((s) => s.activeConnection);
+  const projects = useAppStore((s) => s.projects);
+  const user = useAuthStore((s) => s.user);
+  const notesOpen = useNotesStore((s) => s.isOpen);
+  const toggleNotes = useNotesStore((s) => s.toggleOpen);
   const notesCount = useNotesStore((s) => s.notes.length);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);

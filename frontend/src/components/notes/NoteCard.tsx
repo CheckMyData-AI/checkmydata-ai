@@ -51,7 +51,8 @@ interface NoteCardProps {
 }
 
 export function NoteCard({ note }: NoteCardProps) {
-  const { removeNote, updateNote } = useNotesStore();
+  const removeNote = useNotesStore((s) => s.removeNote);
+  const updateNote = useNotesStore((s) => s.updateNote);
   const confirm = useConfirmStore((s) => s.show);
   const currentUserId = useAuthStore((s) => s.user?.id);
   const isOwner = note.user_id === currentUserId;
