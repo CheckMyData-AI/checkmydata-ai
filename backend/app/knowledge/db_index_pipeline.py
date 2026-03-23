@@ -654,7 +654,7 @@ class DbIndexPipeline:
                 try:
                     await connector.disconnect()
                 except Exception:
-                    pass
+                    logger.debug("Connector disconnect failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Context helpers

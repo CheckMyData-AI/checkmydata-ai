@@ -1098,7 +1098,7 @@ class SQLAgent(BaseAgent):
                             if tag:
                                 sync_warnings_map[se.table_name.lower()] = tag
                 except Exception:
-                    pass
+                    logger.debug("Code-DB sync enrichment parse failed", exc_info=True)
 
             return _build_enriched_table_map(entries, sync_warnings_map)
         except Exception:

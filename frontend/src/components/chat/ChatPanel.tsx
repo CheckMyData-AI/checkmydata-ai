@@ -496,11 +496,11 @@ export function ChatPanel() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3">
         <div className="flex gap-1">
-          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
-          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
-          <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce [animation-delay:0.1s]" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce [animation-delay:0.2s]" />
         </div>
-        <p className="text-zinc-500 text-sm">Restoring your session…</p>
+        <p className="text-text-muted text-sm">Restoring your session…</p>
       </div>
     );
   }
@@ -508,10 +508,10 @@ export function ChatPanel() {
   if (!activeProject) {
     return (
       <div className="flex-1 flex flex-col p-6 gap-4">
-        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-3/4" />
-        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-1/2" />
-        <div className="animate-pulse bg-zinc-800 rounded-lg h-4 w-2/3" />
-        <p className="text-zinc-500 text-sm mt-4">Select a project to start chatting</p>
+        <div className="animate-pulse bg-surface-2 rounded-lg h-4 w-3/4" />
+        <div className="animate-pulse bg-surface-2 rounded-lg h-4 w-1/2" />
+        <div className="animate-pulse bg-surface-2 rounded-lg h-4 w-2/3" />
+        <p className="text-text-muted text-sm mt-4">Select a project to start chatting</p>
       </div>
     );
   }

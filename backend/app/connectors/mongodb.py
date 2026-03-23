@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from typing import Any
@@ -16,6 +17,7 @@ from app.connectors.base import (
 )
 from app.connectors.ssh_tunnel import SSHTunnelManager
 
+logger = logging.getLogger(__name__)
 _tunnel_mgr = SSHTunnelManager()
 
 
@@ -214,4 +216,5 @@ class MongoDBConnector(BaseConnector):
             await self._client.admin.command("ping")
             return True
         except Exception:
+            logger.debug("MongoDB ping failed", exc_info=True)
             return False

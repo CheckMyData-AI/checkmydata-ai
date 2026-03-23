@@ -294,7 +294,7 @@ async def repo_status(
         try:
             indexed_files_count = len(_json.loads(record.indexed_files))
         except Exception:
-            pass
+            logger.debug("Failed to parse indexed_files JSON", exc_info=True)
 
     checkpoint = await _checkpoint_svc.get_active(db, project_id)
 

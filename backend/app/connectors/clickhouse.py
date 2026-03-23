@@ -135,7 +135,7 @@ class ClickHouseConnector(BaseConnector):
                             )
                         )
                 except Exception:
-                    pass
+                    logger.debug("ClickHouse index query failed for %s", tname, exc_info=True)
 
                 tables.append(
                     TableInfo(
