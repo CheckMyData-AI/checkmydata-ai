@@ -35,6 +35,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { useRestoreState } from "@/hooks/useRestoreState";
+import { useRefreshOnFocus } from "@/hooks/useRefreshOnFocus";
 import { useMobileLayout } from "@/hooks/useMobileLayout";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -56,6 +57,7 @@ export default function Home() {
 
   useGlobalEvents(!!user);
   useRestoreState(!!user);
+  useRefreshOnFocus(!!user);
 
   const showOnboarding =
     !!user && !user.is_onboarded && projects.length === 0 && !onboardingDismissed;
