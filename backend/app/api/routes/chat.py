@@ -375,6 +375,14 @@ class ChatRequest(BaseModel):
     modification: str | None = Field(None, max_length=5000)
 
 
+class WsChatMessage(BaseModel):
+    """Validated WebSocket chat message."""
+
+    message: str = Field(min_length=1, max_length=20000)
+    preferred_provider: str | None = Field(None, max_length=50)
+    model: str | None = Field(None, max_length=100)
+
+
 class ChatResponse(BaseModel):
     session_id: str
     answer: str
@@ -1355,14 +1363,14 @@ async def chat_websocket(
 
         while True:
             data = await websocket.receive_json()
-            message = data.get("message", "")
-            if not message:
-                continue
-            if len(message) > 20000:
+            try:
+                ws_msg = WsChatMessage.model_validate(data)
+            except Exception as val_err:
                 await websocket.send_json(
-                    {"type": "error", "message": "Message too long (max 20000 chars)"}
+                    {"type": "error", "message": f"Invalid message: {val_err}"}
                 )
                 continue
+            message = ws_msg.message
 
             limit_err = await agent_limiter.acquire(user_id)
             if limit_err:
@@ -1379,8 +1387,8 @@ async def chat_websocket(
             try:
                 _proj_agent_prov = ws_project.agent_llm_provider if ws_project else None
                 _proj_agent_mdl = ws_project.agent_llm_model if ws_project else None
-                ws_agent_provider = data.get("preferred_provider") or _proj_agent_prov
-                ws_agent_model = data.get("model") or _proj_agent_mdl
+                ws_agent_provider = ws_msg.preferred_provider or _proj_agent_prov
+                ws_agent_model = ws_msg.model or _proj_agent_mdl
                 _proj_sql_prov = ws_project.sql_llm_provider if ws_project else None
                 _proj_sql_mdl = ws_project.sql_llm_model if ws_project else None
                 ws_sql_provider = _proj_sql_prov or ws_agent_provider
