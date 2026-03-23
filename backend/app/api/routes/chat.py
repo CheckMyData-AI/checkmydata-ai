@@ -1483,7 +1483,7 @@ async def chat_websocket(
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:
-            pass
+            logger.debug("Failed to send error over WebSocket", exc_info=True)
 
 
 class ExplainSqlRequest(BaseModel):

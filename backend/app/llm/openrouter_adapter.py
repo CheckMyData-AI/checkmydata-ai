@@ -37,7 +37,7 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
         try:
             body = exc.response.text.lower()
         except Exception:
-            pass
+            logger.debug("Could not read error response body", exc_info=True)
 
         if status == 429:
             return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)

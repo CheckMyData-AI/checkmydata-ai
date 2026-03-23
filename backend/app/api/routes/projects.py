@@ -46,23 +46,23 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1)
+    name: str | None = Field(None, min_length=1, max_length=255)
 
     @field_validator("name", mode="before")
     @classmethod
     def strip_name(cls, v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) else v
 
-    description: str | None = None
-    repo_url: str | None = None
-    repo_branch: str | None = None
-    ssh_key_id: str | None = None
-    indexing_llm_provider: str | None = None
-    indexing_llm_model: str | None = None
-    agent_llm_provider: str | None = None
-    agent_llm_model: str | None = None
-    sql_llm_provider: str | None = None
-    sql_llm_model: str | None = None
+    description: str | None = Field(None, max_length=2000)
+    repo_url: str | None = Field(None, max_length=1024)
+    repo_branch: str | None = Field(None, max_length=255)
+    ssh_key_id: str | None = Field(None, max_length=255)
+    indexing_llm_provider: str | None = Field(None, max_length=100)
+    indexing_llm_model: str | None = Field(None, max_length=100)
+    agent_llm_provider: str | None = Field(None, max_length=100)
+    agent_llm_model: str | None = Field(None, max_length=100)
+    sql_llm_provider: str | None = Field(None, max_length=100)
+    sql_llm_model: str | None = Field(None, max_length=100)
 
 
 class ProjectResponse(BaseModel):

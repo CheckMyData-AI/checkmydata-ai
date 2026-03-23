@@ -65,28 +65,28 @@ _learning_svc = AgentLearningService()
 
 
 class ConnectionCreate(BaseModel):
-    project_id: str
+    project_id: str = Field(max_length=255)
     name: str = Field(max_length=255)
     db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] = Field(max_length=50)
-    source_type: str = "database"
+    source_type: str = Field(default="database", max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = Field(None, max_length=255)
-    ssh_key_id: str | None = None
+    ssh_key_id: str | None = Field(None, max_length=255)
     db_host: str = Field(default="127.0.0.1", max_length=255)
     db_port: int = Field(default=5432, ge=1, le=65535)
-    db_name: str = ""
+    db_name: str = Field(default="", max_length=255)
     db_user: str | None = Field(None, max_length=255)
-    db_password: str | None = None
-    connection_string: str | None = Field(None, max_length=1024)
+    db_password: str | None = Field(None, max_length=1024)
+    connection_string: str | None = Field(None, max_length=2048)
     is_read_only: bool = True
     ssh_exec_mode: bool = False
-    ssh_command_template: str | None = None
-    ssh_pre_commands: list[str] | None = None
+    ssh_command_template: str | None = Field(None, max_length=2048)
+    ssh_pre_commands: list[str] | None = Field(None, max_length=20)
     # MCP-specific fields
-    mcp_server_command: str | None = None
-    mcp_server_args: list[str] | None = None
-    mcp_server_url: str | None = None
+    mcp_server_command: str | None = Field(None, max_length=1024)
+    mcp_server_args: list[str] | None = Field(None, max_length=50)
+    mcp_server_url: str | None = Field(None, max_length=1024)
     mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
 

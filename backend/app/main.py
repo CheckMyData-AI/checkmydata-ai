@@ -799,7 +799,7 @@ async def module_health():
                 if mgr:
                     tunnel_info.append({"module": mod_path, "active_tunnels": len(mgr._tunnels)})
             except Exception:
-                pass
+                logger.debug("Tunnel introspection failed for %s", mod_path, exc_info=True)
         results["ssh_tunnels"] = {"status": "ok", "detail": tunnel_info}
     except Exception:
         results["ssh_tunnels"] = {"status": "error", "detail": "Service unavailable"}

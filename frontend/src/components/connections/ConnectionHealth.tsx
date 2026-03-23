@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ConnectionHealthState } from "@/lib/api";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
+import { toast } from "@/stores/toast-store";
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
@@ -85,8 +86,8 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
         setHealth(result.health);
         onStatusChange?.(result.health.status as HealthStatus);
       }
-    } catch {
-      /* handled by toast at the caller level */
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Reconnect failed", "error");
     } finally {
       if (mountedRef.current) setReconnecting(false);
     }
