@@ -225,6 +225,18 @@ class SSHTunnelManager:
             f"{self._RECONNECT_MAX_ATTEMPTS} attempts: {last_exc}"
         ) from last_exc
 
+    async def close_for_config(self, config: ConnectionConfig) -> bool:
+        """Close the tunnel for a specific connection config, if it exists."""
+        if not config.ssh_host:
+            return False
+        key = self._key(config)
+        tunnel = self._tunnels.pop(key, None)
+        if tunnel:
+            await tunnel.stop()
+            logger.info("Closed SSH tunnel for %s", key)
+            return True
+        return False
+
     async def close_all(self):
         for tunnel in self._tunnels.values():
             await tunnel.stop()

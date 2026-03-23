@@ -134,9 +134,35 @@ class ConnectionService:
         conn = await self.get(session, connection_id)
         if not conn:
             return False
+
+        try:
+            config = await self.to_config(session, conn)
+            if config.ssh_host:
+                await self._close_ssh_tunnels(config)
+        except Exception:
+            logger.debug("Failed to clean up SSH tunnels on delete", exc_info=True)
+
         await session.delete(conn)
         await session.commit()
         return True
+
+    @staticmethod
+    async def _close_ssh_tunnels(config: ConnectionConfig) -> None:
+        """Close SSH tunnels for all connector types."""
+        connector_modules = [
+            "app.connectors.postgres",
+            "app.connectors.mysql",
+            "app.connectors.mongodb",
+            "app.connectors.clickhouse",
+        ]
+        for mod_path in connector_modules:
+            try:
+                mod = __import__(mod_path, fromlist=["_tunnel_mgr"])
+                mgr = getattr(mod, "_tunnel_mgr", None)
+                if mgr:
+                    await mgr.close_for_config(config)
+            except Exception:
+                logger.debug("Error closing tunnel via %s", mod_path, exc_info=True)
 
     async def test_connection(self, session: AsyncSession, connection_id: str) -> dict:
         conn = await self.get(session, connection_id)
