@@ -140,7 +140,9 @@ class TestListEndpointPerformance:
         resp = await auth_client.get("/api/models")
         ms = _elapsed_ms(t0)
         assert resp.status_code in (200, 404)
-        assert ms < MAX_EXTERNAL_LIST_MS, f"Models list took {ms:.0f}ms (limit {MAX_EXTERNAL_LIST_MS}ms)"
+        assert ms < MAX_EXTERNAL_LIST_MS, (
+            f"Models list took {ms:.0f}ms (limit {MAX_EXTERNAL_LIST_MS}ms)"
+        )
 
     async def test_legal_pages_latency(self, client: AsyncClient):
         for path in ("/api/legal/terms", "/api/legal/privacy"):
