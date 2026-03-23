@@ -32,6 +32,7 @@ interface ConnectionHealthProps {
 
 export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHealthProps) {
   const [health, setHealth] = useState<ConnectionHealthState | null>(null);
+  const [loading, setLoading] = useState(true);
   const [reconnecting, setReconnecting] = useState(false);
   const mountedRef = useRef(true);
 
@@ -45,10 +46,13 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       .then((h) => {
         if (mountedRef.current) {
           setHealth(h);
+          setLoading(false);
           onStatusChange?.(h.status as HealthStatus);
         }
       })
-      .catch(() => { /* polling — suppress to avoid toast spam */ });
+      .catch(() => {
+        if (mountedRef.current) setLoading(false);
+      });
   }, [connectionId, onStatusChange]);
 
   useEffect(() => {
@@ -92,6 +96,14 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       if (mountedRef.current) setReconnecting(false);
     }
   };
+
+  if (loading) {
+    return (
+      <span className="inline-flex items-center" aria-label="Checking connection health">
+        <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-surface-3 animate-pulse" />
+      </span>
+    );
+  }
 
   const status: HealthStatus = (health?.status as HealthStatus) ?? "unknown";
   const dotClass = STATUS_DOT_CLASSES[status];
