@@ -59,7 +59,11 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
     try:
         user = await _auth.register(db, body.email, body.password, body.display_name)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        logger.info("Registration conflict: %s", e)
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email already exists.",
+        ) from e
 
     await _invite_svc.auto_accept_for_user(db, user.id, user.email)
 
