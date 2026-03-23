@@ -17,28 +17,26 @@ import { CostEstimator } from "./CostEstimator";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
 
 export function ChatPanel() {
-  const {
-    activeProject,
-    activeConnection,
-    activeSession,
-    messages,
-    isThinking,
-    chatMode,
-    activeToolCalls,
-    restoringState,
-    sessionTokens,
-    sessionCost,
-    setActiveSession,
-    addMessage,
-    updateMessageId,
-    setThinking,
-    setLoading,
-    addToolCall,
-    clearToolCalls,
-    bumpRulesVersion,
-    addSessionUsage,
-    resetSessionUsage,
-  } = useAppStore();
+  const activeProject = useAppStore((s) => s.activeProject);
+  const activeConnection = useAppStore((s) => s.activeConnection);
+  const activeSession = useAppStore((s) => s.activeSession);
+  const messages = useAppStore((s) => s.messages);
+  const isThinking = useAppStore((s) => s.isThinking);
+  const chatMode = useAppStore((s) => s.chatMode);
+  const activeToolCalls = useAppStore((s) => s.activeToolCalls);
+  const restoringState = useAppStore((s) => s.restoringState);
+  const sessionTokens = useAppStore((s) => s.sessionTokens);
+  const sessionCost = useAppStore((s) => s.sessionCost);
+  const setActiveSession = useAppStore((s) => s.setActiveSession);
+  const addMessage = useAppStore((s) => s.addMessage);
+  const updateMessageId = useAppStore((s) => s.updateMessageId);
+  const setThinking = useAppStore((s) => s.setThinking);
+  const setLoading = useAppStore((s) => s.setLoading);
+  const addToolCall = useAppStore((s) => s.addToolCall);
+  const clearToolCalls = useAppStore((s) => s.clearToolCalls);
+  const bumpRulesVersion = useAppStore((s) => s.bumpRulesVersion);
+  const addSessionUsage = useAppStore((s) => s.addSessionUsage);
+  const resetSessionUsage = useAppStore((s) => s.resetSessionUsage);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);

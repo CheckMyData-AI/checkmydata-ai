@@ -1343,6 +1343,8 @@ class OrchestratorAgent(BaseAgent):
                         conn = await conn_svc.get(session, connection_id)
                         if not conn or conn.source_type != "mcp":
                             return f"Error: MCP connection '{connection_id}' not found", None
+                        if conn.project_id != context.project_id:
+                            return "Error: MCP connection does not belong to this project", None
                         config = await conn_svc.to_config(session, conn)
                     else:
                         connections = await conn_svc.list_by_project(

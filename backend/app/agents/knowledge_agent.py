@@ -46,7 +46,7 @@ class KnowledgeAgent(BaseAgent):
     ) -> None:
         self._vector_store = vector_store or VectorStore()
         self._cache_svc = ProjectCacheService()
-        self._knowledge_cache: ProjectKnowledge | None = None
+        self._knowledge_cache: dict[str, ProjectKnowledge] = {}
 
     @property
     def name(self) -> str:
@@ -263,13 +263,15 @@ class KnowledgeAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
-        if self._knowledge_cache is not None:
-            return self._knowledge_cache
+        if project_id in self._knowledge_cache:
+            return self._knowledge_cache[project_id]
         from app.models.base import async_session_factory
 
         async with async_session_factory() as session:
-            self._knowledge_cache = await self._cache_svc.load_knowledge(session, project_id)
-        return self._knowledge_cache
+            knowledge = await self._cache_svc.load_knowledge(session, project_id)
+        if knowledge is not None:
+            self._knowledge_cache[project_id] = knowledge
+        return knowledge
 
     # ------------------------------------------------------------------
     # Entity formatting (extracted from ToolExecutor)
