@@ -160,16 +160,18 @@ class WorkflowTracker:
 
     _QUEUE_MAXSIZE = 1024
 
-    def subscribe(self) -> asyncio.Queue[WorkflowEvent]:
+    async def subscribe(self) -> asyncio.Queue[WorkflowEvent]:
         queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue(maxsize=self._QUEUE_MAXSIZE)
-        self._subscribers.append(queue)
+        async with self._lock:
+            self._subscribers.append(queue)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue[WorkflowEvent]) -> None:
-        try:
-            self._subscribers.remove(queue)
-        except ValueError:
-            pass
+    async def unsubscribe(self, queue: asyncio.Queue[WorkflowEvent]) -> None:
+        async with self._lock:
+            try:
+                self._subscribers.remove(queue)
+            except ValueError:
+                pass
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
         logger.info(

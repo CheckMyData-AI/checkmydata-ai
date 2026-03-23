@@ -36,7 +36,7 @@ async def _event_generator(
     except Exception:
         logger.warning("SSE event stream error", exc_info=True)
     finally:
-        tracker.unsubscribe(queue)
+        await tracker.unsubscribe(queue)
 
 
 @router.get("/events")
@@ -44,7 +44,7 @@ async def workflow_events(
     workflow_id: str | None = Query(None, description="Filter to a specific workflow"),
     user: dict = Depends(get_current_user),
 ):
-    queue = tracker.subscribe()
+    queue = await tracker.subscribe()
     return StreamingResponse(
         _event_generator(queue, workflow_id),
         media_type="text/event-stream",

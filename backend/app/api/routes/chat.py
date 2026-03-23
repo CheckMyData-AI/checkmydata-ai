@@ -985,7 +985,7 @@ async def ask_stream(
 
     async def _generate():
         result_holder: list = []
-        queue = tracker.subscribe()
+        queue = await tracker.subscribe()
         released = False
 
         stream_extra: dict = {"session_id": session_id}
@@ -1244,7 +1244,7 @@ async def ask_stream(
                     await task
                 except (asyncio.CancelledError, Exception):
                     pass
-            tracker.unsubscribe(queue)
+            await tracker.unsubscribe(queue)
             if not released:
                 released = True
                 await agent_limiter.release(user["user_id"])
@@ -1402,7 +1402,7 @@ async def chat_websocket(
                 await _chat_svc.add_message(db, session_id, "user", message)
                 history = await _chat_svc.get_history_as_messages(db, session_id)
 
-            queue = tracker.subscribe()
+            queue = await tracker.subscribe()
             relay_task = asyncio.create_task(_relay_events(queue))
 
             try:
@@ -1527,7 +1527,7 @@ async def chat_websocket(
                         await relay_task
                     except (asyncio.CancelledError, Exception):
                         pass
-                tracker.unsubscribe(queue)
+                await tracker.unsubscribe(queue)
                 await agent_limiter.release(user_id)
 
     except WebSocketDisconnect:

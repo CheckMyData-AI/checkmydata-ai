@@ -45,7 +45,7 @@ class TestWorkflowTracker:
     @pytest.mark.asyncio
     async def test_subscribe_receives_events(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         wf_id = await t.begin("test")
         event = queue.get_nowait()
@@ -53,12 +53,12 @@ class TestWorkflowTracker:
         assert event.step == "pipeline_start"
         assert event.status == "started"
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_step_context_manager_completed(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         wf_id = "test-wf-id"
 
         async with t.step(wf_id, "my_step", "doing things"):
@@ -74,12 +74,12 @@ class TestWorkflowTracker:
         assert completed.elapsed_ms is not None
         assert completed.elapsed_ms >= 0
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_step_context_manager_failed(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         wf_id = "test-wf-id"
 
         with pytest.raises(ValueError, match="boom"):
@@ -93,7 +93,7 @@ class TestWorkflowTracker:
         assert failed.status == "failed"
         assert "boom" in failed.detail
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_end_sets_contextvar_to_none(self):
@@ -107,14 +107,14 @@ class TestWorkflowTracker:
     @pytest.mark.asyncio
     async def test_unsubscribe_idempotent(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
-        t.unsubscribe(queue)
-        t.unsubscribe(queue)  # should not raise
+        queue = await t.subscribe()
+        await t.unsubscribe(queue)
+        await t.unsubscribe(queue)  # should not raise
 
     @pytest.mark.asyncio
     async def test_full_queue_drops_subscriber(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         # fill the queue to its maximum capacity (1024)
         for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
@@ -127,7 +127,7 @@ class TestWorkflowTracker:
     @pytest.mark.asyncio
     async def test_emit_custom_event(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         await t.emit("wf-1", "custom", "completed", "extra detail", count=42)
 
@@ -137,21 +137,21 @@ class TestWorkflowTracker:
         assert event.detail == "extra detail"
         assert event.extra["count"] == 42
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_multiple_subscribers(self):
         t = WorkflowTracker()
-        q1 = t.subscribe()
-        q2 = t.subscribe()
+        q1 = await t.subscribe()
+        q2 = await t.subscribe()
 
         await t.emit("wf", "step", "started")
 
         assert not q1.empty()
         assert not q2.empty()
 
-        t.unsubscribe(q1)
-        t.unsubscribe(q2)
+        await t.unsubscribe(q1)
+        await t.unsubscribe(q2)
 
     @pytest.mark.asyncio
     async def test_active_workflows_tracked_for_background_pipelines(self):
@@ -203,7 +203,7 @@ class TestWorkflowTracker:
     @pytest.mark.asyncio
     async def test_step_events_carry_pipeline_for_background(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         wf_id = await t.begin("index_repo", {"project_id": "p1"})
         queue.get_nowait()  # consume pipeline_start
 
@@ -216,12 +216,12 @@ class TestWorkflowTracker:
         assert completed.pipeline == "index_repo"
 
         await t.end(wf_id, "index_repo")
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_step_events_empty_pipeline_for_non_background(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         wf_id = await t.begin("agent")
         queue.get_nowait()  # consume pipeline_start
 
@@ -232,12 +232,12 @@ class TestWorkflowTracker:
         assert started.pipeline == ""
 
         await t.end(wf_id, "agent")
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_emit_carries_pipeline_for_background(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         wf_id = await t.begin("db_index", {"connection_id": "c1"})
         queue.get_nowait()
 
@@ -246,7 +246,7 @@ class TestWorkflowTracker:
         assert event.pipeline == "db_index"
 
         await t.end(wf_id, "db_index")
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_end_handles_broadcast_failure(self):
@@ -261,7 +261,7 @@ class TestWorkflowTracker:
     async def test_broadcast_tolerates_already_removed_subscriber(self):
         """Lines 199-200: dead subscriber already removed before cleanup."""
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
         for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
             queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
 
