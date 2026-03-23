@@ -37,7 +37,9 @@ class ClickHouseConnector(BaseConnector):
             try:
                 await asyncio.to_thread(self._client.close)
             except Exception:
-                logger.debug("ClickHouse: error closing existing client before reconnect", exc_info=True)
+                logger.debug(
+                    "ClickHouse: error closing existing client before reconnect", exc_info=True
+                )
             self._client = None
         self._config = config
 

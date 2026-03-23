@@ -36,7 +36,9 @@ class MongoDBConnector(BaseConnector):
             try:
                 self._client.close()
             except Exception:
-                logger.debug("MongoDB: error closing existing client before reconnect", exc_info=True)
+                logger.debug(
+                    "MongoDB: error closing existing client before reconnect", exc_info=True
+                )
             self._client = None
             self._db = None
         self._config = config

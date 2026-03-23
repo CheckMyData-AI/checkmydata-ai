@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,7 +122,8 @@ class SQLAgent(BaseAgent):
         self._connectors: dict[str, BaseConnector] = {}
         self._connector_lock = asyncio.Lock()
         self._schema_cache: TTLCache[SchemaInfo] = TTLCache(
-            ttl=settings.schema_cache_ttl_seconds, max_size=128,
+            ttl=settings.schema_cache_ttl_seconds,
+            max_size=128,
         )
         self._query_cache = QueryCache()
         self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)

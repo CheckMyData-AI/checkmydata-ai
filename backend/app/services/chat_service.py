@@ -2,6 +2,7 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
 
@@ -27,9 +28,7 @@ class ChatService:
         return chat
 
     async def get_session(self, session: AsyncSession, session_id: str) -> ChatSession | None:
-        result = await session.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
-        )
+        result = await session.execute(select(ChatSession).where(ChatSession.id == session_id))
         return result.scalar_one_or_none()
 
     async def list_sessions(

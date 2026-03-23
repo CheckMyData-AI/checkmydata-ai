@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
-from typing import Generic, TypeVar
-
-V = TypeVar("V")
 
 
-class TTLCache(Generic[V]):
+class TTLCache[V]:
     """In-memory cache with time-to-live and LRU eviction at max_size."""
 
     def __init__(self, ttl: float = 300.0, max_size: int = 128) -> None:

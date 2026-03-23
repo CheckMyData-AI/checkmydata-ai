@@ -5,6 +5,7 @@ from typing import Any
 
 import asyncpg
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -15,7 +16,6 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
-from app.config import settings
 from app.connectors.ssh_tunnel import SSHTunnelManager
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,9 @@ class PostgresConnector(BaseConnector):
             try:
                 await self._pool.close()
             except Exception:
-                logger.debug("Postgres: error closing existing pool before reconnect", exc_info=True)
+                logger.debug(
+                    "Postgres: error closing existing pool before reconnect", exc_info=True
+                )
             self._pool = None
         self._config = config
 
