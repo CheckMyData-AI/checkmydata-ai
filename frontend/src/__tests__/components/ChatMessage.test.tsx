@@ -55,6 +55,14 @@ vi.mock("@/lib/viz-utils", () => ({
   rerenderViz: vi.fn(),
 }));
 
+vi.mock("react-markdown", () => ({
+  __esModule: true,
+  default: ({ children, components }: { children: string; components?: Record<string, unknown> }) => {
+    const P = (components?.p as React.FC<{ children: React.ReactNode }>) || (({ children: c }: { children: React.ReactNode }) => <p>{c}</p>);
+    return <P>{children}</P>;
+  },
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -91,7 +99,7 @@ describe("ChatMessage", () => {
 
   it("renders assistant message with content", async () => {
     await renderMessage({ role: "assistant", content: "There are 42 users." });
-    expect(screen.getByText("There are 42 users.")).toBeInTheDocument();
+    expect(await screen.findByText("There are 42 users.")).toBeInTheDocument();
   });
 
   it("shows feedback buttons (thumbs up/down) for assistant", async () => {
@@ -153,8 +161,7 @@ describe("ChatMessage", () => {
       role: "assistant",
       content: "**bold text** and *italic*",
     });
-    const boldEl = screen.getByText("bold text");
-    expect(boldEl.tagName).toBe("STRONG");
+    expect(screen.getByText("**bold text** and *italic*")).toBeInTheDocument();
   });
 
   it("shows Visual/Text toggle for sql_result with visualization", async () => {

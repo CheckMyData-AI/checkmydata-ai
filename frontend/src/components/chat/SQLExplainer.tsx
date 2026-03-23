@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
+import dynamic from "next/dynamic";
+
+const ReactMarkdown = dynamic(() => import("react-markdown"), {
+  loading: () => <span className="text-sm text-zinc-500">Loading…</span>,
+});
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 

@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import dynamic from "next/dynamic";
+import type { Components } from "react-markdown";
+
+const ReactMarkdown = dynamic(() => import("react-markdown"), {
+  loading: () => <span className="text-sm text-zinc-500">Loading…</span>,
+});
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { useAppStore } from "@/stores/app-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
