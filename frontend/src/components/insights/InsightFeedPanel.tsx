@@ -311,8 +311,8 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
           </div>
         )}
 
-        {!loading && loadError && insights.length === 0 && (
-          <div className="text-center py-8 px-4">
+        {!loading && loadError && (
+          <div className="text-center py-4 px-4">
             <Icon name="alert-triangle" size={24} className="mx-auto text-warning mb-2" />
             <p className="text-xs text-text-tertiary mb-2">
               Couldn&apos;t load insights

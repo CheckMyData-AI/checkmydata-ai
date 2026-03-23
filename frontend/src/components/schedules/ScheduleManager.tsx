@@ -292,6 +292,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
       setHistory(runs);
     } catch {
       setHistory([]);
+      toast("Failed to load run history", "error");
     } finally {
       setHistoryLoading(false);
     }

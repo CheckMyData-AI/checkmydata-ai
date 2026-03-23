@@ -1206,6 +1206,12 @@ async def ask_stream(
             }
             yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
         finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
             tracker.unsubscribe(queue)
             if not released:
                 released = True

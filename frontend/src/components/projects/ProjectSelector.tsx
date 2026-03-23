@@ -604,6 +604,9 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       {isFormOpen && <div className="mb-1.5">{formUI}</div>}
 
       {listLoading && <Spinner />}
+      {!listLoading && projects.length === 0 && !isFormOpen && (
+        <p className="text-[11px] text-text-muted px-3 py-2">No projects yet</p>
+      )}
       <div>
         {projects.map((p) => {
           const isActive = activeProject?.id === p.id;

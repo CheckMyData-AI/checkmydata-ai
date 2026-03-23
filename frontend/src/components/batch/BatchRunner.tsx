@@ -115,11 +115,13 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
       setBatchId(res.batch_id);
 
+      let pollErrors = 0;
       pollRef.current = setInterval(async () => {
         if (!mountedRef.current) return;
         try {
           const batch = await api.batch.get(res.batch_id);
           if (!mountedRef.current) return;
+          pollErrors = 0;
           const results = batch.results_json ? JSON.parse(batch.results_json) : [];
           setProgress({ current: results.length, total: validQueries.length });
 
@@ -138,7 +140,15 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             );
           }
         } catch {
-          // keep polling
+          pollErrors++;
+          if (pollErrors >= 10) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            if (mountedRef.current) {
+              setIsRunning(false);
+              toast("Lost connection to batch — check results later", "error");
+            }
+          }
         }
       }, 1500);
     } catch (err) {
