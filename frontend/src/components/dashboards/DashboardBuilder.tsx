@@ -257,7 +257,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
                 </div>
               );
             }
-            const viz = note.visualization_json ? JSON.parse(note.visualization_json) : null;
+            let viz = null;
+            try { viz = note.visualization_json ? JSON.parse(note.visualization_json) : null; } catch { /* malformed viz JSON */ }
             return (
               <div
                 key={card.note_id}

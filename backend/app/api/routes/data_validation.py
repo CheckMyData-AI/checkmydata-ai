@@ -15,12 +15,14 @@ from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
 from app.models.data_validation import DataInvestigation
+from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _membership_svc = MembershipService()
+_conn_svc = ConnectionService()
 
 
 # ------------------------------------------------------------------
@@ -423,6 +425,10 @@ async def get_investigation(
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
+    conn = await _conn_svc.get(db, inv.connection_id)
+    if not conn or conn.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+
     return {
         "id": inv.id,
         "status": inv.status,
@@ -464,6 +470,10 @@ async def confirm_investigation_fix(
 
     inv = await inv_svc.get_investigation(db, investigation_id)
     if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+
+    conn = await _conn_svc.get(db, inv.connection_id)
+    if not conn or conn.project_id != body.project_id:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
     if not body.accepted:

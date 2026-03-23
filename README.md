@@ -2644,25 +2644,40 @@ Every push to `main` triggers automatic deployment via GitHub Actions (`.github/
 
 Required GitHub secret: `HEROKU_API_KEY` (already configured).
 
-**Manual redeploy (if needed):**
+**Manual deploy script:**
+
+When CI/CD is unavailable (e.g. GitHub Actions billing limits), use the deploy script:
 
 ```bash
-# Login to container registry
-heroku container:login
+# Deploy both backend and frontend
+./scripts/deploy-heroku.sh
 
-# Build for linux/amd64 (required on Apple Silicon)
+# Deploy only backend
+./scripts/deploy-heroku.sh --backend-only
+
+# Deploy only frontend
+./scripts/deploy-heroku.sh --frontend-only
+```
+
+The script builds Docker images for `linux/amd64`, pushes to Heroku Container Registry, releases both apps, and runs health checks. Requires `heroku login` or `HEROKU_API_KEY` env var.
+
+<details>
+<summary>Manual Docker commands (without the script)</summary>
+
+```bash
+heroku container:login
 docker build --platform linux/amd64 -t registry.heroku.com/checkmydata-api/web -f Dockerfile.backend .
 docker build --platform linux/amd64 -t registry.heroku.com/checkmydata-web/web \
   --build-arg NEXT_PUBLIC_API_URL=https://api.checkmydata.ai/api \
   --build-arg NEXT_PUBLIC_WS_URL=wss://api.checkmydata.ai/api/chat/ws \
   -f Dockerfile.frontend .
-
-# Push and release
 docker push registry.heroku.com/checkmydata-api/web
 docker push registry.heroku.com/checkmydata-web/web
 heroku container:release web --app checkmydata-api
 heroku container:release web --app checkmydata-web
 ```
+
+</details>
 
 **Setting up a new Heroku deployment from scratch:**
 

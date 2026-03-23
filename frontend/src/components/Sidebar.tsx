@@ -516,6 +516,10 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
                 </SidebarSection>
 
+                <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={{ label: "New dashboard", onClick: () => setDashCreateReq(true) }}>
+                  <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
+                </SidebarSection>
+
                 <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
                   <KnowledgeDocs />
                 </SidebarSection>
