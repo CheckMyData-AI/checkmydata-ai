@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
 from app.core.exploration_engine import ExplorationEngine
+from app.core.rate_limit import limiter
 from app.services.membership_service import MembershipService
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,9 @@ _engine = ExplorationEngine()
 
 
 @router.post("/{project_id}")
+@limiter.limit("10/minute")
 async def explore_project(
+    request: Request,
     project_id: str,
     connection_id: str | None = None,
     db: AsyncSession = Depends(get_db),

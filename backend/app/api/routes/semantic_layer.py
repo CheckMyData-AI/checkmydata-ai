@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
+from app.core.rate_limit import limiter
 from app.core.semantic_layer import SemanticLayerService
 from app.services.membership_service import MembershipService
 
@@ -20,7 +21,9 @@ _semantic_svc = SemanticLayerService()
 
 
 @router.post("/{project_id}/build/{connection_id}")
+@limiter.limit("10/minute")
 async def build_catalog(
+    request: Request,
     project_id: str,
     connection_id: str,
     db: AsyncSession = Depends(get_db),
@@ -41,7 +44,9 @@ async def build_catalog(
 
 
 @router.post("/{project_id}/normalize")
+@limiter.limit("10/minute")
 async def normalize_project(
+    request: Request,
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

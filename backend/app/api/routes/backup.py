@@ -58,7 +58,10 @@ async def trigger_backup(
         )
         db.add(record)
         await db.commit()
-        raise HTTPException(status_code=500, detail=f"Backup failed: {e}") from e
+        logger.error("Backup failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Backup failed. Check server logs for details."
+        ) from e
 
 
 @router.get("/list")

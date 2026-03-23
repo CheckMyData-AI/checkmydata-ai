@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
+from app.core.rate_limit import limiter
 from app.core.temporal_intelligence import TemporalIntelligenceService
 from app.services.membership_service import MembershipService
 
@@ -39,7 +40,9 @@ class DetectLagRequest(BaseModel):
 
 
 @router.post("/{project_id}/analyze")
+@limiter.limit("20/minute")
 async def analyze_series(
+    request: Request,
     project_id: str,
     req: AnalyzeSeriesRequest,
     db: AsyncSession = Depends(get_db),
@@ -54,7 +57,9 @@ async def analyze_series(
 
 
 @router.post("/{project_id}/lag")
+@limiter.limit("20/minute")
 async def detect_lag(
+    request: Request,
     project_id: str,
     req: DetectLagRequest,
     db: AsyncSession = Depends(get_db),

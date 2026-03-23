@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_safe_id
+from app.core.rate_limit import limiter
 from app.core.reconciliation_engine import ReconciliationEngine
 from app.services.membership_service import MembershipService
 
@@ -117,7 +118,9 @@ async def _validate_connection_ownership(
 
 
 @router.post("/{project_id}/row-counts")
+@limiter.limit("20/minute")
 async def reconcile_row_counts(
+    request: Request,
     project_id: str,
     req: ReconcileRowCountsRequest,
     db: AsyncSession = Depends(get_db),
@@ -147,7 +150,9 @@ async def reconcile_row_counts(
 
 
 @router.post("/{project_id}/values")
+@limiter.limit("20/minute")
 async def reconcile_values(
+    request: Request,
     project_id: str,
     req: ReconcileValuesRequest,
     db: AsyncSession = Depends(get_db),
@@ -177,7 +182,9 @@ async def reconcile_values(
 
 
 @router.post("/{project_id}/schemas")
+@limiter.limit("20/minute")
 async def reconcile_schemas(
+    request: Request,
     project_id: str,
     req: ReconcileSchemasRequest,
     db: AsyncSession = Depends(get_db),
@@ -207,7 +214,9 @@ async def reconcile_schemas(
 
 
 @router.post("/{project_id}/full")
+@limiter.limit("10/minute")
 async def reconcile_full(
+    request: Request,
     project_id: str,
     req: ReconcileFullRequest,
     db: AsyncSession = Depends(get_db),
