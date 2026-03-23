@@ -61,7 +61,8 @@ function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
       storeAuth(set, res);
       scheduleRefresh(set);
     } catch {
-      toast("Your session expires soon. Please save your work.", "info");
+      toast("Your session has expired. Please log in again.", "error");
+      useAuthStore.getState().logout();
     }
   }, refreshAt);
 }
