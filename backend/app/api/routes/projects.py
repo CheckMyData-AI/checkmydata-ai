@@ -195,7 +195,9 @@ async def get_project(
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
+@limiter.limit("20/minute")
 async def update_project(
+    request: Request,
     project_id: str,
     body: ProjectUpdate,
     db: AsyncSession = Depends(get_db),

@@ -467,7 +467,9 @@ async def _require_session_owner(db: AsyncSession, session_id: str, user_id: str
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionResponse)
+@limiter.limit("30/minute")
 async def update_session(
+    request: Request,
     session_id: str,
     body: SessionUpdate,
     db: AsyncSession = Depends(get_db),
@@ -481,7 +483,9 @@ async def update_session(
 
 
 @router.post("/sessions/{session_id}/generate-title", response_model=SessionResponse)
+@limiter.limit("10/minute")
 async def generate_session_title(
+    request: Request,
     session_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -525,7 +529,9 @@ async def generate_session_title(
 
 
 @router.delete("/sessions/{session_id}")
+@limiter.limit("10/minute")
 async def delete_session(
+    request: Request,
     session_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -543,7 +549,9 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/feedback")
+@limiter.limit("30/minute")
 async def submit_feedback(
+    request: Request,
     body: FeedbackRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

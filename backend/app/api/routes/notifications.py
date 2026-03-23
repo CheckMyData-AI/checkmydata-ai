@@ -60,7 +60,9 @@ async def unread_count(
 
 
 @router.patch("/{notification_id}/read")
+@limiter.limit("60/minute")
 async def mark_read(
+    request: Request,
     notification_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

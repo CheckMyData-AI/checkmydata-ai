@@ -101,7 +101,9 @@ async def get_ssh_key(
 
 
 @router.delete("/{key_id}")
+@limiter.limit("10/minute")
 async def delete_ssh_key(
+    request: Request,
     key_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
