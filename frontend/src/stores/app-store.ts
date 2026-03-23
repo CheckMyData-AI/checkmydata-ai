@@ -42,8 +42,12 @@ interface ToolCallEvent {
 
 function persistId(key: string, value: string | null) {
   if (typeof window === "undefined") return;
-  if (value) localStorage.setItem(key, value);
-  else localStorage.removeItem(key);
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    /* QuotaExceededError — IDs persist only for this session */
+  }
 }
 
 export function getPersistedId(key: string): string | null {

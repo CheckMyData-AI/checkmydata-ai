@@ -128,13 +128,15 @@ class SSHExecConnector(BaseConnector):
     async def disconnect(self) -> None:
         if self._conn:
             logger.debug("Disconnecting SSH exec session")
-            self._conn.close()
-            await asyncio.sleep(0.1)
             try:
-                await asyncio.wait_for(self._conn.wait_closed(), timeout=5)
-            except Exception as exc:
-                logger.warning("SSH exec disconnect did not complete cleanly: %s", exc)
-            self._conn = None
+                self._conn.close()
+                await asyncio.sleep(0.1)
+                try:
+                    await asyncio.wait_for(self._conn.wait_closed(), timeout=5)
+                except Exception as exc:
+                    logger.warning("SSH exec disconnect did not complete cleanly: %s", exc)
+            finally:
+                self._conn = None
 
     async def _run_command(
         self, command: str, timeout: int = SSH_COMMAND_TIMEOUT

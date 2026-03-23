@@ -92,10 +92,12 @@ class MCPClientAdapter(DataSourceAdapter):
 
     async def disconnect(self) -> None:
         if self._exit_stack:
-            await self._exit_stack.aclose()
-            self._exit_stack = None
-        self._session = None
-        self._tools = []
+            try:
+                await self._exit_stack.aclose()
+            finally:
+                self._exit_stack = None
+                self._session = None
+                self._tools = []
 
     async def test_connection(self) -> bool:
         if not self._session:

@@ -58,9 +58,11 @@ class MongoDBConnector(BaseConnector):
 
     async def disconnect(self) -> None:
         if self._client:
-            self._client.close()
-            self._client = None
-            self._db = None
+            try:
+                self._client.close()
+            finally:
+                self._client = None
+                self._db = None
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         """

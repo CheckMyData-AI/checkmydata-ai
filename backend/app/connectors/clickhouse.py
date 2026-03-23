@@ -58,8 +58,10 @@ class ClickHouseConnector(BaseConnector):
 
     async def disconnect(self) -> None:
         if self._client:
-            await asyncio.to_thread(self._client.close)
-            self._client = None
+            try:
+                await asyncio.to_thread(self._client.close)
+            finally:
+                self._client = None
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._client:

@@ -63,9 +63,11 @@ class MySQLConnector(BaseConnector):
 
     async def disconnect(self) -> None:
         if self._pool:
-            self._pool.close()
-            await self._pool.wait_closed()
-            self._pool = None
+            try:
+                self._pool.close()
+                await self._pool.wait_closed()
+            finally:
+                self._pool = None
 
     @staticmethod
     def _dict_to_positional(query: str, params: dict[str, Any]) -> tuple[str, tuple]:

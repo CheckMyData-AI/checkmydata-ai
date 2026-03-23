@@ -56,8 +56,10 @@ class PostgresConnector(BaseConnector):
 
     async def disconnect(self) -> None:
         if self._pool:
-            await self._pool.close()
-            self._pool = None
+            try:
+                await self._pool.close()
+            finally:
+                self._pool = None
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._pool:
