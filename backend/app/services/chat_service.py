@@ -2,8 +2,6 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
 
@@ -30,9 +28,7 @@ class ChatService:
 
     async def get_session(self, session: AsyncSession, session_id: str) -> ChatSession | None:
         result = await session.execute(
-            select(ChatSession)
-            .where(ChatSession.id == session_id)
-            .options(selectinload(ChatSession.messages))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         return result.scalar_one_or_none()
 
@@ -75,11 +71,16 @@ class ChatService:
     async def get_history_as_messages(
         self, session: AsyncSession, session_id: str, limit: int = 20
     ) -> list[Message]:
-        chat = await self.get_session(session, session_id)
-        if not chat or not chat.messages:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(limit)
+        )
+        rows = await session.execute(stmt)
+        recent = list(reversed(rows.scalars().all()))
+        if not recent:
             return []
-
-        recent = chat.messages[-limit:]
         result: list[Message] = []
         for m in recent:
             content = m.content

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
@@ -59,6 +59,10 @@ class ChatMessage(Base):
     user_rating: Mapped[int | None] = mapped_column(
         nullable=True
     )  # 1 (thumbs up) / -1 (thumbs down)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")

@@ -95,7 +95,7 @@ class TestCreateSession:
 
 class TestGetSession:
     @pytest.mark.asyncio
-    async def test_returns_session_with_messages(self, db):
+    async def test_returns_session_without_eager_messages(self, db):
         proj = await _make_project(db)
         chat = await svc.create_session(db, project_id=proj.id, title="With Msgs")
         await svc.add_message(db, chat.id, "user", "Hello")
@@ -106,9 +106,11 @@ class TestGetSession:
         assert fetched is not None
         assert fetched.id == chat.id
         assert fetched.title == "With Msgs"
-        assert len(fetched.messages) == 2
-        assert fetched.messages[0].role == "user"
-        assert fetched.messages[1].role == "assistant"
+
+        history = await svc.get_history_as_messages(db, chat.id, limit=50)
+        assert len(history) == 2
+        roles = {m.role for m in history}
+        assert roles == {"user", "assistant"}
 
     @pytest.mark.asyncio
     async def test_returns_none_for_missing_id(self, db):

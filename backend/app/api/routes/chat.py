@@ -660,8 +660,21 @@ async def get_session_messages(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    session = await _require_session_owner(db, session_id, user["user_id"])
-    msgs = session.messages[offset : offset + limit]
+    await _require_session_owner(db, session_id, user["user_id"])
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.chat_session import ChatMessage as ChatMessageModel
+
+    stmt = (
+        sa_select(ChatMessageModel)
+        .where(ChatMessageModel.session_id == session_id)
+        .order_by(ChatMessageModel.created_at)
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    msgs = result.scalars().all()
     return [
         MessageResponse(
             id=m.id,
