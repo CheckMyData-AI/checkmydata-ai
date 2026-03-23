@@ -93,7 +93,12 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
               )}
               {explanation && (
                 <div className="text-xs text-zinc-300 leading-relaxed prose prose-invert prose-xs max-w-none overflow-hidden break-words">
-                  <ReactMarkdown>{explanation}</ReactMarkdown>
+                  <ReactMarkdown components={{
+                    a: ({ href, children }) => {
+                      const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined;
+                      return <a href={safeHref} target="_blank" rel="noopener noreferrer">{children}</a>;
+                    }
+                  }}>{explanation}</ReactMarkdown>
                 </div>
               )}
             </>

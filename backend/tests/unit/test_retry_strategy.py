@@ -113,6 +113,11 @@ class TestRepairHints:
         hints = self.strategy.get_repair_hints(err, self.schema)
         assert "type" in hints.lower()
 
+    def test_explain_warning_hints(self):
+        err = _error(QueryErrorType.EXPLAIN_WARNING)
+        hints = self.strategy.get_repair_hints(err, self.schema)
+        assert "performance" in hints.lower() or "index" in hints.lower()
+
     def test_unknown_hints(self):
         err = _error(QueryErrorType.UNKNOWN)
         hints = self.strategy.get_repair_hints(err, self.schema)

@@ -8,6 +8,7 @@ from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     LLMAuthError,
     LLMConnectionError,
+    LLMError,
     LLMRateLimitError,
     LLMServerError,
     LLMTimeoutError,
@@ -461,3 +462,13 @@ class TestOpenRouterAdapterComplete:
         ]
         formatted = adapter._format_messages(msgs)
         assert formatted[0]["tool_calls"][0]["id"] == "tc-1"
+
+
+class TestLLMErrorUserMessage:
+    def test_base_error_user_message(self):
+        err = LLMError("something broke")
+        assert "AI service" in err.user_message
+
+    def test_base_error_retry_after(self):
+        err = LLMError("fail", retry_after=10.0)
+        assert err.retry_after_seconds == 10.0

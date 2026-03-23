@@ -954,6 +954,7 @@ async def ask_stream(
     async def _generate():
         result_holder: list = []
         queue = tracker.subscribe()
+        released = False
 
         stream_extra: dict = {"session_id": session_id}
         if body.pipeline_action:
@@ -981,233 +982,234 @@ async def ask_stream(
 
         task = asyncio.create_task(_process())
 
-        wf_id = None
-        safety = app_settings.stream_safety_margin_seconds
-        loop_deadline = time.monotonic() + stream_timeout_seconds + safety
-        while not task.done() or not queue.empty():
-            if time.monotonic() > loop_deadline:
-                logger.warning("SSE event loop exceeded safety timeout, breaking")
-                break
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=0.5)
-            except TimeoutError:
-                continue
-            if wf_id is None and event.step == "pipeline_start":
-                wf_id = event.workflow_id
-            if wf_id and event.workflow_id != wf_id:
-                continue
+        try:
+            wf_id = None
+            safety = app_settings.stream_safety_margin_seconds
+            loop_deadline = time.monotonic() + stream_timeout_seconds + safety
+            while not task.done() or not queue.empty():
+                if time.monotonic() > loop_deadline:
+                    logger.warning("SSE event loop exceeded safety timeout, breaking")
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except TimeoutError:
+                    continue
+                if wf_id is None and event.step == "pipeline_start":
+                    wf_id = event.workflow_id
+                if wf_id and event.workflow_id != wf_id:
+                    continue
 
-            event_data = {
-                "workflow_id": event.workflow_id,
-                "step": event.step,
-                "status": event.status,
-                "detail": event.detail,
-                "elapsed_ms": event.elapsed_ms,
-            }
-
-            pipeline_events = frozenset(
-                {
-                    "plan",
-                    "stage_start",
-                    "stage_result",
-                    "stage_validation",
-                    "stage_complete",
-                    "checkpoint",
-                    "stage_retry",
+                event_data = {
+                    "workflow_id": event.workflow_id,
+                    "step": event.step,
+                    "status": event.status,
+                    "detail": event.detail,
+                    "elapsed_ms": event.elapsed_ms,
                 }
-            )
 
-            if event.step == "token":
-                yield (
-                    f"event: token\ndata: {json.dumps({'chunk': event.detail}, default=str)}\n\n"
+                pipeline_events = frozenset(
+                    {
+                        "plan",
+                        "stage_start",
+                        "stage_result",
+                        "stage_validation",
+                        "stage_complete",
+                        "checkpoint",
+                        "stage_retry",
+                    }
                 )
-                continue
-            if event.step == "thinking":
-                yield (f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n")
-            elif event.step in pipeline_events:
-                event_data["extra"] = event.extra
-                yield f"event: {event.step}\ndata: {json.dumps(event_data, default=str)}\n\n"
-            elif event.step.startswith("tool:") or ":tool:" in event.step:
-                yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
-            elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
-                agent_name = event.step.split(":")[0]
-                event_data["agent"] = agent_name
-                if event.status == "started":
-                    yield f"event: agent_start\ndata: {json.dumps(event_data, default=str)}\n\n"
-                elif event.status in ("completed", "failed"):
-                    yield f"event: agent_end\ndata: {json.dumps(event_data, default=str)}\n\n"
+
+                if event.step == "token":
+                    yield (
+                        f"event: token\ndata: "
+                        f"{json.dumps({'chunk': event.detail}, default=str)}\n\n"
+                    )
+                    continue
+                if event.step == "thinking":
+                    yield f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n"
+                elif event.step in pipeline_events:
+                    event_data["extra"] = event.extra
+                    yield (f"event: {event.step}\ndata: {json.dumps(event_data, default=str)}\n\n")
+                elif event.step.startswith("tool:") or ":tool:" in event.step:
+                    yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
+                elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
+                    agent_name = event.step.split(":")[0]
+                    event_data["agent"] = agent_name
+                    if event.status == "started":
+                        yield (
+                            f"event: agent_start\ndata: {json.dumps(event_data, default=str)}\n\n"
+                        )
+                    elif event.status in ("completed", "failed"):
+                        yield (f"event: agent_end\ndata: {json.dumps(event_data, default=str)}\n\n")
+                    else:
+                        yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
                 else:
                     yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
-            else:
-                yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
 
-            if event.step == "pipeline_end":
-                break
+                if event.step == "pipeline_end":
+                    break
 
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=stream_timeout_seconds)
-        except TimeoutError:
-            task.cancel()
-            tracker.unsubscribe(queue)
-            error_payload = {
-                "error": "Request timed out",
-                "error_type": "timeout",
-                "is_retryable": True,
-                "user_message": (
-                    "The request took too long to complete. "
-                    "Please try again with a simpler question."
-                ),
-            }
-            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            await agent_limiter.release(user["user_id"])
-            return
-        except Exception as exc:
-            tracker.unsubscribe(queue)
-            error_payload = _build_structured_error(exc)
-            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            await agent_limiter.release(user["user_id"])
-            return
-        tracker.unsubscribe(queue)
-        result = result_holder[0] if result_holder else None
-        if not result:
-            error_payload = {
-                "error": "No result",
-                "error_type": "internal",
-                "is_retryable": True,
-                "user_message": "An unexpected error occurred. Please try again.",
-            }
-            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-            await agent_limiter.release(user["user_id"])
-            return
-
-        viz_data = None
-        if result.results and not result.error:
-            viz_data = render(
-                result=result.results,
-                viz_type=result.viz_type,
-                config=result.viz_config,
-                summary=result.answer,
-            )
-
-        raw_result = _build_raw_result(result.results)
-
-        stream_rag = [
-            {
-                "source_path": s.source_path,
-                "distance": s.distance,
-                "doc_type": s.doc_type,
-            }
-            for s in result.knowledge_sources
-        ]
-
-        tool_calls_str = (
-            json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
-        )
-
-        from app.models.base import async_session_factory as _stream_session_factory
-
-        s_usage = result.token_usage or {}
-        s_cost = _estimate_cost(
-            result.llm_model,
-            s_usage.get("prompt_tokens", 0),
-            s_usage.get("completion_tokens", 0),
-        )
-        s_enriched_usage = (
-            {
-                **(result.token_usage or {}),
-                "provider": result.llm_provider or "unknown",
-                "model": result.llm_model or "unknown",
-                "estimated_cost_usd": s_cost,
-                "prompt_version": result.prompt_version,
-            }
-            if result.token_usage
-            else None
-        )
-
-        async with _stream_session_factory() as stream_db:
-            assistant_msg = await _chat_svc.add_message(
-                stream_db,
-                session_id,
-                "assistant",
-                result.answer,
-                metadata={
-                    "query": result.query,
-                    "query_explanation": result.query_explanation,
-                    "question": body.message,
-                    "viz_type": result.viz_type,
-                    "visualization": viz_data,
-                    "raw_result": raw_result,
-                    "error": result.error,
-                    "workflow_id": result.workflow_id,
-                    "row_count": (result.results.row_count if result.results else None),
-                    "execution_time_ms": (
-                        result.results.execution_time_ms if result.results else None
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=stream_timeout_seconds)
+            except TimeoutError:
+                task.cancel()
+                error_payload = {
+                    "error": "Request timed out",
+                    "error_type": "timeout",
+                    "is_retryable": True,
+                    "user_message": (
+                        "The request took too long to complete. "
+                        "Please try again with a simpler question."
                     ),
-                    "rag_sources": stream_rag,
-                    "token_usage": s_enriched_usage,
-                    "response_type": result.response_type,
-                    "staleness_warning": result.staleness_warning,
-                    "insights": result.insights or [],
-                    "suggested_followups": result.suggested_followups or [],
-                },
-                tool_calls_json=tool_calls_str,
+                }
+                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                return
+            except Exception as exc:
+                error_payload = _build_structured_error(exc)
+                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                return
+            result = result_holder[0] if result_holder else None
+            if not result:
+                error_payload = {
+                    "error": "No result",
+                    "error_type": "internal",
+                    "is_retryable": True,
+                    "user_message": "An unexpected error occurred. Please try again.",
+                }
+                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                return
+            viz_data = None
+            if result.results and not result.error:
+                viz_data = render(
+                    result=result.results,
+                    viz_type=result.viz_type,
+                    config=result.viz_config,
+                    summary=result.answer,
+                )
+
+            raw_result = _build_raw_result(result.results)
+
+            stream_rag = [
+                {
+                    "source_path": s.source_path,
+                    "distance": s.distance,
+                    "doc_type": s.doc_type,
+                }
+                for s in result.knowledge_sources
+            ]
+
+            tool_calls_str = (
+                json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
             )
 
-            if stream_rag:
+            from app.models.base import async_session_factory as _stream_session_factory
+
+            s_usage = result.token_usage or {}
+            s_cost = _estimate_cost(
+                result.llm_model,
+                s_usage.get("prompt_tokens", 0),
+                s_usage.get("completion_tokens", 0),
+            )
+            s_enriched_usage = (
+                {
+                    **(result.token_usage or {}),
+                    "provider": result.llm_provider or "unknown",
+                    "model": result.llm_model or "unknown",
+                    "estimated_cost_usd": s_cost,
+                    "prompt_version": result.prompt_version,
+                }
+                if result.token_usage
+                else None
+            )
+
+            async with _stream_session_factory() as stream_db:
+                assistant_msg = await _chat_svc.add_message(
+                    stream_db,
+                    session_id,
+                    "assistant",
+                    result.answer,
+                    metadata={
+                        "query": result.query,
+                        "query_explanation": result.query_explanation,
+                        "question": body.message,
+                        "viz_type": result.viz_type,
+                        "visualization": viz_data,
+                        "raw_result": raw_result,
+                        "error": result.error,
+                        "workflow_id": result.workflow_id,
+                        "row_count": (result.results.row_count if result.results else None),
+                        "execution_time_ms": (
+                            result.results.execution_time_ms if result.results else None
+                        ),
+                        "rag_sources": stream_rag,
+                        "token_usage": s_enriched_usage,
+                        "response_type": result.response_type,
+                        "staleness_warning": result.staleness_warning,
+                        "insights": result.insights or [],
+                        "suggested_followups": result.suggested_followups or [],
+                    },
+                    tool_calls_json=tool_calls_str,
+                )
+
+                if stream_rag:
+                    try:
+                        await _rag_feedback_svc.record(
+                            session=stream_db,
+                            project_id=body.project_id,
+                            rag_sources=stream_rag,
+                            query_succeeded=not result.error,
+                            question_snippet=body.message[:200],
+                        )
+                    except Exception:
+                        logger.warning("Failed to record RAG feedback", exc_info=True)
+
+                stream_usage = result.token_usage or {}
                 try:
-                    await _rag_feedback_svc.record(
-                        session=stream_db,
+                    await _usage_svc.record_usage(
+                        stream_db,
+                        user_id=user["user_id"],
                         project_id=body.project_id,
-                        rag_sources=stream_rag,
-                        query_succeeded=not result.error,
-                        question_snippet=body.message[:200],
+                        session_id=session_id,
+                        message_id=assistant_msg.id,
+                        provider=result.llm_provider or "unknown",
+                        model=result.llm_model or "unknown",
+                        prompt_tokens=stream_usage.get("prompt_tokens", 0),
+                        completion_tokens=stream_usage.get("completion_tokens", 0),
+                        total_tokens=stream_usage.get("total_tokens", 0),
+                        estimated_cost_usd=_estimate_cost(
+                            result.llm_model,
+                            stream_usage.get("prompt_tokens", 0),
+                            stream_usage.get("completion_tokens", 0),
+                        ),
                     )
                 except Exception:
-                    logger.warning("Failed to record RAG feedback", exc_info=True)
+                    logger.warning("Failed to record token usage", exc_info=True)
 
-            stream_usage = result.token_usage or {}
-            try:
-                await _usage_svc.record_usage(
-                    stream_db,
-                    user_id=user["user_id"],
-                    project_id=body.project_id,
-                    session_id=session_id,
-                    message_id=assistant_msg.id,
-                    provider=result.llm_provider or "unknown",
-                    model=result.llm_model or "unknown",
-                    prompt_tokens=stream_usage.get("prompt_tokens", 0),
-                    completion_tokens=stream_usage.get("completion_tokens", 0),
-                    total_tokens=stream_usage.get("total_tokens", 0),
-                    estimated_cost_usd=_estimate_cost(
-                        result.llm_model,
-                        stream_usage.get("prompt_tokens", 0),
-                        stream_usage.get("completion_tokens", 0),
-                    ),
-                )
-            except Exception:
-                logger.warning("Failed to record token usage", exc_info=True)
-
-        final = {
-            "session_id": session_id,
-            "answer": result.answer,
-            "query": result.query,
-            "query_explanation": result.query_explanation,
-            "visualization": viz_data,
-            "raw_result": raw_result,
-            "error": result.error,
-            "workflow_id": result.workflow_id,
-            "rag_sources": stream_rag,
-            "staleness_warning": result.staleness_warning,
-            "token_usage": s_enriched_usage,
-            "response_type": result.response_type,
-            "assistant_message_id": assistant_msg.id,
-            "user_message_id": user_message_id,
-            "rules_changed": _has_rules_changed(result.tool_call_log),
-            "insights": result.insights or [],
-            "suggested_followups": result.suggested_followups or [],
-        }
-        yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
-        await agent_limiter.release(user["user_id"])
+            final = {
+                "session_id": session_id,
+                "answer": result.answer,
+                "query": result.query,
+                "query_explanation": result.query_explanation,
+                "visualization": viz_data,
+                "raw_result": raw_result,
+                "error": result.error,
+                "workflow_id": result.workflow_id,
+                "rag_sources": stream_rag,
+                "staleness_warning": result.staleness_warning,
+                "token_usage": s_enriched_usage,
+                "response_type": result.response_type,
+                "assistant_message_id": assistant_msg.id,
+                "user_message_id": user_message_id,
+                "rules_changed": _has_rules_changed(result.tool_call_log),
+                "insights": result.insights or [],
+                "suggested_followups": result.suggested_followups or [],
+            }
+            yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
+        finally:
+            tracker.unsubscribe(queue)
+            if not released:
+                released = True
+                await agent_limiter.release(user["user_id"])
 
     return StreamingResponse(
         _generate(),
@@ -1347,6 +1349,16 @@ async def chat_websocket(
             message = data.get("message", "")
             if not message:
                 continue
+            if len(message) > 20000:
+                await websocket.send_json(
+                    {"type": "error", "message": "Message too long (max 20000 chars)"}
+                )
+                continue
+
+            limit_err = await agent_limiter.acquire(user_id)
+            if limit_err:
+                await websocket.send_json({"type": "error", "message": limit_err})
+                continue
 
             async with async_session_factory() as db:
                 await _chat_svc.add_message(db, session_id, "user", message)
@@ -1456,6 +1468,7 @@ async def chat_websocket(
                     except (asyncio.CancelledError, Exception):
                         pass
                 tracker.unsubscribe(queue)
+                await agent_limiter.release(user_id)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for project %s", project_id)

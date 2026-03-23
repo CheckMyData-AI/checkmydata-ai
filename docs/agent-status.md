@@ -4,11 +4,11 @@
 
 | Field | Value |
 |-------|-------|
-| Cycle | Cycle 4 — Unit Coverage Sprint |
-| Started | 2026-03-22 |
+| Cycle | Cycle 6 — Reliability & Security Hardening |
+| Started | 2026-03-23 |
 | Status | Complete |
-| Tasks Planned | 11 |
-| Tasks Completed | 11 |
+| Tasks Planned | 5 |
+| Tasks Completed | 5 |
 
 ## Health Summary
 
@@ -21,42 +21,22 @@
 | Backend Ruff Lint | PASS | 0 violations |
 | Backend Ruff Format | PASS | 416 files formatted |
 | Backend Mypy | PASS | 0 errors |
-| Backend Unit Tests | PASS | 2478/2478 |
+| Backend Unit Tests | PASS | 2482/2482 |
 | Backend Integration Tests | PASS | 410/410 |
 | Backend Coverage (unit-only) | 72.00% | CI threshold: 72% |
 | CI Pipeline | GREEN | All checks pass |
 
 ## Changes This Cycle
 
-Massive unit test expansion across 24 test files (+2579 lines, +297 tests):
+5 reliability and security fixes:
 
-1. **agent_learning_service** — 66% -> 100% (conflict resolution, cross-connection, compile_prompt)
-2. **benchmark_service** — 66% -> 100% (normalize, find, create_or_confirm, flag_stale, get_all)
-3. **db_index_service** — 69% -> 100% (upsert, get, delete, summary, age, stale, indexing_status)
-4. **checkpoint_service** — expanded (edge cases)
-5. **insight_feed_agent** — expanded significantly (+867 lines, all branches)
-6. **investigation_service** — expanded (corrupted log, corrected_result, benchmarks_updated)
-7. **encryption** — expanded (bad ciphertext, missing key)
-8. **config_settings** — NEW (database_url rewriting, production secret validation)
-9. **code_db_sync_service** — expanded (sync_to_prompt_context, table_sync_to_detail)
-10. **pre_validator** — expanded (alias resolution)
-11. **viz_agent** — expanded (pie/scatter/bar auto-fix, summarize empty)
-12. **tools** — NEW (get_available_tools flag combinations)
-13. **retry** — expanded (non_retryable, on_retry callback failure)
-14. **schema_hints** — expanded (comments, indexes)
-15. **session_notes_service** — expanded (create, get, count, decay, deactivate)
-16. **ssh_key_service** — expanded (get with user_id)
-17. **suggestion_engine** — expanded (history limits, dedup, column skip)
-18. **viz/chart** — expanded (export_xlsx, serialize, detect types, scatter, pie)
-19. **viz/text** — expanded (multi-row fallback)
-20. **stage_validator** — NEW (validation outcome, basic, min/max rows, business rules)
-21. **sql_prompt** — NEW (dialect hints, all optional params)
-22. **workflow_tracker** — expanded (broadcast failure, dead subscriber removal)
-23. **exploration_engine** — expanded (_safe_float None/invalid)
-24. **cli_output_parser** — expanded (empty generic, blank lines, headers-only csv)
-25. **pipeline_registry** — expanded (register_pipeline)
-26. **planner_prompt** — NEW (db_type branch)
-27. **query_repair** — expanded (chat_history branch)
+1. **SSE subscriber leak (P0)** — Wrapped entire SSE generator in `try/finally` to guarantee `tracker.unsubscribe()` and `agent_limiter.release()` even on client disconnect. Previously, subscriber cleanup was spread across 4 branches with gaps when the client dropped the connection.
+2. **WebSocket agent_limiter bypass (P0)** — Applied `agent_limiter.acquire/release` to the WebSocket chat handler. Previously only the REST `/ask/stream` endpoint enforced per-user rate limits; WebSocket was uncapped.
+3. **WebSocket message length cap (P1)** — Added 20,000 char limit to WebSocket messages, matching the REST `ChatRequest.message` `Field(max_length=20000)` validation.
+4. **Markdown link XSS prevention (P1)** — Sanitized `href` in ChatMessage and SQLExplainer markdown renderers to only allow `http://` and `https://` schemes, blocking `javascript:` and other dangerous URIs.
+5. **Dashboard load race condition (P1)** — Replaced shared `mountedRef` boolean with a monotonic request counter (`requestIdRef`) so that stale responses from slow API calls are discarded when the route `id` changes quickly.
+
+Additional: 4 new unit tests (retry_strategy EXPLAIN_WARNING, LLMError.user_message, chunker no-boundary split) to maintain 72% coverage.
 
 ## Known Issues (Remaining)
 
@@ -64,11 +44,14 @@ Massive unit test expansion across 24 test files (+2579 lines, +297 tests):
 2. **Mypy untyped functions** — 23 `annotation-unchecked` notes across connector and LLM modules. Non-blocking.
 3. **Dead code** — `exploration_engine.py` line 326 (`positive_count` in summary) is unreachable. Consider removing.
 4. **Dead code** — `cli_output_parser.py` line 38 (`if not all_rows` after non-empty csv.reader) is unreachable.
+5. **Health /modules endpoint** — Unauthenticated, calls live LLM. Should require auth or be simplified.
+6. **Unbounded query params** — Several endpoints accept large `limit`/`offset` without strict bounds (notifications, insights).
+7. **Metrics keys unbounded** — MetricsMiddleware creates per-path entries; UUID paths cause slow growth.
 
 ## Next Cycle Priorities
 
-1. Browser-based flow testing (onboarding, chat, insights)
-2. Performance profiling (frontend bundle, API response times)
-3. Mobile responsiveness audit
-4. Continue coverage improvement toward 75% target
-5. Dead code cleanup (exploration_engine, cli_output_parser)
+1. Protect `/api/health/modules` (add auth or remove live LLM call)
+2. Clamp query param bounds (limit/offset) across API routes
+3. Cap MetricsMiddleware path cardinality
+4. Browser-based flow testing (onboarding, chat, insights)
+5. Continue coverage improvement toward 75% target

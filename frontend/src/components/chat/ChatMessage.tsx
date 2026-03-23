@@ -28,11 +28,14 @@ const mdComponents: Components = {
   li: ({ children }) => <li className="text-sm">{children}</li>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300 break-all">
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => {
+    const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined;
+    return (
+      <a href={safeHref} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300 break-all">
+        {children}
+      </a>
+    );
+  },
   blockquote: ({ children }) => (
     <blockquote className="border-l-2 border-zinc-600 pl-3 my-2 text-zinc-400 italic overflow-hidden break-words">{children}</blockquote>
   ),

@@ -35,6 +35,12 @@ class TestChunker:
         chunks = chunk_document("", "empty.py", "orm_model")
         assert len(chunks) == 0
 
+    def test_large_document_no_class_boundary(self):
+        content = "x = 12345678\n" * 2000
+        chunks = chunk_document(content, "plain.py", "raw_sql")
+        assert len(chunks) >= 1
+        assert all(c.metadata["source_path"] == "plain.py" for c in chunks)
+
     def test_heading_boundaries(self):
         content = (
             "## Table: users\nUser accounts table\n\n"

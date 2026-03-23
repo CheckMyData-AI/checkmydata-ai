@@ -93,12 +93,12 @@ export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-  const mountedRef = useRef(true);
+  const requestIdRef = useRef(0);
 
-  const loadDashboard = useCallback(async () => {
+  const loadDashboard = useCallback(async (reqId: number) => {
     try {
       const d = await api.dashboards.get(id);
-      if (!mountedRef.current) return;
+      if (requestIdRef.current !== reqId) return;
       setDashboard(d);
       const cards = parseCards(d.cards_json);
       const noteIds = cards.map((c) => c.note_id);
@@ -112,23 +112,23 @@ export default function DashboardPage() {
           }
         }),
       );
-      if (!mountedRef.current) return;
+      if (requestIdRef.current !== reqId) return;
       const map = new Map<string, SavedNote>();
       for (const entry of noteEntries) {
         if (entry) map.set(entry[0], entry[1]);
       }
       setNotes(map);
     } catch (err) {
-      if (mountedRef.current) toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
+      if (requestIdRef.current === reqId) toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (requestIdRef.current === reqId) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
-    mountedRef.current = true;
-    loadDashboard();
-    return () => { mountedRef.current = false; };
+    const reqId = ++requestIdRef.current;
+    loadDashboard(reqId);
+    return () => { requestIdRef.current++; };
   }, [loadDashboard]);
 
   useEffect(() => {
@@ -186,7 +186,7 @@ export default function DashboardPage() {
   const handleSaveEdit = (updated: Dashboard) => {
     setDashboard(updated);
     setEditing(false);
-    loadDashboard();
+    loadDashboard(requestIdRef.current);
   };
 
   if (loading) {

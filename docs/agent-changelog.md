@@ -4,6 +4,21 @@ Changes made by the continuous improvement agent.
 
 ---
 
+## Cycle 6 — Reliability & Security Hardening (2026-03-23)
+
+### Backend
+- **fix(chat.py):** Wrapped SSE generator `_generate()` in `try/finally` to prevent subscriber leaks and ensure `agent_limiter.release()` on client disconnect
+- **fix(chat.py):** Added `agent_limiter.acquire/release` to WebSocket `chat_websocket` handler — previously unprotected
+- **fix(chat.py):** Added 20,000 char message length validation to WebSocket handler, matching REST parity
+- **test:** Added tests for retry_strategy EXPLAIN_WARNING, LLMError.user_message, chunker no-boundary path
+
+### Frontend
+- **fix(ChatMessage.tsx):** Sanitized markdown link `href` to only allow `http(s)://` schemes, preventing `javascript:` XSS
+- **fix(SQLExplainer.tsx):** Applied same link sanitization to SQL explainer markdown
+- **fix(dashboard/[id]/page.tsx):** Replaced `mountedRef` with monotonic request counter to prevent stale data race on rapid route changes
+
+---
+
 ## Cycle 4 — Unit Coverage Sprint — 2026-03-22
 
 ### Summary
