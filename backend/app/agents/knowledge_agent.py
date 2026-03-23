@@ -46,7 +46,8 @@ class KnowledgeAgent(BaseAgent):
     ) -> None:
         self._vector_store = vector_store or VectorStore()
         self._cache_svc = ProjectCacheService()
-        self._knowledge_cache: dict[str, ProjectKnowledge] = {}
+        self._knowledge_cache: dict[str, tuple[float, ProjectKnowledge]] = {}
+        self._knowledge_cache_ttl = 300.0
 
     @property
     def name(self) -> str:
@@ -263,14 +264,20 @@ class KnowledgeAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
-        if project_id in self._knowledge_cache:
-            return self._knowledge_cache[project_id]
+        import time
+
+        cached = self._knowledge_cache.get(project_id)
+        if cached is not None:
+            ts, knowledge = cached
+            if (time.monotonic() - ts) < self._knowledge_cache_ttl:
+                return knowledge
+
         from app.models.base import async_session_factory
 
         async with async_session_factory() as session:
             knowledge = await self._cache_svc.load_knowledge(session, project_id)
         if knowledge is not None:
-            self._knowledge_cache[project_id] = knowledge
+            self._knowledge_cache[project_id] = (time.monotonic(), knowledge)
         return knowledge
 
     # ------------------------------------------------------------------

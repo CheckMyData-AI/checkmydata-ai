@@ -647,10 +647,13 @@ class MessageResponse(BaseModel):
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
 async def get_session_messages(
     session_id: str,
+    limit: int = Query(default=500, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     session = await _require_session_owner(db, session_id, user["user_id"])
+    msgs = session.messages[offset : offset + limit]
     return [
         MessageResponse(
             id=m.id,
@@ -661,7 +664,7 @@ async def get_session_messages(
             user_rating=m.user_rating,
             created_at=m.created_at.isoformat() if m.created_at else "",
         )
-        for m in session.messages
+        for m in msgs
     ]
 
 

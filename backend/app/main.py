@@ -8,12 +8,13 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.deps import get_current_user
 from app.api.routes import (
     auth,
     backup,
@@ -765,8 +766,10 @@ async def health_check():
 
 
 @app.get("/api/health/modules")
-async def module_health():
-    """Per-module health checks for independent debugging."""
+async def module_health(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Per-module health checks for independent debugging (auth required)."""
     results: dict[str, dict] = {}
 
     # Internal database
