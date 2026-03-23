@@ -525,9 +525,9 @@ async def _run_db_index_background(
             final_status = "failed"
         else:
             logger.info(
-                "DB index completed: connection=%s result=%s",
+                "DB index completed: connection=%s tables=%s",
                 connection_id[:8],
-                result,
+                result.get("tables_indexed") if isinstance(result, dict) else "ok",
             )
             final_status = "completed"
             await _regenerate_overview(project_id, connection_id)
@@ -752,9 +752,8 @@ async def _run_sync_background(
             final_status = "failed"
         else:
             logger.info(
-                "Code-DB sync completed: connection=%s result=%s",
+                "Code-DB sync completed: connection=%s",
                 connection_id[:8],
-                result,
             )
             final_status = "completed"
             await _regenerate_overview(project_id, connection_id)
