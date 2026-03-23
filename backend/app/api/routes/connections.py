@@ -32,6 +32,8 @@ _sync_svc = CodeDbSyncService()
 
 _db_index_tasks: dict[str, asyncio.Task] = {}
 _sync_tasks: dict[str, asyncio.Task] = {}
+_db_index_start_locks: dict[str, asyncio.Lock] = {}
+_sync_start_locks: dict[str, asyncio.Lock] = {}
 
 
 def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], None]:
@@ -277,24 +279,26 @@ async def test_connection(
         from app.config import settings as app_settings
 
         if app_settings.auto_index_db_on_test:
-            existing = _db_index_tasks.get(connection_id)
-            if not (existing and not existing.done()):
-                try:
-                    config = await _svc.to_config(db, conn, user_id=user["user_id"])
-                    await _db_index_svc.set_indexing_status(db, connection_id, "running")
-                    await db.commit()
-                    task = asyncio.create_task(
-                        _run_db_index_background(connection_id, config, conn.project_id)
-                    )
-                    task.add_done_callback(_log_task_error("DB index", connection_id))
-                    _db_index_tasks[connection_id] = task
-                    result["auto_indexing"] = True
-                    logger.info(
-                        "Auto-indexing triggered after test: connection=%s",
-                        connection_id[:8],
-                    )
-                except Exception:
-                    logger.debug("Auto-index trigger failed", exc_info=True)
+            auto_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
+            async with auto_lock:
+                existing = _db_index_tasks.get(connection_id)
+                if not (existing and not existing.done()):
+                    try:
+                        config = await _svc.to_config(db, conn, user_id=user["user_id"])
+                        await _db_index_svc.set_indexing_status(db, connection_id, "running")
+                        await db.commit()
+                        task = asyncio.create_task(
+                            _run_db_index_background(connection_id, config, conn.project_id)
+                        )
+                        task.add_done_callback(_log_task_error("DB index", connection_id))
+                        _db_index_tasks[connection_id] = task
+                        result["auto_indexing"] = True
+                        logger.info(
+                            "Auto-indexing triggered after test: connection=%s",
+                            connection_id[:8],
+                        )
+                    except Exception:
+                        logger.debug("Auto-index trigger failed", exc_info=True)
 
     return result
 
@@ -365,29 +369,31 @@ async def index_database(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
-    existing = _db_index_tasks.get(connection_id)
-    if existing and not existing.done():
-        raise HTTPException(
-            status_code=409,
-            detail="Database indexing already in progress for this connection",
-        )
+    idx_start_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
+    async with idx_start_lock:
+        existing = _db_index_tasks.get(connection_id)
+        if existing and not existing.done():
+            raise HTTPException(
+                status_code=409,
+                detail="Database indexing already in progress for this connection",
+            )
 
-    db_status = await _db_index_svc.get_indexing_status(db, connection_id)
-    if db_status == "running" and not (existing and existing.done()):
-        raise HTTPException(
-            status_code=409,
-            detail="Database indexing already in progress for this connection",
-        )
+        db_status = await _db_index_svc.get_indexing_status(db, connection_id)
+        if db_status == "running" and not (existing and existing.done()):
+            raise HTTPException(
+                status_code=409,
+                detail="Database indexing already in progress for this connection",
+            )
 
-    config = await _svc.to_config(db, conn, user_id=user["user_id"])
-    project_id = conn.project_id
+        config = await _svc.to_config(db, conn, user_id=user["user_id"])
+        project_id = conn.project_id
 
-    await _db_index_svc.set_indexing_status(db, connection_id, "running")
-    await db.commit()
+        await _db_index_svc.set_indexing_status(db, connection_id, "running")
+        await db.commit()
 
-    task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
-    task.add_done_callback(_log_task_error("DB index", connection_id))
-    _db_index_tasks[connection_id] = task
+        task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
+        task.add_done_callback(_log_task_error("DB index", connection_id))
+        _db_index_tasks[connection_id] = task
 
     logger.info(
         "DB index started: connection=%s type=%s project=%s",
@@ -605,34 +611,36 @@ async def trigger_sync(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
-    existing = _sync_tasks.get(connection_id)
-    if existing and not existing.done():
-        raise HTTPException(
-            status_code=409,
-            detail="Code-DB sync already in progress for this connection",
-        )
+    sync_start_lock = _sync_start_locks.setdefault(connection_id, asyncio.Lock())
+    async with sync_start_lock:
+        existing = _sync_tasks.get(connection_id)
+        if existing and not existing.done():
+            raise HTTPException(
+                status_code=409,
+                detail="Code-DB sync already in progress for this connection",
+            )
 
-    sync_status = await _sync_svc.get_sync_status(db, connection_id)
-    if sync_status == "running" and not (existing and existing.done()):
-        raise HTTPException(
-            status_code=409,
-            detail="Code-DB sync already in progress for this connection",
-        )
+        sync_status = await _sync_svc.get_sync_status(db, connection_id)
+        if sync_status == "running" and not (existing and existing.done()):
+            raise HTTPException(
+                status_code=409,
+                detail="Code-DB sync already in progress for this connection",
+            )
 
-    db_indexed = await _db_index_svc.is_indexed(db, connection_id)
-    if not db_indexed:
-        raise HTTPException(
-            status_code=400,
-            detail="Database must be indexed before running sync. Run 'Index DB' first.",
-        )
+        db_indexed = await _db_index_svc.is_indexed(db, connection_id)
+        if not db_indexed:
+            raise HTTPException(
+                status_code=400,
+                detail="Database must be indexed before running sync. Run 'Index DB' first.",
+            )
 
-    await _sync_svc.set_sync_status(db, connection_id, "running")
-    await db.commit()
+        await _sync_svc.set_sync_status(db, connection_id, "running")
+        await db.commit()
 
-    project_id = conn.project_id
-    task = asyncio.create_task(_run_sync_background(connection_id, project_id))
-    task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
-    _sync_tasks[connection_id] = task
+        project_id = conn.project_id
+        task = asyncio.create_task(_run_sync_background(connection_id, project_id))
+        task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
+        _sync_tasks[connection_id] = task
 
     logger.info(
         "Code-DB sync started: connection=%s project=%s",

@@ -46,6 +46,7 @@ _membership_svc = MembershipService()
 _repo_svc = RepositoryService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
+_index_start_locks: dict[str, asyncio.Lock] = {}
 
 _pipeline_runner = IndexingPipelineRunner(
     ssh_key_svc=_ssh_key_svc,
@@ -134,55 +135,57 @@ async def index_repo(
             detail="Project has no repository URL configured",
         )
 
-    existing_task = _indexing_tasks.get(project_id)
-    if existing_task and not existing_task.done():
-        raise HTTPException(
-            status_code=409,
-            detail="Indexing already in progress for this project",
+    start_lock = _index_start_locks.setdefault(project_id, asyncio.Lock())
+    async with start_lock:
+        existing_task = _indexing_tasks.get(project_id)
+        if existing_task and not existing_task.done():
+            raise HTTPException(
+                status_code=409,
+                detail="Indexing already in progress for this project",
+            )
+
+        lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
+
+        existing_cp = await _checkpoint_svc.get_active(db, project_id)
+        resumed = False
+
+        if existing_cp and not body.force_full:
+            if existing_cp.status == "running":
+                existing_cp.status = "interrupted"
+                await db.commit()
+            resumed = True
+        elif existing_cp and body.force_full:
+            await _checkpoint_svc.delete(db, existing_cp.id)
+            existing_cp = None
+
+        logger.info(
+            "Index started: project=%s force=%s resumed=%s",
+            project_id[:8],
+            body.force_full,
+            resumed,
         )
 
-    lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
+        wf_id = await tracker.begin(
+            "index_repo",
+            {
+                "project_id": project_id,
+                "repo_url": project.repo_url,
+                "resumed": resumed,
+            },
+        )
 
-    existing_cp = await _checkpoint_svc.get_active(db, project_id)
-    resumed = False
+        def _on_index_done(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error("Repo index %s failed: %s", project_id, exc, exc_info=exc)
 
-    if existing_cp and not body.force_full:
-        if existing_cp.status == "running":
-            existing_cp.status = "interrupted"
-            await db.commit()
-        resumed = True
-    elif existing_cp and body.force_full:
-        await _checkpoint_svc.delete(db, existing_cp.id)
-        existing_cp = None
-
-    logger.info(
-        "Index started: project=%s force=%s resumed=%s",
-        project_id[:8],
-        body.force_full,
-        resumed,
-    )
-
-    wf_id = await tracker.begin(
-        "index_repo",
-        {
-            "project_id": project_id,
-            "repo_url": project.repo_url,
-            "resumed": resumed,
-        },
-    )
-
-    def _on_index_done(t: asyncio.Task) -> None:
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc:
-            logger.error("Repo index %s failed: %s", project_id, exc, exc_info=exc)
-
-    task = asyncio.create_task(
-        _run_index_background(project_id, project, body, wf_id, lock),
-    )
-    task.add_done_callback(_on_index_done)
-    _indexing_tasks[project_id] = task
+        task = asyncio.create_task(
+            _run_index_background(project_id, project, body, wf_id, lock),
+        )
+        task.add_done_callback(_on_index_done)
+        _indexing_tasks[project_id] = task
 
     return JSONResponse(
         status_code=202,

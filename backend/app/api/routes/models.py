@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Literal
@@ -16,6 +17,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 CACHE_TTL_SECONDS = settings.model_cache_ttl_seconds
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
+_fetch_lock = asyncio.Lock()
 
 STATIC_MODELS: dict[str, list[dict]] = {
     "openai": [
@@ -59,40 +61,41 @@ def _sort_openrouter_models(models: list[dict]) -> list[dict]:
 
 
 async def _fetch_openrouter_models() -> list[dict]:
-    now = time.monotonic()
-    cached = _cache.get("openrouter")
-    if cached:
-        ts, data = cached
-        if now - ts < CACHE_TTL_SECONDS:
-            return data
+    async with _fetch_lock:
+        now = time.monotonic()
+        cached = _cache.get("openrouter")
+        if cached:
+            ts, data = cached
+            if now - ts < CACHE_TTL_SECONDS:
+                return data
 
-    headers: dict[str, str] = {}
-    if settings.openrouter_api_key:
-        headers["Authorization"] = f"Bearer {settings.openrouter_api_key}"
+        headers: dict[str, str] = {}
+        if settings.openrouter_api_key:
+            headers["Authorization"] = f"Bearer {settings.openrouter_api_key}"
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(f"{OPENROUTER_BASE_URL}/models", headers=headers)
-        resp.raise_for_status()
-        raw = resp.json()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{OPENROUTER_BASE_URL}/models", headers=headers)
+            resp.raise_for_status()
+            raw = resp.json()
 
-    models = []
-    for item in raw.get("data", []):
-        pricing = item.get("pricing")
-        models.append(
-            {
-                "id": item["id"],
-                "name": item.get("name", item["id"]),
-                "context_length": item.get("context_length"),
-                "pricing": {
-                    "prompt": pricing.get("prompt", "0") if pricing else "0",
-                    "completion": pricing.get("completion", "0") if pricing else "0",
-                },
-            }
-        )
+        models = []
+        for item in raw.get("data", []):
+            pricing = item.get("pricing")
+            models.append(
+                {
+                    "id": item["id"],
+                    "name": item.get("name", item["id"]),
+                    "context_length": item.get("context_length"),
+                    "pricing": {
+                        "prompt": pricing.get("prompt", "0") if pricing else "0",
+                        "completion": (pricing.get("completion", "0") if pricing else "0"),
+                    },
+                }
+            )
 
-    sorted_models = _sort_openrouter_models(models)
-    _cache["openrouter"] = (now, sorted_models)
-    return sorted_models
+        sorted_models = _sort_openrouter_models(models)
+        _cache["openrouter"] = (now, sorted_models)
+        return sorted_models
 
 
 @router.get("", response_model=list[ModelInfo])

@@ -96,6 +96,47 @@ def test_json_formatter_includes_exception() -> None:
     assert "ValueError" in data["exception"]
 
 
+def test_json_formatter_includes_request_id_only() -> None:
+    fmt = JSONFormatter()
+    record = logging.LogRecord("x", logging.INFO, __file__, 1, "m", (), None)
+    record.workflow_id = ""
+    record.request_id = "trace-abc"
+    data = json.loads(fmt.format(record))
+    assert data["request_id"] == "trace-abc"
+    assert "workflow_id" not in data
+
+
+def test_readable_formatter_tag_from_request_id() -> None:
+    fmt = ReadableFormatter()
+    record = logging.LogRecord("svc", logging.INFO, __file__, 1, "msg", (), None)
+    record.workflow_id = ""
+    record.request_id = "request-id-long"
+    out = fmt.format(record)
+    assert "[r:" in out
+
+
+def test_readable_formatter_includes_exception() -> None:
+    fmt = ReadableFormatter()
+    record = logging.LogRecord("x", logging.ERROR, __file__, 1, "fail", (), None)
+    record.workflow_id = ""
+    record.request_id = ""
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        import sys
+
+        record.exc_info = sys.exc_info()
+    out = fmt.format(record)
+    assert "ValueError" in out
+
+
+def test_configure_logging_json_format() -> None:
+    with patch("app.core.logging_config.logging.config.dictConfig") as mock_dc:
+        configure_logging(json_format=True, level="INFO")
+    cfg = mock_dc.call_args[0][0]
+    assert "JSONFormatter" in cfg["formatters"]["default"]["()"]
+
+
 def test_configure_logging_sets_level() -> None:
     with patch("app.core.logging_config.logging.config.dictConfig") as mock_dc:
         configure_logging(json_format=False, level="DEBUG")
