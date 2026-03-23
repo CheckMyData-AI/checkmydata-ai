@@ -580,7 +580,7 @@ export function ChatPanel() {
         <div className="flex items-center justify-between px-6 py-1.5 bg-error/10 border-b border-error/20">
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
-            <span className="text-xs text-error">Connection is down. Attempting reconnect...</span>
+            <span className="text-xs text-error">Connection is down. Click Retry to reconnect.</span>
           </div>
           <button
             disabled={reconnecting}
