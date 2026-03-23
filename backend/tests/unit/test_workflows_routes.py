@@ -9,7 +9,7 @@ class TestSSEEventGenerator:
     @pytest.mark.asyncio
     async def test_subscriber_receives_formatted_events(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         await t.emit("wf-1", "clone_repo", "completed", "OK")
 
@@ -22,13 +22,13 @@ class TestSSEEventGenerator:
         assert '"step": "clone_repo"' in json_str
         assert '"status": "completed"' in json_str
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_workflow_id_filter_logic(self):
         """Simulates the SSE endpoint filtering by workflow_id."""
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         await t.emit("wf-other", "step1", "started")
         await t.emit("wf-target", "step2", "completed", "should match")
@@ -43,7 +43,7 @@ class TestSSEEventGenerator:
         assert len(filtered) == 1
         assert filtered[0].step == "step2"
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
 
     @pytest.mark.asyncio
     async def test_sse_format_output(self):
@@ -66,7 +66,7 @@ class TestSSEEventGenerator:
     @pytest.mark.asyncio
     async def test_full_pipeline_event_sequence(self):
         t = WorkflowTracker()
-        queue = t.subscribe()
+        queue = await t.subscribe()
 
         wf_id = await t.begin("index_repo")
 
@@ -93,4 +93,4 @@ class TestSSEEventGenerator:
         assert statuses[0] == "started"
         assert statuses[-1] == "completed"
 
-        t.unsubscribe(queue)
+        await t.unsubscribe(queue)
