@@ -161,7 +161,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             <h2 className="text-sm font-semibold text-text-primary">Batch Query Runner</h2>
           </div>
           {!isRunning && (
-            <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors">
+            <button onClick={onClose} aria-label="Close batch runner" className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors">
               <Icon name="x" size={14} />
             </button>
           )}

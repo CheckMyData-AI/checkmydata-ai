@@ -40,6 +40,10 @@ class TestTrustService:
         score = TrustService.compute_confidence(base_confidence=0.5, data_freshness_hours=200)
         assert score == 0.4
 
+    def test_compute_confidence_moderately_stale_data(self):
+        score = TrustService.compute_confidence(base_confidence=0.5, data_freshness_hours=48)
+        assert score == 0.45
+
     def test_compute_confidence_clamped(self):
         score = TrustService.compute_confidence(
             base_confidence=0.9,

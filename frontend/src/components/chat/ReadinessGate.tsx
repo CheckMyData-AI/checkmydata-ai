@@ -125,6 +125,12 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
     }, POLL_INTERVAL_MS);
   }, [projectId]);
 
+  useEffect(() => {
+    if (!loading && !fetchError && !readiness) {
+      onBypass();
+    }
+  }, [loading, fetchError, readiness, onBypass]);
+
   const handleAction = async (step: string) => {
     const cid = connectionId || readiness?.active_connection_id;
     setActionInProgress(step);
@@ -184,7 +190,6 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
   }
 
   if (!readiness) {
-    onBypass();
     return null;
   }
 

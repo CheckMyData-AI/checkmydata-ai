@@ -79,6 +79,10 @@ export function Tooltip({ label, position = "bottom", children }: TooltipProps) 
     reposition();
   }, [visible, reposition]);
 
+  useEffect(() => {
+    return () => clearTimeout(delayRef.current);
+  }, []);
+
   if (!label) return <>{children}</>;
 
   const show = () => {

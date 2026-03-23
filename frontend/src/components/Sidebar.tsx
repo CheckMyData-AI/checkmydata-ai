@@ -92,6 +92,12 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     setIndexResult(null);
     setIndexWorkflowId(null);
     loadStatus();
+    return () => {
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current);
+        dismissTimerRef.current = null;
+      }
+    };
   }, [activeProject?.id, loadStatus]);
 
   const handleIndex = async () => {

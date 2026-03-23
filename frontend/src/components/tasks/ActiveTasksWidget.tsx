@@ -54,7 +54,8 @@ function useElapsed(startedAt: number, completedAt: number | undefined, active: 
 }
 
 function TaskItem({ task }: { task: ActiveTask }) {
-  const { projects, connections } = useAppStore();
+  const projects = useAppStore((s) => s.projects);
+  const connections = useAppStore((s) => s.connections);
   const dismissTask = useTaskStore((s) => s.dismissTask);
   const elapsed = useElapsed(task.startedAt, task.completedAt, task.status === "running");
   const meta = PIPELINE_META[task.pipeline] || { label: task.pipeline, icon: "activity" as IconName };

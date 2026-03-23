@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
@@ -14,13 +14,19 @@ const inputCls =
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    return () => clearTimeout(timerRef.current);
+  }, []);
 
   const copy = useCallback(() => {
     navigator.clipboard
       .writeText(text)
       .then(() => {
         setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => setCopied(false), 1500);
       })
       .catch(() => {
         toast("Failed to copy to clipboard", "error");

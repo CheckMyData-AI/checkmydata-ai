@@ -51,3 +51,27 @@ class TestGetAvailableTools:
         assert "get_agent_learnings" in names
         assert "get_sync_context" in names
         assert "search_knowledge" in names
+
+
+class TestOrchestratorTools:
+    def test_includes_mcp_tool_when_enabled(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_mcp_sources=True)
+        names = [t.name for t in tools]
+        assert "query_mcp_source" in names
+
+    def test_excludes_mcp_tool_when_disabled(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_mcp_sources=False)
+        names = [t.name for t in tools]
+        assert "query_mcp_source" not in names
+
+    def test_connection_tools_included(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_connection=True)
+        names = [t.name for t in tools]
+        assert "query_database" in names
+        assert "manage_rules" in names

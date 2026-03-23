@@ -213,3 +213,18 @@ class TestGetCurrentDatetimeStr:
         result = get_current_datetime_str()
         assert "UTC" in result
         assert "202" in result
+
+
+class TestOrchestratorRecentLearnings:
+    def test_learnings_injected(self):
+        from app.agents.prompts.orchestrator_prompt import (
+            build_orchestrator_system_prompt,
+        )
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            recent_learnings="- Prefer joins on user_id",
+        )
+        assert "Prefer joins on user_id" in prompt
+        assert "verified patterns" in prompt

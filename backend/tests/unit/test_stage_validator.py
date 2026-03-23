@@ -161,6 +161,20 @@ class TestBusinessRules:
         outcome = validator.validate(stage, result, ctx)
         assert outcome.warnings == []
 
+    def test_no_negative_skips_ragged_row(self, validator):
+        stage = _make_stage(
+            validation=StageValidation(business_rules=["Ensure no negative values"]),
+        )
+        qr = QueryResult(
+            columns=["a", "b"],
+            rows=[[1, 2], [3]],
+            row_count=2,
+        )
+        result = _make_result(qr=qr)
+        ctx = StageContext(plan=_make_plan(stage))
+        outcome = validator.validate(stage, result, ctx)
+        assert outcome.passed is True
+
     def test_no_rows_skips_business_rules(self, validator):
         stage = _make_stage(
             validation=StageValidation(business_rules=["Ensure no negative values"]),

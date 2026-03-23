@@ -213,9 +213,7 @@ class TestUpdateSchedule:
     async def test_update_cron_recalculates_next_run(self, db):
         schedule, *_ = await _make_schedule(db, cron_expression="0 * * * *")
         old_next = schedule.next_run_at
-        updated = await svc.update_schedule(
-            db, schedule.id, cron_expression="15 3 1 1 *"
-        )
+        updated = await svc.update_schedule(db, schedule.id, cron_expression="15 3 1 1 *")
         assert updated is not None
         assert updated.next_run_at != old_next
 
