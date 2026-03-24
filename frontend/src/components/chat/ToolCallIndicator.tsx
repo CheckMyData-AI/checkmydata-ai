@@ -13,6 +13,7 @@ const TOOL_LABELS: Record<string, string> = {
   "orchestrator:knowledge_agent": "Knowledge Agent working",
   "orchestrator:viz": "Choosing visualization",
   "orchestrator:manage_rules": "Managing rules",
+  "orchestrator:process_data": "Enriching data",
   "sql:llm_call": "SQL Agent thinking",
   "sql:get_schema": "Checking schema",
   "sql:load_rules": "Loading rules",

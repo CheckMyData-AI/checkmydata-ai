@@ -58,6 +58,7 @@ from app.llm.errors import (
     LLMTokenLimitError,
 )
 from app.llm.router import LLMRouter
+from app.services.data_processor import get_data_processor
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,9 @@ class OrchestratorAgent(BaseAgent):
             vector_store=self._vector_store,
         )
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
+        self._last_sql_result: SQLAgentResult | None = None
+        self._last_enriched_result: SQLAgentResult | None = None
+        self._enriched_at: float = 0.0
 
     @property
     def name(self) -> str:
@@ -154,8 +158,17 @@ class OrchestratorAgent(BaseAgent):
         context: AgentContext,
         **_kwargs: Any,
     ) -> AgentResponse:
+        import time as _time
+
         wf_id = context.workflow_id
         question = context.user_question
+
+        stale_seconds = 300  # 5 min staleness guard
+        if self._last_enriched_result and (_time.time() - self._enriched_at) < stale_seconds:
+            self._last_sql_result = self._last_enriched_result
+        else:
+            self._last_sql_result = None
+            self._last_enriched_result = None
 
         try:
             # Check for pipeline resume first
@@ -420,7 +433,11 @@ class OrchestratorAgent(BaseAgent):
                     )
                 )
 
-                if len(llm_resp.tool_calls) > 1:
+                has_process_data = any(
+                    tc.name == "process_data" for tc in llm_resp.tool_calls
+                )
+
+                if len(llm_resp.tool_calls) > 1 and not has_process_data:
                     gather_results = await asyncio.gather(
                         *(
                             self._handle_meta_tool(tc, context, wf_id, total_usage)
@@ -440,11 +457,13 @@ class OrchestratorAgent(BaseAgent):
                         else:
                             tool_pairs.append(res)  # type: ignore[arg-type]
                 else:
-                    tool_pairs = [
-                        await self._handle_meta_tool(
-                            llm_resp.tool_calls[0], context, wf_id, total_usage
+                    tool_pairs = []
+                    for single_tc in llm_resp.tool_calls:
+                        tool_pairs.append(
+                            await self._handle_meta_tool(
+                                single_tc, context, wf_id, total_usage
+                            )
                         )
-                    ]
 
                 for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
                     tool_call_log.append(
@@ -457,6 +476,7 @@ class OrchestratorAgent(BaseAgent):
 
                     if isinstance(sub_result, SQLAgentResult):
                         last_sql_result = sub_result
+                        self._last_sql_result = sub_result
                     elif isinstance(sub_result, KnowledgeResult):
                         knowledge_sources.extend(sub_result.sources)
 
@@ -1063,6 +1083,7 @@ class OrchestratorAgent(BaseAgent):
             "manage_rules": "Rules Manager",
             "query_mcp_source": "MCP Source Agent",
             "ask_user": "Asking user for clarification",
+            "process_data": "Data Processing",
         }
         brief = (tc.arguments or {}).get("question", "")[:80]
         label = tool_labels.get(tc.name, tc.name)
@@ -1104,13 +1125,18 @@ class OrchestratorAgent(BaseAgent):
                 total_usage,
             )
             return mcp_text, mcp_sub
+        if tc.name == "process_data":
+            pd_text = await self._handle_process_data(tc, wf_id)
+            operation = (tc.arguments or {}).get("operation", "")
+            pd_sub = self._last_sql_result if operation == "aggregate_data" else None
+            return pd_text, pd_sub
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
         logger.warning("Unknown meta-tool called: %s", tc.name)
         return (
             f"Error: unknown tool '{tc.name}'. Available tools: "
             "query_database, search_codebase, manage_rules, "
-            "query_mcp_source, ask_user."
+            "query_mcp_source, process_data, ask_user."
         ), None
 
     async def _handle_query_database(
@@ -1162,6 +1188,103 @@ class OrchestratorAgent(BaseAgent):
             "SQL query failed after maximum retries. "
             "Partial information may be available from other tools."
         ), None
+
+    async def _handle_process_data(
+        self,
+        tc: ToolCall,
+        wf_id: str,
+    ) -> str:
+        """Apply a data-processing operation to the last query result."""
+        args = tc.arguments or {}
+        operation: str = args.get("operation", "")
+
+        if self._last_sql_result is None or self._last_sql_result.results is None:
+            return (
+                "Error: no query results available to process. "
+                "Call query_database first to retrieve data, then use process_data."
+            )
+
+        qr = self._last_sql_result.results
+        if qr.error or not qr.rows:
+            return "Error: last query result has no data rows to process."
+
+        params = self._build_process_data_params(args)
+
+        try:
+            processor = get_data_processor()
+            processed = processor.process(qr, operation, params)
+        except ValueError as e:
+            return f"Processing error: {e}"
+        except Exception:
+            logger.exception("Unexpected error in process_data")
+            return "Error: data processing failed unexpectedly."
+
+        import time as _time
+
+        self._last_sql_result.results = processed.query_result
+        self._last_enriched_result = self._last_sql_result
+        self._enriched_at = _time.time()
+
+        result_qr = processed.query_result
+        parts: list[str] = [f"**Data Processing:** {processed.summary}", ""]
+        parts.append(f"**Columns:** {', '.join(result_qr.columns)}")
+        parts.append(f"**Total rows:** {result_qr.row_count}")
+
+        if operation == "aggregate_data":
+            parts.append("")
+            parts.append("**Full aggregation results:**")
+            header = " | ".join(result_qr.columns)
+            parts.append(header)
+            parts.append("-" * len(header))
+            for row in result_qr.rows[:200]:
+                parts.append(" | ".join(str(v) for v in row))
+            if result_qr.row_count > 200:
+                parts.append(f"... and {result_qr.row_count - 200} more groups")
+        else:
+            parts.append("")
+            parts.append("**Sample rows (first 5):**")
+            for row in result_qr.rows[:5]:
+                parts.append(" | ".join(str(v) for v in row))
+            if result_qr.row_count > 5:
+                parts.append(
+                    f"\nFull enriched data contains {result_qr.row_count} rows. "
+                    "Use process_data with operation='aggregate_data' to compute "
+                    "groupings and statistics over the complete dataset."
+                )
+
+        await self._tracker.emit(wf_id, "thinking", "completed", processed.summary[:120])
+        return "\n".join(parts)
+
+    @staticmethod
+    def _build_process_data_params(args: dict[str, Any]) -> dict[str, Any]:
+        """Convert flat LLM tool-call arguments into ``DataProcessor`` params."""
+        params: dict[str, Any] = {}
+        if args.get("column"):
+            params["column"] = args["column"]
+        if args.get("group_by"):
+            params["group_by"] = [
+                c.strip() for c in str(args["group_by"]).split(",") if c.strip()
+            ]
+        if args.get("aggregations"):
+            agg_list: list[tuple[str, str]] = []
+            for pair in str(args["aggregations"]).split(","):
+                pair = pair.strip()
+                if ":" in pair:
+                    col, fn = pair.rsplit(":", 1)
+                    agg_list.append((col.strip(), fn.strip()))
+            if agg_list:
+                params["aggregations"] = agg_list
+        if args.get("sort_by"):
+            params["sort_by"] = str(args["sort_by"]).strip()
+        if args.get("order"):
+            params["order"] = str(args["order"]).strip().lower()
+        if args.get("op"):
+            params["op"] = str(args["op"]).strip()
+        if "value" in args and args["value"] is not None:
+            params["value"] = args["value"]
+        if args.get("exclude_empty"):
+            params["exclude_empty"] = True
+        return params
 
     async def _handle_search_codebase(
         self,

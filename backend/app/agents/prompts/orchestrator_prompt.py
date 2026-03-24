@@ -39,6 +39,26 @@ def build_orchestrator_system_prompt(
             "introspection, query generation, validation, and execution."
         )
         sections.append(
+            "- **process_data**: Enrich, aggregate, or filter query results in memory. "
+            "Operations:\n"
+            "  • ip_to_country — convert IP addresses to country codes/names "
+            "(requires 'column')\n"
+            "  • phone_to_country — convert phone numbers to country via dialing "
+            "code prefix E.164 (requires 'column')\n"
+            "  • aggregate_data — group rows by columns and compute statistics "
+            "(requires 'group_by' and 'aggregations'). Multiple functions per "
+            "column allowed, e.g. 'amount:sum,amount:avg,user_id:count_distinct,"
+            "*:count'. Supported: count, count_distinct, sum, avg, min, max, "
+            "median. Optional: sort_by (column), order (asc/desc)\n"
+            "  • filter_data — filter rows by column value (requires 'column', "
+            "optional 'op', 'value', 'exclude_empty')\n"
+            "  You can chain multiple process_data calls sequentially: first "
+            "enrich (e.g. ip_to_country), then filter (e.g. exclude Unknown), "
+            "then aggregate. Each call operates on the result of the previous "
+            "one. IMPORTANT: call process_data ONE AT A TIME — do NOT issue "
+            "multiple process_data calls in parallel."
+        )
+        sections.append(
             "- **manage_rules**: Create, update, or delete project rules/guidelines. "
             "Use when the user asks to remember, save, or create a convention."
         )
@@ -103,6 +123,35 @@ def build_orchestrator_system_prompt(
     sections.append(f"{n}. Always explain your reasoning and summarize results clearly.")
     n += 1
     if has_connection:
+        sections.append(
+            f"{n}. When query results contain IP addresses and the user wants "
+            "to know the country or geographic location: call `process_data` "
+            "with operation='ip_to_country' and the IP column name."
+        )
+        n += 1
+        sections.append(
+            f"{n}. When query results contain phone numbers and the user wants "
+            "to know the destination country: call `process_data` "
+            "with operation='phone_to_country' and the phone number column name."
+        )
+        n += 1
+        sections.append(
+            f"{n}. When you need to compute aggregated statistics over enriched "
+            "data (e.g. after ip_to_country or phone_to_country), use "
+            "`process_data` with operation='aggregate_data', providing "
+            "group_by (comma-separated columns) and aggregations "
+            "(col:func pairs, e.g. 'amount:sum,amount:avg,user_id:count_distinct,"
+            "*:count'). Multiple functions per column are allowed. "
+            "Use sort_by and order='desc' when the user asks for top/most/least. "
+            "Use count_distinct when the user asks about unique items."
+        )
+        n += 1
+        sections.append(
+            f"{n}. When you need to exclude rows after enrichment (e.g. remove "
+            "Unknown countries or filter to specific regions), use "
+            "`process_data` with operation='filter_data', column, op, and value."
+        )
+        n += 1
         sections.append(
             f"{n}. When the user asks to remember or save a guideline: use "
             "`manage_rules` with action='create'."

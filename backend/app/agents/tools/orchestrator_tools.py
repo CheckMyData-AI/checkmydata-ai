@@ -73,6 +73,118 @@ MANAGE_RULES_TOOL = Tool(
 )
 
 
+PROCESS_DATA_TOOL = Tool(
+    name="process_data",
+    description=(
+        "Process and enrich the last query result with derived data. "
+        "Available operations:\n"
+        "• ip_to_country — convert IP addresses to country codes/names "
+        "(requires 'column')\n"
+        "• phone_to_country — convert phone numbers to country via dialing "
+        "code prefix (requires 'column')\n"
+        "• aggregate_data — group rows by columns and compute statistics "
+        "(requires 'group_by' and 'aggregations'). Multiple functions per "
+        "column allowed, e.g. 'amount:sum,amount:avg,*:count'. Supported "
+        "functions: count, count_distinct, sum, avg, min, max, median\n"
+        "• filter_data — filter rows by column value "
+        "(requires 'column', optional 'op', 'value', 'exclude_empty')\n"
+        "Use after query_database when you need to transform or enrich raw "
+        "data before continuing analysis. You can chain multiple process_data "
+        "calls sequentially."
+    ),
+    parameters=[
+        ToolParameter(
+            name="operation",
+            type="string",
+            description="Processing operation to apply",
+            enum=[
+                "ip_to_country",
+                "phone_to_country",
+                "aggregate_data",
+                "filter_data",
+            ],
+        ),
+        ToolParameter(
+            name="column",
+            type="string",
+            description=(
+                "Column name to process. Required for ip_to_country, "
+                "phone_to_country, and filter_data."
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="group_by",
+            type="string",
+            description=(
+                "Comma-separated column names to group by "
+                "(required for aggregate_data)"
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="aggregations",
+            type="string",
+            description=(
+                "Comma-separated col:func pairs for aggregate_data, e.g. "
+                "'amount:sum,amount:avg,*:count'. Multiple functions per "
+                "column allowed. Supported: count, count_distinct, sum, "
+                "avg, min, max, median. (required for aggregate_data)"
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="sort_by",
+            type="string",
+            description=(
+                "Column name to sort aggregation results by "
+                "(optional for aggregate_data, default: group key ascending)"
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="order",
+            type="string",
+            description="Sort order: 'asc' or 'desc' (default: 'asc')",
+            required=False,
+        ),
+        ToolParameter(
+            name="op",
+            type="string",
+            description=(
+                "Filter comparison operator for filter_data: eq, neq, "
+                "contains, not_contains, gt, gte, lt, lte, in"
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="value",
+            type="string",
+            description=(
+                "Value to compare against for filter_data. For 'in' op, "
+                "comma-separated list of allowed values."
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="exclude_empty",
+            type="string",
+            description=(
+                "Set to 'true' to exclude rows where column is null or "
+                "empty (for filter_data)"
+            ),
+            required=False,
+        ),
+        ToolParameter(
+            name="description",
+            type="string",
+            description="What you want to achieve with this processing step",
+            required=False,
+        ),
+    ],
+)
+
+
 ASK_USER_TOOL = Tool(
     name="ask_user",
     description=(
@@ -120,6 +232,7 @@ def get_orchestrator_tools(
     tools: list[Tool] = []
     if has_connection:
         tools.append(QUERY_DATABASE_TOOL)
+        tools.append(PROCESS_DATA_TOOL)
         tools.append(MANAGE_RULES_TOOL)
         tools.append(ASK_USER_TOOL)
     if has_knowledge_base:

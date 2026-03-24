@@ -51,7 +51,7 @@ class StageValidation:
 class PlanStage:
     stage_id: str
     description: str
-    tool: str  # query_database | search_codebase | analyze_results | synthesize
+    tool: str  # query_database | search_codebase | process_data | analyze_results | synthesize
     depends_on: list[str] = field(default_factory=list)
     input_context: str = ""
     validation: StageValidation = field(default_factory=StageValidation)

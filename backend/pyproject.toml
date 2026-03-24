@@ -32,6 +32,7 @@ dependencies = [
     "google-auth>=2.0.0",
     "mcp>=1.2.0",
     "croniter>=2.0.0",
+    "geoip2fast>=1.0.0",
 ]
 
 [project.optional-dependencies]

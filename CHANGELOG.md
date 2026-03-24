@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **GeoIP two-tier cache** (`backend/app/services/geoip_cache.py`) — In-memory LRU (100k entries, ~20MB) + SQLite persistent storage (`data/geoip_cache.db`, WAL mode, `WITHOUT ROWID`) for IP geolocation results. Eliminates redundant lookups across requests and survives process restarts. Handles millions of unique IPs. Batch operations deduplicate IPs and use batch SQL reads/writes. Configurable via `GEOIP_CACHE_ENABLED`, `GEOIP_CACHE_DIR`, `GEOIP_MEMORY_CACHE_SIZE` env vars
+- **Data Processing meta-tool (`process_data`)** — Orchestrator tool that enriches query results with derived data between query steps. Enables multi-step analysis workflows (e.g., query DB for IPs, convert to countries, filter, aggregate). Supports chaining multiple operations sequentially
+- **IP-to-country enrichment (`ip_to_country`)** — Offline GeoIP resolution using `geoip2fast` (MaxMind GeoLite2 database). Converts IP address columns to ISO country codes and country names with no external API calls
+- **Phone-to-country enrichment (`phone_to_country`)** — Offline E.164 dialing code prefix resolution (~250 countries/territories) with Canadian area code disambiguation for US/CA differentiation within NANP +1 zone
+- **In-memory aggregation (`aggregate_data`)** — Groups enriched data by one or more columns and computes `count`, `count_distinct`, `sum`, `avg`, `min`, `max`, `median`. **Multiple functions per column supported** (e.g., `amount:sum,amount:avg,*:count`). Optional `sort_by` / `order` params for controlling result ordering
+- **Row filtering (`filter_data`)** — Post-enrichment row filtering by column value. Supports operators: `eq`, `neq`, `contains`, `not_contains`, `gt`, `gte`, `lt`, `lte`, `in`. Can exclude empty/null values with `exclude_empty`
+- **`count_distinct` aggregation** — Counts unique non-null values in a column within each group (e.g., unique users per country)
+- **`median` aggregation** — Computes median value for numeric columns within each group
+- **GeoIPService** (`backend/app/services/geoip_service.py`) — Singleton service for offline IP geolocation lookups with graceful fallback when the library is unavailable
+- **PhoneCountryService** (`backend/app/services/phone_country_service.py`) — Singleton service for offline phone number to country resolution via E.164 dialing codes, including Canadian area code disambiguation
+- **DataProcessor** (`backend/app/services/data_processor.py`) — Pluggable data transformation engine that operates on `QueryResult` objects with four operations: `ip_to_country`, `phone_to_country`, `aggregate_data`, `filter_data`
+- **Complex pipeline support** — `process_data` registered as a valid stage tool in `QueryPlanner` and `StageExecutor` for multi-stage queries (up to 10 stages). Stage executor parses structured JSON from `input_context` with fallback heuristics and emits fine-grained progress events
+- **Sequential guard for `process_data`** — When `process_data` appears among parallel tool calls, the orchestrator forces sequential execution to prevent race conditions on shared `_last_sql_result` state
+- **Aggregation visualization** — VizAgent is automatically triggered after `aggregate_data` to produce charts/tables for aggregated results
+- **Cross-message enriched data persistence** — Enriched `QueryResult` survives across conversation turns for 5 minutes, enabling follow-up questions without re-running the full enrichment pipeline
+- **Orchestrator iteration limit raised to 10** — Supports complex multi-enrichment workflows (e.g., dual-query call+SMS analysis with ip_to_country + phone_to_country + aggregate_data for each)
+
 ### Fixed
 - **Registration race condition** — Concurrent duplicate email registrations now caught by DB `IntegrityError` and returned as 409 instead of 500
 - **Invite accept commit on early return** — `accept_invite` now commits invite status change when user is already a project member, preventing the update from being silently rolled back

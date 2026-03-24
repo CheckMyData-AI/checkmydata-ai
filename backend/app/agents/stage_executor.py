@@ -4,6 +4,7 @@ retry, checkpoint pauses, and resume-from-stage capability.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -22,6 +23,7 @@ from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import Message
 from app.llm.errors import RETRYABLE_LLM_ERRORS
 from app.llm.router import LLMRouter
+from app.services.data_processor import get_data_processor
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,8 @@ class StageExecutor:
                     return await self._run_knowledge_stage(enriched_q, stage, context)
                 case "analyze_results":
                     return await self._run_analysis_stage(enriched_q, stage, stage_ctx, context)
+                case "process_data":
+                    return await self._run_process_data_stage(stage, stage_ctx, context)
                 case "synthesize":
                     return await self._synthesize_stage(stage, stage_ctx, context)
                 case _:
@@ -332,6 +336,116 @@ class StageExecutor:
             summary=resp.content or "",
             token_usage=resp.usage or {},
         )
+
+    async def _run_process_data_stage(
+        self,
+        stage: PlanStage,
+        stage_ctx: StageContext,
+        context: AgentContext | None = None,
+    ) -> StageResult:
+        """Apply a data-processing operation to the most recent stage with a QueryResult."""
+        wf_id = context.workflow_id if context else ""
+
+        source_qr: QueryResult | None = None
+        for dep_id in reversed(stage.depends_on):
+            dep_result = stage_ctx.get_result(dep_id)
+            if dep_result and dep_result.query_result and dep_result.query_result.rows:
+                source_qr = dep_result.query_result
+                break
+
+        if source_qr is None:
+            for prev in reversed(stage_ctx.plan.stages):
+                if prev.stage_id == stage.stage_id:
+                    break
+                sr = stage_ctx.get_result(prev.stage_id)
+                if sr and sr.query_result and sr.query_result.rows:
+                    source_qr = sr.query_result
+                    break
+
+        if source_qr is None:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error="No query result available from previous stages to process.",
+            )
+
+        params = self._parse_process_data_params(stage, source_qr)
+        operation = params.get("operation", "unknown")
+
+        await self._tracker.emit(
+            wf_id,
+            "thinking",
+            "in_progress",
+            f"Processing data: {operation} on {source_qr.row_count} rows…",
+        )
+
+        try:
+            processor = get_data_processor()
+            processed = processor.process(
+                source_qr, params.pop("operation"), params
+            )
+        except (ValueError, Exception) as exc:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=str(exc),
+            )
+
+        await self._tracker.emit(
+            wf_id,
+            "thinking",
+            "completed",
+            processed.summary[:120],
+        )
+
+        return StageResult(
+            stage_id=stage.stage_id,
+            status="success",
+            query_result=processed.query_result,
+            summary=processed.summary,
+        )
+
+    @staticmethod
+    def _parse_process_data_params(
+        stage: PlanStage, source_qr: QueryResult
+    ) -> dict[str, Any]:
+        """Extract operation params from ``input_context`` (JSON) with fallback heuristics."""
+        params: dict[str, Any] = {}
+        if stage.input_context:
+            try:
+                parsed = json.loads(stage.input_context)
+                if isinstance(parsed, dict):
+                    params = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if "operation" not in params:
+            desc_lower = (stage.description + " " + (stage.input_context or "")).lower()
+            if "filter" in desc_lower:
+                params["operation"] = "filter_data"
+            elif "phone" in desc_lower or "dial" in desc_lower or "e.164" in desc_lower:
+                params["operation"] = "phone_to_country"
+            elif "aggregat" in desc_lower or "group" in desc_lower:
+                params["operation"] = "aggregate_data"
+            else:
+                params["operation"] = "ip_to_country"
+
+        needs_column = params["operation"] in (
+            "ip_to_country", "phone_to_country", "filter_data",
+        )
+        if needs_column and "column" not in params:
+            keyword = "ip" if params["operation"] == "ip_to_country" else "phone"
+            for col in source_qr.columns:
+                if keyword in col.lower():
+                    params["column"] = col
+                    break
+            if "column" not in params and source_qr.columns:
+                params["column"] = source_qr.columns[0]
+
+        if "aggregations" in params and isinstance(params["aggregations"], dict):
+            params["aggregations"] = list(params["aggregations"].items())
+
+        return params
 
     async def _synthesize_stage(
         self,

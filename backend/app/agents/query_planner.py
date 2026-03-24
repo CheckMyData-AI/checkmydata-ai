@@ -105,7 +105,10 @@ async def detect_complexity_adaptive(
 # Plan validation helpers
 # ------------------------------------------------------------------
 
-_VALID_TOOLS = {"query_database", "search_codebase", "analyze_results", "synthesize"}
+_VALID_TOOLS = {
+    "query_database", "search_codebase", "analyze_results",
+    "process_data", "synthesize",
+}
 
 
 def _validate_plan_structure(stages: list[dict[str, Any]]) -> list[str]:

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 5
+    max_orchestrator_iterations: int = 10
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 3
     max_mcp_iterations: int = 5
@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
     max_concurrent_agent_calls: int = 3
     max_agent_calls_per_hour: int = 100
+
+    # GeoIP cache settings
+    geoip_cache_enabled: bool = True
+    geoip_cache_dir: str = "./data"
+    geoip_memory_cache_size: int = 100_000
 
     # External service settings
     model_cache_ttl_seconds: int = 3600

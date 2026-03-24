@@ -28,6 +28,7 @@ const STEP_LABELS: Record<string, string> = {
   "orchestrator:knowledge_agent": "Knowledge Agent",
   "orchestrator:viz": "Visualization",
   "orchestrator:manage_rules": "Managing Rules",
+  "orchestrator:process_data": "Processing Data",
   "sql:llm_call": "SQL Agent Thinking",
   "sql:get_schema": "Loading Schema",
   "sql:load_rules": "Loading Rules",

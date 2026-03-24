@@ -8,12 +8,31 @@ question into a sequence of discrete stages that can be executed one at a time.
 
 ## Rules
 
-1. Produce the MINIMUM number of stages needed (typically 2-5).
+1. Produce the MINIMUM number of stages needed (typically 2-10; use more \
+   stages for workflows that require multiple enrichment steps such as \
+   ip_to_country + phone_to_country + aggregate_data across several queries).
 2. Each stage must do exactly ONE thing: one SQL query, one analysis pass, \
    or one synthesis step.
 3. Available tools per stage:
    - "query_database" — run a SQL query against the user's database
    - "search_codebase" — search the project knowledge base / documentation
+   - "process_data" — enrich data from a previous stage with derived columns. \
+     Specify the operation and target column in input_context as JSON. \
+     Available operations: \
+     ip_to_country (requires "column"), e.g.: \
+     {"operation": "ip_to_country", "column": "user_ip"}. \
+     phone_to_country (requires "column"), e.g.: \
+     {"operation": "phone_to_country", "column": "dest_number"}. \
+     aggregate_data (requires "group_by" and "aggregations"; supports \
+     multiple functions per column), e.g.: \
+     {"operation": "aggregate_data", "group_by": ["country"], \
+     "aggregations": [["amount", "sum"], ["amount", "avg"], \
+     ["user_id", "count_distinct"], ["*", "count"]], \
+     "sort_by": "sum_amount", "order": "desc"}. \
+     Supported functions: count, count_distinct, sum, avg, min, max, median. \
+     filter_data (requires "column"), e.g.: \
+     {"operation": "filter_data", "column": "country_code", \
+     "op": "neq", "value": "", "exclude_empty": true}.
    - "analyze_results" — perform analysis or computation on data from \
      previous stages (no new DB query)
    - "synthesize" — produce the final user-facing answer, combining \

@@ -501,6 +501,45 @@ Each insight includes a `type`, `title`, `description`, and `confidence` score (
 - `frontend/src/components/chat/ChatPanel.tsx` — Passes insights through metadata to ChatMessage
 - `frontend/src/lib/api.ts` — Added `chat.summarize()` API method
 
+### 8d. Data Processing & Enrichment Pipeline
+
+The orchestrator can enrich query results with derived data between query steps using the `process_data` meta-tool. This enables multi-step analysis workflows where raw data is transformed, enriched, filtered, and aggregated before further analysis. Multiple `process_data` calls can be chained sequentially.
+
+**Available operations:**
+
+- **`ip_to_country`** — Converts IP address columns to country codes (ISO 3166-1 alpha-2) and country names using an offline GeoIP database (`geoip2fast`). No external API calls required. Results are cached in a two-tier cache (in-memory LRU + SQLite persistent) so repeated lookups across requests and restarts are near-instant even at millions of unique IPs. Adds `{column}_country_code` and `{column}_country_name` columns to the result.
+- **`phone_to_country`** — Converts phone number columns to country codes and names using an offline E.164 international dialing code prefix mapping (~250 countries/territories). Includes Canadian area code disambiguation (US vs CA within the NANP +1 zone). Adds `{column}_country_code` and `{column}_country_name` columns.
+- **`aggregate_data`** — Groups rows by one or more columns and computes aggregation functions. **Multiple functions per column supported** (e.g., `amount:sum,amount:avg,user_id:count_distinct,*:count`). Supported functions: `count`, `count_distinct`, `sum`, `avg`, `min`, `max`, `median`. Optional `sort_by` and `order` (asc/desc) params for controlling result ordering.
+- **`filter_data`** — Filters rows by column value after enrichment. Supports operators: `eq`, `neq`, `contains`, `not_contains`, `gt`, `gte`, `lt`, `lte`, `in`. Can exclude empty/null values with `exclude_empty`.
+
+**Typical chained workflow:**
+
+1. `query_database` — fetch raw data (e.g., purchases with buyer IPs)
+2. `process_data(ip_to_country)` — enrich with country columns
+3. `process_data(filter_data)` — optionally exclude Unknown countries
+4. `process_data(aggregate_data)` — group by country, compute multiple stats (sum, avg, count_distinct, etc.), sort by value descending
+5. VizAgent automatically produces a chart/table for aggregated results
+6. LLM analyzes the compact aggregated result
+
+**Cross-message persistence:** Enriched data survives across conversation turns for 5 minutes, enabling follow-up questions without re-running the full enrichment pipeline.
+
+**Architecture:**
+- `backend/app/services/geoip_service.py` — Singleton `GeoIPService` wrapping `geoip2fast` for offline IP-to-country lookups with two-tier cache
+- `backend/app/services/geoip_cache.py` — `GeoIPCache` with in-memory LRU (100k entries) + SQLite persistent storage (millions of records). Config: `GEOIP_CACHE_ENABLED`, `GEOIP_CACHE_DIR`, `GEOIP_MEMORY_CACHE_SIZE`
+- `backend/app/services/phone_country_service.py` — Singleton `PhoneCountryService` with offline E.164 dialing code mapping (including Canadian area codes)
+- `backend/app/services/data_processor.py` — `DataProcessor` with pluggable operations (`ip_to_country`, `phone_to_country`, `aggregate_data`, `filter_data`) that transform `QueryResult` objects
+- The `process_data` tool is available in both the simple orchestrator loop (up to 10 iterations) and the complex multi-stage pipeline (`QueryPlanner` + `StageExecutor`, up to 10 stages)
+- When `process_data` is included in parallel tool calls, the orchestrator forces sequential execution to prevent race conditions on shared state
+- After `aggregate_data`, VizAgent is triggered to produce visualizations for the aggregated result
+- Pipeline `process_data` stages emit fine-grained progress events for UI feedback
+
+**Example user queries this enables:**
+- _"Find the pattern between buyer country (by IP) and which product they buy"_
+- _"From which countries do users make outgoing calls, and to which countries do they call?"_
+- _"What is the average check by buyer country? Show total revenue, count, and unique buyers too"_
+- _"Group outgoing calls by source country and destination country, sort by count descending"_
+- _"How many unique buyers per country? Exclude unknown countries"_
+
 ### 8b. Query Cost and Performance Preview
 
 Before sending a query, the chat interface shows an estimated token cost and context budget utilization so users can understand resource usage.
@@ -647,6 +686,10 @@ Your question
 ├── Knowledge question → search_codebase → KnowledgeAgent
 │   ↓
 │   Returns answer with source citations
+│
+├── Data enrichment → process_data (ip_to_country / phone_to_country / aggregate_data)
+│   ↓
+│   Enriches/aggregates last query result with derived columns or grouped stats
 │
 ├── Rule management → manage_rules (handled directly by orchestrator)
 │   ↓
@@ -1035,6 +1078,11 @@ OrchestratorAgent.run(context)
 │  search_codebase → _handle_search_codebase() → KnowledgeAgent.run()
 │                    Results validated before returning             │
 │                                                                  │
+│  process_data    → _handle_process_data()                        │
+│                    Enriches/aggregates last QueryResult in-memory │
+│                    Operations: ip_to_country, phone_to_country,  │
+│                    aggregate_data (group_by + sum/avg/count/…)    │
+│                                                                  │
 │  manage_rules    → _handle_manage_rules()                        │
 │                    Direct CRUD (no sub-agent)                    │
 │                                                                  │
@@ -1060,7 +1108,7 @@ The function `get_orchestrator_tools()` accepts three booleans and returns only 
 
 | Condition | Tools included |
 |---|---|
-| `has_connection = True` | `query_database`, `manage_rules` |
+| `has_connection = True` | `query_database`, `process_data`, `manage_rules` |
 | `has_knowledge_base = True` | `search_codebase` |
 | `has_mcp_sources = True` | `query_mcp_source` |
 
