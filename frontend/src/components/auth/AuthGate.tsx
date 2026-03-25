@@ -135,7 +135,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-surface-0 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center mx-auto mb-4">
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-accent to-accent-hover flex items-center justify-center mx-auto mb-4">
             <Icon name="zap" size={28} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight">
@@ -173,13 +173,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               onChange={(e) => { setEmail(e.target.value); if (emailTouched && emailRegex.test(e.target.value)) useAuthStore.setState({ error: null }); }}
               onBlur={() => setEmailTouched(true)}
               required
-              className={`${inputCls} ${emailTouched && email && !emailRegex.test(email) ? "border-red-500 focus:border-red-500 focus:ring-red-500/30" : ""}`}
+              className={`${inputCls} ${emailTouched && email && !emailRegex.test(email) ? "border-error focus:border-error focus:ring-error/30" : ""}`}
               aria-label="Email"
               aria-required="true"
               aria-invalid={emailTouched && email ? !emailRegex.test(email) : undefined}
             />
             {emailTouched && email && !emailRegex.test(email) && (
-              <p className="text-[10px] text-red-400 mt-1 px-1">Please enter a valid email address</p>
+              <p className="text-[10px] text-error mt-1 px-1">Please enter a valid email address</p>
             )}
           </div>
 
@@ -191,12 +191,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className={`${inputCls} ${mode === "register" && password.length > 0 && password.length < 8 ? "border-red-500 focus:border-red-500 focus:ring-red-500/30" : ""}`}
+              className={`${inputCls} ${mode === "register" && password.length > 0 && password.length < 8 ? "border-error focus:border-error focus:ring-error/30" : ""}`}
               aria-label="Password"
               aria-required="true"
             />
             {mode === "register" && password.length > 0 && password.length < 8 ? (
-              <p className="text-[10px] text-red-400 mt-1 px-1">
+              <p className="text-[10px] text-error mt-1 px-1">
                 Password must be at least 8 characters
               </p>
             ) : mode === "register" ? (

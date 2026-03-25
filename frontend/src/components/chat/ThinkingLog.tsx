@@ -28,7 +28,7 @@ export function ThinkingLog({ entries, startTime }: ThinkingLogProps) {
   return (
     <div className="space-y-1">
       {elapsed && (
-        <div className="text-[10px] text-zinc-600 font-mono text-right">
+        <div className="text-[10px] text-text-muted font-mono text-right">
           {elapsed} elapsed
         </div>
       )}
@@ -43,16 +43,16 @@ export function ThinkingLog({ entries, startTime }: ThinkingLogProps) {
             <div
               key={idx}
               className={`flex items-start gap-1.5 text-[11px] leading-tight font-mono animate-in fade-in duration-200 ${
-                isLatest ? "text-zinc-300" : "text-zinc-500"
+                isLatest ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
               {isLatest ? (
                 <span className="mt-[3px] shrink-0 relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
                 </span>
               ) : (
-                <span className="mt-[3px] shrink-0 h-1.5 w-1.5 rounded-full bg-zinc-600" />
+                <span className="mt-[3px] shrink-0 h-1.5 w-1.5 rounded-full bg-surface-3" />
               )}
               <span className="break-words min-w-0">{entry}</span>
             </div>

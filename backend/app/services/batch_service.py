@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 _conn_svc = ConnectionService()
 
 _RAW_RESULT_ROW_CAP = 500
+_MAX_BATCH_CONCURRENCY = 4
 
 
 class BatchService:
@@ -82,13 +84,89 @@ class BatchService:
         await db.commit()
         return True
 
+    async def _execute_single_query(
+        self,
+        idx: int,
+        query_item: dict,
+        db_type: str,
+        config,
+        batch_id: str,
+        total: int,
+        wf_id: str,
+    ) -> dict:
+        """Execute a single query within a batch and return the result dict."""
+        sql = query_item.get("sql", "")
+        q_title = query_item.get("title", f"Query {idx + 1}")
+
+        await tracker.emit(
+            wf_id,
+            "batch_progress",
+            "running",
+            detail=f"Executing {idx + 1}/{total}: {q_title}",
+            batch_id=batch_id,
+            query_index=idx,
+            total=total,
+        )
+
+        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
+        start = time.monotonic()
+        try:
+            await connector.connect(config)
+            try:
+                result = await connector.execute_query(sql)
+            finally:
+                await connector.disconnect()
+
+            duration_ms = int((time.monotonic() - start) * 1000)
+            cols = list(getattr(result, "columns", []))
+            rows = getattr(result, "rows", []) or []
+            serialized = [
+                [serialize_value(v) for v in row] for row in rows[:_RAW_RESULT_ROW_CAP]
+            ]
+
+            entry = {
+                "title": q_title,
+                "sql": sql,
+                "status": "success",
+                "columns": cols,
+                "rows": serialized,
+                "total_rows": getattr(result, "row_count", len(rows)),
+                "duration_ms": duration_ms,
+            }
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            logger.warning("Batch %s query %d failed: %s", batch_id[:8], idx, e)
+            entry = {
+                "title": q_title,
+                "sql": sql,
+                "status": "failed",
+                "error": str(e),
+                "duration_ms": duration_ms,
+            }
+
+        await tracker.emit(
+            wf_id,
+            "batch_progress",
+            "completed" if entry["status"] == "success" else "failed",
+            detail=f"Query {idx + 1}/{total}: {entry['status']}",
+            batch_id=batch_id,
+            query_index=idx,
+            total=total,
+        )
+        return entry
+
     async def execute_batch(
         self,
         batch_id: str,
         connection_id: str,
         user_id: str | None = None,
+        parallel: bool = True,
     ) -> None:
-        """Run all queries in a batch sequentially, storing results and emitting SSE events."""
+        """Run all queries in a batch, storing results and emitting SSE events.
+
+        When *parallel* is True (the default), queries run concurrently with a
+        concurrency cap of ``_MAX_BATCH_CONCURRENCY``.
+        """
         async with async_session_factory() as db:
             batch = await self.get_batch(db, batch_id)
             if not batch:
@@ -111,81 +189,41 @@ class BatchService:
             await db.commit()
 
             wf_id = await tracker.begin("batch_execute", context={"batch_id": batch_id})
-            results: list[dict] = []
-            succeeded = 0
-            failed = 0
 
-            for idx, query_item in enumerate(queries):
-                sql = query_item.get("sql", "")
-                q_title = query_item.get("title", f"Query {idx + 1}")
+            if parallel and total > 1:
+                sem = asyncio.Semaphore(_MAX_BATCH_CONCURRENCY)
 
-                await tracker.emit(
-                    wf_id,
-                    "batch_progress",
-                    "running",
-                    detail=f"Executing {idx + 1}/{total}: {q_title}",
-                    batch_id=batch_id,
-                    query_index=idx,
-                    total=total,
-                )
+                async def _throttled(idx: int, qi: dict) -> dict:
+                    async with sem:
+                        return await self._execute_single_query(
+                            idx, qi, conn_model.db_type, config, batch_id, total, wf_id,
+                        )
 
-                connector = get_connector(conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode)
-                start = time.monotonic()
-                try:
-                    await connector.connect(config)
-                    try:
-                        result = await connector.execute_query(sql)
-                    finally:
-                        await connector.disconnect()
-
-                    duration_ms = int((time.monotonic() - start) * 1000)
-                    cols = list(getattr(result, "columns", []))
-                    rows = getattr(result, "rows", []) or []
-                    serialized = [
-                        [serialize_value(v) for v in row] for row in rows[:_RAW_RESULT_ROW_CAP]
-                    ]
-
-                    results.append(
-                        {
-                            "title": q_title,
-                            "sql": sql,
-                            "status": "success",
-                            "columns": cols,
-                            "rows": serialized,
-                            "total_rows": getattr(result, "row_count", len(rows)),
-                            "duration_ms": duration_ms,
-                        }
-                    )
-                    succeeded += 1
-
-                except Exception as e:
-                    duration_ms = int((time.monotonic() - start) * 1000)
-                    logger.warning(
-                        "Batch %s query %d failed: %s",
-                        batch_id[:8],
-                        idx,
-                        e,
-                    )
-                    results.append(
-                        {
-                            "title": q_title,
-                            "sql": sql,
+                tasks = [_throttled(i, q) for i, q in enumerate(queries)]
+                ordered_results = await asyncio.gather(*tasks, return_exceptions=True)
+                results: list[dict] = []
+                for i, r in enumerate(ordered_results):
+                    if isinstance(r, BaseException):
+                        results.append({
+                            "title": queries[i].get("title", f"Query {i + 1}"),
+                            "sql": queries[i].get("sql", ""),
                             "status": "failed",
-                            "error": str(e),
-                            "duration_ms": duration_ms,
-                        }
+                            "error": str(r),
+                            "duration_ms": 0,
+                        })
+                    else:
+                        results.append(r)
+            else:
+                results = []
+                for idx, query_item in enumerate(queries):
+                    entry = await self._execute_single_query(
+                        idx, query_item, conn_model.db_type, config,
+                        batch_id, total, wf_id,
                     )
-                    failed += 1
+                    results.append(entry)
 
-                await tracker.emit(
-                    wf_id,
-                    "batch_progress",
-                    "completed" if results[-1]["status"] == "success" else "failed",
-                    detail=f"Query {idx + 1}/{total}: {results[-1]['status']}",
-                    batch_id=batch_id,
-                    query_index=idx,
-                    total=total,
-                )
+            succeeded = sum(1 for r in results if r["status"] == "success")
+            failed = total - succeeded
 
             if failed == total:
                 batch.status = "failed"

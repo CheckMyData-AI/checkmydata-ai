@@ -146,7 +146,7 @@ describe("ConfirmModal component", () => {
     const { container } = render(<ConfirmModal />);
     const svg = container.querySelector("svg");
     expect(svg).toBeTruthy();
-    expect(svg?.className.baseVal).toContain("text-yellow-400");
+    expect(svg?.className.baseVal).toContain("text-warning");
   });
 
   it("shows critical icon when severity=critical", () => {
@@ -158,7 +158,7 @@ describe("ConfirmModal component", () => {
     });
     const { container } = render(<ConfirmModal />);
     const svg = container.querySelector("svg");
-    expect(svg?.className.baseVal).toContain("text-red-400");
+    expect(svg?.className.baseVal).toContain("text-error");
   });
 
   it("Confirm disabled when confirmText required and not typed", () => {

@@ -305,7 +305,7 @@ class TestExecuteBatch:
 
     @pytest.mark.asyncio
     async def test_batch_not_found_logs_and_returns(self, db, mock_tracker, mock_session_factory):
-        await svc.execute_batch("nonexistent-id", "conn-id")
+        await svc.execute_batch("nonexistent-id", "conn-id", parallel=False)
         mock_tracker.begin.assert_not_called()
 
     @pytest.mark.asyncio
@@ -320,7 +320,7 @@ class TestExecuteBatch:
         mock_get, _ = mock_conn_svc
         mock_get.return_value = None
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         await db.refresh(batch)
         assert batch.status == "failed"
@@ -350,7 +350,7 @@ class TestExecuteBatch:
             columns=["id"], rows=[[1], [2]], row_count=2
         )
 
-        await svc.execute_batch(batch.id, conn.id, user_id=user.id)
+        await svc.execute_batch(batch.id, conn.id, user_id=user.id, parallel=False)
 
         await db.refresh(batch)
         assert batch.status == "completed"
@@ -382,7 +382,7 @@ class TestExecuteBatch:
 
         mock_connector.execute_query.side_effect = RuntimeError("syntax error")
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         await db.refresh(batch)
         assert batch.status == "failed"
@@ -414,7 +414,7 @@ class TestExecuteBatch:
             RuntimeError("fail"),
         ]
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         await db.refresh(batch)
         assert batch.status == "partially_failed"
@@ -445,7 +445,7 @@ class TestExecuteBatch:
             columns=["n"], rows=big_rows, row_count=600
         )
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         await db.refresh(batch)
         results = json.loads(batch.results_json)
@@ -474,7 +474,7 @@ class TestExecuteBatch:
             columns=["v"], rows=[[1]], row_count=1
         )
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         mock_tracker.begin.assert_called_once()
         assert mock_tracker.emit.call_count == 2
@@ -500,7 +500,7 @@ class TestExecuteBatch:
 
         mock_connector.execute_query.return_value = QueryResult(columns=[], rows=[], row_count=0)
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         mock_connector.execute_query.assert_called_once_with("")
 
@@ -524,6 +524,6 @@ class TestExecuteBatch:
 
         mock_connector.execute_query.side_effect = RuntimeError("boom")
 
-        await svc.execute_batch(batch.id, conn.id)
+        await svc.execute_batch(batch.id, conn.id, parallel=False)
 
         mock_connector.disconnect.assert_called_once()

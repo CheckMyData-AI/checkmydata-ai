@@ -106,10 +106,28 @@ class LLMRouter:
     def get_context_window(self, model: str | None = None) -> int:
         """Return the context window size for *model* (or a safe default)."""
         if model:
+            if model in MODEL_CONTEXT_WINDOWS:
+                return MODEL_CONTEXT_WINDOWS[model]
             for key, size in MODEL_CONTEXT_WINDOWS.items():
                 if key in model or model in key:
                     return size
         return _DEFAULT_CONTEXT_WINDOW
+
+    @staticmethod
+    def estimate_tokens(text: str, model: str | None = None) -> int:
+        """Estimate token count for *text* without calling the provider.
+
+        Uses tiktoken when available (accurate for OpenAI models), falls back
+        to a character-based heuristic (~4 chars per token).
+        """
+        try:
+            import tiktoken
+
+            encoding_name = "cl100k_base"
+            enc = tiktoken.get_encoding(encoding_name)
+            return len(enc.encode(text))
+        except Exception:
+            return max(1, len(text) // 4)
 
     async def start_health_checks(self) -> None:
         """Start background health check loop (called from app lifespan)."""

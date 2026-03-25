@@ -34,9 +34,14 @@ dependencies = [
     "croniter>=2.0.0",
     "geoip2fast>=1.0.0",
     "resend>=2.0.0",
+    "tiktoken>=0.7.0",
 ]
 
 [project.optional-dependencies]
+redis = [
+    "redis[hiredis]>=5.0.0",
+    "arq>=0.26.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -76,6 +81,14 @@ omit = ["app/mcp_server/__main__.py"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+fail_under = 40
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "DEPRECATED",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

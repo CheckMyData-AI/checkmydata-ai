@@ -7,12 +7,12 @@ import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
 
 const inputCls =
-  "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent";
 
 const ROLE_COLORS: Record<string, string> = {
-  owner: "bg-amber-500/20 text-amber-300",
-  editor: "bg-blue-500/20 text-blue-300",
-  viewer: "bg-zinc-500/20 text-zinc-300",
+  owner: "bg-warning-muted text-warning",
+  editor: "bg-accent-muted text-accent-hover",
+  viewer: "bg-surface-3/20 text-text-primary",
 };
 
 interface Props {
@@ -85,15 +85,15 @@ export function InviteManager({ projectId, onClose }: Props) {
   };
 
   return (
-    <div className="space-y-3 p-3 bg-zinc-800/80 rounded-lg border border-zinc-700">
+    <div className="space-y-3 p-3 bg-surface-2/80 rounded-xl border border-border-default">
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-medium text-zinc-300 uppercase tracking-wider">
+        <h4 className="text-xs font-medium text-text-primary uppercase tracking-wider">
           Manage Access
         </h4>
         <button
           onClick={onClose}
           aria-label="Close access manager"
-          className="text-xs text-zinc-500 hover:text-zinc-300"
+          className="text-xs text-text-tertiary hover:text-text-primary"
         >
           ✕
         </button>
@@ -105,13 +105,16 @@ export function InviteManager({ projectId, onClose }: Props) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Email address"
+          aria-label="Invite email address"
+          aria-required="true"
           className={inputCls}
           onKeyDown={(e) => e.key === "Enter" && handleInvite()}
         />
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-100 focus:outline-none"
+          aria-label="Member role"
+          className="bg-surface-1 border border-border-default rounded-lg px-2 py-1.5 text-xs text-text-primary focus:outline-none"
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
@@ -119,24 +122,24 @@ export function InviteManager({ projectId, onClose }: Props) {
         <button
           onClick={handleInvite}
           disabled={loading || !email.trim()}
-          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-500 disabled:opacity-50 whitespace-nowrap"
+          className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover disabled:opacity-50 whitespace-nowrap"
         >
           Invite
         </button>
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-error">{error}</p>}
       {refreshLoading && <Spinner />}
 
       {/* Members */}
       {members.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Members</p>
+          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Members</p>
           {members.map((m) => (
-            <div key={m.id} className="flex items-center justify-between py-1 px-2 bg-zinc-900/50 rounded text-xs">
+            <div key={m.id} className="flex items-center justify-between py-1 px-2 bg-surface-1/50 rounded text-xs">
               <div className="flex items-center gap-2">
-                <span className="text-zinc-200">{m.email || m.user_id}</span>
+                <span className="text-text-primary">{m.email || m.user_id}</span>
                 {m.display_name && (
-                  <span className="text-zinc-500">({m.display_name})</span>
+                  <span className="text-text-tertiary">({m.display_name})</span>
                 )}
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${ROLE_COLORS[m.role] || ROLE_COLORS.viewer}`}>
                   {m.role}
@@ -145,7 +148,8 @@ export function InviteManager({ projectId, onClose }: Props) {
               {m.role !== "owner" && (
                 <button
                   onClick={() => handleRemoveMember(m.user_id)}
-                  className="text-zinc-600 hover:text-red-400 text-[10px]"
+                  aria-label="Remove member"
+                  className="text-text-muted hover:text-error text-[10px]"
                 >
                   ×
                 </button>
@@ -158,21 +162,21 @@ export function InviteManager({ projectId, onClose }: Props) {
       {/* Pending invites */}
       {invites.filter((i) => i.status === "pending").length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Pending Invites</p>
+          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Pending Invites</p>
           {invites
             .filter((i) => i.status === "pending")
             .map((inv) => (
-              <div key={inv.id} className="flex items-center justify-between py-1 px-2 bg-zinc-900/50 rounded text-xs">
+              <div key={inv.id} className="flex items-center justify-between py-1 px-2 bg-surface-1/50 rounded text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="text-zinc-300">{inv.email}</span>
+                  <span className="text-text-primary">{inv.email}</span>
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${ROLE_COLORS[inv.role] || ROLE_COLORS.viewer}`}>
                     {inv.role}
                   </span>
-                  <span className="text-yellow-500/60 text-[10px]">pending</span>
+                  <span className="text-warning/60 text-[10px]">pending</span>
                 </div>
                 <button
                   onClick={() => handleRevoke(inv.id)}
-                  className="text-zinc-600 hover:text-red-400 text-[10px]"
+                  className="text-text-muted hover:text-error text-[10px]"
                 >
                   revoke
                 </button>

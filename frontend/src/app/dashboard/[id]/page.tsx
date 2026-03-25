@@ -75,7 +75,7 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
         </tbody>
       </table>
       {data.total_rows > 50 && (
-        <p className="text-[9px] text-text-muted mt-1 px-1.5">
+        <p className="text-[10px] text-text-muted mt-1 px-1.5">
           Showing 50 of {data.total_rows} rows
         </p>
       )}

@@ -225,7 +225,7 @@ export function ChatSearch() {
           placeholder="Search chats..."
           className="w-full pl-7 pr-10 py-1.5 text-xs bg-surface-1 border border-border-subtle rounded-md text-text-primary placeholder:text-text-muted/60 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-colors"
         />
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] text-text-muted/50 bg-surface-2 border border-border-subtle rounded font-mono leading-none">
+        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-text-muted/50 bg-surface-2 border border-border-subtle rounded font-mono leading-none">
           {typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent) ? "\u2318" : "Ctrl"}K
         </kbd>
       </div>
@@ -264,7 +264,7 @@ export function ChatSearch() {
                 <span className="text-[11px] font-medium text-text-primary truncate">
                   {r.session_title}
                 </span>
-                <span className="text-[9px] text-text-muted shrink-0">
+                <span className="text-[10px] text-text-muted shrink-0">
                   {formatTime(r.created_at)}
                 </span>
               </div>

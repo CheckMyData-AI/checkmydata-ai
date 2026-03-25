@@ -29,35 +29,35 @@ const TYPE_CONFIG: Record<
 > = {
   high_performer: {
     icon: "🏆",
-    color: "text-emerald-400",
-    bg: "bg-emerald-950/30",
-    border: "border-emerald-900/40",
+    color: "text-success",
+    bg: "bg-success-muted",
+    border: "border-border-default",
   },
   conversion_gap: {
     icon: "📈",
-    color: "text-blue-400",
-    bg: "bg-blue-950/30",
-    border: "border-blue-900/40",
+    color: "text-accent",
+    bg: "bg-accent-muted",
+    border: "border-border-default",
   },
   undermonetized: {
     icon: "💎",
-    color: "text-purple-400",
-    bg: "bg-purple-950/30",
-    border: "border-purple-900/40",
+    color: "text-accent",
+    bg: "bg-accent-muted",
+    border: "border-border-default",
   },
   growth_potential: {
     icon: "🚀",
-    color: "text-amber-400",
-    bg: "bg-amber-950/30",
-    border: "border-amber-900/40",
+    color: "text-warning",
+    bg: "bg-warning-muted",
+    border: "border-border-default",
   },
 };
 
 const DEFAULT_TYPE = {
   icon: "💡",
-  color: "text-zinc-400",
-  bg: "bg-zinc-800/50",
-  border: "border-zinc-700/50",
+  color: "text-text-secondary",
+  bg: "bg-surface-2",
+  border: "border-border-default",
 };
 
 function drillQuestion(opp: OpportunityData): string {
@@ -87,7 +87,7 @@ export function OpportunityCard({
 
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 font-medium uppercase tracking-wider">
+      <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
         <span>💰</span>
         Opportunities ({opportunities.length})
       </div>
@@ -99,7 +99,7 @@ export function OpportunityCard({
         return (
           <div
             key={idx}
-            className={`rounded-lg border ${cfg.border} ${cfg.bg} transition-all`}
+            className={`rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}
           >
             <button
               onClick={() => handleToggle(idx)}
@@ -116,19 +116,19 @@ export function OpportunityCard({
                 <span
                   className={`text-[10px] px-1 py-0.5 rounded ${
                     opp.gap_pct > 0
-                      ? "bg-emerald-900/40 text-emerald-400"
-                      : "bg-red-900/40 text-red-400"
+                      ? "bg-success-muted text-success"
+                      : "bg-error-muted text-error"
                   }`}
                 >
                   {opp.gap_pct > 0 ? "+" : ""}
                   {opp.gap_pct}%
                 </span>
-                <span className="text-[10px] text-zinc-500 tabular-nums">
+                <span className="text-[10px] text-text-tertiary tabular-nums">
                   {confidencePct}%
                 </span>
               </span>
               <svg
-                className={`w-3 h-3 text-zinc-500 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                className={`w-3 h-3 text-text-tertiary transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -143,17 +143,17 @@ export function OpportunityCard({
             </button>
 
             {isExpanded && (
-              <div className="px-2.5 pb-2 space-y-1.5 border-t border-zinc-800/50">
-                <p className="text-[11px] text-zinc-400 leading-relaxed pt-1.5">
+              <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
+                <p className="text-[11px] text-text-secondary leading-relaxed pt-1.5">
                   {opp.description}
                 </p>
 
                 {opp.estimated_impact && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       📊 Impact:
                     </span>
-                    <span className="text-zinc-300">
+                    <span className="text-text-primary">
                       {opp.estimated_impact}
                     </span>
                   </div>
@@ -161,10 +161,10 @@ export function OpportunityCard({
 
                 {opp.suggested_action && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       → Action:
                     </span>
-                    <span className="text-emerald-400">
+                    <span className="text-success">
                       {opp.suggested_action}
                     </span>
                   </div>
@@ -175,7 +175,7 @@ export function OpportunityCard({
                     {opp.evidence.map((e, i) => (
                       <span
                         key={i}
-                        className="text-[10px] px-1.5 py-0.5 bg-zinc-800/60 rounded text-zinc-500"
+                        className="text-[10px] px-1.5 py-0.5 bg-surface-2 rounded text-text-tertiary"
                       >
                         {e}
                       </span>

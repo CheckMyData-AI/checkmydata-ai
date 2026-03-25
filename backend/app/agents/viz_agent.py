@@ -99,6 +99,37 @@ class VizAgent(BaseAgent):
             config = self._generate_config(results, preferred_viz)
             return VizResult(viz_type=preferred_viz, viz_config=config)
 
+        if len(cols) == 2 and len(rows) == 1:
+            return VizResult(
+                viz_type="text",
+                summary=" | ".join(f"{cols[i]}: {rows[0][i]}" for i in range(len(cols))),
+            )
+
+        if len(cols) >= 2:
+            has_numeric = any(
+                isinstance(rows[0][i], (int, float)) for i in range(len(cols))
+            )
+            labels_col, data_cols = _auto_detect_columns(results, "bar_chart")
+
+            if has_numeric and data_cols:
+                if len(rows) <= settings.max_pie_categories and len(data_cols) == 1:
+                    config = {
+                        "labels_column": labels_col,
+                        "data_column": data_cols[0],
+                    }
+                    return VizResult(viz_type="pie_chart", viz_config=config)
+
+                if len(rows) > 50 and len(data_cols) >= 1:
+                    config = {"labels_column": labels_col, "data_columns": data_cols}
+                    return VizResult(viz_type="line_chart", viz_config=config)
+
+                if len(rows) > 1 and len(data_cols) >= 1:
+                    config = {"labels_column": labels_col, "data_columns": data_cols}
+                    return VizResult(viz_type="bar_chart", viz_config=config)
+
+        if len(cols) == 1:
+            return VizResult(viz_type="table")
+
         return None
 
     @staticmethod

@@ -21,12 +21,12 @@ describe("VerificationBadge", () => {
   it("has correct styling for verified", () => {
     const { container } = render(<VerificationBadge status="verified" />);
     const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain("emerald");
+    expect(badge.className).toContain("success");
   });
 
   it("has correct styling for flagged", () => {
     const { container } = render(<VerificationBadge status="flagged" />);
     const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain("red");
+    expect(badge.className).toContain("error");
   });
 });

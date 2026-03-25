@@ -5,12 +5,12 @@ import { useLogStore, type LogEntry } from "@/stores/log-store";
 import { Icon } from "@/components/ui/Icon";
 
 const PIPELINE_COLORS: Record<string, string> = {
-  index_repo: "text-purple-400",
-  db_index: "text-emerald-400",
-  code_db_sync: "text-teal-400",
-  orchestrator: "text-orange-400",
-  query: "text-cyan-400",
-  agent: "text-amber-400",
+  index_repo: "text-accent",
+  db_index: "text-success",
+  code_db_sync: "text-info",
+  orchestrator: "text-warning",
+  query: "text-info",
+  agent: "text-warning",
   system: "text-text-muted",
 };
 
@@ -160,7 +160,7 @@ export function PersistentLogToggle() {
     <div className="absolute bottom-3 right-3 z-10">
       <button
         onClick={toggle}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-md"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-lg"
         title="Open Activity Log"
       >
         <span
@@ -169,7 +169,7 @@ export function PersistentLogToggle() {
         <Icon name="activity" size={11} />
         <span>Log</span>
         {unreadCount > 0 && (
-          <span className="bg-accent text-white text-[9px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
+          <span className="bg-accent text-white text-[10px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}

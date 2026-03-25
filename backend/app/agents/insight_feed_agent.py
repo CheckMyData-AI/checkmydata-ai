@@ -34,31 +34,6 @@ class FeedScanResult:
     errors: list[str] = field(default_factory=list)
 
 
-DIAGNOSTIC_QUERIES: list[dict[str, str]] = [
-    {
-        "name": "daily_trend",
-        "description": "Recent daily activity trend",
-        "template": (
-            "SELECT DATE({date_col}) as day, COUNT(*) as count "
-            "FROM {table} "
-            "WHERE {date_col} >= DATE('now', '-30 days') "
-            "GROUP BY DATE({date_col}) "
-            "ORDER BY day"
-        ),
-    },
-    {
-        "name": "top_values",
-        "description": "Top values by frequency",
-        "template": (
-            "SELECT {group_col}, COUNT(*) as cnt "
-            "FROM {table} "
-            "GROUP BY {group_col} "
-            "ORDER BY cnt DESC "
-            "LIMIT 20"
-        ),
-    },
-]
-
 
 class InsightFeedAgent:
     """Runs autonomous scans on connected data sources."""

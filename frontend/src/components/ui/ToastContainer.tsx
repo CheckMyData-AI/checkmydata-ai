@@ -3,9 +3,9 @@
 import { useToastStore } from "@/stores/toast-store";
 
 const TYPE_STYLES: Record<string, string> = {
-  success: "bg-emerald-900/90 border-emerald-700 text-emerald-200",
-  error: "bg-red-900/90 border-red-700 text-red-200",
-  info: "bg-zinc-800/90 border-zinc-600 text-zinc-200",
+  success: "bg-success-muted border-success/30 text-success",
+  error: "bg-error-muted border-error/30 text-error",
+  info: "bg-surface-2/90 border-border-default text-text-primary",
 };
 
 export function ToastContainer() {

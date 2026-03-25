@@ -236,7 +236,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                   <button
                     onClick={() => removeQuery(q.id)}
                     disabled={queries.length <= 1}
-                    className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors disabled:opacity-30"
+                    className="p-1 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors disabled:opacity-30"
                     title="Remove"
                     aria-label={`Remove query ${idx + 1}`}
                   >

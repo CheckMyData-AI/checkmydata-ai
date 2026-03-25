@@ -173,7 +173,7 @@ export default function Home() {
                         >
                           <Icon name="bookmark" size={16} />
                           {notesCount > 0 && !notesOpen && (
-                            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-accent text-white text-[8px] font-bold flex items-center justify-center">
+                            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center">
                               {notesCount > 9 ? "9+" : notesCount}
                             </span>
                           )}
@@ -203,7 +203,7 @@ export default function Home() {
         {isMobile && notesOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
             <div
-              className="absolute inset-0 bg-black/50"
+              className="absolute inset-0 bg-black/60"
               onClick={toggleNotes}
             />
             <div className="absolute bottom-0 left-0 right-0 max-h-[80vh] bg-surface-0 border-t border-border-subtle rounded-t-2xl overflow-hidden flex flex-col animate-slide-up">

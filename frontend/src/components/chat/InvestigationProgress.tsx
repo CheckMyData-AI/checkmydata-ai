@@ -26,7 +26,7 @@ export function InvestigationProgress({ investigation }: InvestigationProgressPr
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-zinc-400">Investigating the issue...</p>
+      <p className="text-xs text-text-secondary">Investigating the issue...</p>
       <div className="space-y-2">
         {INVESTIGATION_STEPS.map((step, idx) => {
           let state: "pending" | "active" | "done" | "error" = "pending";
@@ -38,27 +38,27 @@ export function InvestigationProgress({ investigation }: InvestigationProgressPr
             <div key={step.key} className="flex items-center gap-2.5">
               <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
                 {state === "done" && (
-                  <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 )}
                 {state === "active" && (
-                  <div className="w-3.5 h-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-accent border-t-transparent animate-spin" />
                 )}
                 {state === "error" && (
-                  <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className="w-4 h-4 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 )}
                 {state === "pending" && (
-                  <div className="w-2 h-2 rounded-full bg-zinc-700" />
+                  <div className="w-2 h-2 rounded-full bg-surface-3" />
                 )}
               </div>
               <span className={`text-xs ${
-                state === "done" ? "text-zinc-300" :
-                state === "active" ? "text-blue-400" :
-                state === "error" ? "text-red-400" :
-                "text-zinc-600"
+                state === "done" ? "text-text-primary" :
+                state === "active" ? "text-accent" :
+                state === "error" ? "text-error" :
+                "text-text-muted"
               }`}>
                 {step.label}
               </span>

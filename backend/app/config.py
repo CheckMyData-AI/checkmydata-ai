@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     max_concurrent_agent_calls: int = 3
     max_agent_calls_per_hour: int = 100
 
+    # Token budget limits (0 = unlimited)
+    daily_token_limit: int = 0
+    monthly_token_limit: int = 0
+
+    # Query cache persistence (empty = in-memory only)
+    query_cache_persist_dir: str = ""
+
+    # Redis (enables shared cache + ARQ task queue; empty = in-process fallback)
+    redis_url: str = ""
+
     # GeoIP cache settings
     geoip_cache_enabled: bool = True
     geoip_cache_dir: str = "./data"

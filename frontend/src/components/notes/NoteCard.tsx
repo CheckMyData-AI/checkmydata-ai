@@ -157,7 +157,7 @@ export function NoteCard({ note }: NoteCardProps) {
   };
 
   return (
-    <div className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
+    <div className="bg-surface-1 border border-border-subtle rounded-xl overflow-hidden">
       {/* Header */}
       <div className="px-3 py-2.5 flex items-start gap-2">
         <div className="flex-1 min-w-0">
@@ -166,7 +166,7 @@ export function NoteCard({ note }: NoteCardProps) {
               {note.title}
             </h4>
             {note.is_shared && (
-              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-accent-muted text-accent font-medium">
+              <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-accent-muted text-accent font-medium">
                 Shared
               </span>
             )}
@@ -183,7 +183,7 @@ export function NoteCard({ note }: NoteCardProps) {
               </span>
             )}
             {vizType && vizType !== "text" && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-surface-2 text-text-muted">
+              <span className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-muted">
                 {vizType}
               </span>
             )}
@@ -220,7 +220,7 @@ export function NoteCard({ note }: NoteCardProps) {
                 onClick={handleDelete}
                 title="Delete"
                 aria-label="Delete note"
-                className="p-1.5 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center"
+                className="p-1.5 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center"
               >
                 <Icon name="trash" size={12} />
               </button>
@@ -331,6 +331,7 @@ export function NoteCard({ note }: NoteCardProps) {
           <button
             onClick={handleCopySql}
             title="Copy SQL"
+            aria-label="Copy SQL"
             className="ml-auto p-0.5 rounded hover:bg-surface-2 hover:text-text-secondary transition-colors"
           >
             <Icon name="copy" size={10} />
@@ -378,7 +379,7 @@ export function NoteCard({ note }: NoteCardProps) {
                 </tbody>
               </table>
               {result.total_rows > 20 && (
-                <p className="text-[9px] text-text-muted mt-1 px-1.5">
+                <p className="text-[10px] text-text-muted mt-1 px-1.5">
                   Showing 20 of {result.total_rows} rows
                 </p>
               )}

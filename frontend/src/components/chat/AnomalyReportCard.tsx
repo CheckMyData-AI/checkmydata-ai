@@ -27,32 +27,32 @@ const SEVERITY_CONFIG: Record<
   { color: string; bg: string; border: string; icon: string; label: string }
 > = {
   critical: {
-    color: "text-red-400",
-    bg: "bg-red-950/30",
-    border: "border-red-900/40",
+    color: "text-error",
+    bg: "bg-error-muted",
+    border: "border-border-default",
     icon: "🔴",
     label: "Critical",
   },
   warning: {
-    color: "text-amber-400",
-    bg: "bg-amber-950/30",
-    border: "border-amber-900/40",
+    color: "text-warning",
+    bg: "bg-warning-muted",
+    border: "border-border-default",
     icon: "🟡",
     label: "Warning",
   },
   info: {
-    color: "text-blue-400",
-    bg: "bg-blue-950/30",
-    border: "border-blue-900/40",
+    color: "text-accent",
+    bg: "bg-accent-muted",
+    border: "border-border-default",
     icon: "ℹ️",
     label: "Info",
   },
 };
 
 const DEFAULT_SEVERITY = {
-  color: "text-zinc-400",
-  bg: "bg-zinc-800/50",
-  border: "border-zinc-700/50",
+  color: "text-text-secondary",
+  bg: "bg-surface-2",
+  border: "border-border-default",
   icon: "❓",
   label: "Unknown",
 };
@@ -88,7 +88,7 @@ export function AnomalyReportCard({
 
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 font-medium uppercase tracking-wider">
+      <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
         <svg
           className="w-3 h-3"
           fill="none"
@@ -113,7 +113,7 @@ export function AnomalyReportCard({
         return (
           <div
             key={idx}
-            className={`rounded-lg border ${cfg.border} ${cfg.bg} transition-all`}
+            className={`rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}
           >
             <button
               onClick={() => handleToggle(idx)}
@@ -126,11 +126,11 @@ export function AnomalyReportCard({
               >
                 {report.title}
               </span>
-              <span className="ml-auto shrink-0 text-[10px] text-zinc-500 tabular-nums">
+              <span className="ml-auto shrink-0 text-[10px] text-text-tertiary tabular-nums">
                 {confidencePct}%
               </span>
               <svg
-                className={`w-3 h-3 text-zinc-500 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                className={`w-3 h-3 text-text-tertiary transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -145,17 +145,17 @@ export function AnomalyReportCard({
             </button>
 
             {isExpanded && (
-              <div className="px-2.5 pb-2 space-y-1.5 border-t border-zinc-800/50">
-                <p className="text-[11px] text-zinc-400 leading-relaxed pt-1.5">
+              <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
+                <p className="text-[11px] text-text-secondary leading-relaxed pt-1.5">
                   {report.description}
                 </p>
 
                 {report.root_cause_hypothesis && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       💡 Root cause:
                     </span>
-                    <span className="text-zinc-300">
+                    <span className="text-text-primary">
                       {report.root_cause_hypothesis}
                     </span>
                   </div>
@@ -163,10 +163,10 @@ export function AnomalyReportCard({
 
                 {report.business_impact && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       📊 Impact:
                     </span>
-                    <span className="text-zinc-300">
+                    <span className="text-text-primary">
                       {report.business_impact}
                     </span>
                   </div>
@@ -174,10 +174,10 @@ export function AnomalyReportCard({
 
                 {report.recommended_action && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       → Action:
                     </span>
-                    <span className="text-emerald-400">
+                    <span className="text-success">
                       {report.recommended_action}
                     </span>
                   </div>
@@ -185,10 +185,10 @@ export function AnomalyReportCard({
 
                 {report.expected_impact && (
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-text-tertiary shrink-0">
                       ✨ Expected:
                     </span>
-                    <span className="text-zinc-300">
+                    <span className="text-text-primary">
                       {report.expected_impact}
                     </span>
                   </div>
@@ -196,12 +196,12 @@ export function AnomalyReportCard({
 
                 <div className="flex items-center gap-2 pt-0.5">
                   {report.affected_rows > 0 && (
-                    <span className="text-[10px] text-zinc-500">
+                    <span className="text-[10px] text-text-tertiary">
                       {report.affected_rows} rows affected
                     </span>
                   )}
                   {report.affected_metrics.length > 0 && (
-                    <span className="text-[10px] text-zinc-500">
+                    <span className="text-[10px] text-text-tertiary">
                       Metric:{" "}
                       {report.affected_metrics.join(", ")}
                     </span>

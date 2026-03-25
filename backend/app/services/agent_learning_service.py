@@ -485,14 +485,26 @@ class AgentLearningService:
                 parts.append(f"- {lrn.lesson} [{conf_pct}% confidence{confirmed}{critical}]")
             parts.append("")
 
+        existing_hashes = {lrn.lesson_hash for lrn in learnings}
+
         cross_section = await self._get_cross_connection_learnings(
             session,
             connection_id,
-            {lrn.lesson_hash for lrn in learnings},
+            existing_hashes,
         )
         if cross_section:
             parts.append("### From Similar Connections (same project)")
             parts.extend(cross_section)
+            parts.append("")
+
+        global_section = await self.promote_global_patterns(
+            session,
+            connection_id,
+            exclude_hashes=existing_hashes,
+        )
+        if global_section:
+            parts.append("### Global Patterns (observed across multiple databases)")
+            parts.extend(global_section)
             parts.append("")
 
         prompt = "\n".join(parts)
@@ -570,6 +582,100 @@ class AgentLearningService:
             conf_pct = int(lrn.confidence * 100)
             lines.append(f"- [from sibling] {lrn.lesson} [{conf_pct}% confidence]")
         return lines[:8]
+
+    async def get_global_patterns(
+        self,
+        session: AsyncSession,
+        *,
+        min_connections: int = 2,
+        min_confidence: float = 0.7,
+        limit: int = 15,
+    ) -> list[dict]:
+        """Identify learnings that appear across multiple connections.
+
+        Returns high-confidence patterns that have been independently
+        discovered on at least *min_connections* different connections,
+        suggesting they are universally applicable (e.g. "amounts are
+        stored in cents").
+        """
+        stmt = (
+            select(
+                AgentLearning.lesson_hash,
+                AgentLearning.category,
+                AgentLearning.subject,
+                func.max(AgentLearning.lesson).label("lesson"),
+                func.max(AgentLearning.confidence).label("max_confidence"),
+                func.count(func.distinct(AgentLearning.connection_id)).label("conn_count"),
+                func.sum(AgentLearning.times_confirmed).label("total_confirmed"),
+            )
+            .where(
+                AgentLearning.is_active.is_(True),
+                AgentLearning.confidence >= min_confidence,
+            )
+            .group_by(
+                AgentLearning.lesson_hash,
+                AgentLearning.category,
+                AgentLearning.subject,
+            )
+            .having(
+                func.count(func.distinct(AgentLearning.connection_id)) >= min_connections,
+            )
+            .order_by(
+                func.count(func.distinct(AgentLearning.connection_id)).desc(),
+                func.max(AgentLearning.confidence).desc(),
+            )
+            .limit(limit)
+        )
+        rows = (await session.execute(stmt)).all()
+
+        return [
+            {
+                "lesson_hash": r.lesson_hash,
+                "category": r.category,
+                "subject": r.subject,
+                "lesson": r.lesson,
+                "max_confidence": float(r.max_confidence),
+                "connection_count": int(r.conn_count),
+                "total_confirmed": int(r.total_confirmed),
+            }
+            for r in rows
+        ]
+
+    async def promote_global_patterns(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        exclude_hashes: set[str] | None = None,
+    ) -> list[str]:
+        """Format global patterns as prompt lines for a specific connection.
+
+        Returns learnings that appear on 2+ other connections but are not
+        yet present on *connection_id*.
+        """
+        patterns = await self.get_global_patterns(session)
+        if not patterns:
+            return []
+
+        existing = await session.execute(
+            select(AgentLearning.lesson_hash).where(
+                AgentLearning.connection_id == connection_id,
+                AgentLearning.is_active.is_(True),
+            )
+        )
+        existing_hashes = {r[0] for r in existing.all()}
+        if exclude_hashes:
+            existing_hashes |= exclude_hashes
+
+        lines: list[str] = []
+        for p in patterns:
+            if p["lesson_hash"] in existing_hashes:
+                continue
+            conf_pct = int(p["max_confidence"] * 100)
+            lines.append(
+                f"- [global pattern, seen on {p['connection_count']} DBs] "
+                f"{p['lesson']} [{conf_pct}% confidence]"
+            )
+        return lines[:5]
 
     async def get_or_compile_summary(
         self,

@@ -1,3 +1,10 @@
+"""DEPRECATED: Legacy orchestrator module.
+
+This module is superseded by ``app.agents.orchestrator.Orchestrator``.
+It is kept temporarily for backward-compatible test imports.  No production
+code should import from this module — use ``app.agents`` instead.
+"""
+
 import asyncio
 import logging
 import time

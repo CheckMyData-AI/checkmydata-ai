@@ -124,7 +124,7 @@ export function NotificationBell() {
       >
         <Icon name="bell" size={16} />
         {count > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-red-500 text-white text-[8px] font-bold leading-none px-0.5">
+          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-error text-white text-[10px] font-bold leading-none px-0.5">
             {count > 99 ? "99+" : count}
           </span>
         )}
@@ -141,7 +141,7 @@ export function NotificationBell() {
               {count > 0 && (
                 <button
                   onClick={handleMarkAllRead}
-                  className="text-[10px] text-accent hover:text-accent-hover"
+                  className="text-[10px] text-accent hover:text-accent-hover transition-colors"
                 >
                   Mark all read
                 </button>
@@ -177,13 +177,13 @@ export function NotificationBell() {
                           </p>
                         )}
                         {n.created_at && (
-                          <p className="text-[9px] text-text-muted mt-0.5">
+                          <p className="text-[10px] text-text-muted mt-0.5">
                             {timeAgo(n.created_at)}
                           </p>
                         )}
                       </div>
                       {n.type === "alert" && (
-                        <Icon name="alert-triangle" size={12} className="text-amber-400 shrink-0 mt-0.5" />
+                        <Icon name="alert-triangle" size={12} className="text-warning shrink-0 mt-0.5" />
                       )}
                     </div>
                   </button>

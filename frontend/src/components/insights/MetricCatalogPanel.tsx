@@ -26,14 +26,14 @@ interface MetricCatalogPanelProps {
 }
 
 const CATEGORY_CONFIG: Record<string, { icon: string; color: string }> = {
-  revenue: { icon: "💰", color: "text-emerald-400" },
-  cost: { icon: "💸", color: "text-red-400" },
-  conversion: { icon: "🔄", color: "text-blue-400" },
-  engagement: { icon: "👥", color: "text-purple-400" },
-  retention: { icon: "🔁", color: "text-amber-400" },
-  acquisition: { icon: "📈", color: "text-teal-400" },
-  performance: { icon: "⚡", color: "text-orange-400" },
-  general: { icon: "📊", color: "text-zinc-400" },
+  revenue: { icon: "💰", color: "text-success" },
+  cost: { icon: "💸", color: "text-error" },
+  conversion: { icon: "🔄", color: "text-accent" },
+  engagement: { icon: "👥", color: "text-accent" },
+  retention: { icon: "🔁", color: "text-warning" },
+  acquisition: { icon: "📈", color: "text-info" },
+  performance: { icon: "⚡", color: "text-warning" },
+  general: { icon: "📊", color: "text-text-secondary" },
 };
 
 export function MetricCatalogPanel({
@@ -67,7 +67,7 @@ export function MetricCatalogPanel({
 
   return (
     <div className="flex flex-col gap-2 h-full">
-      <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-300">
+      <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
         <span>📚</span> Metric Catalog ({metrics.length})
       </div>
 
@@ -78,7 +78,7 @@ export function MetricCatalogPanel({
         aria-label="Search metrics"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full px-2 py-1 text-[11px] bg-zinc-900 border border-zinc-800 rounded text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+        className="w-full px-2 py-1 text-[11px] bg-surface-1 border border-border-subtle rounded-lg text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
       />
 
       {/* Category filters */}
@@ -87,8 +87,8 @@ export function MetricCatalogPanel({
           onClick={() => setCategoryFilter(null)}
           className={`text-[10px] px-1.5 py-0.5 rounded transition-all ${
             !categoryFilter
-              ? "bg-zinc-700 text-zinc-200"
-              : "bg-zinc-900 text-zinc-500 hover:text-zinc-300"
+              ? "bg-surface-3 text-text-primary"
+              : "bg-surface-1 text-text-tertiary hover:text-text-primary"
           }`}
         >
           All
@@ -103,8 +103,8 @@ export function MetricCatalogPanel({
               }
               className={`text-[10px] px-1.5 py-0.5 rounded transition-all ${
                 categoryFilter === cat
-                  ? "bg-zinc-700 text-zinc-200"
-                  : "bg-zinc-900 text-zinc-500 hover:text-zinc-300"
+                  ? "bg-surface-3 text-text-primary"
+                  : "bg-surface-1 text-text-tertiary hover:text-text-primary"
               }`}
             >
               {cfg.icon} {cat}
@@ -116,7 +116,7 @@ export function MetricCatalogPanel({
       {/* Metric list */}
       <div className="flex-1 overflow-y-auto space-y-1">
         {filtered.length === 0 && (
-          <div className="text-[11px] text-zinc-600 py-4 text-center">
+          <div className="text-[11px] text-text-muted py-4 text-center">
             No metrics found
           </div>
         )}
@@ -127,7 +127,7 @@ export function MetricCatalogPanel({
             <button
               key={m.id}
               onClick={() => onMetricClick?.(m)}
-              className="w-full text-left px-2 py-1.5 rounded border border-zinc-800/50 bg-zinc-900/50 hover:bg-zinc-800/50 transition-all group"
+              className="w-full text-left px-2 py-1.5 rounded border border-border-subtle/50 bg-surface-1/50 hover:bg-surface-2/50 transition-all group"
             >
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px]">{cfg.icon}</span>
@@ -138,25 +138,25 @@ export function MetricCatalogPanel({
                   {m.display_name}
                 </span>
                 {m.aggregation && (
-                  <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0">
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-tertiary shrink-0">
                     {m.aggregation}
                   </span>
                 )}
                 {m.unit && (
-                  <span className="text-[9px] text-zinc-600 shrink-0">
+                  <span className="text-[10px] text-text-muted shrink-0">
                     {m.unit}
                   </span>
                 )}
-                <span className="ml-auto text-[9px] text-zinc-700 shrink-0">
+                <span className="ml-auto text-[10px] text-text-muted shrink-0">
                   {Math.round(m.confidence * 100)}%
                 </span>
               </div>
               {m.description && (
-                <div className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                <div className="text-[10px] text-text-muted mt-0.5 truncate">
                   {m.description}
                 </div>
               )}
-              <div className="text-[9px] text-zinc-700 mt-0.5">
+              <div className="text-[10px] text-text-muted mt-0.5">
                 {m.source_table && (
                   <span>
                     {m.source_table}

@@ -18,7 +18,7 @@ const LLM_PROVIDERS: { value: string; label: string }[] = [
 ];
 
 const inputCls =
-  "w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent transition-colors";
 
 export function LlmModelSelector({
   label,
@@ -69,11 +69,11 @@ export function LlmModelSelector({
   return (
     <div className={`space-y-1.5 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       <div>
-        <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+        <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
           {label}
         </span>
         {description && (
-          <span className="text-[10px] text-zinc-600 ml-1.5">{description}</span>
+          <span className="text-[10px] text-text-muted ml-1.5">{description}</span>
         )}
       </div>
       <select
@@ -81,6 +81,7 @@ export function LlmModelSelector({
         onChange={(e) => onChange({ provider: e.target.value, model: "" })}
         className={inputCls}
         disabled={disabled}
+        aria-label={`${label} provider`}
       >
         <option value="">System default (OpenAI)</option>
         {LLM_PROVIDERS.map((p) => (
@@ -92,7 +93,7 @@ export function LlmModelSelector({
       {pair.provider && (
         loading ? (
           <div className={`${inputCls} flex items-center`}>
-            <span className="text-zinc-500 text-[10px] animate-pulse">
+            <span className="text-text-muted text-[10px] animate-pulse">
               Loading models...
             </span>
           </div>
@@ -102,6 +103,7 @@ export function LlmModelSelector({
             onChange={(e) => onChange({ ...pair, model: e.target.value })}
             className={inputCls}
             disabled={disabled}
+            aria-label={`${label} model`}
           >
             <option value="">Select model</option>
             {models.map((m) => (
@@ -116,11 +118,12 @@ export function LlmModelSelector({
               value={pair.model}
               onChange={(e) => onChange({ ...pair, model: e.target.value })}
               placeholder="Model name (e.g. gpt-4o)"
-              className={`${inputCls} ${loadError ? "border-amber-600" : ""}`}
+              className={`${inputCls} ${loadError ? "border-warning" : ""}`}
               disabled={disabled}
+              aria-label={`${label} model name`}
             />
             {loadError && (
-              <p className="text-[10px] text-amber-400 mt-0.5 px-1">Could not load models — type model name manually</p>
+              <p className="text-[10px] text-warning mt-0.5 px-1">Could not load models — type model name manually</p>
             )}
           </div>
         )

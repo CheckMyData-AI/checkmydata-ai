@@ -134,20 +134,24 @@ class TestCompilePrompt:
         existing_summary = MagicMock(spec=AgentLearningSummary)
 
         call_count = 0
+        summary_returned = False
 
         async def mock_execute(stmt):
-            nonlocal call_count
+            nonlocal call_count, summary_returned
             call_count += 1
             m = MagicMock()
+            stmt_str = str(stmt)
             if call_count == 1:
                 m.scalars.return_value.all.return_value = [lrn]
-            elif call_count == 2:
-                m.scalar_one_or_none.return_value = None
-                m.all.return_value = []
-            elif call_count == 3:
+            elif not summary_returned and "agent_learning_summaries" in stmt_str:
                 m.scalar_one_or_none.return_value = existing_summary
+                summary_returned = True
             else:
                 m.scalar_one_or_none.return_value = None
+                m.all.return_value = []
+                m.scalars.return_value.all.return_value = []
+                m.scalar.return_value = 0
+                m.one.return_value = MagicMock()
             return m
 
         session = AsyncMock()
@@ -993,16 +997,25 @@ class TestCompilePromptCrossConnection:
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [learning]
 
-        summary_result = MagicMock()
-        summary_result.scalar_one_or_none.return_value = None
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        empty_result.all.return_value = []
+        empty_result.scalars.return_value.all.return_value = []
 
-        session.execute = AsyncMock(side_effect=[mock_result, summary_result])
+        session.execute = AsyncMock(
+            side_effect=[mock_result, empty_result, empty_result, empty_result, empty_result]
+        )
 
         with patch.object(
             svc,
             "_get_cross_connection_learnings",
             new_callable=AsyncMock,
             return_value=["- [from sibling] Use ISO dates [80% confidence]"],
+        ), patch.object(
+            svc,
+            "promote_global_patterns",
+            new_callable=AsyncMock,
+            return_value=[],
         ):
             prompt = await svc.compile_prompt(session, "conn-1")
 

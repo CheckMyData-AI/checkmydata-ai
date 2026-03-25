@@ -159,7 +159,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
         Checking project readiness...
       </div>
     );
@@ -168,18 +168,18 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
   if (fetchError) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="max-w-sm w-full mx-4 bg-zinc-800/50 border border-red-700/30 rounded-xl p-6 space-y-3 text-center">
-          <p className="text-sm text-red-400">Failed to check project readiness</p>
+        <div className="max-w-sm w-full mx-4 bg-surface-2/50 border border-border-default rounded-xl p-6 space-y-3 text-center">
+          <p className="text-sm text-error">Failed to check project readiness</p>
           <div className="flex gap-2 justify-center">
             <button
               onClick={() => { setLoading(true); fetchReadiness(); }}
-              className="text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              className="text-sm px-4 py-2 rounded-lg bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
             >
               Retry
             </button>
             <button
               onClick={onBypass}
-              className="text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              className="text-sm px-4 py-2 rounded-lg bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
             >
               Chat anyway
             </button>
@@ -218,8 +218,8 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
 
   return (
     <div className="flex-1 flex items-center justify-center">
-      <div className="max-w-md w-full mx-4 bg-zinc-800/50 border border-zinc-700 rounded-xl p-6 space-y-4">
-        <h3 className="text-sm font-medium text-zinc-200">
+        <div className="max-w-md w-full mx-4 bg-surface-2/50 border border-border-default rounded-xl p-6 space-y-4">
+        <h3 className="text-sm font-medium text-text-primary">
           {allDone ? "Project status" : "Set up your project for full AI queries"}
         </h3>
 
@@ -233,28 +233,28 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
 
             return (
               <div key={step} className="flex items-center gap-3 py-1">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${done ? "bg-green-400" : "bg-zinc-600"}`} />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${done ? "bg-success" : "bg-surface-3"}`} />
                 {isNavigable ? (
                   <button
                     onClick={() => handleNavigate(step)}
-                    className="flex-1 text-sm text-left text-blue-400 hover:text-blue-300 hover:underline cursor-pointer transition-colors"
+                    className="flex-1 text-sm text-left text-accent hover:text-accent-hover hover:underline cursor-pointer transition-colors"
                   >
                     {STEP_LABELS[step] || step}
                     <span className="ml-1.5 text-[10px] opacity-60">→</span>
                   </button>
                 ) : (
-                  <span className={`flex-1 text-sm ${done ? "text-zinc-300" : "text-zinc-500"}`}>
+                  <span className={`flex-1 text-sm ${done ? "text-text-primary" : "text-text-tertiary"}`}>
                     {STEP_LABELS[step] || step}
                   </span>
                 )}
                 {done && (
-                  <span className="text-[10px] text-green-400/70 shrink-0">Done</span>
+                  <span className="text-[10px] text-success/70 shrink-0">Done</span>
                 )}
                 {canAct && (
                   <button
                     onClick={() => handleAction(step)}
                     disabled={isRunning || !prevDone}
-                    className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isRunning ? "Running..." : "Run"}
                   </button>
@@ -265,10 +265,10 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         </div>
 
         {readiness.last_indexed_at && (
-          <div className="text-[11px] text-zinc-500">
+          <div className="text-[11px] text-text-tertiary">
             Last indexed {timeAgo(readiness.last_indexed_at)}
             {readiness.commits_behind > 0 && (
-              <span className="text-amber-400/80 ml-1">
+              <span className="text-warning/80 ml-1">
                 · {readiness.commits_behind} new commit{readiness.commits_behind !== 1 ? "s" : ""}
               </span>
             )}
@@ -276,14 +276,14 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         )}
 
         {readiness.is_stale && (
-          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-900/20 border border-amber-800/30">
-            <span className="text-xs text-amber-400">
+          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-warning-muted border border-border-default">
+            <span className="text-xs text-warning">
               Index is outdated ({">"} 7 days, {readiness.commits_behind} new commits). Re-indexing recommended.
             </span>
             <button
               onClick={() => handleAction("index_repo")}
               disabled={actionInProgress === "index_repo"}
-              className="shrink-0 text-[10px] px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-50"
+              className="shrink-0 text-[10px] px-2 py-1 rounded bg-warning text-white hover:bg-warning disabled:opacity-50"
             >
               {actionInProgress === "index_repo" ? "Running..." : "Re-index"}
             </button>
@@ -291,13 +291,13 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         )}
 
         {!allDone && (
-          <div className="border-t border-zinc-700 pt-3 space-y-2">
-            <p className="text-xs text-amber-400/80">
+          <div className="border-t border-border-default pt-3 space-y-2">
+            <p className="text-xs text-warning/80">
               You can still chat, but SQL queries may be less accurate without full setup.
             </p>
             <button
               onClick={onBypass}
-              className="w-full text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              className="w-full text-sm px-4 py-2 rounded-lg bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
             >
               Chat anyway
             </button>
@@ -305,10 +305,10 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         )}
 
         {allDone && !readiness.is_stale && (
-          <div className="border-t border-zinc-700 pt-3">
+          <div className="border-t border-border-default pt-3">
             <button
               onClick={onBypass}
-              className="w-full text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors"
+              className="w-full text-sm px-4 py-2 rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors"
             >
               Start chatting
             </button>
@@ -316,10 +316,10 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         )}
 
         {allDone && readiness.is_stale && (
-          <div className="border-t border-zinc-700 pt-3">
+          <div className="border-t border-border-default pt-3">
             <button
               onClick={onBypass}
-              className="w-full text-sm px-4 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              className="w-full text-sm px-4 py-2 rounded-lg bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
             >
               Chat anyway
             </button>
@@ -362,7 +362,7 @@ export function ReadinessBanner({ projectId }: { projectId: string }) {
   if (missing.length === 0 && !staleInfo?.is_stale) return null;
 
   return (
-    <div className="flex items-center gap-2 px-6 py-1.5 bg-amber-900/20 border-b border-amber-800/30 text-xs text-amber-400">
+    <div className="flex items-center gap-2 px-6 py-1.5 bg-warning-muted border-b border-border-default text-xs text-warning">
       {missing.length > 0 && <span>Missing: {missing.join(" → ")}</span>}
       {missing.length > 0 && staleInfo?.is_stale && <span>·</span>}
       {staleInfo?.is_stale && (

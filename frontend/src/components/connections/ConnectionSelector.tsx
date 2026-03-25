@@ -955,25 +955,25 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         : {}),
                     }));
                   }}
-                  className="accent-purple-500"
+                  className="accent-accent"
                   disabled={form.db_type === "mongodb"}
                 />
                 <span className="flex items-center gap-1.5">
                   <Icon name="terminal" size={12} />
                   SSH Exec Mode
                   {form.db_type === "mongodb" ? (
-                    <span className="text-[9px] text-text-muted">
+                    <span className="text-[10px] text-text-muted">
                       (not supported for MongoDB)
                     </span>
                   ) : (
-                    <span className="text-[9px] text-text-muted">
+                    <span className="text-[10px] text-text-muted">
                       (CLI on server)
                     </span>
                   )}
                 </span>
               </label>
               {!form.ssh_exec_mode && (
-                <p className="text-[9px] text-text-muted px-1">
+                <p className="text-[10px] text-text-muted px-1">
                   Enable only if port forwarding is blocked or you need specific
                   CLI options.
                 </p>
@@ -1021,7 +1021,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     rows={2}
                     className={inputCls + " font-mono text-[10px] resize-y"}
                   />
-                  <p className="text-[9px] text-text-muted px-1">
+                  <p className="text-[10px] text-text-muted px-1">
                     Placeholders: {"{db_host}"} {"{db_port}"} {"{db_user}"}{" "}
                     {"{db_password}"} {"{db_name}"}. Query piped via stdin.
                   </p>
@@ -1066,7 +1066,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           disabled={saving}
           className="flex-1 px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          {saving && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+          {saving && <span className="w-3.5 h-3.5 border-2 border-text-primary/30 border-t-text-primary rounded-full animate-spin" />}
           {saving ? "Saving…" : editingId ? "Save Changes" : "Create Connection"}
         </button>
         {editingId && (
@@ -1155,21 +1155,21 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     {c.name}
                   </span>
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                    <span className="text-[9px] text-text-muted font-mono uppercase">
+                    <span className="text-[10px] text-text-muted font-mono uppercase">
                       {c.source_type === "mcp" ? "MCP" : c.db_type}
                     </span>
                     {c.is_read_only && (
-                      <span className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
+                      <span className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
                         RO
                       </span>
                     )}
                     {c.ssh_exec_mode && (
-                      <span className="text-[8px] px-1 py-px rounded-full bg-purple-900/30 text-purple-400 leading-none">
+                      <span className="text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none">
                         EXEC
                       </span>
                     )}
                     {idx?.is_indexing ? (
-                      <span className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                      <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
                         IDX...
                       </span>
                     ) : idx?.is_indexed ? (
@@ -1177,7 +1177,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Re-index database"
-                          className="text-[8px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleIndexDb(c.id);
@@ -1191,7 +1191,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Index database schema"
-                          className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleIndexDb(c.id);
@@ -1202,7 +1202,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       </Tooltip>
                     ) : null}
                     {sync?.is_syncing ? (
-                      <span className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                      <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
                         SYNC...
                       </span>
                     ) : sync?.is_synced ? (
@@ -1210,7 +1210,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Re-sync database"
-                          className="text-[8px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSync(c.id);
@@ -1224,7 +1224,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Re-sync stale data"
-                          className="text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSync(c.id);
@@ -1238,7 +1238,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Run Code-DB Sync"
-                          className="text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSync(c.id);
@@ -1270,7 +1270,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Manage agent learnings"
-                          className="text-[8px] px-1 py-px rounded-full bg-blue-900/30 text-blue-400 cursor-pointer hover:bg-blue-900/50 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent cursor-pointer hover:bg-accent-muted outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             setShowLearnings(showLearnings === c.id ? null : c.id);

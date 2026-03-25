@@ -44,22 +44,22 @@ function StepIcon({ status }: { status: StepState["status"] }) {
   switch (status) {
     case "started":
       return (
-        <span className="w-3.5 h-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
+        <span className="w-3.5 h-3.5 rounded-full border-2 border-accent border-t-transparent animate-spin inline-block" />
       );
     case "completed":
       return (
-        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <svg className="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
       );
     case "failed":
       return (
-        <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <svg className="w-3.5 h-3.5 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>
       );
     default:
-      return <span className="w-3.5 h-3.5 rounded-full bg-zinc-700 inline-block" />;
+      return <span className="w-3.5 h-3.5 rounded-full bg-surface-3 inline-block" />;
   }
 }
 
@@ -91,10 +91,10 @@ export function StreamWorkflowProgress({ events, compact = false }: StreamWorkfl
   if (compact) {
     const current = steps.findLast((s) => s.status === "started") || steps[steps.length - 1];
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
+      <div className="flex items-center gap-2 text-xs text-text-secondary">
         <StepIcon status={current.status} />
         <span>{STEP_LABELS[current.name] || current.name}</span>
-        {current.detail && <span className="text-zinc-600 truncate max-w-40">{current.detail}</span>}
+        {current.detail && <span className="text-text-muted truncate max-w-40">{current.detail}</span>}
       </div>
     );
   }
@@ -104,12 +104,12 @@ export function StreamWorkflowProgress({ events, compact = false }: StreamWorkfl
       {steps.map((step) => (
         <div key={step.name} className="flex items-center gap-2 text-xs">
           <StepIcon status={step.status} />
-          <span className={step.status === "failed" ? "text-red-400" : step.status === "started" ? "text-blue-300" : "text-zinc-300"}>
+          <span className={step.status === "failed" ? "text-error" : step.status === "started" ? "text-accent" : "text-text-primary"}>
             {STEP_LABELS[step.name] || step.name}
-            {step.count > 1 && <span className="ml-1 text-zinc-500">x{step.count}</span>}
+            {step.count > 1 && <span className="ml-1 text-text-tertiary">x{step.count}</span>}
           </span>
           {step.elapsed_ms != null && step.status !== "started" && (
-            <span className="text-zinc-600 ml-auto tabular-nums whitespace-nowrap">
+            <span className="text-text-muted ml-auto tabular-nums whitespace-nowrap">
               {step.elapsed_ms >= 1000
                 ? `${(step.elapsed_ms / 1000).toFixed(1)}s`
                 : `${Math.round(step.elapsed_ms)}ms`}

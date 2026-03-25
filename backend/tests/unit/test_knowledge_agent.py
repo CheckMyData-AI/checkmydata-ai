@@ -208,6 +208,10 @@ class TestKnowledgeAgent:
         assert len(result.tool_call_log) == 1
         assert result.tool_call_log[0]["tool"] == "search_knowledge"
         assert "Found 2 relevant" in result.tool_call_log[0]["result_preview"]
+        assert len(result.sources) == 2
+        assert result.sources[0].source_path == "README.md"
+        assert result.sources[0].distance == 0.3
+        assert result.sources[1].source_path == "docs/migrations.md"
 
     # 4 ── search_knowledge with no results ───────────────────────────
 

@@ -8,11 +8,11 @@ interface ContextBudgetIndicatorProps {
 }
 
 const SEGMENTS: { key: keyof CostEstimateBreakdown; label: string; color: string }[] = [
-  { key: "schema_context", label: "Schema", color: "bg-blue-500" },
-  { key: "rules", label: "Rules", color: "bg-purple-500" },
-  { key: "learnings", label: "Learnings", color: "bg-amber-500" },
-  { key: "overview", label: "Overview", color: "bg-teal-500" },
-  { key: "history_budget_remaining", label: "History remaining", color: "bg-zinc-600" },
+  { key: "schema_context", label: "Schema", color: "bg-accent" },
+  { key: "rules", label: "Rules", color: "bg-accent" },
+  { key: "learnings", label: "Learnings", color: "bg-warning" },
+  { key: "overview", label: "Overview", color: "bg-info" },
+  { key: "history_budget_remaining", label: "History remaining", color: "bg-surface-3" },
 ];
 
 export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProps) {
@@ -25,7 +25,7 @@ export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProp
 
   return (
     <div className="relative">
-      <div className="flex h-1 rounded-full overflow-hidden bg-zinc-800">
+      <div className="flex h-1 rounded-full overflow-hidden bg-surface-2">
         {SEGMENTS.map((seg, i) => {
           const value = breakdown[seg.key] || 0;
           if (value === 0) return null;
@@ -43,7 +43,7 @@ export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProp
       </div>
 
       {hoveredIdx !== null && (
-        <div className="absolute bottom-full left-0 mb-1 z-50 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-300 shadow-lg whitespace-nowrap">
+        <div className="absolute bottom-full left-0 mb-1 z-50 bg-surface-2 border border-border-default rounded px-2 py-1 text-[10px] text-text-primary shadow-lg whitespace-nowrap">
           {SEGMENTS[hoveredIdx].label}: {fmt(breakdown[SEGMENTS[hoveredIdx].key] || 0)} tokens
         </div>
       )}

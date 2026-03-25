@@ -1,4 +1,22 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   backend:
     build:
       context: .
@@ -9,10 +27,14 @@ services:
       - backend/.env
     environment:
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3100"]}
+      - REDIS_URL=redis://redis:6379
     volumes:
       - backend-data:/app/data
       - ./rules:/app/rules
       - chroma-cache:/home/appuser/.cache/chroma
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
@@ -25,6 +47,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["sh", "-c", "PYTHONPATH=/app arq app.worker.WorkerSettings"]
+    env_file:
+      - backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - backend-data:/app/data
+      - ./rules:/app/rules
+      - chroma-cache:/home/appuser/.cache/chroma
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
 
   frontend:
     build:
@@ -58,4 +103,5 @@ services:
 
 volumes:
   backend-data:
+  redis-data:
   chroma-cache:

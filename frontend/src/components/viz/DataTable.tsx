@@ -39,9 +39,9 @@ export function DataTable({ data }: DataTableProps) {
   };
 
   return (
-    <div className="bg-zinc-900 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
-        <span className="text-xs text-zinc-400">
+    <div className="bg-surface-1 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle">
+        <span className="text-xs text-text-secondary">
           {totalRows} row{totalRows !== 1 ? "s" : ""}
           {executionTime != null && ` • ${executionTime.toFixed(0)}ms`}
         </span>
@@ -53,7 +53,7 @@ export function DataTable({ data }: DataTableProps) {
               disabled={exporting}
               aria-label={`Export as ${fmt.toUpperCase()}`}
               title={`Export as ${fmt.toUpperCase()}`}
-              className="text-xs px-2.5 py-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50 min-h-[28px]"
+              className="text-xs px-2.5 py-1 text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors disabled:opacity-50 min-h-[28px]"
             >
               {fmt.toUpperCase()}
             </button>
@@ -63,11 +63,11 @@ export function DataTable({ data }: DataTableProps) {
       <div className="overflow-x-auto max-h-96 data-table-scroll">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-zinc-800">
+            <tr className="border-b border-border-subtle">
               {columns.map((col) => (
                 <th
                   key={col}
-                  className="px-4 py-2 text-left text-zinc-400 font-medium whitespace-nowrap"
+                  className="px-4 py-2 text-left text-text-secondary font-medium whitespace-nowrap"
                 >
                   {col}
                 </th>
@@ -77,16 +77,16 @@ export function DataTable({ data }: DataTableProps) {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length || 1} className="px-4 py-8 text-center text-zinc-500 text-xs">
+                <td colSpan={columns.length || 1} className="px-4 py-8 text-center text-text-tertiary text-xs">
                   No data returned
                 </td>
               </tr>
             ) : rows.map((row, i) => (
-              <tr key={`${i}-${columns.length > 0 ? String(row[columns[0]] ?? "") : i}`} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+              <tr key={`${i}-${columns.length > 0 ? String(row[columns[0]] ?? "") : i}`} className="border-b border-border-subtle/50 hover:bg-surface-2/30">
                 {columns.map((col) => (
-                  <td key={col} className="px-4 py-2 text-zinc-300 whitespace-nowrap">
+                  <td key={col} className="px-4 py-2 text-text-primary whitespace-nowrap">
                     {row[col] == null ? (
-                      <span className="text-zinc-600">NULL</span>
+                      <span className="text-text-muted">NULL</span>
                     ) : (
                       String(row[col])
                     )}
@@ -98,7 +98,7 @@ export function DataTable({ data }: DataTableProps) {
         </table>
       </div>
       {isCapped && (
-        <div className="px-4 py-2 border-t border-zinc-800/50 text-center">
+        <div className="px-4 py-2 border-t border-border-subtle/50 text-center">
           <button
             onClick={() => setShowAll(true)}
             className="text-[11px] text-accent hover:text-accent-hover transition-colors"

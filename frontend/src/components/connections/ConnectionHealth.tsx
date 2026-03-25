@@ -144,7 +144,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
           type="button"
           onClick={handleReconnect}
           disabled={reconnecting}
-          className="text-[8px] px-1 py-px rounded-full bg-error-muted text-error hover:bg-error/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50"
+          className="text-[10px] px-1 py-px rounded-full bg-error-muted text-error hover:bg-error/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50"
         >
           {reconnecting ? "..." : "RECONNECT"}
         </button>

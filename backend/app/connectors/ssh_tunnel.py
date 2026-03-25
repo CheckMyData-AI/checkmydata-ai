@@ -17,6 +17,9 @@ SSH_RETRY_DELAY = 3
 _LIVENESS_CACHE_TTL = 30  # seconds
 
 
+IDLE_TUNNEL_TTL = 1800  # 30 minutes
+
+
 class SSHTunnel:
     def __init__(self):
         self._conn: asyncssh.SSHClientConnection | None = None
@@ -24,6 +27,7 @@ class SSHTunnel:
         self._local_host: str = "127.0.0.1"
         self._local_port: int | None = None
         self._last_alive_check: float = 0.0
+        self._last_used: float = time.monotonic()
 
     @property
     def local_host(self) -> str:
@@ -116,6 +120,14 @@ class SSHTunnel:
 
     _ALIVE_MARKER = "__SSH_TUNNEL_ALIVE__"
 
+    def touch(self) -> None:
+        """Mark the tunnel as recently used (resets the idle timer)."""
+        self._last_used = time.monotonic()
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last_used
+
     async def is_alive(self) -> bool:
         if self._conn is None or self._listener is None:
             return False
@@ -199,11 +211,13 @@ class SSHTunnelManager:
 
         tunnel = self._tunnels.get(key)
         if tunnel and await tunnel.is_alive():
+            tunnel.touch()
             return tunnel.local_host, tunnel.local_port
 
         async with self._get_lock(key):
             tunnel = self._tunnels.get(key)
             if tunnel and await tunnel.is_alive():
+                tunnel.touch()
                 return tunnel.local_host, tunnel.local_port
 
             if tunnel:
@@ -247,6 +261,19 @@ class SSHTunnelManager:
             logger.info("Closed SSH tunnel for %s", key)
             return True
         return False
+
+    async def cleanup_idle(self, max_idle: float = IDLE_TUNNEL_TTL) -> int:
+        """Close tunnels that have been idle longer than *max_idle* seconds."""
+        to_remove: list[str] = []
+        for key, tunnel in self._tunnels.items():
+            if tunnel.idle_seconds > max_idle:
+                to_remove.append(key)
+        for key in to_remove:
+            tunnel = self._tunnels.pop(key, None)
+            if tunnel:
+                await tunnel.stop()
+                logger.info("Closed idle SSH tunnel: %s (idle %.0fs)", key, tunnel.idle_seconds)
+        return len(to_remove)
 
     async def close_all(self):
         for tunnel in self._tunnels.values():

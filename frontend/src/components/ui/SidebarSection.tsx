@@ -104,7 +104,7 @@ export function SidebarSection({
             size={14}
             className="text-text-tertiary shrink-0"
           />
-          <span className="flex-1 text-[11.5px] font-medium text-text-secondary">
+          <span className="flex-1 text-[11px] font-medium text-text-secondary">
             {title}
           </span>
           {count !== undefined && count > 0 && (

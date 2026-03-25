@@ -34,21 +34,21 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  pending: "text-zinc-500",
-  running: "text-blue-400",
-  passed: "text-emerald-400",
-  failed: "text-red-400",
-  checkpoint: "text-amber-400",
-  skipped: "text-zinc-600",
+  pending: "text-text-tertiary",
+  running: "text-accent",
+  passed: "text-success",
+  failed: "text-error",
+  checkpoint: "text-warning",
+  skipped: "text-text-muted",
 };
 
 const STATUS_BG: Record<string, string> = {
-  pending: "bg-zinc-800",
-  running: "bg-blue-900/30 border-blue-700/30",
-  passed: "bg-emerald-900/20 border-emerald-700/20",
-  failed: "bg-red-900/20 border-red-700/20",
-  checkpoint: "bg-amber-900/20 border-amber-700/20",
-  skipped: "bg-zinc-800/50",
+  pending: "bg-surface-2",
+  running: "bg-accent-muted border-border-default",
+  passed: "bg-success-muted border-border-default",
+  failed: "bg-error-muted border-border-default",
+  checkpoint: "bg-warning-muted border-border-default",
+  skipped: "bg-surface-2/50",
 };
 
 export function StageProgress({
@@ -70,7 +70,7 @@ export function StageProgress({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
+      <div className="flex items-center justify-between text-xs text-text-secondary mb-1">
         <span className="font-medium">Pipeline Progress</span>
         <span>
           {done}/{total} stages
@@ -81,7 +81,7 @@ export function StageProgress({
         {stages.map((stage, idx) => (
           <div
             key={stage.id}
-            className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-sm ${STATUS_BG[stage.status] || "bg-zinc-800"}`}
+            className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-sm ${STATUS_BG[stage.status] || "bg-surface-2"}`}
           >
             <div className="flex flex-col items-center pt-0.5">
               <span className={`text-base leading-none font-mono ${STATUS_COLOR[stage.status]}`}>
@@ -92,7 +92,7 @@ export function StageProgress({
                 )}
               </span>
               {idx < stages.length - 1 && (
-                <div className="w-px h-3 bg-zinc-700 mt-1" />
+                <div className="w-px h-3 bg-surface-3 mt-1" />
               )}
             </div>
 
@@ -100,19 +100,19 @@ export function StageProgress({
               <div className="flex items-center gap-2">
                 <span
                   className={`font-medium truncate ${
-                    stage.status === "pending" ? "text-zinc-500" : "text-zinc-200"
+                    stage.status === "pending" ? "text-text-tertiary" : "text-text-primary"
                   }`}
                   title={stage.description}
                 >
                   {stage.description}
                 </span>
                 {!compact && (
-                  <span className="text-[10px] text-zinc-600 shrink-0">{stage.tool}</span>
+                  <span className="text-[10px] text-text-muted shrink-0">{stage.tool}</span>
                 )}
               </div>
 
               {stage.status === "passed" && (stage.rowCount !== undefined || stage.columns) && !compact && (
-                <div className="text-xs text-zinc-500 mt-0.5">
+                <div className="text-xs text-text-tertiary mt-0.5">
                   {stage.rowCount !== undefined && <span>{stage.rowCount} rows</span>}
                   {stage.columns && (
                     <span className="ml-2 truncate">
@@ -124,11 +124,11 @@ export function StageProgress({
               )}
 
               {stage.status === "failed" && stage.error && (
-                <div className="text-xs text-red-400/80 mt-0.5 truncate" title={stage.error}>{stage.error}</div>
+                <div className="text-xs text-error/80 mt-0.5 truncate" title={stage.error}>{stage.error}</div>
               )}
 
               {stage.warnings && stage.warnings.length > 0 && (
-                <div className="text-xs text-amber-400/70 mt-0.5 break-words">
+                <div className="text-xs text-warning/70 mt-0.5 break-words">
                   {stage.warnings.join("; ")}
                 </div>
               )}
@@ -145,7 +145,7 @@ export function StageProgress({
               {onContinue && checkpointStageId && (
                 <button
                   onClick={onContinue}
-                  className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-md transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-success hover:bg-success text-white rounded-md transition-colors"
                 >
                   Continue
                 </button>
@@ -153,7 +153,7 @@ export function StageProgress({
               {onModify && (
                 <button
                   onClick={() => setShowModify(true)}
-                  className="px-3 py-1.5 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-warning hover:bg-warning text-white rounded-md transition-colors"
                 >
                   Modify
                 </button>
@@ -161,7 +161,7 @@ export function StageProgress({
               {onRetry && (
                 <button
                   onClick={onRetry}
-                  className="px-3 py-1.5 text-xs font-medium bg-zinc-600 hover:bg-zinc-500 text-white rounded-md transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-surface-3 hover:bg-surface-3/80 text-white rounded-md transition-colors"
                 >
                   Retry
                 </button>
@@ -174,7 +174,7 @@ export function StageProgress({
                 value={modifyText}
                 onChange={(e) => setModifyText(e.target.value)}
                 placeholder="Describe what to change…"
-                className="flex-1 px-3 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-md text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600"
+                className="flex-1 px-3 py-1.5 text-xs bg-surface-2 border border-border-default rounded-md text-text-primary placeholder-text-muted focus:outline-none focus:border-warning"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && modifyText.trim()) {
                     onModify?.(modifyText.trim());
@@ -191,7 +191,7 @@ export function StageProgress({
                     setShowModify(false);
                   }
                 }}
-                className="px-3 py-1.5 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-colors"
+                className="px-3 py-1.5 text-xs font-medium bg-warning hover:bg-warning text-white rounded-md transition-colors"
               >
                 Send
               </button>
@@ -200,7 +200,7 @@ export function StageProgress({
                   setShowModify(false);
                   setModifyText("");
                 }}
-                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-300"
+                className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
               >
                 Cancel
               </button>

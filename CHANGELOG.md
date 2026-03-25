@@ -7,6 +7,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Design system documentation** (`DESIGN_SYSTEM.md`) — Comprehensive visual guide covering semantic color tokens, typography scale, spacing, border-radius, shadows, icons, button variants, form inputs, cards, modals, tooltips, toasts, status indicators, animations, responsive rules, and accessibility guidelines
+- **Frontend design system skill** (`.cursor/skills/frontend-design-system/SKILL.md`) — Cursor agent skill that enforces design system compliance on all future frontend work
+- **Celery worker infrastructure** (`backend/app/worker.py`, `backend/app/core/task_queue.py`, `backend/app/core/cache.py`) — Redis-backed task queue with shared cache layer for background job processing
+
+### Changed
+- **Full design system migration** (68 frontend files) — Migrated all raw Tailwind palette classes (`zinc-*`, `blue-*`, `red-*`, `emerald-*`, `amber-*`, `purple-*`, etc.) to semantic design tokens (`surface-*`, `text-*`, `border-*`, `accent`, `success`, `error`, `warning`, `info`). Zero raw palette classes remain in component files
+- **Typography scale enforcement** — Eliminated all off-scale font sizes: `text-[8px]`/`text-[9px]` → `text-[10px]`, `text-[11.5px]` → `text-[11px]`, `text-[12px]`/`text-[13px]` → `text-sm`, legal page h1 `text-3xl` → `text-2xl`
+- **Card/panel border-radius standardization** — All card and panel containers now use `rounded-xl`; form inputs use `rounded-lg`; modals use `rounded-lg`
+- **Modal accessibility** — OnboardingWizard now has `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, focus trap, and Escape-to-close. WrongDataModal updated with `aria-labelledby` and correct shadow level
+- **Toast styling** — Success/error/info toast variants now use semantic tokens instead of raw palette colors
+- **Button focus rings** — ConfirmModal Cancel/Confirm buttons now have `focus-visible:ring` styles
+- **Shadow standardization** — Eliminated `shadow-2xl` (modals → `shadow-xl`), `shadow-md` (LogPanel toggle → `shadow-lg`)
+- **Batch service refactored** for Celery task queue support with improved error handling
+
+### Fixed
+- **Missing ARIA labels** — Added `aria-label` to icon-only buttons in InviteManager, LearningsPanel, ScheduleManager, NoteCard, DashboardBuilder, AccountMenu, LlmModelSelector, and OnboardingWizard
+- **Missing `transition-colors`** — Added smooth color transitions to interactive elements in StageProgress, Sidebar, NotificationBell
+- **ActionCard `aria-expanded`** — Expand/collapse button now correctly announces its state to screen readers
+- **ConfirmModal typing input** — Added `aria-label` for the confirmation phrase input
+- **SessionContinuationBanner invalid tokens** — Fixed references to non-existent tokens (`text-text-2`, `bg-border`) → valid semantic tokens
+- **Test assertions updated** — VerificationBadge and ConfirmModal tests updated to match semantic token class names
+
+### Added
 - **Transactional emails via Resend** (`backend/app/services/email_service.py`) — Three email types: welcome email on registration, invite notification when a project owner invites a collaborator, and acceptance confirmation when an invite is accepted. Uses the Resend Python SDK with `asyncio.to_thread()` for async compatibility. Idempotency keys prevent duplicate sends. Gracefully no-ops when `RESEND_API_KEY` is not configured. New env vars: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_URL`
 - **Session rotation** (`backend/app/services/session_summarizer.py`) — Automatic context-aware session rotation when chat history approaches the context window limit. Summarizes the old session via LLM, creates a new session with a continuation banner linking back to the original. Frontend `SessionContinuationBanner` component shows the transition. Cost estimate endpoint now includes `rotation_imminent` flag. Configurable via `SESSION_ROTATION_ENABLED`, `SESSION_ROTATION_THRESHOLD_PCT`, `SESSION_ROTATION_SUMMARY_MAX_TOKENS`
 - **Context usage tracking in AgentResponse** — `context_usage_pct` field added to `AgentResponse` so the frontend can display how much of the context window has been consumed

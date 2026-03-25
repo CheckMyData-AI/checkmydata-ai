@@ -74,12 +74,12 @@ class ChartErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="bg-zinc-900 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
+        <div className="bg-surface-1 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
           <div className="text-center space-y-2">
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-text-secondary">
               Chart could not be rendered
             </p>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-text-tertiary">
               Try switching to Table view using the toolbar above
             </p>
           </div>
@@ -109,8 +109,8 @@ export function ChartRenderer({ config }: ChartRendererProps) {
 
   if (!validateChartData(chartData)) {
     return (
-      <div className="bg-zinc-900 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
-        <p className="text-sm text-zinc-400">No chart data available</p>
+      <div className="bg-surface-1 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
+        <p className="text-sm text-text-secondary">No chart data available</p>
       </div>
     );
   }
@@ -187,7 +187,7 @@ export function ChartRenderer({ config }: ChartRendererProps) {
 
   return (
     <ChartErrorBoundary chartType={chartType}>
-      <div className="bg-zinc-900 rounded-lg p-4 min-h-[18rem] max-h-96 min-w-0 w-full">
+      <div className="bg-surface-1 rounded-lg p-4 min-h-[18rem] max-h-96 min-w-0 w-full">
         {chartType === "bar" && (
           <Bar data={data as never} options={options as never} />
         )}
@@ -202,7 +202,7 @@ export function ChartRenderer({ config }: ChartRendererProps) {
         )}
         {!["bar", "line", "pie", "scatter"].includes(chartType) && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-text-secondary">
               Unsupported chart type: &ldquo;{chartType}&rdquo;. Try Table view.
             </p>
           </div>

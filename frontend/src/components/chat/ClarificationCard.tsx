@@ -26,32 +26,32 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
 
   if (submitted) {
     return (
-      <div className="mt-3 p-3 rounded-lg border border-zinc-700/50 bg-zinc-800/50">
-        <p className="text-xs text-zinc-400">You answered: {answer}</p>
+      <div className="mt-3 p-3 rounded-xl border border-border-default bg-surface-2">
+        <p className="text-xs text-text-secondary">You answered: {answer}</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-3 p-3 rounded-lg border border-blue-800/40 bg-blue-950/20">
+    <div className="mt-3 p-3 rounded-xl border border-border-default bg-accent-muted">
       {data.context && (
-        <p className="text-xs text-zinc-400 mb-2">{data.context}</p>
+        <p className="text-xs text-text-secondary mb-2">{data.context}</p>
       )}
-      <p className="text-sm font-medium text-zinc-200 mb-3">{data.question}</p>
+      <p className="text-sm font-medium text-text-primary mb-3">{data.question}</p>
 
       {data.question_type === "yes_no" && (
         <div className="flex gap-2">
           <button
             disabled={submitted}
             onClick={() => { setSubmitted(true); setAnswer("Yes"); onSubmit("Yes"); }}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-900/40 text-emerald-400 border border-emerald-800/40 hover:bg-emerald-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-success-muted text-success border border-border-default hover:bg-success-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Yes
           </button>
           <button
             disabled={submitted}
             onClick={() => { setSubmitted(true); setAnswer("No"); onSubmit("No"); }}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-red-900/40 text-red-400 border border-red-800/40 hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-error-muted text-error border border-border-default hover:bg-error-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             No
           </button>
@@ -67,8 +67,8 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
               onClick={() => { setSubmitted(true); setAnswer(option); onSubmit(option); }}
               className={`block w-full text-left px-3 py-2 rounded-md text-xs border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 answer === option
-                  ? "border-blue-600 bg-blue-900/30 text-blue-300"
-                  : "border-zinc-700/50 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"
+                  ? "border-accent bg-accent-muted text-accent-hover"
+                  : "border-border-default bg-surface-2 text-text-primary hover:bg-surface-3"
               }`}
             >
               {option}
@@ -87,12 +87,12 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
             placeholder="Type your answer..."
             aria-label="Your answer"
             maxLength={2000}
-            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-600"
+            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>
@@ -108,12 +108,12 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="Enter a number..."
             aria-label="Numeric answer"
-            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-600"
+            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>

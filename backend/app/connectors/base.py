@@ -83,6 +83,47 @@ class SchemaInfo:
     db_type: str = ""
     db_name: str = ""
 
+    def fingerprint(self) -> dict[str, str]:
+        """Return a table-name -> column-signature map for incremental diff.
+
+        The signature is a hash of column names, types, and FK targets so
+        we can detect which tables actually changed between introspections.
+        """
+        import hashlib
+
+        result: dict[str, str] = {}
+        for table in self.tables:
+            parts = []
+            for col in sorted(table.columns, key=lambda c: c.name):
+                parts.append(f"{col.name}:{col.data_type}:{col.is_nullable}")
+            for fk in sorted(table.foreign_keys, key=lambda f: f.column):
+                parts.append(f"fk:{fk.column}->{fk.references_table}.{fk.references_column}")
+            sig = hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
+            result[f"{table.schema}.{table.name}" if table.schema else table.name] = sig
+        return result
+
+    def diff(self, previous: "SchemaInfo") -> dict:
+        """Compare against a *previous* schema and return changes.
+
+        Returns ``{"added": [...], "removed": [...], "changed": [...], "unchanged": [...]}``.
+        """
+        old_fp = previous.fingerprint()
+        new_fp = self.fingerprint()
+        added = sorted(set(new_fp) - set(old_fp))
+        removed = sorted(set(old_fp) - set(new_fp))
+        changed = sorted(
+            t for t in (set(new_fp) & set(old_fp)) if new_fp[t] != old_fp[t]
+        )
+        unchanged = sorted(
+            t for t in (set(new_fp) & set(old_fp)) if new_fp[t] == old_fp[t]
+        )
+        return {
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "unchanged": unchanged,
+        }
+
 
 MAX_RESULT_ROWS = 10_000
 

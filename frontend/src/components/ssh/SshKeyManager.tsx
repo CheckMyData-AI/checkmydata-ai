@@ -36,7 +36,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[9px] bg-surface-2 text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors"
+      className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[10px] bg-surface-2 text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors"
       title="Copy to clipboard"
     >
       {copied ? (
@@ -302,12 +302,12 @@ export function SshKeyManager() {
                 <span className="text-xs font-medium text-text-secondary truncate">
                   {k.name}
                 </span>
-                <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono uppercase">
+                <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono uppercase">
                   {k.key_type}
                 </span>
               </div>
               <span
-                className="text-[9px] text-text-muted font-mono truncate block mt-0.5"
+                className="text-[10px] text-text-muted font-mono truncate block mt-0.5"
                 title={k.fingerprint}
               >
                 {truncateFingerprint(k.fingerprint)}

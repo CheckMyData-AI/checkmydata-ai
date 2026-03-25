@@ -58,11 +58,11 @@ export function ToolCallIndicator({ events }: ToolCallIndicatorProps) {
   if (recentStarted.length <= 1) {
     const label = resolveLabel(latest);
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-400 min-w-0">
+      <div className="flex items-center gap-2 text-xs text-text-secondary min-w-0">
         {isActive && (
           <span className="relative flex h-2 w-2 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
           </span>
         )}
         <span className="truncate">{label}…</span>
@@ -79,13 +79,13 @@ export function ToolCallIndicator({ events }: ToolCallIndicatorProps) {
           <div key={`${ev.step}-${idx}`} className="flex items-center gap-2 text-xs">
             {isCurrent ? (
               <span className="relative flex h-2 w-2 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
               </span>
             ) : (
-              <span className="flex h-2 w-2 shrink-0 rounded-full bg-zinc-600" />
+              <span className="flex h-2 w-2 shrink-0 rounded-full bg-surface-3" />
             )}
-            <span className={isCurrent ? "text-zinc-300" : "text-zinc-500"}>
+            <span className={isCurrent ? "text-text-primary" : "text-text-tertiary"}>
               {label}{isCurrent ? "…" : ""}
             </span>
           </div>

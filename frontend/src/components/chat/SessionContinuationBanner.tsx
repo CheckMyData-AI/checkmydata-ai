@@ -20,13 +20,13 @@ export function SessionContinuationBanner({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-2 text-xs text-text-2 hover:text-text-1 transition-colors group cursor-pointer"
+        className="flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary transition-colors group cursor-pointer"
       >
-        <span className="h-px w-12 bg-border group-hover:bg-text-2 transition-colors" />
+        <span className="h-px w-12 bg-border-subtle group-hover:bg-surface-3 transition-colors" />
         <span>
           Conversation continued ({messageCount} messages summarized)
         </span>
-        <span className="h-px w-12 bg-border group-hover:bg-text-2 transition-colors" />
+        <span className="h-px w-12 bg-border-subtle group-hover:bg-surface-3 transition-colors" />
         <svg
           className={`w-3 h-3 transition-transform ${expanded ? "rotate-180" : ""}`}
           viewBox="0 0 12 12"
@@ -40,14 +40,14 @@ export function SessionContinuationBanner({
       </button>
 
       {expanded && (
-        <div className="mt-1.5 max-w-md text-xs text-text-2 bg-surface-2 rounded-lg px-3 py-2 border border-border">
+        <div className="mt-1.5 max-w-md text-xs text-text-secondary bg-surface-2 rounded-lg px-3 py-2 border border-border-subtle">
           {summaryPreview && <p className="mb-1">{summaryPreview}</p>}
           {topics && topics.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {topics.map((t) => (
                 <span
                   key={t}
-                  className="px-1.5 py-0.5 bg-surface-3 rounded text-[10px] text-text-2"
+                  className="px-1.5 py-0.5 bg-surface-3 rounded text-[10px] text-text-secondary"
                 >
                   {t}
                 </span>

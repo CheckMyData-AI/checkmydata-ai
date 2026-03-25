@@ -54,7 +54,7 @@ function VizIcon({ type }: { type: string }) {
 
 export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizToolbarProps) {
   return (
-    <div className="flex items-center flex-wrap gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg w-fit">
+    <div className="flex items-center flex-wrap gap-0.5 p-0.5 bg-surface-1/60 rounded-lg w-fit">
       {VIZ_TYPES.map((vt) => {
         const isActive = activeType === vt.key;
         return (
@@ -66,8 +66,8 @@ export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizT
             aria-label={`Show as ${vt.label}`}
             className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors ${
               isActive
-                ? "bg-blue-600 text-white"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                ? "bg-accent text-white"
+                : "text-text-secondary hover:text-text-primary hover:bg-surface-2"
             } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
           >
             <VizIcon type={vt.icon} />
@@ -76,7 +76,7 @@ export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizT
         );
       })}
       {loading && (
-        <span className="ml-1 w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
+        <span className="ml-1 w-3 h-3 border-2 border-border-default border-t-accent rounded-full animate-spin" />
       )}
     </div>
   );

@@ -361,10 +361,14 @@ async def refresh_schema(
 
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     try:
-        from app.core.orchestrator import Orchestrator
+        from app.connectors.registry import get_connector
 
-        orch = Orchestrator()
-        schema = await orch.refresh_schema(config)
+        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        await connector.connect(config)
+        try:
+            schema = await connector.introspect_schema()
+        finally:
+            await connector.disconnect()
         return {
             "ok": True,
             "tables": len(schema.tables),

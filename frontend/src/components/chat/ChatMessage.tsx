@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import type { Components } from "react-markdown";
 
 const ReactMarkdown = dynamic(() => import("react-markdown"), {
-  loading: () => <span className="text-sm text-zinc-500">Loading…</span>,
+  loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
 });
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { useAppStore } from "@/stores/app-store";
@@ -37,33 +37,33 @@ const mdComponents: Components = {
   a: ({ href, children }) => {
     const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined;
     return (
-      <a href={safeHref} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300 break-all">
+      <a href={safeHref} target="_blank" rel="noopener noreferrer" className="text-accent underline hover:text-accent-hover break-all">
         {children}
       </a>
     );
   },
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-zinc-600 pl-3 my-2 text-zinc-400 italic overflow-hidden break-words">{children}</blockquote>
+    <blockquote className="border-l-2 border-border-default pl-3 my-2 text-text-secondary italic overflow-hidden break-words">{children}</blockquote>
   ),
   code: ({ className, children }) => {
     const isBlock = className?.includes("language-");
     if (isBlock) {
       return <code className="text-xs font-mono">{children}</code>;
     }
-    return <code className="bg-zinc-900 text-zinc-300 px-1 py-0.5 rounded text-xs font-mono break-all">{children}</code>;
+    return <code className="bg-surface-1 text-text-primary px-1 py-0.5 rounded text-xs font-mono break-all">{children}</code>;
   },
   pre: ({ children }) => (
-    <pre className="bg-zinc-900 p-3 rounded-lg overflow-x-auto max-w-full mb-2 last:mb-0">{children}</pre>
+    <pre className="bg-surface-1 p-3 rounded-lg overflow-x-auto max-w-full mb-2 last:mb-0">{children}</pre>
   ),
   table: ({ children }) => (
     <div className="overflow-x-auto mb-2 last:mb-0">
       <table className="text-xs border-collapse w-full">{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead className="border-b border-zinc-700">{children}</thead>,
-  th: ({ children }) => <th className="text-left px-2 py-1 text-zinc-400 font-medium">{children}</th>,
-  td: ({ children }) => <td className="px-2 py-1 border-t border-zinc-800">{children}</td>,
-  hr: () => <hr className="border-zinc-700 my-3" />,
+  thead: ({ children }) => <thead className="border-b border-border-default">{children}</thead>,
+  th: ({ children }) => <th className="text-left px-2 py-1 text-text-secondary font-medium">{children}</th>,
+  td: ({ children }) => <td className="px-2 py-1 border-t border-border-subtle">{children}</td>,
+  hr: () => <hr className="border-border-default my-3" />,
   img: () => null,
 };
 
@@ -141,10 +141,10 @@ function computeSqlComplexity(sql: string): string {
 }
 
 const complexityBadgeColors: Record<string, string> = {
-  simple: "bg-emerald-900/30 text-emerald-400",
-  moderate: "bg-blue-900/30 text-blue-400",
-  complex: "bg-amber-900/30 text-amber-400",
-  expert: "bg-red-900/30 text-red-400",
+  simple: "bg-success-muted text-success",
+  moderate: "bg-accent-muted text-accent",
+  complex: "bg-warning-muted text-warning",
+  expert: "bg-error-muted text-error",
 };
 
 export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, sessionId }: ChatMessageProps) {
@@ -330,11 +330,11 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[95%] md:max-w-[80%] min-w-0 overflow-hidden rounded-xl px-3 py-2.5 md:px-4 md:py-3 ${
-          isUser ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-100"
+          isUser ? "bg-accent text-white" : "bg-surface-2 text-text-primary"
         }`}
       >
         {message.stalenessWarning && (
-          <div className="mb-2 px-2 py-1.5 rounded bg-amber-900/20 border border-amber-800/30 text-amber-400 text-xs">
+          <div className="mb-2 px-2 py-1.5 rounded bg-warning-muted border border-border-default text-warning text-xs">
             {message.stalenessWarning}
           </div>
         )}
@@ -345,10 +345,10 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded ${
                 responseType === "sql_result"
-                  ? "bg-blue-900/30 text-blue-400"
+                  ? "bg-accent-muted text-accent"
                   : responseType === "clarification_request"
-                  ? "bg-amber-900/30 text-amber-400"
-                  : "bg-purple-900/30 text-purple-400"
+                  ? "bg-warning-muted text-warning"
+                  : "bg-accent-muted text-accent"
               }`}
             >
               {responseType === "sql_result" ? "SQL Result" : responseType === "clarification_request" ? "Question" : "Knowledge"}
@@ -378,19 +378,19 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {/* SQL Query — only for sql_result responses */}
         {message.query && isSqlResult && (
           <details className="mt-3 text-xs">
-            <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300 flex items-center gap-2">
+            <summary className="cursor-pointer text-text-secondary hover:text-text-primary flex items-center gap-2">
               View SQL Query
               {sqlComplexity && (
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
                   {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
                 </span>
               )}
             </summary>
-            <pre className="mt-2 p-3 bg-zinc-900 rounded-lg overflow-x-auto max-w-full text-zinc-300">
+            <pre className="mt-2 p-3 bg-surface-1 rounded-lg overflow-x-auto max-w-full text-text-primary">
               {message.query}
             </pre>
             {message.queryExplanation && (
-              <p className="mt-1 text-zinc-400">{message.queryExplanation}</p>
+              <p className="mt-1 text-text-secondary">{message.queryExplanation}</p>
             )}
             <SQLExplainer
               sql={message.query}
@@ -402,14 +402,14 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {/* Text / Visual toggle + Viz toolbar — for sql_result responses with visualization */}
         {isSqlResult && hasViz && (
           <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-0.5 p-0.5 bg-zinc-900/60 rounded-lg">
+            <div className="flex items-center gap-0.5 p-0.5 bg-surface-1/60 rounded-lg">
               <button
                 onClick={() => setViewMode("viz")}
                 aria-label="Show visualization"
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   viewMode === "viz"
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200"
+                    ? "bg-surface-3 text-text-primary"
+                    : "text-text-secondary hover:text-text-primary"
                 }`}
               >
                 Visual
@@ -419,8 +419,8 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                 aria-label="Show data as text"
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   viewMode === "text"
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200"
+                    ? "bg-surface-3 text-text-primary"
+                    : "text-text-secondary hover:text-text-primary"
                 }`}
               >
                 Text
@@ -445,7 +445,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   <VizRenderer data={overrideViz ?? message.visualization!} />
                   <button
                     onClick={() => setMobileVizExpanded(false)}
-                    className="mt-1.5 text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors"
+                    className="mt-1.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
                   >
                     Collapse chart
                   </button>
@@ -453,7 +453,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               ) : (
                 <button
                   onClick={() => setMobileVizExpanded(true)}
-                  className="w-full py-3 min-h-[44px] text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 rounded-lg border border-zinc-700/30 transition-colors text-center"
+                  className="w-full py-3 min-h-[44px] text-xs text-text-secondary hover:text-text-primary bg-surface-1/40 rounded-lg border border-border-default/30 transition-colors text-center"
                 >
                   Tap to view chart
                 </button>
@@ -494,13 +494,13 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               <button
                 onClick={handleSummarize}
                 disabled={summaryLoading}
-                className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors disabled:opacity-50"
+                className="text-[10px] px-2 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
               >
                 {summaryLoading ? "Generating..." : "Summary"}
               </button>
             )}
             {summaryText && (
-              <div className="mt-1 p-2 rounded-lg bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-300 leading-relaxed">
+              <div className="mt-1 p-2 rounded-lg bg-surface-1/60 border border-border-subtle text-[11px] text-text-primary leading-relaxed">
                 {summaryText}
               </div>
             )}
@@ -509,10 +509,10 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
         {/* Knowledge sources — prominent for knowledge responses */}
         {!isUser && hasKnowledgeSources && responseType === "knowledge" && (
-          <div className="mt-3 border-t border-zinc-700/50 pt-2">
+          <div className="mt-3 border-t border-border-default/50 pt-2">
             <button
               onClick={() => setShowSources((v) => !v)}
-              className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
+              className="text-xs text-accent hover:text-accent-hover flex items-center gap-1"
               aria-expanded={showSources}
               aria-label={`${showSources ? "Hide" : "Show"} knowledge sources`}
             >
@@ -526,16 +526,16 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                 {(metadata?.rag_sources ?? []).map((src, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-1.5 py-1 px-2 rounded bg-zinc-900/50 text-[11px] text-zinc-400"
+                    className="flex items-center gap-1.5 py-1 px-2 rounded bg-surface-1/50 text-[11px] text-text-secondary"
                   >
-                    <span className="text-[9px] uppercase px-1 py-px rounded bg-purple-900/30 text-purple-400">
+                    <span className="text-[10px] uppercase px-1 py-px rounded bg-accent-muted text-accent">
                       {src.doc_type || "doc"}
                     </span>
                     <span className="truncate flex-1" title={src.source_path}>
                       {src.source_path}
                     </span>
                     {src.distance != null && (
-                      <span className="ml-auto text-zinc-600 tabular-nums">
+                      <span className="ml-auto text-text-muted tabular-nums">
                         {(1 - src.distance).toFixed(2)}
                       </span>
                     )}
@@ -548,11 +548,11 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
         {message.error && (
           <div className="mt-2 flex items-center gap-2">
-            <p className="text-xs text-red-400">Error: {message.error}</p>
+            <p className="text-xs text-error">Error: {message.error}</p>
             {onRetry && responseType === "error" && (
               <button
                 onClick={onRetry}
-                className="text-[10px] px-2 py-0.5 rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+                className="text-[10px] px-2 py-0.5 rounded bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
               >
                 Retry
               </button>
@@ -570,8 +570,8 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               disabled={feedbackLoading}
               className={`p-1 rounded transition-colors disabled:opacity-50 ${
                 userRating === 1
-                  ? "text-emerald-400 bg-emerald-900/30"
-                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                  ? "text-success bg-success-muted"
+                  : "text-text-tertiary hover:text-text-primary hover:bg-surface-2"
               }`}
               title="Helpful"
             >
@@ -586,8 +586,8 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
               disabled={feedbackLoading}
               className={`p-1 rounded transition-colors disabled:opacity-50 ${
                 userRating === -1
-                  ? "text-red-400 bg-red-900/30"
-                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                  ? "text-error bg-error-muted"
+                  : "text-text-tertiary hover:text-text-primary hover:bg-surface-2"
               }`}
               title="Not helpful"
             >
@@ -604,7 +604,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   className={`p-1 rounded transition-colors disabled:opacity-50 ml-1 ${
                     noteSaved
                       ? "text-accent bg-accent-muted"
-                      : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-2"
                   }`}
                   title={noteSaved ? "Saved to notes" : "Save to notes"}
                 >
@@ -616,8 +616,8 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   disabled={summaryLoading}
                   className={`p-1 rounded transition-colors disabled:opacity-50 ml-0.5 ${
                     summaryText
-                      ? "text-violet-400 bg-violet-900/20"
-                      : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                      ? "text-info bg-info-muted"
+                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-2"
                   }`}
                   title="Executive summary"
                 >
@@ -632,9 +632,9 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
         {/* Executive summary */}
         {summaryOpen && isSqlResult && (
-          <div className="mt-2 p-3 bg-violet-950/20 border border-violet-800/30 rounded-lg text-xs">
+          <div className="mt-2 p-3 bg-info-muted border border-border-default rounded-lg text-xs">
             {summaryLoading ? (
-              <div className="flex items-center gap-2 text-zinc-400">
+              <div className="flex items-center gap-2 text-text-secondary">
                 <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -644,7 +644,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             ) : summaryText ? (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] font-medium text-violet-400">Executive Summary</span>
+                  <span className="text-[10px] font-medium text-info">Executive Summary</span>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(summaryText).then(
@@ -652,12 +652,12 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                         () => toast("Failed to copy", "error"),
                       );
                     }}
-                    className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                    className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
                   >
                     Copy
                   </button>
                 </div>
-                <p className="text-zinc-300 leading-relaxed">{summaryText}</p>
+                <p className="text-text-primary leading-relaxed">{summaryText}</p>
               </div>
             ) : null}
           </div>
@@ -667,36 +667,36 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
         {!isUser && metadata && (metadata.row_count != null || metadata.execution_time_ms != null || (metadata.total_attempts && metadata.total_attempts > 0) || metadata.token_usage) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {metadata.execution_time_ms != null && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.execution_time_ms < 1000
                   ? `${Math.round(metadata.execution_time_ms)}ms`
                   : `${(metadata.execution_time_ms / 1000).toFixed(1)}s`}
               </span>
             )}
             {metadata.row_count != null && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.row_count} row{metadata.row_count !== 1 ? "s" : ""}
               </span>
             )}
             {metadata.viz_type && metadata.viz_type !== "text" && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400">
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.viz_type}
               </span>
             )}
             {metadata.total_attempts != null && metadata.total_attempts > 1 && (
-              <span className={`hidden md:inline text-[10px] px-1.5 py-0.5 rounded ${metadata.error ? "bg-red-900/30 text-red-400" : "bg-emerald-900/30 text-emerald-400"}`}>
+              <span className={`hidden md:inline text-[10px] px-1.5 py-0.5 rounded ${metadata.error ? "bg-error-muted text-error" : "bg-success-muted text-success"}`}>
                 {metadata.error
                   ? `Failed after ${metadata.total_attempts} attempts`
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
             {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
                 {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} in / {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()} out
               </span>
             )}
             {metadata.token_usage?.estimated_cost_usd != null && Number(metadata.token_usage.estimated_cost_usd) > 0 && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400">
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-info-muted text-info">
                 ${Number(metadata.token_usage.estimated_cost_usd) < 0.01
                   ? Number(metadata.token_usage.estimated_cost_usd).toFixed(4)
                   : Number(metadata.token_usage.estimated_cost_usd).toFixed(2)}
@@ -704,7 +704,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             )}
             <button
               onClick={() => setShowDetails((v) => !v)}
-              className="text-[10px] text-zinc-500 hover:text-zinc-300 ml-1"
+              className="text-[10px] text-text-tertiary hover:text-text-primary ml-1"
               aria-expanded={showDetails}
               aria-label={showDetails ? "Hide message details" : "Show message details"}
             >
@@ -715,7 +715,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
 
         {/* Expandable details */}
         {showDetails && metadata && (
-          <div className="mt-2 p-2 bg-zinc-900/50 rounded text-[10px] text-zinc-500 space-y-1">
+          <div className="mt-2 p-2 bg-surface-1/50 rounded text-[10px] text-text-tertiary space-y-1">
             {metadata.workflow_id && <div>Workflow: {metadata.workflow_id}</div>}
             {metadata.response_type && <div>Response type: {metadata.response_type}</div>}
             {metadata.execution_time_ms != null && (
@@ -723,11 +723,11 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             )}
             {metadata.row_count != null && <div>Rows: {metadata.row_count}</div>}
             {metadata.viz_type && <div>Visualization: {metadata.viz_type}</div>}
-            {metadata.error && <div className="text-red-400">Error: {metadata.error}</div>}
+            {metadata.error && <div className="text-error">Error: {metadata.error}</div>}
 
             {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
-              <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
-                <div className="font-medium text-zinc-400 mb-1">Token Usage</div>
+              <div className="mt-1.5 border-t border-border-subtle pt-1.5">
+                <div className="font-medium text-text-secondary mb-1">Token Usage</div>
                 <div>Prompt: {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()}</div>
                 <div>Completion: {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}</div>
                 <div>Total: {Number(metadata.token_usage.total_tokens).toLocaleString()}</div>
@@ -744,23 +744,23 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             )}
 
             {metadata.rag_sources && metadata.rag_sources.length > 0 && responseType !== "knowledge" && (
-              <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
-                <div className="font-medium text-zinc-400 mb-1">
+              <div className="mt-1.5 border-t border-border-subtle pt-1.5">
+                <div className="font-medium text-text-secondary mb-1">
                   Code Context ({metadata.rag_sources.length} sources)
                 </div>
                 {metadata.rag_sources.map((src, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-1.5 py-0.5 text-zinc-500"
+                    className="flex items-center gap-1.5 py-0.5 text-text-tertiary"
                   >
-                    <span className="text-[9px] uppercase px-1 py-px rounded bg-zinc-800 text-zinc-500">
+                    <span className="text-[10px] uppercase px-1 py-px rounded bg-surface-2 text-text-tertiary">
                       {src.doc_type || "doc"}
                     </span>
                     <span className="truncate flex-1" title={src.source_path}>
                       {src.source_path?.split("/").pop() || src.source_path}
                     </span>
                     {src.distance != null && (
-                      <span className="ml-auto text-zinc-600 tabular-nums">
+                      <span className="ml-auto text-text-muted tabular-nums">
                         {(1 - src.distance).toFixed(2)} sim
                       </span>
                     )}
@@ -770,8 +770,8 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             )}
 
             {metadata.attempts && metadata.attempts.length > 0 && (
-              <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
-                <div className="font-medium text-zinc-400 mb-1">
+              <div className="mt-1.5 border-t border-border-subtle pt-1.5">
+                <div className="font-medium text-text-secondary mb-1">
                   Attempt History ({metadata.attempts.length})
                 </div>
                 {metadata.attempts.map((att) => (
@@ -779,26 +779,26 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                     key={att.attempt}
                     className={`p-1.5 rounded mb-1 ${
                       att.error
-                        ? "bg-red-950/30 border border-red-900/30"
-                        : "bg-emerald-950/30 border border-emerald-900/30"
+                        ? "bg-error-muted border border-border-default"
+                        : "bg-success-muted border border-border-default"
                     }`}
                   >
                     <div className="flex items-center gap-1.5">
                       <span className="font-medium">#{att.attempt}</span>
                       {att.error ? (
-                        <span className="text-red-400">{att.error_type}: {att.error}</span>
+                        <span className="text-error">{att.error_type}: {att.error}</span>
                       ) : (
-                        <span className="text-emerald-400">Success</span>
+                        <span className="text-success">Success</span>
                       )}
                       {att.elapsed_ms != null && (
-                        <span className="ml-auto text-zinc-600">
+                        <span className="ml-auto text-text-muted">
                           {att.elapsed_ms < 1000
                             ? `${Math.round(att.elapsed_ms)}ms`
                             : `${(att.elapsed_ms / 1000).toFixed(1)}s`}
                         </span>
                       )}
                     </div>
-                    <pre className="mt-0.5 text-zinc-600 truncate max-w-full overflow-hidden">
+                    <pre className="mt-0.5 text-text-muted truncate max-w-full overflow-hidden">
                       {att.query?.slice(0, 200)}
                     </pre>
                   </div>
@@ -807,18 +807,18 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
             )}
 
             {toolCalls.length > 0 && (
-              <div className="mt-1.5 border-t border-zinc-800 pt-1.5">
-                <div className="font-medium text-zinc-400 mb-1">
+              <div className="mt-1.5 border-t border-border-subtle pt-1.5">
+                <div className="font-medium text-text-secondary mb-1">
                   Tool Calls ({toolCalls.length})
                 </div>
                 {toolCalls.map((tc: { tool?: string; arguments?: Record<string, unknown>; result_preview?: string }, idx: number) => (
                   <div
                     key={idx}
-                    className="p-1.5 rounded mb-1 bg-cyan-950/20 border border-cyan-900/20"
+                    className="p-1.5 rounded mb-1 bg-info-muted border border-border-default"
                   >
-                    <span className="text-cyan-400 font-medium">{tc.tool}</span>
+                    <span className="text-info font-medium">{tc.tool}</span>
                     {tc.arguments && (
-                      <pre className="mt-0.5 text-zinc-600 truncate max-w-full overflow-hidden">
+                      <pre className="mt-0.5 text-text-muted truncate max-w-full overflow-hidden">
                         {JSON.stringify(tc.arguments).slice(0, 150)}
                       </pre>
                     )}

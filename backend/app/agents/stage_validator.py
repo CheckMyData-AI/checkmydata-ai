@@ -43,6 +43,9 @@ class StageValidationOutcome:
 class StageValidator:
     """Validates a single stage result against its plan-defined criteria."""
 
+    def __init__(self, *, strict_row_bounds: bool = False) -> None:
+        self._strict_row_bounds = strict_row_bounds
+
     def validate(
         self,
         stage: PlanStage,
@@ -63,11 +66,20 @@ class StageValidator:
             if missing:
                 outcome.fail(f"Missing expected columns: {sorted(missing)}")
 
+        strict = self._strict_row_bounds or getattr(v, "strict_row_bounds", False)
         if qr:
             if v.min_rows is not None and qr.row_count < v.min_rows:
-                outcome.warn(f"Expected at least {v.min_rows} rows, got {qr.row_count}")
+                msg = f"Expected at least {v.min_rows} rows, got {qr.row_count}"
+                if strict:
+                    outcome.fail(msg)
+                else:
+                    outcome.warn(msg)
             if v.max_rows is not None and qr.row_count > v.max_rows:
-                outcome.warn(f"Got {qr.row_count} rows, expected at most {v.max_rows}")
+                msg = f"Got {qr.row_count} rows, expected at most {v.max_rows}"
+                if strict:
+                    outcome.fail(msg)
+                else:
+                    outcome.warn(msg)
 
         if v.cross_stage_checks:
             for check in v.cross_stage_checks:

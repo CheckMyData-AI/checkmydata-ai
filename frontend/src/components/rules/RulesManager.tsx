@@ -215,12 +215,12 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
                   {rule.name}
                 </span>
                 {rule.is_default && (
-                  <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
+                  <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
                     default
                   </span>
                 )}
                 {!rule.project_id && (
-                  <span className="shrink-0 text-[8px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
+                  <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
                     global
                   </span>
                 )}

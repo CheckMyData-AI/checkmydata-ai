@@ -8,6 +8,18 @@ from app.models.token_usage import TokenUsage
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DAILY_TOKEN_LIMIT = 0
+DEFAULT_MONTHLY_TOKEN_LIMIT = 0
+
+
+class BudgetExceededError(Exception):
+    """Raised when a user or project exceeds their token budget."""
+
+    def __init__(self, message: str, *, used: int, limit: int):
+        super().__init__(message)
+        self.used = used
+        self.limit = limit
+
 
 class UsageService:
     async def record_usage(
@@ -43,6 +55,69 @@ class UsageService:
         db.add(row)
         await db.commit()
         return row
+
+    async def check_budget(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        *,
+        daily_limit: int = DEFAULT_DAILY_TOKEN_LIMIT,
+        monthly_limit: int = DEFAULT_MONTHLY_TOKEN_LIMIT,
+    ) -> dict:
+        """Check if user is within budget.  Limits of 0 mean unlimited.
+
+        Returns a dict with ``allowed``, ``daily_used``, ``monthly_used``,
+        ``daily_limit``, ``monthly_limit``, and ``daily_remaining`` /
+        ``monthly_remaining`` (``None`` when unlimited).
+        Raises ``BudgetExceededError`` when a non-zero limit is breached.
+        """
+        now = datetime.now(UTC)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        daily_stmt = select(
+            func.coalesce(func.sum(TokenUsage.total_tokens), 0)
+        ).where(
+            TokenUsage.user_id == user_id,
+            TokenUsage.created_at >= today_start,
+        )
+        daily_used = int((await db.execute(daily_stmt)).scalar_one())
+
+        monthly_stmt = select(
+            func.coalesce(func.sum(TokenUsage.total_tokens), 0)
+        ).where(
+            TokenUsage.user_id == user_id,
+            TokenUsage.created_at >= month_start,
+        )
+        monthly_used = int((await db.execute(monthly_stmt)).scalar_one())
+
+        result = {
+            "allowed": True,
+            "daily_used": daily_used,
+            "monthly_used": monthly_used,
+            "daily_limit": daily_limit or None,
+            "monthly_limit": monthly_limit or None,
+            "daily_remaining": (daily_limit - daily_used) if daily_limit else None,
+            "monthly_remaining": (monthly_limit - monthly_used) if monthly_limit else None,
+        }
+
+        if daily_limit and daily_used >= daily_limit:
+            result["allowed"] = False
+            raise BudgetExceededError(
+                f"Daily token budget exceeded ({daily_used:,}/{daily_limit:,})",
+                used=daily_used,
+                limit=daily_limit,
+            )
+
+        if monthly_limit and monthly_used >= monthly_limit:
+            result["allowed"] = False
+            raise BudgetExceededError(
+                f"Monthly token budget exceeded ({monthly_used:,}/{monthly_limit:,})",
+                used=monthly_used,
+                limit=monthly_limit,
+            )
+
+        return result
 
     async def get_period_comparison(
         self,

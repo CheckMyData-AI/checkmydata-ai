@@ -130,7 +130,7 @@ export function KnowledgeDocs() {
                 />
               )}
               <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                <span className="text-[8px] text-text-muted uppercase font-mono shrink-0 leading-none">
+                <span className="text-[10px] text-text-muted uppercase font-mono shrink-0 leading-none">
                   {d.doc_type}
                 </span>
                 <span className={`text-xs truncate ${isViewing ? "text-text-primary" : "text-text-secondary"}`}>

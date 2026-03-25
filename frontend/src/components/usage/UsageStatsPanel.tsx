@@ -17,11 +17,11 @@ function formatCost(usd: number | null): string {
 }
 
 function ChangeBadge({ value }: { value: number | null }) {
-  if (value == null || value === 0) return <span className="text-[10px] text-zinc-500">--</span>;
+  if (value == null || value === 0) return <span className="text-[10px] text-text-tertiary">--</span>;
   const isUp = value > 0;
   return (
     <span
-      className={`text-[10px] font-medium ${isUp ? "text-amber-400" : "text-emerald-400"}`}
+      className={`text-[10px] font-medium ${isUp ? "text-warning" : "text-success"}`}
     >
       {isUp ? "+" : ""}{value.toFixed(1)}%
     </span>
@@ -39,7 +39,7 @@ function MiniBarChart({ data }: { data: { date: string; total_tokens: number }[]
         return (
           <div
             key={d.date}
-            className="flex-1 min-w-[3px] rounded-t bg-violet-500/60 hover:bg-violet-400/80 transition-colors cursor-default"
+            className="flex-1 min-w-[3px] rounded-t bg-accent/60 hover:bg-accent/80 transition-colors cursor-default"
             style={{ height: `${Math.max(pct, 2)}%` }}
             title={`${d.date}: ${d.total_tokens.toLocaleString()} tokens`}
           />
@@ -77,7 +77,7 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
   if (loading) {
     return (
-      <div className="px-2 py-1 text-[10px] text-zinc-500 animate-pulse">
+      <div className="px-2 py-1 text-[10px] text-text-tertiary animate-pulse">
         Loading usage...
       </div>
     );
@@ -85,9 +85,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-red-400 flex items-center gap-2">
+      <div className="px-2 py-1 text-[10px] text-error flex items-center gap-2">
         <span>{error}</span>
-        <button onClick={load} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
+        <button onClick={load} className="text-text-secondary hover:text-text-primary underline">Retry</button>
       </div>
     );
   }
@@ -100,9 +100,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
     return (
       <div className="px-2 py-1 space-y-1">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-zinc-500">30-day tokens</span>
+          <span className="text-[10px] text-text-tertiary">30-day tokens</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-medium text-zinc-300 tabular-nums">
+            <span className="text-[11px] font-medium text-text-primary tabular-nums">
               {formatNumber(cur.total_tokens)}
             </span>
             <ChangeBadge value={change.total_tokens} />
@@ -110,9 +110,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
         </div>
         {cur.estimated_cost_usd != null && cur.estimated_cost_usd > 0 && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-zinc-500">Est. cost</span>
+            <span className="text-[10px] text-text-tertiary">Est. cost</span>
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium text-zinc-300 tabular-nums">
+              <span className="text-[11px] font-medium text-text-primary tabular-nums">
                 {formatCost(cur.estimated_cost_usd)}
               </span>
               <ChangeBadge value={change.estimated_cost_usd} />
@@ -120,9 +120,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-zinc-500">Requests</span>
+          <span className="text-[10px] text-text-tertiary">Requests</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-medium text-zinc-300 tabular-nums">
+            <span className="text-[11px] font-medium text-text-primary tabular-nums">
               {cur.request_count.toLocaleString()}
             </span>
             <ChangeBadge value={change.request_count} />
@@ -157,16 +157,16 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
         />
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-zinc-500">
+      <div className="flex items-center justify-between text-[10px] text-text-tertiary">
         <span>Requests: {cur.request_count.toLocaleString()}</span>
         <span>vs prev {stats.period_days}d</span>
       </div>
 
       {stats.daily_breakdown.length > 0 && (
         <div>
-          <div className="text-[10px] text-zinc-500 mb-1">Daily tokens ({stats.period_days}d)</div>
+          <div className="text-[10px] text-text-tertiary mb-1">Daily tokens ({stats.period_days}d)</div>
           <MiniBarChart data={stats.daily_breakdown} />
-          <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
+          <div className="flex justify-between text-[10px] text-text-muted mt-0.5">
             <span>{stats.daily_breakdown[0]?.date}</span>
             <span>{stats.daily_breakdown[stats.daily_breakdown.length - 1]?.date}</span>
           </div>
@@ -186,10 +186,10 @@ function StatCard({
   change: number | null;
 }) {
   return (
-    <div className="bg-zinc-800/50 rounded-md px-2 py-1.5">
-      <div className="text-[10px] text-zinc-500">{label}</div>
+    <div className="bg-surface-2/50 rounded-md px-2 py-1.5">
+      <div className="text-[10px] text-text-tertiary">{label}</div>
       <div className="flex items-center gap-1.5 mt-0.5">
-        <span className="text-[12px] font-medium text-zinc-200 tabular-nums">{value}</span>
+        <span className="text-sm font-medium text-text-primary tabular-nums">{value}</span>
         <ChangeBadge value={change} />
       </div>
     </div>

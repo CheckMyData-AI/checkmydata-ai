@@ -20,10 +20,10 @@ interface AnalyticsData {
 }
 
 const VERDICT_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  confirmed: { label: "Confirmed", color: "bg-emerald-400", bg: "text-emerald-400" },
-  approximate: { label: "Approximate", color: "bg-amber-400", bg: "text-amber-400" },
-  rejected: { label: "Rejected", color: "bg-red-400", bg: "text-red-400" },
-  unknown: { label: "Unknown", color: "bg-zinc-500", bg: "text-zinc-500" },
+  confirmed: { label: "Confirmed", color: "bg-success", bg: "text-success" },
+  approximate: { label: "Approximate", color: "bg-warning", bg: "text-warning" },
+  rejected: { label: "Rejected", color: "bg-error", bg: "text-error" },
+  unknown: { label: "Unknown", color: "bg-surface-3", bg: "text-text-tertiary" },
 };
 
 interface FeedbackAnalyticsPanelProps {
@@ -53,7 +53,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (loading) {
     return (
-      <div className="px-2 py-1 text-[10px] text-zinc-500 animate-pulse">
+      <div className="px-2 py-1 text-[10px] text-text-tertiary animate-pulse">
         Loading analytics...
       </div>
     );
@@ -61,9 +61,9 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-red-400 flex items-center gap-2">
+      <div className="px-2 py-1 text-[10px] text-error flex items-center gap-2">
         <span>Failed to load analytics</span>
-        <button onClick={() => load()} className="text-zinc-400 hover:text-zinc-200 underline">Retry</button>
+        <button onClick={() => load()} className="text-text-secondary hover:text-text-primary underline">Retry</button>
       </div>
     );
   }
@@ -71,7 +71,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
   if (!data || data.validations.total === 0) {
     return (
       <div className="px-2 py-2">
-        <p className="text-[11px] text-zinc-500 leading-relaxed">
+        <p className="text-[11px] text-text-tertiary leading-relaxed">
           No validation data yet. Rate query results with thumbs up/down to start tracking data quality.
         </p>
       </div>
@@ -110,11 +110,11 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
       {validations.top_error_patterns.length > 0 && (
         <div className="space-y-1">
-          <div className="text-[10px] text-zinc-500">Top errors</div>
+          <div className="text-[10px] text-text-tertiary">Top errors</div>
           {validations.top_error_patterns.slice(0, 3).map((p, i) => (
             <div key={i} className="flex items-center justify-between text-[10px]">
-              <span className="text-zinc-400 truncate mr-2">{p.reason}</span>
-              <span className="text-zinc-600 tabular-nums shrink-0">{p.count}x</span>
+              <span className="text-text-secondary truncate mr-2">{p.reason}</span>
+              <span className="text-text-muted tabular-nums shrink-0">{p.count}x</span>
             </div>
           ))}
         </div>
@@ -126,9 +126,9 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 function ConfidenceScore({ accuracy }: { accuracy: number | null }) {
   if (accuracy == null) {
     return (
-      <div className="bg-zinc-800/50 rounded-md px-2.5 py-2">
-        <div className="text-[10px] text-zinc-500">Data Confidence</div>
-        <div className="text-[12px] font-medium text-zinc-400 mt-0.5">No data yet</div>
+      <div className="bg-surface-2/50 rounded-md px-2.5 py-2">
+        <div className="text-[10px] text-text-tertiary">Data Confidence</div>
+        <div className="text-sm font-medium text-text-secondary mt-0.5">No data yet</div>
       </div>
     );
   }
@@ -139,26 +139,26 @@ function ConfidenceScore({ accuracy }: { accuracy: number | null }) {
     "red";
 
   const barColor = {
-    emerald: "bg-emerald-400",
-    amber: "bg-amber-400",
-    red: "bg-red-400",
+    emerald: "bg-success",
+    amber: "bg-warning",
+    red: "bg-error",
   }[color];
 
   const textColor = {
-    emerald: "text-emerald-400",
-    amber: "text-amber-400",
-    red: "text-red-400",
+    emerald: "text-success",
+    amber: "text-warning",
+    red: "text-error",
   }[color];
 
   return (
-    <div className="bg-zinc-800/50 rounded-md px-2.5 py-2">
+    <div className="bg-surface-2/50 rounded-md px-2.5 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-zinc-500">Data Confidence</span>
-        <span className={`text-[12px] font-semibold tabular-nums ${textColor}`}>
+        <span className="text-[10px] text-text-tertiary">Data Confidence</span>
+        <span className={`text-sm font-semibold tabular-nums ${textColor}`}>
           {accuracy}%
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+      <div className="mt-1.5 h-1.5 bg-surface-3 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${barColor}`}
           style={{ width: `${Math.min(accuracy, 100)}%` }}
@@ -180,7 +180,7 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
 
   return (
     <div className="space-y-1.5">
-      <div className="text-[10px] text-zinc-500">Verdict breakdown</div>
+      <div className="text-[10px] text-text-tertiary">Verdict breakdown</div>
       <div className="flex h-2 rounded-full overflow-hidden gap-[1px]">
         {entries.map(([verdict, count]) => {
           const cfg = VERDICT_CONFIG[verdict];
@@ -188,7 +188,7 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
           return (
             <div
               key={verdict}
-              className={`${cfg?.color ?? "bg-zinc-600"} transition-all duration-300`}
+              className={`${cfg?.color ?? "bg-surface-3"} transition-all duration-300`}
               style={{ width: `${pct}%` }}
               title={`${cfg?.label ?? verdict}: ${count} (${Math.round(pct)}%)`}
             />
@@ -200,8 +200,8 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
           const cfg = VERDICT_CONFIG[verdict];
           return (
             <div key={verdict} className="flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${cfg?.color ?? "bg-zinc-600"}`} />
-              <span className="text-[9px] text-zinc-500">
+              <span className={`w-1.5 h-1.5 rounded-full ${cfg?.color ?? "bg-surface-3"}`} />
+              <span className="text-[10px] text-text-tertiary">
                 {cfg?.label ?? verdict} {count}
               </span>
             </div>
@@ -214,9 +214,9 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
 
 function MiniStat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-zinc-800/50 rounded-md px-2 py-1.5">
-      <div className="text-[10px] text-zinc-500">{label}</div>
-      <div className="text-[12px] font-medium text-zinc-200 tabular-nums mt-0.5">
+    <div className="bg-surface-2/50 rounded-md px-2 py-1.5">
+      <div className="text-[10px] text-text-tertiary">{label}</div>
+      <div className="text-sm font-medium text-text-primary tabular-nums mt-0.5">
         {value}
       </div>
     </div>

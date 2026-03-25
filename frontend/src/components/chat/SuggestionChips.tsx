@@ -14,7 +14,7 @@ function SkeletonChips() {
       {[1, 2, 3].map((i) => (
         <div
           key={i}
-          className="h-7 rounded-full bg-zinc-800/60 border border-zinc-700/30"
+          className="h-7 rounded-full bg-surface-2/60 border border-border-default/30"
           style={{ width: `${80 + i * 24}px` }}
         />
       ))}
@@ -38,7 +38,7 @@ export function SuggestionChips({ suggestions, loading, onSelect }: SuggestionCh
       <div className="relative">
       <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-1" role="group" aria-label="Suggested questions">
         <svg
-          className="w-3.5 h-3.5 text-amber-400/70 shrink-0"
+          className="w-3.5 h-3.5 text-warning/70 shrink-0"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -56,7 +56,7 @@ export function SuggestionChips({ suggestions, loading, onSelect }: SuggestionCh
             key={i}
             onClick={() => onSelect(s.text)}
             title={s.text}
-            className="shrink-0 max-w-[280px] truncate px-3 py-1.5 text-xs text-zinc-300 bg-zinc-800/60 border border-zinc-700/40 rounded-full hover:bg-zinc-700/60 hover:border-zinc-600/50 hover:text-zinc-100 transition-all duration-150 cursor-pointer"
+            className="shrink-0 max-w-[280px] truncate px-3 py-1.5 text-xs text-text-primary bg-surface-2/60 border border-border-default/40 rounded-full hover:bg-surface-3/60 hover:border-border-default/50 hover:text-text-primary transition-all duration-150 cursor-pointer"
           >
             {s.text.length > 60 ? s.text.slice(0, 57) + "..." : s.text}
           </button>
@@ -82,7 +82,7 @@ export function FollowupChips({ followups, onSelect }: FollowupChipsProps) {
         <button
           key={i}
           onClick={() => onSelect(text)}
-          className="px-2.5 py-1 text-[11px] text-zinc-400 bg-zinc-900/50 border border-zinc-700/30 rounded-full hover:bg-zinc-800/80 hover:text-zinc-200 hover:border-zinc-600/40 transition-all duration-150 cursor-pointer"
+          className="px-2.5 py-1 text-[11px] text-text-secondary bg-surface-1/50 border border-border-default/30 rounded-full hover:bg-surface-2/80 hover:text-text-primary hover:border-border-default/40 transition-all duration-150 cursor-pointer"
         >
           {text}
         </button>

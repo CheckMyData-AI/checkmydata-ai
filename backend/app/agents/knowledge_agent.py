@@ -78,6 +78,7 @@ class KnowledgeAgent(BaseAgent):
 
         result = KnowledgeResult()
         tool_call_log: list[dict[str, Any]] = []
+        self._collected_sources: list[RAGSource] = []
 
         tracker = context.tracker
         wf_id = context.workflow_id
@@ -159,6 +160,7 @@ class KnowledgeAgent(BaseAgent):
 
         result.token_usage = total_usage
         result.tool_call_log = tool_call_log
+        result.sources = self._collected_sources
         result.status = "success" if result.answer else "no_result"
         return result
 
@@ -229,6 +231,15 @@ class KnowledgeAgent(BaseAgent):
                 break
             parts.append(chunk)
             total_len += len(chunk)
+
+            self._collected_sources.append(
+                RAGSource(
+                    source_path=source,
+                    distance=distance,
+                    doc_type=meta.get("doc_type", ""),
+                    chunk_index=str(meta.get("chunk_index", "")),
+                )
+            )
 
         await ctx.tracker.emit(
             ctx.workflow_id,

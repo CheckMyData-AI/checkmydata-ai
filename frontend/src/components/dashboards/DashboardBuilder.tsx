@@ -246,7 +246,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
                     <button
                       onClick={() => handleRemoveCard(card.note_id)}
                       title="Remove card"
-                      className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors shrink-0"
+                      aria-label="Remove card"
+                      className="p-1 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors shrink-0"
                     >
                       <Icon name="x" size={11} />
                     </button>
@@ -268,7 +269,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
                   <button
                     onClick={() => handleRemoveCard(card.note_id)}
                     title="Remove card"
-                    className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors shrink-0"
+                    aria-label="Remove card"
+                    className="p-1 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors shrink-0"
                   >
                     <Icon name="x" size={11} />
                   </button>

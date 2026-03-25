@@ -326,7 +326,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             <button
               onClick={handleIndex}
               disabled={indexing}
-              className="ml-1.5 underline hover:text-warning/80"
+              className="ml-1.5 underline hover:text-warning/80 transition-colors"
             >
               Re-index now
             </button>
@@ -458,7 +458,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             )}
 
             <div className="px-4 pt-3 pb-1">
-              <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">Setup</span>
+              <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">Setup</span>
             </div>
 
             <SidebarSection icon="key" title="SSH Keys" open={sshCollapse.open} onToggle={sshCollapse.toggle} count={sshKeys.length} collapsed={false}>
@@ -475,7 +475,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               <>
                 <div className="px-4 pt-3 pb-1">
                   <div className="border-t border-border-subtle/50 mb-3" />
-                  <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">Workspace</span>
+                  <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">Workspace</span>
                 </div>
 
                 {activeProject.repo_url && (
@@ -661,7 +661,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         {/* SETUP group */}
         {!collapsed && (
           <div className="px-4 pt-3 pb-1">
-            <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">
+            <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">
               Setup
             </span>
           </div>
@@ -698,7 +698,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             {!collapsed && (
               <div className="px-4 pt-3 pb-1">
                 <div className="border-t border-border-subtle/50 mb-3" />
-                <span className="text-[9px] text-text-muted/60 uppercase tracking-wider">
+                <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">
                   Workspace
                 </span>
               </div>

@@ -90,6 +90,13 @@ async def lifespan(app: FastAPI):
     await _decay_stale_learnings()
     await _cleanup_pipeline_runs()
 
+    from app.core.cache import shared_cache
+    from app.core.task_queue import init_task_queue
+
+    redis_url = settings.redis_url or None
+    await init_task_queue(redis_url)
+    await shared_cache.connect(redis_url)
+
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
         await _maybe_initial_backup()
@@ -113,6 +120,12 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+
+    from app.core.cache import shared_cache as _sc
+    from app.core.task_queue import close_task_queue
+
+    await close_task_queue()
+    await _sc.close()
 
     from app.api.routes.connections import cancel_background_tasks as cancel_conn_tasks
     from app.api.routes.repos import cancel_background_tasks as cancel_repo_tasks
@@ -775,6 +788,25 @@ async def _health_check_loop() -> None:
             break
         except Exception:
             logger.warning("Health check loop error", exc_info=True)
+
+        try:
+            for mod_path in (
+                "app.connectors.postgres",
+                "app.connectors.mysql",
+                "app.connectors.mongodb",
+                "app.connectors.clickhouse",
+            ):
+                try:
+                    mod = __import__(mod_path, fromlist=["_tunnel_mgr"])
+                    mgr = getattr(mod, "_tunnel_mgr", None)
+                    if mgr and hasattr(mgr, "cleanup_idle"):
+                        closed = await mgr.cleanup_idle()
+                        if closed:
+                            logger.info("Cleaned up %d idle SSH tunnel(s) from %s", closed, mod_path)
+                except Exception:
+                    logger.debug("Tunnel cleanup skipped for %s", mod_path, exc_info=True)
+        except Exception:
+            logger.debug("SSH tunnel idle cleanup failed", exc_info=True)
 
         await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
 

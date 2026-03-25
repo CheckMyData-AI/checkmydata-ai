@@ -36,32 +36,32 @@ const STATUS_CONFIG: Record<
 > = {
   issues_found: {
     icon: "⚠️",
-    color: "text-amber-400",
-    bg: "bg-amber-950/30",
-    border: "border-amber-900/40",
+    color: "text-warning",
+    bg: "bg-warning-muted",
+    border: "border-border-default",
     label: "Issues Found",
   },
   healthy: {
     icon: "✅",
-    color: "text-emerald-400",
-    bg: "bg-emerald-950/30",
-    border: "border-emerald-900/40",
+    color: "text-success",
+    bg: "bg-success-muted",
+    border: "border-border-default",
     label: "All Healthy",
   },
   partial: {
     icon: "🔍",
-    color: "text-blue-400",
-    bg: "bg-blue-950/30",
-    border: "border-blue-900/40",
+    color: "text-accent",
+    bg: "bg-accent-muted",
+    border: "border-border-default",
     label: "Partial Analysis",
   },
 };
 
 const SEVERITY_CONFIG: Record<string, { icon: string; color: string }> = {
-  critical: { icon: "🔴", color: "text-red-400" },
-  warning: { icon: "🟡", color: "text-amber-400" },
-  info: { icon: "🔵", color: "text-blue-400" },
-  positive: { icon: "🟢", color: "text-emerald-400" },
+  critical: { icon: "🔴", color: "text-error" },
+  warning: { icon: "🟡", color: "text-warning" },
+  info: { icon: "🔵", color: "text-accent" },
+  positive: { icon: "🟢", color: "text-success" },
 };
 
 const CATEGORY_ICON: Record<string, string> = {
@@ -80,43 +80,43 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
   const statusCfg = STATUS_CONFIG[report.status] || STATUS_CONFIG.partial;
 
   return (
-    <div className={`mt-2 rounded-lg border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
+    <div className={`mt-2 rounded-xl border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
       {/* Header */}
       <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-[11px]">
         <span>{statusCfg.icon}</span>
         <span className={`font-medium ${statusCfg.color}`}>
           Exploration Report: {statusCfg.label}
         </span>
-        <span className="ml-auto text-zinc-500">
+        <span className="ml-auto text-text-tertiary">
           {report.total_findings} findings
         </span>
       </div>
 
       {/* Summary */}
-      <div className="px-2.5 pb-1.5 text-[11px] text-zinc-400 leading-relaxed">
+      <div className="px-2.5 pb-1.5 text-[11px] text-text-secondary leading-relaxed">
         {report.summary}
       </div>
 
       {/* Badge row */}
       <div className="px-2.5 pb-1.5 flex gap-1.5 flex-wrap">
         {report.critical_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-red-900/40 text-red-400">
+          <span className="text-[10px] px-1 py-0.5 rounded bg-error-muted text-error">
             {report.critical_count} critical
           </span>
         )}
         {report.warning_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400">
+          <span className="text-[10px] px-1 py-0.5 rounded bg-warning-muted text-warning">
             {report.warning_count} warnings
           </span>
         )}
         {report.positive_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-400">
+          <span className="text-[10px] px-1 py-0.5 rounded bg-success-muted text-success">
             {report.positive_count} positive
           </span>
         )}
         <button
           onClick={() => setShowSteps(!showSteps)}
-          className="text-[10px] px-1 py-0.5 rounded bg-zinc-800/50 text-zinc-500 hover:text-zinc-300 transition-all"
+          className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-tertiary hover:text-text-primary transition-all"
         >
           {showSteps ? "Hide" : "Show"} steps ({report.investigation_steps.length})
         </button>
@@ -124,8 +124,8 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
 
       {/* Investigation steps */}
       {showSteps && (
-        <div className="px-2.5 pb-1.5 border-t border-zinc-800/50">
-          <ol className="list-decimal list-inside text-[10px] text-zinc-500 space-y-0.5 pt-1">
+        <div className="px-2.5 pb-1.5 border-t border-border-subtle">
+          <ol className="list-decimal list-inside text-[10px] text-text-tertiary space-y-0.5 pt-1">
             {report.investigation_steps.map((step, i) => (
               <li key={i}>{step}</li>
             ))}
@@ -135,14 +135,14 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
 
       {/* Findings */}
       {report.findings.length > 0 && (
-        <div className="border-t border-zinc-800/50">
+        <div className="border-t border-border-subtle">
           {report.findings.map((finding, idx) => {
             const isExpanded = expandedIdx === idx;
             const sevCfg = SEVERITY_CONFIG[finding.severity] || SEVERITY_CONFIG.info;
             const catIcon = CATEGORY_ICON[finding.category] || CATEGORY_ICON.general;
 
             return (
-              <div key={idx} className="border-b border-zinc-800/30 last:border-b-0">
+              <div key={idx} className="border-b border-border-subtle last:border-b-0">
                 <button
                   onClick={() => setExpandedIdx(isExpanded ? null : idx)}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] w-full text-left"
@@ -152,11 +152,11 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
                   <span className={`${sevCfg.color} truncate`} title={finding.title}>
                     {finding.title}
                   </span>
-                  <span className="ml-auto text-[9px] text-zinc-600 shrink-0">
+                  <span className="ml-auto text-[10px] text-text-muted shrink-0">
                     {Math.round(finding.confidence * 100)}%
                   </span>
                   <svg
-                    className={`w-3 h-3 text-zinc-500 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                    className={`w-3 h-3 text-text-tertiary transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -169,20 +169,20 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
                 {isExpanded && (
                   <div className="px-2.5 pb-1.5 space-y-1 text-[11px]">
                     {finding.description && (
-                      <div className="text-zinc-400 leading-relaxed">
+                      <div className="text-text-secondary leading-relaxed">
                         {finding.description}
                       </div>
                     )}
                     {finding.evidence && (
                       <div className="flex gap-1.5">
-                        <span className="text-zinc-500 shrink-0">Evidence:</span>
-                        <span className="text-zinc-300">{finding.evidence}</span>
+                        <span className="text-text-tertiary shrink-0">Evidence:</span>
+                        <span className="text-text-primary">{finding.evidence}</span>
                       </div>
                     )}
                     {finding.recommended_action && (
                       <div className="flex gap-1.5">
-                        <span className="text-zinc-500 shrink-0">Action:</span>
-                        <span className="text-emerald-400">{finding.recommended_action}</span>
+                        <span className="text-text-tertiary shrink-0">Action:</span>
+                        <span className="text-success">{finding.recommended_action}</span>
                       </div>
                     )}
                     {onDrillDown && finding.severity !== "positive" && (
@@ -192,7 +192,7 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
                           onDrillDown(`Investigate: ${finding.title}`);
                           setExpandedIdx(null);
                         }}
-                        className="text-[10px] px-1.5 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-all"
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
                       >
                         Dig deeper
                       </button>

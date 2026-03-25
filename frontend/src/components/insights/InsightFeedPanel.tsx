@@ -8,27 +8,27 @@ import { Icon } from "@/components/ui/Icon";
 
 const SEVERITY_CONFIG: Record<string, { color: string; bg: string; border: string; label: string }> = {
   critical: {
-    color: "text-red-400",
-    bg: "bg-red-950/30",
-    border: "border-red-900/40",
+    color: "text-error",
+    bg: "bg-error-muted",
+    border: "border-border-default",
     label: "Critical",
   },
   warning: {
-    color: "text-amber-400",
-    bg: "bg-amber-950/30",
-    border: "border-amber-900/40",
+    color: "text-warning",
+    bg: "bg-warning-muted",
+    border: "border-border-default",
     label: "Warning",
   },
   info: {
-    color: "text-blue-400",
-    bg: "bg-blue-950/30",
-    border: "border-blue-900/40",
+    color: "text-accent",
+    bg: "bg-accent-muted",
+    border: "border-border-default",
     label: "Info",
   },
   positive: {
-    color: "text-emerald-400",
-    bg: "bg-emerald-950/30",
-    border: "border-emerald-900/40",
+    color: "text-success",
+    bg: "bg-success-muted",
+    border: "border-border-default",
     label: "Opportunity",
   },
 };
@@ -51,16 +51,16 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   let cls: string;
   if (confidence >= 0.85) {
     label = "High";
-    cls = "text-emerald-400 bg-emerald-950/30 border-emerald-900/40";
+    cls = "text-success bg-success-muted border-border-default";
   } else if (confidence >= 0.6) {
     label = "Medium";
-    cls = "text-blue-400 bg-blue-950/30 border-blue-900/40";
+    cls = "text-accent bg-accent-muted border-border-default";
   } else if (confidence >= 0.3) {
     label = "Low";
-    cls = "text-amber-400 bg-amber-950/30 border-amber-900/40";
+    cls = "text-warning bg-warning-muted border-border-default";
   } else {
     label = "Very low";
-    cls = "text-zinc-400 bg-zinc-800/50 border-zinc-700/50";
+    cls = "text-text-secondary bg-surface-2/50 border-border-default/50";
   }
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border ${cls}`}>
@@ -87,7 +87,7 @@ function InsightCard({
   const iconName = TYPE_ICONS[insight.insight_type] || "info";
 
   return (
-    <div className={`rounded-lg border ${cfg.border} ${cfg.bg} transition-all`}>
+    <div className={`rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}>
       <button
         onClick={() => setExpanded((p) => !p)}
         className={`flex items-start gap-2 px-3 py-2 w-full text-left`}
@@ -103,7 +103,7 @@ function InsightCard({
               </span>
             )}
           </div>
-          <p className="text-[13px] text-text-primary font-medium mt-0.5 leading-snug">
+          <p className="text-sm text-text-primary font-medium mt-0.5 leading-snug">
             {insight.title}
           </p>
         </div>
@@ -127,7 +127,7 @@ function InsightCard({
               </p>
               <p className="text-xs text-text-primary">{insight.recommended_action}</p>
               {insight.expected_impact && (
-                <p className="text-[11px] text-emerald-400 mt-0.5">
+                <p className="text-[11px] text-success mt-0.5">
                   Expected: {insight.expected_impact}
                 </p>
               )}
@@ -140,7 +140,7 @@ function InsightCard({
                 e.stopPropagation();
                 onConfirm(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-emerald-900/40 text-emerald-400 bg-emerald-950/20 hover:bg-emerald-950/40 transition-colors"
+              className="text-[11px] px-2 py-0.5 rounded border border-border-default text-success bg-success-muted hover:bg-success-muted transition-colors"
             >
               Confirm
             </button>
@@ -149,7 +149,7 @@ function InsightCard({
                 e.stopPropagation();
                 onDismiss(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-zinc-700/50 text-zinc-400 bg-zinc-800/50 hover:bg-zinc-700/50 transition-colors"
+              className="text-[11px] px-2 py-0.5 rounded border border-border-default/50 text-text-secondary bg-surface-2/50 hover:bg-surface-3/50 transition-colors"
             >
               Dismiss
             </button>
@@ -158,7 +158,7 @@ function InsightCard({
                 e.stopPropagation();
                 onResolve(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-blue-900/40 text-blue-400 bg-blue-950/20 hover:bg-blue-950/40 transition-colors"
+              className="text-[11px] px-2 py-0.5 rounded border border-border-default text-accent bg-accent-muted hover:bg-accent-muted transition-colors"
             >
               Resolved
             </button>

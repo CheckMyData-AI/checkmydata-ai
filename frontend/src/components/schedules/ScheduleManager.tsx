@@ -52,9 +52,9 @@ function timeAgo(iso: string): string {
 }
 
 function statusDot(schedule: ScheduledQuery) {
-  if (!schedule.is_active) return "bg-gray-500";
-  if (!schedule.last_run_at) return "bg-blue-400";
-  return "bg-emerald-400";
+  if (!schedule.is_active) return "bg-surface-3";
+  if (!schedule.last_run_at) return "bg-accent";
+  return "bg-success";
 }
 
 interface AlertCondition {
@@ -351,6 +351,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onClick={() => handleToggleActive(s)}
                 disabled={togglingId === s.id}
                 title={s.is_active ? "Pause" : "Activate"}
+                aria-label={s.is_active ? "Pause" : "Activate"}
                 className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors disabled:opacity-50"
               >
                 <Icon name={s.is_active ? "pause" : "play"} size={11} />
@@ -359,6 +360,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onClick={() => handleRunNow(s.id)}
                 disabled={runningId === s.id}
                 title="Run now"
+                aria-label="Run now"
                 className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40"
               >
                 <Icon
@@ -370,6 +372,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               <button
                 onClick={() => loadHistory(s.id)}
                 title="History"
+                aria-label="History"
                 className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
               >
                 <Icon name="clock" size={11} />
@@ -377,6 +380,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               <button
                 onClick={() => openEdit(s)}
                 title="Edit"
+                aria-label="Edit"
                 className="p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors"
               >
                 <Icon name="edit" size={11} />
@@ -384,7 +388,8 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               <button
                 onClick={() => handleDelete(s.id)}
                 title="Delete"
-                className="p-1 rounded text-text-muted hover:text-error hover:bg-red-900/20 transition-colors"
+                aria-label="Delete"
+                className="p-1 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors"
               >
                 <Icon name="trash" size={11} />
               </button>
@@ -406,10 +411,10 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         run.status === "success"
-                          ? "bg-emerald-400"
+                          ? "bg-success"
                           : run.status === "alert_triggered"
-                            ? "bg-amber-400"
-                            : "bg-red-400"
+                            ? "bg-warning"
+                            : "bg-error"
                       }`}
                     />
                     <span className="text-text-secondary">{run.status}</span>

@@ -652,7 +652,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
                   )}
                   {p.user_role && (
                     <span
-                      className={`shrink-0 px-1 py-0.5 rounded text-[9px] font-medium leading-none ${
+                      className={`shrink-0 px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
                         ROLE_STYLES[p.user_role] || ROLE_STYLES.viewer
                       }`}
                     >

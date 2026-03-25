@@ -64,28 +64,28 @@ const RETRY_STEPS = new Set([
 function StepIcon({ status, isRetry }: { status: StepState["status"]; isRetry?: boolean }) {
   if (isRetry && status === "started") {
     return (
-      <span className="w-4 h-4 rounded-full border-2 border-amber-400 border-t-transparent animate-spin inline-block" />
+      <span className="w-4 h-4 rounded-full border-2 border-warning border-t-transparent animate-spin inline-block" />
     );
   }
   switch (status) {
     case "started":
       return (
-        <span className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
+        <span className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin inline-block" />
       );
     case "completed":
       return (
-        <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
       );
     case "failed":
       return (
-        <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <svg className="w-4 h-4 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>
       );
     default:
-      return <span className="w-4 h-4 rounded-full bg-zinc-700 inline-block" />;
+      return <span className="w-4 h-4 rounded-full bg-surface-3 inline-block" />;
   }
 }
 
@@ -157,19 +157,19 @@ export function WorkflowProgress({ workflowId, compact = false, onComplete }: Wo
     if (pipelineStatus !== "running") {
       const last = steps[steps.length - 1];
       return (
-        <div className="flex items-center gap-2 text-xs text-zinc-400">
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
           <StepIcon status={pipelineStatus === "completed" ? "completed" : "failed"} />
           <span>{pipelineStatus === "completed" ? "Done" : "Failed"}</span>
-          {last?.detail && <span className="text-zinc-600 truncate max-w-40">{last.detail}</span>}
+          {last?.detail && <span className="text-text-muted truncate max-w-40">{last.detail}</span>}
         </div>
       );
     }
     const current = steps.findLast((s) => s.status === "started") || steps[steps.length - 1];
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
+      <div className="flex items-center gap-2 text-xs text-text-secondary">
         <StepIcon status={current.status} />
         <span>{STEP_LABELS[current.name] || current.name}</span>
-        {current.detail && <span className="text-zinc-600 truncate max-w-40">{current.detail}</span>}
+        {current.detail && <span className="text-text-muted truncate max-w-40">{current.detail}</span>}
       </div>
     );
   }
@@ -180,26 +180,26 @@ export function WorkflowProgress({ workflowId, compact = false, onComplete }: Wo
         const isRetry = RETRY_STEPS.has(step.name);
         const statusColor =
           step.status === "started"
-            ? isRetry ? "text-amber-300" : "text-blue-300"
+            ? isRetry ? "text-warning" : "text-accent"
             : step.status === "failed"
-              ? "text-red-400"
-              : "text-zinc-300";
+              ? "text-error"
+              : "text-text-primary";
         return (
           <div key={step.name} className="flex items-center gap-2 text-xs">
             <StepIcon status={step.status} isRetry={isRetry && step.count > 1} />
             <span className={statusColor}>
               {STEP_LABELS[step.name] || step.name}
               {step.count > 1 && (
-                <span className="ml-1 text-zinc-500">x{step.count}</span>
+                <span className="ml-1 text-text-tertiary">x{step.count}</span>
               )}
             </span>
             {step.detail && (
-              <span className={`truncate max-w-48 ${step.status === "failed" ? "text-red-500/70" : "text-zinc-600"}`}>
+              <span className={`truncate max-w-48 ${step.status === "failed" ? "text-error/70" : "text-text-muted"}`}>
                 {step.detail}
               </span>
             )}
             {step.elapsed_ms != null && step.status !== "started" && (
-              <span className="text-zinc-600 ml-auto tabular-nums whitespace-nowrap">
+              <span className="text-text-muted ml-auto tabular-nums whitespace-nowrap">
                 {step.elapsed_ms >= 1000
                   ? `${(step.elapsed_ms / 1000).toFixed(1)}s`
                   : `${Math.round(step.elapsed_ms)}ms`}
@@ -209,8 +209,8 @@ export function WorkflowProgress({ workflowId, compact = false, onComplete }: Wo
         );
       })}
       {pipelineStatus === "running" && steps.every((s) => s.status !== "started") && (
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
-          <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-transparent animate-spin inline-block" />
+        <div className="flex items-center gap-2 text-xs text-text-tertiary">
+          <span className="w-4 h-4 rounded-full border-2 border-border-default border-t-transparent animate-spin inline-block" />
           <span>Processing...</span>
         </div>
       )}

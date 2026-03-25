@@ -551,11 +551,11 @@ export function ChatPanel() {
 
   if (!canChat) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-text-tertiary">
         <p>No database connection configured.</p>
         <button
           onClick={() => useAppStore.getState().setChatMode("knowledge_only")}
-          className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-500 transition-colors"
+          className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover transition-colors"
           aria-label="Chat with Knowledge Base"
         >
           Chat with Knowledge Base
@@ -567,11 +567,11 @@ export function ChatPanel() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {chatMode === "knowledge_only" && !activeConnection && (
-        <div className="flex items-center justify-between px-6 py-1.5 bg-purple-900/20 border-b border-purple-800/30">
-          <span className="text-xs text-purple-400">Knowledge Base Mode</span>
+        <div className="flex items-center justify-between px-6 py-1.5 bg-accent-muted border-b border-border-default">
+          <span className="text-xs text-accent">Knowledge Base Mode</span>
           <button
             onClick={() => useAppStore.getState().setChatMode("full")}
-            className="text-[10px] text-purple-400 hover:text-purple-300"
+            className="text-[10px] text-accent hover:text-accent-hover"
             aria-label="Exit Knowledge Base Mode"
           >
             Exit
@@ -618,14 +618,14 @@ export function ChatPanel() {
       )}
       <div className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4 chat-scroll" aria-live="polite" aria-relevant="additions" aria-atomic="false">
         {messages.length === 0 ? (
-          <div className="text-center text-zinc-500 text-sm mt-20">
+          <div className="text-center text-text-tertiary text-sm mt-20">
             <p className="text-lg font-medium mb-2">
               {activeConnection ? "Ready to query" : "Knowledge Base Mode"}
             </p>
             {activeConnection ? (
               <p>
                 Connected to{" "}
-                <span className="text-zinc-300">{activeConnection.name}</span>{" "}
+                <span className="text-text-primary">{activeConnection.name}</span>{" "}
                 ({activeConnection.db_type})
               </p>
             ) : (
@@ -656,7 +656,7 @@ export function ChatPanel() {
         })}
         {/* Pipeline stage progress (visible even after thinking finishes for checkpoints) */}
         {pipelineStages.length > 0 && (
-          <div className="bg-zinc-800/80 rounded-xl px-4 py-3 overflow-hidden">
+          <div className="bg-surface-2/80 rounded-xl px-4 py-3 overflow-hidden">
             <StageProgress
               stages={pipelineStages}
               pipelineRunId={pipelineRunId}
@@ -680,30 +680,30 @@ export function ChatPanel() {
         {isThinking && (
           <div className="flex gap-3">
             {streamingText ? (
-              <div className="bg-zinc-800 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
-                <p className="text-zinc-200 text-sm whitespace-pre-wrap break-words">{streamingText}<span className="inline-block w-1.5 h-4 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" /></p>
+              <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
+                <p className="text-text-primary text-sm whitespace-pre-wrap break-words">{streamingText}<span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" /></p>
                 <button
                   onClick={handleStop}
-                  className="mt-2 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="mt-2 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
                 </button>
               </div>
             ) : (
-              <div className="bg-zinc-800 rounded-xl px-4 py-3 space-y-2 max-w-[95%] md:max-w-[80%] overflow-hidden">
+              <div className="bg-surface-2 rounded-xl px-4 py-3 space-y-2 max-w-[95%] md:max-w-[80%] overflow-hidden">
                 {thinkingLog.length > 0 ? (
                   <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
                 ) : (
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" />
-                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
-                    <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce [animation-delay:0.1s]" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce [animation-delay:0.2s]" />
                   </div>
                 )}
                 <button
                   onClick={handleStop}
-                  className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
@@ -727,7 +727,7 @@ export function ChatPanel() {
           <div className="flex items-center gap-3">
             <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} onEstimate={handleEstimate} />
             {sessionTokens > 0 && (
-              <span className="text-[11px] text-zinc-600 ml-auto">
+              <span className="text-[11px] text-text-muted ml-auto">
                 Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens
                 {sessionCost > 0 && (
                   <> / ${sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(2)}</>

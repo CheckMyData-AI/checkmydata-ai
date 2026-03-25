@@ -61,6 +61,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
 
   const [question, setQuestion] = useState("Show me the top 10 users by total order amount");
 
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [createdProject, setCreatedProject] = useState<Project | null>(null);
   const [createdConnection, setCreatedConnection] = useState<Connection | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -79,6 +80,32 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleSkipAll();
+        return;
+      }
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   const goNext = useCallback(() => {
     setDirection("forward");
@@ -623,8 +650,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg mx-4 bg-surface-1 rounded-2xl border border-border-subtle shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+      <div ref={dialogRef} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-xl overflow-hidden">
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center justify-center gap-2 mb-6">
             {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
@@ -645,7 +672,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
             <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
               <span className="text-sm font-semibold text-accent">{step + 1}</span>
             </div>
-            <h2 className="text-lg font-semibold text-text-primary">
+            <h2 id="onboarding-title" className="text-lg font-semibold text-text-primary">
               {stepTitles[step]}
             </h2>
             {step === 3 && (

@@ -40,28 +40,28 @@ const STATUS_CONFIG: Record<
 > = {
   clean: {
     icon: "✅",
-    color: "text-emerald-400",
-    bg: "bg-emerald-950/30",
-    border: "border-emerald-900/40",
+    color: "text-success",
+    bg: "bg-success-muted",
+    border: "border-border-default",
   },
   discrepancies_found: {
     icon: "⚠️",
-    color: "text-amber-400",
-    bg: "bg-amber-950/30",
-    border: "border-amber-900/40",
+    color: "text-warning",
+    bg: "bg-warning-muted",
+    border: "border-border-default",
   },
   error: {
     icon: "❌",
-    color: "text-red-400",
-    bg: "bg-red-950/30",
-    border: "border-red-900/40",
+    color: "text-error",
+    bg: "bg-error-muted",
+    border: "border-border-default",
   },
 };
 
 const SEVERITY_BADGE: Record<string, string> = {
-  critical: "bg-red-900/40 text-red-400",
-  warning: "bg-amber-900/40 text-amber-400",
-  info: "bg-blue-900/40 text-blue-400",
+  critical: "bg-error-muted text-error",
+  warning: "bg-warning-muted text-warning",
+  info: "bg-accent-muted text-accent",
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -80,20 +80,20 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
   }, []);
 
   return (
-    <div className={`mt-2 rounded-lg border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
+    <div className={`mt-2 rounded-xl border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
       {/* Header */}
       <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-[11px]">
         <span>{statusCfg.icon}</span>
         <span className={`font-medium ${statusCfg.color}`}>
           Reconciliation: {report.source_a_name} vs {report.source_b_name}
         </span>
-        <span className="ml-auto text-zinc-500">
+        <span className="ml-auto text-text-tertiary">
           {report.total_checks} checks
         </span>
       </div>
 
       {/* Summary */}
-      <div className="px-2.5 pb-1.5 text-[11px] text-zinc-400 leading-relaxed">
+      <div className="px-2.5 pb-1.5 text-[11px] text-text-secondary leading-relaxed">
         {report.summary}
       </div>
 
@@ -101,12 +101,12 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
       {(report.critical_count > 0 || report.warning_count > 0) && (
         <div className="px-2.5 pb-1.5 flex gap-1.5">
           {report.critical_count > 0 && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-red-900/40 text-red-400">
+            <span className="text-[10px] px-1 py-0.5 rounded bg-error-muted text-error">
               {report.critical_count} critical
             </span>
           )}
           {report.warning_count > 0 && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400">
+            <span className="text-[10px] px-1 py-0.5 rounded bg-warning-muted text-warning">
               {report.warning_count} warnings
             </span>
           )}
@@ -115,14 +115,14 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
 
       {/* Discrepancy list */}
       {report.discrepancies.length > 0 && (
-        <div className="border-t border-zinc-800/50">
+        <div className="border-t border-border-subtle">
           {report.discrepancies.map((disc, idx) => {
             const isExpanded = expandedIdx === idx;
             const sevClass = SEVERITY_BADGE[disc.severity] || SEVERITY_BADGE.info;
             const typeLabel = TYPE_LABEL[disc.discrepancy_type] || disc.discrepancy_type;
 
             return (
-              <div key={idx} className="border-b border-zinc-800/30 last:border-b-0">
+              <div key={idx} className="border-b border-border-subtle last:border-b-0">
                 <button
                   onClick={() => handleToggle(idx)}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] w-full text-left"
@@ -130,14 +130,14 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
                   <span className={`text-[10px] px-1 py-0.5 rounded shrink-0 ${sevClass}`}>
                     {disc.severity}
                   </span>
-                  <span className="text-zinc-300 truncate" title={disc.title}>
+                  <span className="text-text-primary truncate" title={disc.title}>
                     {disc.title}
                   </span>
-                  <span className="ml-auto text-[10px] text-zinc-600 shrink-0">
+                  <span className="ml-auto text-[10px] text-text-muted shrink-0">
                     {typeLabel}
                   </span>
                   <svg
-                    className={`w-3 h-3 text-zinc-500 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                    className={`w-3 h-3 text-text-tertiary transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -149,26 +149,26 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
 
                 {isExpanded && (
                   <div className="px-2.5 pb-1.5 space-y-1 text-[11px]">
-                    <div className="text-zinc-400 leading-relaxed">{disc.description}</div>
+                    <div className="text-text-secondary leading-relaxed">{disc.description}</div>
 
                     {disc.difference_pct > 0 && (
                       <div className="flex gap-1.5">
-                        <span className="text-zinc-500">Difference:</span>
-                        <span className="text-amber-400">{disc.difference_pct}%</span>
+                        <span className="text-text-tertiary">Difference:</span>
+                        <span className="text-warning">{disc.difference_pct}%</span>
                       </div>
                     )}
 
                     {disc.likely_cause && (
                       <div className="flex gap-1.5">
-                        <span className="text-zinc-500 shrink-0">Likely cause:</span>
-                        <span className="text-zinc-300">{disc.likely_cause}</span>
+                        <span className="text-text-tertiary shrink-0">Likely cause:</span>
+                        <span className="text-text-primary">{disc.likely_cause}</span>
                       </div>
                     )}
 
                     {disc.recommended_action && (
                       <div className="flex gap-1.5">
-                        <span className="text-zinc-500 shrink-0">Action:</span>
-                        <span className="text-emerald-400">{disc.recommended_action}</span>
+                        <span className="text-text-tertiary shrink-0">Action:</span>
+                        <span className="text-success">{disc.recommended_action}</span>
                       </div>
                     )}
 
@@ -181,7 +181,7 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
                           );
                           setExpandedIdx(null);
                         }}
-                        className="text-[10px] px-1.5 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-all"
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
                       >
                         Investigate this
                       </button>

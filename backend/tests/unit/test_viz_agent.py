@@ -176,8 +176,8 @@ class TestVizAgent:
         result = await agent.run(
             context,
             results=_qr(
-                columns=["month", "revenue"],
-                rows=[["Jan", 100], ["Feb", 200], ["Mar", 300]],
+                columns=["month", "category", "region"],
+                rows=[["Jan", "A", "US"], ["Feb", "B", "EU"], ["Mar", "C", "AP"]],
             ),
         )
         assert result.viz_type == "line_chart"
@@ -198,8 +198,8 @@ class TestVizAgent:
         result = await agent.run(
             context,
             results=_qr(
-                columns=["id", "name", "email"],
-                rows=[[1, "Alice", "a@b.com"], [2, "Bob", "b@b.com"]],
+                columns=["name", "email", "role"],
+                rows=[["Alice", "a@b.com", "admin"], ["Bob", "b@b.com", "user"]],
             ),
         )
         assert result.viz_type == "table"
@@ -311,8 +311,8 @@ class TestVizAgent:
         result = await agent.run(
             context,
             results=_qr(
-                columns=["a", "b"],
-                rows=[[1, 2], [3, 4]],
+                columns=["status", "description", "note"],
+                rows=[["ok", "first", "a"], ["err", "second", "b"]],
             ),
         )
         assert result.token_usage["prompt_tokens"] == 80
@@ -355,8 +355,8 @@ class TestVizAgent:
         result = await agent.run(
             context,
             results=_qr(
-                columns=["x", "y"],
-                rows=[[1, 2], [3, 4]],
+                columns=["label", "note", "extra"],
+                rows=[["a", "b", "c"], ["d", "e", "f"]],
             ),
         )
         assert result.viz_type == "bar_chart"
@@ -457,8 +457,8 @@ class TestVizAgent:
         )
 
         results = _qr(
-            columns=["month", "revenue"],
-            rows=[["Jan", 100], ["Feb", 200]],
+            columns=["label", "note", "remark"],
+            rows=[["a", "b", "c"], ["d", "e", "f"]],
         )
         result = await agent.run(context, results=results)
         assert result.viz_type == "bar_chart"

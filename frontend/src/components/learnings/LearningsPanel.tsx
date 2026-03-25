@@ -17,12 +17,12 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  table_preference: "text-purple-400 bg-purple-900/20",
-  column_usage: "text-blue-400 bg-blue-900/20",
-  data_format: "text-emerald-400 bg-emerald-900/20",
-  query_pattern: "text-amber-400 bg-amber-900/20",
-  schema_gotcha: "text-red-400 bg-red-900/20",
-  performance_hint: "text-cyan-400 bg-cyan-900/20",
+  table_preference: "text-accent bg-accent-muted",
+  column_usage: "text-accent bg-accent-muted",
+  data_format: "text-success bg-success-muted",
+  query_pattern: "text-warning bg-warning-muted",
+  schema_gotcha: "text-error bg-error-muted",
+  performance_hint: "text-info bg-info-muted",
 };
 
 type SortKey = "confidence" | "date" | "confirmed" | "applied";
@@ -164,10 +164,10 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
   }, {});
 
   return (
-    <div className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
+    <div className="bg-surface-1 border border-border-subtle rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-surface-2 border-b border-border-subtle">
         <div className="flex items-center gap-2">
-          <Icon name="settings" size={14} className="text-blue-400" />
+          <Icon name="settings" size={14} className="text-accent" />
           <span className="text-xs font-medium text-text-primary">Agent Learnings</span>
           <span className="text-[10px] text-text-muted">({learnings.length})</span>
         </div>
@@ -178,13 +178,14 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                 onClick={handleRecompile}
                 className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
                 title="Recompile learnings prompt"
+                aria-label="Recompile learnings"
               >
                 <Icon name="refresh-cw" size={11} />
               </button>
               {canDelete && (
                 <button
                   onClick={handleClearAll}
-                  className="text-[10px] px-2 py-0.5 rounded text-red-400 hover:bg-red-900/20 transition-colors"
+                  className="text-[10px] px-2 py-0.5 rounded text-error hover:bg-error-muted transition-colors"
                 >
                   Clear all
                 </button>
@@ -206,7 +207,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle overflow-x-auto">
           <button
             onClick={() => setFilterCategory(null)}
-            className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+            className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
               filterCategory === null
                 ? "bg-accent/20 text-accent"
                 : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -218,7 +219,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <button
               key={cat}
               onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
-              className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+              className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
                 filterCategory === cat
                   ? CATEGORY_COLORS[cat] || "bg-surface-3 text-text-primary"
                   : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -231,7 +232,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-[9px] bg-surface-1 border border-border-subtle rounded px-1.5 py-0.5 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              className="text-[10px] bg-surface-1 border border-border-subtle rounded-lg px-1.5 py-0.5 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="confidence">Sort: Confidence</option>
               <option value="date">Sort: Newest</option>
@@ -267,13 +268,13 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
               <div key={category} className="px-3 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
                       CATEGORY_COLORS[category] || "text-text-muted bg-surface-3"
                     }`}
                   >
                     {CATEGORY_LABELS[category] || category}
                   </span>
-                  <span className="text-[9px] text-text-muted">{items.length}</span>
+                  <span className="text-[10px] text-text-muted">{items.length}</span>
                 </div>
                 <div className="space-y-1.5">
                   {items.map((l) => (
@@ -291,7 +292,8 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                             value={editLesson}
                             onChange={(e) => setEditLesson(e.target.value)}
                             rows={2}
-                            className="w-full bg-surface-1 border border-border-subtle rounded px-2 py-1.5 text-xs text-text-primary resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+                            aria-label="Edit learning"
+                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-2 py-1.5 text-xs text-text-primary resize-y focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                           <div className="flex gap-1">
                             <button
@@ -327,6 +329,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                                 }}
                                 className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
                                 title="Edit"
+                                aria-label="Edit"
                               >
                                 <Icon name="pencil" size={11} />
                               </button>
@@ -334,21 +337,23 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                                 onClick={() => handleToggleActive(l)}
                                 className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
                                 title={l.is_active ? "Deactivate" : "Activate"}
+                                aria-label={l.is_active ? "Deactivate" : "Activate"}
                               >
                                 <Icon name={l.is_active ? "x" : "check"} size={11} />
                               </button>
                               {canDelete && (
                                 <button
                                   onClick={() => handleDelete(l.id)}
-                                  className="p-0.5 rounded hover:bg-red-900/30 text-text-muted hover:text-red-400"
+                                  className="p-0.5 rounded hover:bg-error-muted text-text-muted hover:text-error"
                                   title="Delete"
+                                  aria-label="Delete"
                                 >
                                   <Icon name="trash" size={11} />
                                 </button>
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-1 text-[9px] text-text-muted">
+                          <div className="flex items-center gap-2 mt-1 text-[10px] text-text-muted">
                             <span className="flex items-center gap-0.5">
                               <span
                                 className="inline-block w-8 h-1 rounded-full bg-surface-3 overflow-hidden"

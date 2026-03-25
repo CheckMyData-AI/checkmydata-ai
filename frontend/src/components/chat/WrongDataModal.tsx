@@ -152,11 +152,11 @@ export function WrongDataModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Report Incorrect Data" tabIndex={-1} className="w-full max-w-lg mx-4 bg-zinc-900 rounded-xl border border-zinc-700/50 shadow-2xl max-h-[80vh] overflow-y-auto focus:outline-none">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-xl border border-border-default/50 shadow-xl max-h-[80vh] overflow-y-auto focus:outline-none">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-          <h3 className="text-sm font-semibold text-zinc-200">Report Incorrect Data</h3>
-          <button onClick={onClose} aria-label="Close dialog" className="text-zinc-500 hover:text-zinc-300 transition-colors p-1 rounded hover:bg-zinc-800 min-w-[28px] min-h-[28px] flex items-center justify-center">
+        <div className="flex items-center justify-between p-4 border-b border-border-subtle">
+          <h3 id="wrong-data-title" className="text-sm font-semibold text-text-primary">Report Incorrect Data</h3>
+          <button onClick={onClose} aria-label="Close dialog" className="text-text-tertiary hover:text-text-primary transition-colors p-1 rounded hover:bg-surface-2 min-w-[28px] min-h-[28px] flex items-center justify-center">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -168,7 +168,7 @@ export function WrongDataModal({
           {step === "collect" && (
             <div className="space-y-4">
               <div>
-                <p className="text-xs text-zinc-400 mb-2">What seems wrong?</p>
+                <p className="text-xs text-text-secondary mb-2">What seems wrong?</p>
                 <div className="grid grid-cols-2 gap-2">
                   {COMPLAINT_TYPES.map((ct) => (
                     <button
@@ -176,8 +176,8 @@ export function WrongDataModal({
                       onClick={() => setComplaintType(ct.id)}
                       className={`p-2.5 rounded-lg text-left text-xs border transition-colors ${
                         complaintType === ct.id
-                          ? "border-amber-600 bg-amber-900/20 text-amber-300"
-                          : "border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800"
+                        ? "border-warning bg-warning-muted text-warning"
+                        : "border-border-default/50 bg-surface-2/50 text-text-secondary hover:bg-surface-2"
                       }`}
                     >
                       <span className="text-sm mr-1.5">{ct.icon}</span>
@@ -188,23 +188,23 @@ export function WrongDataModal({
               </div>
 
               <div>
-                <label className="text-xs text-zinc-400 block mb-1">Expected value (optional)</label>
+                <label className="text-xs text-text-secondary block mb-1">Expected value (optional)</label>
                 <input
                   type="text"
                   value={expectedValue}
                   onChange={(e) => setExpectedValue(e.target.value)}
                   placeholder="e.g., ~150,000"
-                  className="w-full px-3 py-1.5 rounded-md text-xs bg-zinc-800 border border-zinc-700 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-600"
+                  className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-warning"
                 />
               </div>
 
               {resultColumns.length > 0 && (
                 <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Which column? (optional)</label>
+                  <label className="text-xs text-text-secondary block mb-1">Which column? (optional)</label>
                   <select
                     value={problematicColumn}
                     onChange={(e) => setProblematicColumn(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-md text-xs bg-zinc-800 border border-zinc-700 text-zinc-200 focus:outline-none focus:border-amber-600"
+                    className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary focus:outline-none focus:border-warning"
                   >
                     <option value="">All / not sure</option>
                     {resultColumns.map((col) => (
@@ -217,7 +217,7 @@ export function WrongDataModal({
               <button
                 onClick={handleStartInvestigation}
                 disabled={!complaintType || submitting}
-                className="w-full py-2 rounded-lg text-xs font-medium bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full py-2 rounded-lg text-xs font-medium bg-warning text-white hover:bg-warning disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? "Starting..." : "Start Investigation"}
               </button>
@@ -242,14 +242,14 @@ export function WrongDataModal({
                 <button
                   onClick={() => handleConfirmFix(true)}
                   disabled={confirming}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-success text-white hover:bg-success disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {confirming ? "Saving..." : "Accept Fix"}
                 </button>
                 <button
                   onClick={() => handleConfirmFix(false)}
                   disabled={confirming}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-red-800/40 text-red-400 hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-error/30 text-error hover:bg-error-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Still Wrong
                 </button>

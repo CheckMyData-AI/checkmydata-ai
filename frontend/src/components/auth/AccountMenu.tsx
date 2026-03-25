@@ -59,7 +59,7 @@ export function AccountMenu() {
         <PopoverPortal triggerRef={triggerRef} placement="top-left" gap={8}>
           <div
             ref={panelRef}
-            className="w-56 bg-surface-1 border border-border-subtle rounded-lg shadow-lg animate-fade-in"
+            className="w-56 bg-surface-1 border border-border-subtle rounded-lg shadow-xl animate-fade-in"
           >
             {view === "menu" && (
               <div className="py-1">
@@ -134,6 +134,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
         value={current}
         onChange={(e) => setCurrent(e.target.value)}
         required
+        aria-required="true"
         className={inputCls}
         aria-label="Current password"
       />
@@ -143,6 +144,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
         value={next}
         onChange={(e) => setNext(e.target.value)}
         required
+        aria-required="true"
         minLength={8}
         className={inputCls}
         aria-label="New password"

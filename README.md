@@ -28,6 +28,7 @@ Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](
 | [USAGE.md](USAGE.md) | How to use the application |
 | [API.md](API.md) | REST API reference |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and module overview |
+| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | UI design system, tokens, and component guidelines |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [ROADMAP.md](ROADMAP.md) | Future plans and priorities |
@@ -2066,6 +2067,7 @@ DocStore — one row per (project_id, source_path), updated in-place
 
 ```
 Next.js 15 / React 19 / TypeScript / Tailwind CSS 4 / DM Sans + JetBrains Mono
+All components use semantic design tokens from DESIGN_SYSTEM.md (no raw Tailwind palette classes).
 
 src/
 ├── app/
@@ -2958,6 +2960,40 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-25 — System-Wide Reliability, Intelligence, Speed, Cost & Architecture Improvements
+
+**Reliability:**
+- **KnowledgeResult.sources populated:** RAG search results now correctly wire `RAGSource` objects into `KnowledgeResult.sources`, enabling citation display in chat
+- **StageValidator configurable strictness:** Min/max row count checks can now fail (not just warn) via `strict_row_bounds` flag on the validator or per-stage validation config
+- **SSH tunnel idle cleanup:** `SSHTunnelManager` now tracks last-used time per tunnel and closes idle tunnels (default 30min TTL) during periodic health checks
+- **Scheduler worker already in-process:** Verified the existing `_scheduler_loop` in `main.py` runs every 60s, executes due schedules, fires alerts, and records run history
+
+**Intelligence:**
+- **Global learning patterns:** `AgentLearningService` now identifies learnings that appear across 2+ connections and promotes them into every connection's prompt as universal patterns
+- **Cross-connection learning enhanced:** Sibling connection learnings (same project) are now supplemented by global patterns (across all projects)
+- **Pre-call token estimation:** `LLMRouter.estimate_tokens()` uses tiktoken (OpenAI-accurate) with char-based fallback for pre-call context budgeting
+- **Knowledge quality scoring:** `RAGFeedbackService` now computes per-source quality scores combining success rate and average retrieval distance, and identifies low-quality sources for re-indexing
+
+**Speed:**
+- **Parallel batch queries:** `BatchService.execute_batch()` now runs queries concurrently (up to 4 parallel, configurable) by default. Sequential mode available via `parallel=False`
+- **Persistent query cache:** `QueryCache` supports optional file-based persistence via `query_cache_persist_dir` config, surviving process restarts
+- **Incremental schema diff:** `SchemaInfo.fingerprint()` and `SchemaInfo.diff()` enable comparing schemas to detect only changed tables, avoiding full re-introspection
+
+**Cost:**
+- **Token budget caps:** `UsageService.check_budget()` enforces configurable daily/monthly token limits per user with `BudgetExceededError` and remaining-budget reporting. Configured via `daily_token_limit` / `monthly_token_limit` settings
+- **Expanded rule-based viz:** `VizAgent` now handles more cases without LLM calls: auto-detects pie/bar/line charts for common data shapes, only falling back to LLM for truly ambiguous results
+- **Dead code removed:** Unused `DIAGNOSTIC_QUERIES` removed from insight feed agent
+
+**Architecture:**
+- **Deprecated orchestrator decoupled:** `core/orchestrator.py` is no longer imported by any production code. The `connections.py` schema refresh endpoint now uses the connector registry directly
+- **Deprecation markers:** `core/orchestrator.py` and `core/tool_executor.py` clearly marked as deprecated with migration guidance
+- **Test coverage thresholds:** Added `fail_under = 40` and exclusion patterns to `pyproject.toml` coverage config
+- **tiktoken dependency added** for accurate token counting
+- **Task queue abstraction (ARQ):** New `app/core/task_queue.py` provides `enqueue()` / `close_task_queue()` with dual-backend support — ARQ (Redis) when `REDIS_URL` is set, asyncio in-process fallback otherwise. Deduplication via `task_id`, automatic cleanup callbacks, and graceful shutdown. Worker module at `app/worker.py` with `WorkerSettings` for `arq app.worker.WorkerSettings`
+- **Shared cache layer (Redis):** New `app/core/cache.py` provides `SharedCache` with `get` / `put` / `invalidate` / `invalidate_prefix`. Redis backend when `REDIS_URL` is configured, transparent fallback to in-memory `TTLCache`. Local L1 cache sits in front of Redis for hot-path reads
+- **Worker scaling & deployment:** Docker Compose now includes a `redis` service and a dedicated `worker` container (same image, different command: `arq app.worker.WorkerSettings`). Procfile updated with `worker` process type. API workers and background task workers can now scale independently
+- **Redis optional dependency:** Added `redis[hiredis]` and `arq` as optional extras (`pip install .[redis]`). System works identically without Redis using in-memory fallbacks
 
 ### 2026-03-22 — Context Window Resilience
 
