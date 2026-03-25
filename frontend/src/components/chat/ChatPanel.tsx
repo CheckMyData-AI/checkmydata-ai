@@ -481,7 +481,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, costEstimate, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
+    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
   const handleStop = useCallback(() => {

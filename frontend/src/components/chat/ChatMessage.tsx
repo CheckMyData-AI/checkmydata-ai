@@ -169,24 +169,10 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   }
 
   const responseType = message.responseType || metadata?.response_type || "text";
-
-  if (responseType === "session_continuation") {
-    const rotMeta = metadata as { old_session_id?: string; summary_preview?: string; topics?: string[] } | null;
-    const msgCount = parseInt(String(message.content).match(/\((\d+)/)?.[1] ?? "0", 10);
-    return (
-      <SessionContinuationBanner
-        messageCount={msgCount}
-        summaryPreview={rotMeta?.summary_preview}
-        topics={rotMeta?.topics}
-      />
-    );
-  }
-
   const isSqlResult = responseType === "sql_result";
   const isClarification = responseType === "clarification_request";
   const hasViz = !!message.visualization;
   const hasRawResult = !!message.rawResult;
-
 
   const originalVizType = resolveOriginalVizType(message.visualization, metadata?.viz_type);
   const [activeVizType, setActiveVizType] = useState<VizTypeKey>(originalVizType);
@@ -218,6 +204,29 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     },
     [activeVizType, originalVizType, message.rawResult],
   );
+
+  const [noteSaving, setNoteSaving] = useState(false);
+  const noteSavedFromStore = useNotesStore((s) =>
+    message.query ? s.notes.some((n) => n.sql_query === message.query) : false,
+  );
+  const [noteSavedLocal, setNoteSavedLocal] = useState(false);
+  const noteSaved = noteSavedFromStore || noteSavedLocal;
+
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  if (responseType === "session_continuation") {
+    const rotMeta = metadata as { old_session_id?: string; summary_preview?: string; topics?: string[] } | null;
+    const msgCount = parseInt(String(message.content).match(/\((\d+)/)?.[1] ?? "0", 10);
+    return (
+      <SessionContinuationBanner
+        messageCount={msgCount}
+        summaryPreview={rotMeta?.summary_preview}
+        topics={rotMeta?.topics}
+      />
+    );
+  }
 
   const handleFeedback = async (rating: number) => {
     if (feedbackLoading) return;
@@ -252,13 +261,6 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
     }
   };
 
-  const [noteSaving, setNoteSaving] = useState(false);
-  const noteSavedFromStore = useNotesStore((s) =>
-    message.query ? s.notes.some((n) => n.sql_query === message.query) : false,
-  );
-  const [noteSavedLocal, setNoteSavedLocal] = useState(false);
-  const noteSaved = noteSavedFromStore || noteSavedLocal;
-
   const handleSaveToNotes = async () => {
     if (noteSaving || noteSaved) return;
     const { activeProject, activeConnection } = useAppStore.getState();
@@ -290,10 +292,6 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
       setNoteSaving(false);
     }
   };
-
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryText, setSummaryText] = useState<string | null>(null);
-  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const sqlComplexity = message.query && isSqlResult ? computeSqlComplexity(message.query) : null;
 
