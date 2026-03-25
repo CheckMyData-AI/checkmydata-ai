@@ -1,3 +1,4 @@
+import base64
 import logging
 
 from pydantic import model_validator
@@ -161,5 +162,18 @@ if settings.jwt_secret == "change-me-in-production":
     )
 if not settings.master_encryption_key:
     _config_logger.warning("MASTER_ENCRYPTION_KEY is empty. Credential encryption will not work.")
+elif settings.master_encryption_key:
+    try:
+        _raw = base64.urlsafe_b64decode(settings.master_encryption_key)
+        if len(_raw) != 32:
+            raise ValueError(f"decoded key is {len(_raw)} bytes, expected 32")
+    except Exception as _e:
+        _config_logger.error(
+            "MASTER_ENCRYPTION_KEY is not a valid Fernet key (%s). "
+            "Generate one with: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\"",
+            _e,
+        )
+        raise SystemExit(1) from _e
 if not settings.resend_api_key:
     _config_logger.warning("RESEND_API_KEY is empty. Transactional emails will be skipped.")
