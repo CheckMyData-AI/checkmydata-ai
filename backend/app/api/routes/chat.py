@@ -55,6 +55,20 @@ _SQL_EXPLAIN_CACHE_MAX = 100
 _SQL_EXPLAIN_CACHE_LOCK = asyncio.Lock()
 
 
+async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
+    """Wrap to_config with a user-friendly error on decryption failure."""
+    try:
+        return await _conn_svc.to_config(db, conn_model)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot decrypt credentials for connection '{conn_model.name}'. "
+                "Please re-enter the password in Settings → Connections."
+            ),
+        ) from exc
+
+
 def _compute_sql_complexity(sql: str) -> str:
     upper = sql.upper()
     has_recursive = bool(re.search(r"\bWITH\s+RECURSIVE\b", upper))
@@ -776,7 +790,7 @@ async def ask(
         conn_model = await _conn_svc.get(db, body.connection_id)
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
-        config = await _conn_svc.to_config(db, conn_model)
+        config = await _safe_to_config(db, conn_model)
         config.connection_id = body.connection_id
 
     session_id = body.session_id
@@ -964,7 +978,7 @@ async def ask_stream(
         conn_model = await _conn_svc.get(db, body.connection_id)
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
-        config = await _conn_svc.to_config(db, conn_model)
+        config = await _safe_to_config(db, conn_model)
         config.connection_id = body.connection_id
 
     session_id = body.session_id
@@ -1472,7 +1486,14 @@ async def chat_websocket(
                     await websocket.send_json({"error": "Connection not found"})
                     await websocket.close()
                     return
-                config = await _conn_svc.to_config(db, conn_model)
+                try:
+                    config = await _conn_svc.to_config(db, conn_model)
+                except ValueError:
+                    await websocket.send_json({
+                        "error": f"Cannot decrypt credentials for '{conn_model.name}'. Re-enter the password in Settings."
+                    })
+                    await websocket.close()
+                    return
                 config.connection_id = connection_id
 
             ws_project = await _project_svc.get(db, project_id)

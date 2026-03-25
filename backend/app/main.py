@@ -193,6 +193,19 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
+@app.exception_handler(ValueError)
+async def _value_error_handler(request: Request, exc: ValueError):
+    msg = str(exc)
+    if "Cannot decrypt credentials" in msg or "encryption key may have changed" in msg.lower():
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"{msg} Please re-enter the password in Settings → Connections."},
+        )
+    raise exc
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
