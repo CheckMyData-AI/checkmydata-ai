@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Orchestrator iteration limit raised to 10** — Supports complex multi-enrichment workflows (e.g., dual-query call+SMS analysis with ip_to_country + phone_to_country + aggregate_data for each)
 
 ### Fixed
+- **Google OAuth 403 on cross-origin** — CSRF double-submit cookie check in `/api/auth/google` now skips verification when the cookie is absent (cross-origin setup where frontend and API are on different domains). The nonce parameter already provides replay protection for the programmatic GIS callback flow
 - **Heroku backup skip** — `BackupManager` now detects Heroku (`DYNO` env var) and skips `pg_dump` for managed Postgres, recommending `heroku pg:backups` instead
 - **Noisy orchestrator context messages** — Replaced verbose SSE "thinking" events for context usage with quieter log-level messages to reduce UI clutter
 - **LLM error formatting** — Improved error message formatting in LLM error classes

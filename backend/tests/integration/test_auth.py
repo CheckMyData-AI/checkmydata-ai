@@ -261,6 +261,33 @@ class TestGoogleAuth:
             resp = await client.post("/api/auth/google", json={"credential": "fake"})
         assert resp.status_code == 401
 
+    async def test_google_csrf_body_without_cookie_succeeds(self, client):
+        """Cross-origin: frontend sends g_csrf_token in body but cookie is absent."""
+        email = _email()
+        payload = {**FAKE_GOOGLE_PAYLOAD, "email": email, "sub": f"gid-{uuid.uuid4().hex[:8]}"}
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value=payload,
+        ):
+            resp = await client.post(
+                "/api/auth/google",
+                json={"credential": "fake", "g_csrf_token": "some-token-from-body"},
+            )
+        assert resp.status_code == 200
+
+    async def test_google_csrf_mismatch_returns_403(self, client):
+        """Same-origin: both cookie and body present but values differ."""
+        with patch(
+            "app.services.auth_service.AuthService.verify_google_token",
+            return_value={**FAKE_GOOGLE_PAYLOAD, "email": _email(), "sub": f"gid-{uuid.uuid4().hex[:8]}"},
+        ):
+            resp = await client.post(
+                "/api/auth/google",
+                json={"credential": "fake", "g_csrf_token": "body-token"},
+                cookies={"g_csrf_token": "different-cookie-token"},
+            )
+        assert resp.status_code == 403
+
     async def test_google_login_normalizes_email(self, client):
         email_raw = f"  User-{uuid.uuid4().hex[:8]}@EXAMPLE.COM  "
         email_normalized = email_raw.lower().strip()

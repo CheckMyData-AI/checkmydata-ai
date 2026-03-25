@@ -118,7 +118,7 @@ async def google_login(
 ):
     if body.g_csrf_token:
         cookie_token = request.cookies.get("g_csrf_token")
-        if not cookie_token or cookie_token != body.g_csrf_token:
+        if cookie_token and cookie_token != body.g_csrf_token:
             raise HTTPException(status_code=403, detail="CSRF token mismatch")
 
     try:
