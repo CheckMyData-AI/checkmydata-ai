@@ -93,7 +93,7 @@ The system has **five main flows**:
 2. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
 3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips. A cost/performance preview below the chat input shows estimated token usage, context budget utilization, and session running totals.
 4. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
-5. **Sharing flow**: Project owner invites collaborators by email -> invited users register and are auto-accepted -> each user gets isolated chat sessions while sharing the same project data and connections
+5. **Sharing flow**: Project owner invites collaborators by email -> invitee receives an email notification via Resend -> invited users register and are auto-accepted (the owner gets an acceptance confirmation email) -> each user gets isolated chat sessions while sharing the same project data and connections. New users also receive a welcome email on registration.
 
 ---
 
@@ -552,7 +552,7 @@ Before sending a query, the chat interface shows an estimated token cost and con
 - `CostEstimator` — Displays "~{tokens} tokens" with a tooltip showing the full breakdown, a cost badge (when pricing is available), and a thin utilization bar (green < 60%, amber 60-80%, red > 80%). Fetches the estimate once when project/connection changes.
 - `ContextBudgetIndicator` — A thin stacked horizontal bar showing color-coded segments: schema (blue), rules (purple), learnings (amber), overview (teal), history remaining (gray). Each segment shows a tooltip with its token count on hover.
 - **Session cost tracking** — The Zustand store tracks cumulative `sessionTokens` and `sessionCost` for the active session. These are incremented from each assistant message's `token_usage` metadata and displayed next to the cost estimator. Values reset on session change.
-- **Heavy query warning** — When context utilization exceeds 80%, a brief toast notification informs the user before the query is sent.
+- **Rotation imminent flag** — The estimate response includes `rotation_imminent: true` when context utilization approaches the session rotation threshold (default 90%).
 
 **New files:**
 - `frontend/src/components/chat/CostEstimator.tsx` — Token/cost estimate display with tooltip breakdown
@@ -565,7 +565,40 @@ Before sending a query, the chat interface shows an estimated token cost and con
 - `backend/app/api/routes/chat.py` — Added `/estimate` endpoint with `CostEstimateResponse` model
 - `frontend/src/lib/api.ts` — Added `CostEstimate`, `CostEstimateBreakdown` types and `chat.estimate()` method
 - `frontend/src/stores/app-store.ts` — Added `sessionTokens`, `sessionCost`, `addSessionUsage()`, `resetSessionUsage()` to the store
-- `frontend/src/components/chat/ChatPanel.tsx` — Integrated CostEstimator, ContextBudgetIndicator, session usage display, and heavy query warning toast
+- `frontend/src/components/chat/ChatPanel.tsx` — Integrated CostEstimator, ContextBudgetIndicator, and session usage display
+
+### 8c. Auto-Session Rotation
+
+When a conversation approaches the LLM context window limit, the system automatically summarizes the current session and seamlessly continues in a new session, preserving all context.
+
+**How it works:**
+- Before each agent run, the backend estimates the token count of the chat history. If usage reaches the configured threshold (default 95% of `MAX_CONTEXT_TOKENS`), session rotation triggers automatically.
+- The system generates a rich LLM-based summary of the current session, capturing: main questions asked, SQL queries and results, data insights, and any rules or preferences established.
+- A new session is created with title "Continued: {old title}" and the summary injected as a system message. The user's current question is forwarded to the new session.
+- An SSE event `session_rotated` is emitted with `{old_session_id, new_session_id, summary_preview, message_count, topics}`. The frontend silently switches to the new session.
+- A visual `SessionContinuationBanner` appears inline in the chat as a thin divider showing "Conversation continued (N messages summarized)". Clicking it expands to show the summary text and topic tags.
+- No popup, no modal, no toast — the transition is smooth and non-intrusive.
+
+**Configuration (environment variables):**
+- `SESSION_ROTATION_ENABLED` — Enable/disable auto-rotation (default: `true`)
+- `SESSION_ROTATION_THRESHOLD_PCT` — Context usage percentage that triggers rotation (default: `95`)
+- `SESSION_ROTATION_SUMMARY_MAX_TOKENS` — Maximum tokens for the carry-over summary (default: `500`)
+
+**New files:**
+- `backend/app/services/session_summarizer.py` — Rich LLM-based session summary generation with fallback
+- `frontend/src/components/chat/SessionContinuationBanner.tsx` — Expandable inline banner for session boundaries
+
+**Modified files:**
+- `backend/app/config.py` — Added `session_rotation_enabled`, `session_rotation_threshold_pct`, `session_rotation_summary_max_tokens`
+- `backend/app/api/routes/chat.py` — Session rotation logic in `ask_stream`, `rotation_imminent` in estimate response
+- `backend/app/agents/orchestrator.py` — `context_usage_pct` in `AgentResponse`, suppressed noisy context usage thinking emissions
+- `backend/app/llm/errors.py` — Improved `LLMTokenLimitError` user message
+- `backend/app/core/backup_manager.py` — Heroku-aware backup skip for managed Postgres
+- `frontend/src/lib/api.ts` — `session_rotated` SSE event handling, `onSessionRotated` callback
+- `frontend/src/components/chat/ChatPanel.tsx` — Session rotation handler, removed context budget toast
+- `frontend/src/components/chat/ChatMessage.tsx` — Renders `session_continuation` messages as `SessionContinuationBanner`
+- `frontend/src/components/connections/ConnectionHealth.tsx` — Fixed polling storm (ref-based callback, 30s min interval)
+- `backend/app/main.py` — Added retry logic to lifespan migration step
 
 ### 9. Index the Repository (Knowledge Base)
 
@@ -781,10 +814,13 @@ Project owners can invite other users to collaborate on a project via email:
    - **Viewer** — Can chat (query the database) and view connections. Same session isolation.
 
 3. **How it works**:
-   - When the invited user **registers** with the invited email, they are automatically added to the project with the specified role.
+   - When an invite is created, the invitee receives an **email notification** (via [Resend](https://resend.com)) with the project name, inviter name, role, and a link to sign up.
+   - When the invited user **registers** with the invited email, they are automatically added to the project with the specified role. New users also receive a **welcome email**.
    - If the user already has an account, they can **accept the invite** from the "Pending Invitations" section that appears in the sidebar.
+   - When an invite is accepted, the **project owner receives a confirmation email** with the new member's name and email.
    - Each user has **their own isolated chat sessions** — they cannot see other users' conversation history.
    - All users share the **same project data**: connections, indexed knowledge base, and custom rules.
+   - Email notifications require `RESEND_API_KEY` to be configured. Without it, the invite flow works normally but no emails are sent.
 
 4. **Managing access**:
    - **Revoke** a pending invite before it's accepted
@@ -1834,6 +1870,7 @@ app/
 │   ├── rule_service.py, default_rule_template.py, auth_service.py
 │   ├── membership_service.py ← Role checking, member CRUD, accessible projects
 │   ├── invite_service.py ← Create/accept/revoke invites, auto-accept on registration
+│   ├── email_service.py ← Transactional emails via Resend (welcome, invite, acceptance)
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
@@ -2316,6 +2353,9 @@ Copy `backend/.env.example` to `backend/.env` and set:
 | `JWT_SECRET` | **Yes (prod)** | Secret for signing JWT tokens. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth Client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Enables "Sign in with Google" button. No `GOOGLE_CLIENT_SECRET` needed (GIS ID-token flow). |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | Same value as above, set in `frontend/.env.local` for the GIS JavaScript SDK. |
+| `RESEND_API_KEY` | No | [Resend](https://resend.com) API key for transactional emails (welcome, invite, acceptance). If empty, emails are silently skipped. |
+| `RESEND_FROM_EMAIL` | No | Sender address for transactional emails (default: `CheckMyData <noreply@checkmydata.ai>`). Must match a [verified domain](https://resend.com/domains) in Resend. |
+| `APP_URL` | No | Frontend URL used in email links (default: `http://localhost:3000`). Set to your production URL in prod. |
 | `OPENAI_API_KEY` | One of three | OpenAI API key (for GPT-4o, etc.) |
 | `ANTHROPIC_API_KEY` | One of three | Anthropic API key (for Claude) |
 | `OPENROUTER_API_KEY` | One of three | OpenRouter API key (multi-model proxy) |
@@ -2744,6 +2784,8 @@ heroku config:set \
   DEFAULT_LLM_PROVIDER=openai \
   OPENAI_API_KEY=sk-... \
   CORS_ORIGINS='["https://checkmydata.ai"]' \
+  RESEND_API_KEY=re_... \
+  APP_URL=https://checkmydata.ai \
   --app checkmydata-api
 
 # 4. Set frontend env vars

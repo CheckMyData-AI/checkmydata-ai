@@ -128,12 +128,25 @@ class TestAcceptInvite:
         user = await _make_user(db)
         proj = await _make_project(db)
         invite = await inv_svc.create_invite(db, proj.id, user.email, "editor", owner.id)
-        member = await inv_svc.accept_invite(db, invite.id, user.id)
+        member, returned_invite = await inv_svc.accept_invite(db, invite.id, user.id)
         assert member.role == "editor"
         assert member.project_id == proj.id
-        await db.refresh(invite)
-        assert invite.status == "accepted"
-        assert invite.accepted_at is not None
+        assert returned_invite.id == invite.id
+        await db.refresh(returned_invite)
+        assert returned_invite.status == "accepted"
+        assert returned_invite.accepted_at is not None
+
+    @pytest.mark.asyncio
+    async def test_returns_invite_with_relationships(self, db):
+        owner = await _make_user(db)
+        user = await _make_user(db)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, user.email, "editor", owner.id)
+        _member, returned_invite = await inv_svc.accept_invite(db, invite.id, user.id)
+        assert returned_invite.inviter is not None
+        assert returned_invite.inviter.id == owner.id
+        assert returned_invite.project is not None
+        assert returned_invite.project.id == proj.id
 
     @pytest.mark.asyncio
     async def test_does_not_duplicate_if_already_member(self, db):
@@ -146,7 +159,7 @@ class TestAcceptInvite:
         proj2 = await _make_project(db)
         invite = await inv_svc.create_invite(db, proj2.id, user_email, "editor", owner.id)
         await mem_svc.add_member(db, proj2.id, user.id, "viewer")
-        member = await inv_svc.accept_invite(db, invite.id, user.id)
+        member, _inv = await inv_svc.accept_invite(db, invite.id, user.id)
         assert member.role == "viewer"
 
     @pytest.mark.asyncio

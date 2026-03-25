@@ -34,6 +34,7 @@ from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rag_feedback_service import RAGFeedbackService
 from app.services.suggestion_engine import SuggestionEngine
+from app.services.session_summarizer import SessionSummary, get_session_title, summarize_session
 from app.services.usage_service import UsageService
 from app.viz.renderer import render
 
@@ -113,6 +114,7 @@ class CostEstimateResponse(BaseModel):
     estimated_total_tokens: int = 0
     estimated_cost_usd: float | None = None
     context_utilization_pct: float = 0.0
+    rotation_imminent: bool = False
     breakdown: CostEstimateBreakdown = CostEstimateBreakdown()
 
 
@@ -224,12 +226,19 @@ async def estimate_cost(
     model = (project.agent_llm_model if project else None) or None
     cost = _estimate_cost(model, total_prompt, avg_completion)
 
+    rotation_threshold = app_settings.session_rotation_threshold_pct
+    rotation_imminent = (
+        app_settings.session_rotation_enabled
+        and utilization >= rotation_threshold - 5
+    )
+
     return CostEstimateResponse(
         estimated_prompt_tokens=total_prompt,
         estimated_completion_tokens=avg_completion,
         estimated_total_tokens=total_tokens,
         estimated_cost_usd=cost,
         context_utilization_pct=utilization,
+        rotation_imminent=rotation_imminent,
         breakdown=CostEstimateBreakdown(
             schema_context=schema_tokens,
             rules=rules_tokens,
@@ -988,6 +997,74 @@ async def ask_stream(
 
     from app.config import settings as app_settings
 
+    # --- Session rotation: detect context exhaustion before running agent ---
+    rotated_from: str | None = None
+    rotation_summary: SessionSummary | None = None
+    if (
+        app_settings.session_rotation_enabled
+        and body.session_id  # only rotate existing sessions
+        and len(history) >= 4
+    ):
+        history_chars = sum(len(m.content) for m in history)
+        history_tokens_est = history_chars // CHARS_PER_TOKEN
+        threshold = int(
+            app_settings.max_context_tokens
+            * app_settings.session_rotation_threshold_pct
+            / 100
+        )
+        if history_tokens_est >= threshold:
+            logger.info(
+                "Session rotation triggered: session=%s tokens_est=%d threshold=%d",
+                session_id[:8],
+                history_tokens_est,
+                threshold,
+            )
+            try:
+                from app.llm.router import LLMRouter
+
+                _rotation_llm = LLMRouter()
+                rotation_summary = await summarize_session(
+                    db,
+                    session_id,
+                    _rotation_llm,
+                    preferred_provider=agent_provider,
+                    model=agent_model,
+                )
+                old_title = await get_session_title(db, session_id)
+                rotated_from = session_id
+
+                new_chat_session = await _chat_svc.create_session(
+                    db,
+                    body.project_id,
+                    title=f"Continued: {old_title}",
+                    user_id=user["user_id"],
+                    connection_id=body.connection_id,
+                )
+                session_id = new_chat_session.id
+
+                await _chat_svc.add_message(
+                    db,
+                    session_id,
+                    "system",
+                    f"[Previous conversation summary ({rotation_summary.message_count} messages)]\n{rotation_summary.text}",
+                )
+                user_msg = await _chat_svc.add_message(
+                    db, session_id, "user", body.message
+                )
+                user_message_id = user_msg.id
+                history = await _chat_svc.get_history_as_messages(db, session_id)
+
+                logger.info(
+                    "Session rotated: old=%s new=%s summary_len=%d",
+                    rotated_from[:8],
+                    session_id[:8],
+                    len(rotation_summary.text),
+                )
+            except Exception:
+                logger.warning("Session rotation failed, continuing with original session", exc_info=True)
+                rotated_from = None
+                rotation_summary = None
+
     limit_err = await agent_limiter.acquire(user["user_id"])
     if limit_err:
         raise HTTPException(status_code=429, detail=limit_err)
@@ -998,6 +1075,17 @@ async def ask_stream(
         result_holder: list = []
         queue = await tracker.subscribe()
         released = False
+
+        # Emit session_rotated event before any other events
+        if rotated_from and rotation_summary:
+            rotation_event = {
+                "old_session_id": rotated_from,
+                "new_session_id": session_id,
+                "summary_preview": rotation_summary.text[:200],
+                "message_count": rotation_summary.message_count,
+                "topics": rotation_summary.topics[:5],
+            }
+            yield f"event: session_rotated\ndata: {json.dumps(rotation_event, default=str)}\n\n"
 
         stream_extra: dict = {"session_id": session_id}
         if body.pipeline_action:
@@ -1029,6 +1117,7 @@ async def ask_stream(
             wf_id = None
             safety = app_settings.stream_safety_margin_seconds
             loop_deadline = time.monotonic() + stream_timeout_seconds + safety
+            last_heartbeat = time.monotonic()
             while not task.done() or not queue.empty():
                 if time.monotonic() > loop_deadline:
                     logger.warning("SSE event loop exceeded safety timeout, breaking")
@@ -1036,6 +1125,10 @@ async def ask_stream(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=0.5)
                 except TimeoutError:
+                    now = time.monotonic()
+                    if now - last_heartbeat >= 20:
+                        yield ": heartbeat\n\n"
+                        last_heartbeat = now
                     continue
                 if wf_id is None and event.step == "pipeline_start":
                     wf_id = event.workflow_id
@@ -1092,25 +1185,32 @@ async def ask_stream(
                 if event.step == "pipeline_end":
                     break
 
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=stream_timeout_seconds)
-            except TimeoutError:
-                task.cancel()
-                error_payload = {
-                    "error": "Request timed out",
-                    "error_type": "timeout",
-                    "is_retryable": True,
-                    "user_message": (
-                        "The request took too long to complete. "
-                        "Please try again with a simpler question."
-                    ),
-                }
-                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-                return
-            except Exception as exc:
-                error_payload = _build_structured_error(exc)
-                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-                return
+            wait_deadline = time.monotonic() + stream_timeout_seconds
+            while not task.done():
+                remaining = wait_deadline - time.monotonic()
+                if remaining <= 0:
+                    task.cancel()
+                    error_payload = {
+                        "error": "Request timed out",
+                        "error_type": "timeout",
+                        "is_retryable": True,
+                        "user_message": (
+                            "The request took too long to complete. "
+                            "Please try again with a simpler question."
+                        ),
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                    return
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(task), timeout=min(20, remaining)
+                    )
+                except TimeoutError:
+                    yield ": heartbeat\n\n"
+                except Exception as exc:
+                    error_payload = _build_structured_error(exc)
+                    yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                    return
             result = result_holder[0] if result_holder else None
             if not result:
                 error_payload = {

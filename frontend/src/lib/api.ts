@@ -972,6 +972,7 @@ export const api = {
       onPipelineEvent?: (eventType: string, event: Record<string, unknown>) => void,
       onThinking?: (event: Record<string, unknown>) => void,
       onToken?: (chunk: string) => void,
+      onSessionRotated?: (event: { old_session_id: string; new_session_id: string; summary_preview: string; message_count: number; topics: string[] }) => void,
     ) => {
       const ctrl = new AbortController();
       const STREAM_IDLE_TIMEOUT_MS = 120_000;
@@ -1030,6 +1031,7 @@ export const api = {
               else if (eventType === "tool_call") onToolCall?.(parsed);
               else if (eventType === "result") { gotResult = true; onResult(parsed as ChatResponse); }
               else if (eventType === "error") { gotError = true; onError(parsed as StreamError); }
+              else if (eventType === "session_rotated") onSessionRotated?.(parsed as { old_session_id: string; new_session_id: string; summary_preview: string; message_count: number; topics: string[] });
               else if (pipelineEvents.has(eventType)) onPipelineEvent?.(eventType, parsed);
             } catch { /* skip malformed */ }
           }

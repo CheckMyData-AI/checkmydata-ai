@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Transactional emails via Resend** (`backend/app/services/email_service.py`) — Three email types: welcome email on registration, invite notification when a project owner invites a collaborator, and acceptance confirmation when an invite is accepted. Uses the Resend Python SDK with `asyncio.to_thread()` for async compatibility. Idempotency keys prevent duplicate sends. Gracefully no-ops when `RESEND_API_KEY` is not configured. New env vars: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_URL`
+- **Session rotation** (`backend/app/services/session_summarizer.py`) — Automatic context-aware session rotation when chat history approaches the context window limit. Summarizes the old session via LLM, creates a new session with a continuation banner linking back to the original. Frontend `SessionContinuationBanner` component shows the transition. Cost estimate endpoint now includes `rotation_imminent` flag. Configurable via `SESSION_ROTATION_ENABLED`, `SESSION_ROTATION_THRESHOLD_PCT`, `SESSION_ROTATION_SUMMARY_MAX_TOKENS`
+- **Context usage tracking in AgentResponse** — `context_usage_pct` field added to `AgentResponse` so the frontend can display how much of the context window has been consumed
+- **Connection health auto-refresh** — `ConnectionHealth` component now auto-refreshes status periodically and shows more detailed health info
+- **ChatMessage copy-all button** — New button on chat messages to copy the entire message content
 - **GeoIP two-tier cache** (`backend/app/services/geoip_cache.py`) — In-memory LRU (100k entries, ~20MB) + SQLite persistent storage (`data/geoip_cache.db`, WAL mode, `WITHOUT ROWID`) for IP geolocation results. Eliminates redundant lookups across requests and survives process restarts. Handles millions of unique IPs. Batch operations deduplicate IPs and use batch SQL reads/writes. Configurable via `GEOIP_CACHE_ENABLED`, `GEOIP_CACHE_DIR`, `GEOIP_MEMORY_CACHE_SIZE` env vars
 - **Data Processing meta-tool (`process_data`)** — Orchestrator tool that enriches query results with derived data between query steps. Enables multi-step analysis workflows (e.g., query DB for IPs, convert to countries, filter, aggregate). Supports chaining multiple operations sequentially
 - **IP-to-country enrichment (`ip_to_country`)** — Offline GeoIP resolution using `geoip2fast` (MaxMind GeoLite2 database). Converts IP address columns to ISO country codes and country names with no external API calls
@@ -25,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Orchestrator iteration limit raised to 10** — Supports complex multi-enrichment workflows (e.g., dual-query call+SMS analysis with ip_to_country + phone_to_country + aggregate_data for each)
 
 ### Fixed
+- **Heroku backup skip** — `BackupManager` now detects Heroku (`DYNO` env var) and skips `pg_dump` for managed Postgres, recommending `heroku pg:backups` instead
+- **Noisy orchestrator context messages** — Replaced verbose SSE "thinking" events for context usage with quieter log-level messages to reduce UI clutter
+- **LLM error formatting** — Improved error message formatting in LLM error classes
 - **Registration race condition** — Concurrent duplicate email registrations now caught by DB `IntegrityError` and returned as 409 instead of 500
 - **Invite accept commit on early return** — `accept_invite` now commits invite status change when user is already a project member, preventing the update from being silently rolled back
 - **PATCH project response missing user_role** — `update_project` now returns a full `ProjectResponse` with `user_role` instead of the raw ORM object

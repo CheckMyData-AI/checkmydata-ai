@@ -279,8 +279,9 @@ class TestFindOrCreateGoogleUser:
     @pytest.mark.asyncio
     async def test_creates_new_user(self, db):
         payload = self._payload(email="new@gmail.com", sub="google-new")
-        user = await svc.find_or_create_google_user(db, payload)
+        user, created = await svc.find_or_create_google_user(db, payload)
 
+        assert created is True
         assert user.email == "new@gmail.com"
         assert user.google_id == "google-new"
         assert user.auth_provider == "google"
@@ -294,8 +295,9 @@ class TestFindOrCreateGoogleUser:
         assert existing.google_id is None
 
         payload = self._payload(email="link@test.com", sub="google-link")
-        user = await svc.find_or_create_google_user(db, payload)
+        user, created = await svc.find_or_create_google_user(db, payload)
 
+        assert created is False
         assert user.id == existing.id
         assert user.google_id == "google-link"
         assert user.auth_provider == "google"
@@ -303,21 +305,23 @@ class TestFindOrCreateGoogleUser:
     @pytest.mark.asyncio
     async def test_finds_by_google_id(self, db):
         payload = self._payload(email="gid@test.com", sub="google-find")
-        created = await svc.find_or_create_google_user(db, payload)
+        created_user, was_created = await svc.find_or_create_google_user(db, payload)
+        assert was_created is True
 
         payload2 = self._payload(email="gid@test.com", sub="google-find")
-        found = await svc.find_or_create_google_user(db, payload2)
+        found, was_created2 = await svc.find_or_create_google_user(db, payload2)
 
-        assert found.id == created.id
+        assert was_created2 is False
+        assert found.id == created_user.id
 
     @pytest.mark.asyncio
     async def test_updates_picture_on_google_id_match(self, db):
         payload = self._payload(email="pic@test.com", sub="google-pic", picture="https://old.jpg")
-        user = await svc.find_or_create_google_user(db, payload)
+        user, _ = await svc.find_or_create_google_user(db, payload)
         assert user.picture_url == "https://old.jpg"
 
         payload2 = self._payload(email="pic@test.com", sub="google-pic", picture="https://new.jpg")
-        updated = await svc.find_or_create_google_user(db, payload2)
+        updated, _ = await svc.find_or_create_google_user(db, payload2)
         assert updated.id == user.id
         assert updated.picture_url == "https://new.jpg"
 
@@ -325,5 +329,6 @@ class TestFindOrCreateGoogleUser:
     async def test_uses_email_prefix_when_name_missing(self, db):
         payload = self._payload(email="noname@gmail.com", sub="google-noname")
         payload.pop("name", None)
-        user = await svc.find_or_create_google_user(db, payload)
+        user, created = await svc.find_or_create_google_user(db, payload)
+        assert created is True
         assert user.display_name == "noname"

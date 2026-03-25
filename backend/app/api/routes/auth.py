@@ -8,6 +8,7 @@ from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.auth_service import AuthService
+from app.services.email_service import EmailService
 from app.services.invite_service import InviteService
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _auth = AuthService()
 _invite_svc = InviteService()
+_email_svc = EmailService()
 
 
 class RegisterRequest(BaseModel):
@@ -68,6 +70,9 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
     await _invite_svc.auto_accept_for_user(db, user.id, user.email)
 
     audit_log("auth.register", user_id=user.id, detail=user.email)
+    await _email_svc.send_welcome_email(
+        user_id=user.id, email=user.email, display_name=user.display_name
+    )
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,
@@ -128,11 +133,15 @@ async def google_login(
             logger.warning("Google nonce mismatch: expected=%s got=%s", body.nonce, token_nonce)
             raise HTTPException(status_code=401, detail="Invalid nonce in Google token")
 
-    user = await _auth.find_or_create_google_user(db, payload)
+    user, is_new_user = await _auth.find_or_create_google_user(db, payload)
 
     await _invite_svc.auto_accept_for_user(db, user.id, user.email)
 
     audit_log("auth.google", user_id=user.id, detail=user.email)
+    if is_new_user:
+        await _email_svc.send_welcome_email(
+            user_id=user.id, email=user.email, display_name=user.display_name
+        )
     token = _auth.create_token(user.id, user.email)
     return AuthResponse(
         token=token,

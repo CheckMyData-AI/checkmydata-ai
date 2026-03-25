@@ -71,8 +71,8 @@ class LLMTokenLimitError(LLMError):
     @property
     def user_message(self) -> str:
         return (
-            "The request was too large for the AI model. "
-            "Try simplifying your question or shortening the conversation."
+            "The conversation has become too long for the AI model's context window. "
+            "Starting a fresh chat will resolve this."
         )
 
 

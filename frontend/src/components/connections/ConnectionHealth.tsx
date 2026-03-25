@@ -15,6 +15,8 @@ const STATUS_DOT_CLASSES: Record<HealthStatus, string> = {
   unknown: "bg-surface-3",
 };
 
+const MIN_POLL_INTERVAL_MS = 30_000;
+
 function formatCheckTime(iso: string | null): string {
   if (!iso) return "never";
   const diff = Date.now() - new Date(iso).getTime();
@@ -35,6 +37,10 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
   const [loading, setLoading] = useState(true);
   const [reconnecting, setReconnecting] = useState(false);
   const mountedRef = useRef(true);
+  const onStatusChangeRef = useRef(onStatusChange);
+  const lastFetchRef = useRef(0);
+
+  onStatusChangeRef.current = onStatusChange;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -42,20 +48,25 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
   }, []);
 
   const fetchHealth = useCallback(() => {
+    const now = Date.now();
+    if (now - lastFetchRef.current < MIN_POLL_INTERVAL_MS) return;
+    lastFetchRef.current = now;
+
     api.connections.health(connectionId)
       .then((h) => {
         if (mountedRef.current) {
           setHealth(h);
           setLoading(false);
-          onStatusChange?.(h.status as HealthStatus);
+          onStatusChangeRef.current?.(h.status as HealthStatus);
         }
       })
       .catch(() => {
         if (mountedRef.current) setLoading(false);
       });
-  }, [connectionId, onStatusChange]);
+  }, [connectionId]);
 
   useEffect(() => {
+    lastFetchRef.current = 0;
     fetchHealth();
   }, [fetchHealth]);
 
@@ -73,13 +84,13 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
             consecutive_failures: prev?.consecutive_failures ?? 0,
             last_error: (event.extra?.last_error as string) ?? null,
           };
-          onStatusChange?.(updated.status as HealthStatus);
+          onStatusChangeRef.current?.(updated.status as HealthStatus);
           return updated;
         });
       }
     });
     return unsub;
-  }, [connectionId, onStatusChange]);
+  }, [connectionId]);
 
   const handleReconnect = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -88,7 +99,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       const result = await api.connections.reconnect(connectionId);
       if (result.health) {
         setHealth(result.health);
-        onStatusChange?.(result.health.status as HealthStatus);
+        onStatusChangeRef.current?.(result.health.status as HealthStatus);
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Reconnect failed", "error");

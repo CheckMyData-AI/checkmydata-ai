@@ -174,12 +174,13 @@ class WorkflowTracker:
                 pass
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
+        short = event.detail[:30] + "…" if len(event.detail) > 30 else event.detail
         logger.info(
             "workflow[%s] %s: %s (%s)%s",
             event.workflow_id[:8],
             event.step,
             event.status,
-            event.detail,
+            short,
             f" {event.elapsed_ms:.0f}ms" if event.elapsed_ms is not None else "",
         )
         async with self._lock:

@@ -58,8 +58,13 @@ class InviteService:
         )
         db.add(invite)
         await db.commit()
-        await db.refresh(invite)
-        return invite
+
+        result = await db.execute(
+            select(ProjectInvite)
+            .options(selectinload(ProjectInvite.inviter), selectinload(ProjectInvite.project))
+            .where(ProjectInvite.id == invite.id)
+        )
+        return result.scalar_one()
 
     async def list_invites(
         self,
@@ -98,8 +103,17 @@ class InviteService:
         user_id: str,
         *,
         _skip_email_check: bool = False,
-    ) -> ProjectMember:
-        result = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite_id))
+    ) -> tuple[ProjectMember, ProjectInvite]:
+        """Accept a pending invite and return ``(member, invite)``.
+
+        The returned *invite* has ``inviter`` and ``project`` eagerly loaded
+        so callers can read e.g. ``invite.inviter.email`` for notifications.
+        """
+        result = await db.execute(
+            select(ProjectInvite)
+            .options(selectinload(ProjectInvite.inviter), selectinload(ProjectInvite.project))
+            .where(ProjectInvite.id == invite_id)
+        )
         invite = result.scalar_one_or_none()
         if not invite:
             raise HTTPException(status_code=404, detail="Invite not found")
@@ -128,7 +142,7 @@ class InviteService:
             member = existing.scalar_one_or_none()
             if member:
                 await db.commit()
-                return member
+                return member, invite
 
             member = ProjectMember(
                 project_id=invite.project_id,
@@ -149,7 +163,7 @@ class InviteService:
                 )
             )
             member = existing.scalar_one()
-        return member
+        return member, invite
 
     async def list_pending_for_email(
         self,
@@ -181,6 +195,6 @@ class InviteService:
         pending = await self.list_pending_for_email(db, email)
         members = []
         for invite in pending:
-            member = await self.accept_invite(db, invite.id, user_id, _skip_email_check=True)
+            member, _inv = await self.accept_invite(db, invite.id, user_id, _skip_email_check=True)
             members.append(member)
         return members

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -13,6 +14,10 @@ from pathlib import Path
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_heroku() -> bool:
+    return bool(os.environ.get("DYNO"))
 
 
 class BackupManager:
@@ -65,6 +70,17 @@ class BackupManager:
     async def _backup_database(self, dest: Path, manifest: dict) -> int:
         dest.mkdir(parents=True, exist_ok=True)
         db_url = settings.database_url
+
+        if _is_heroku() and ("postgresql" in db_url or "postgres" in db_url):
+            logger.info(
+                "Skipping pg_dump on Heroku — use `heroku pg:backups` for managed backups"
+            )
+            manifest["files"]["database"] = {
+                "skipped": True,
+                "reason": "Heroku managed Postgres; use heroku pg:backups",
+            }
+            manifest["db_type"] = "postgres_heroku"
+            return 0
 
         try:
             if "sqlite" in db_url:

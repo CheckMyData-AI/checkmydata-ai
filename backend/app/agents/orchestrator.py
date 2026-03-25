@@ -109,6 +109,7 @@ class AgentResponse:
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
     insights: list[dict] = field(default_factory=list)
+    context_usage_pct: int = 0
 
 
 class OrchestratorAgent(BaseAgent):
@@ -318,21 +319,14 @@ class OrchestratorAgent(BaseAgent):
                         )
                     )
                     wrap_up_injected = True
-                    await self._tracker.emit(
+                    logger.info(
+                        "Approaching context limit (wf=%s), finishing with available data",
                         wf_id,
-                        "thinking",
-                        "in_progress",
-                        "Approaching context limit, finishing with available data…",
                     )
 
                 pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
                 if pct > 50:
-                    await self._tracker.emit(
-                        wf_id,
-                        "thinking",
-                        "in_progress",
-                        f"Context usage: ~{pct}% of model limit",
-                    )
+                    logger.debug("Context usage: ~%d%% of model limit (wf=%s)", pct, wf_id)
 
                 await self._tracker.emit(
                     wf_id,
@@ -355,11 +349,9 @@ class OrchestratorAgent(BaseAgent):
                         )
                 except (LLMAllProvidersFailedError, LLMTokenLimitError) as exc:
                     if _is_token_limit_error(exc):
-                        await self._tracker.emit(
+                        logger.info(
+                            "Hit context limit (wf=%s), retrying with compressed context",
                             wf_id,
-                            "thinking",
-                            "in_progress",
-                            "Hit context limit, retrying with compressed context…",
                         )
                         aggressive = int(loop_budget * 0.6)
                         messages, _ = trim_loop_messages(messages, aggressive)
@@ -575,6 +567,10 @@ class OrchestratorAgent(BaseAgent):
                 except Exception:
                     logger.debug("Failed to generate follow-up suggestions", exc_info=True)
 
+            final_pct = int(
+                estimate_messages_tokens(messages) / max(loop_budget, 1) * 100
+            )
+
             return AgentResponse(
                 answer=final_text,
                 query=last_sql_result.query if last_sql_result else None,
@@ -592,6 +588,7 @@ class OrchestratorAgent(BaseAgent):
                 tool_call_log=tool_call_log,
                 insights=last_sql_result.insights if last_sql_result else [],
                 suggested_followups=followups,
+                context_usage_pct=final_pct,
             )
 
         except _ClarificationRequestError as cr:

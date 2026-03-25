@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     google_client_id: str = ""
 
+    # Resend transactional email
+    resend_api_key: str = ""
+    resend_from_email: str = "CheckMyData <noreply@checkmydata.ai>"
+    app_url: str = "http://localhost:3000"
+
     custom_rules_dir: str = "./rules"
 
     repo_clone_base_dir: str = "./data/repos"
@@ -106,6 +111,11 @@ class Settings(BaseSettings):
     # Context window budget
     max_context_tokens: int = 16000
 
+    # Session rotation (auto-summarize and start new session near context limit)
+    session_rotation_enabled: bool = True
+    session_rotation_threshold_pct: int = 95
+    session_rotation_summary_max_tokens: int = 500
+
     # Request limits
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
     max_concurrent_agent_calls: int = 3
@@ -151,3 +161,5 @@ if settings.jwt_secret == "change-me-in-production":
     )
 if not settings.master_encryption_key:
     _config_logger.warning("MASTER_ENCRYPTION_KEY is empty. Credential encryption will not work.")
+if not settings.resend_api_key:
+    _config_logger.warning("RESEND_API_KEY is empty. Transactional emails will be skipped.")

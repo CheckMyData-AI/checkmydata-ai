@@ -70,7 +70,18 @@ _health_check_task: asyncio.Task[None] | None = None
 async def lifespan(app: FastAPI):
     global _backup_task, _scheduler_task, _health_check_task  # noqa: PLW0603
 
-    await asyncio.to_thread(run_migrations)
+    for _attempt in range(1, 4):
+        try:
+            await asyncio.to_thread(run_migrations)
+            break
+        except Exception:
+            if _attempt == 3:
+                logger.error("Alembic migrations failed after 3 attempts", exc_info=True)
+                raise
+            logger.warning(
+                "Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True
+            )
+            await asyncio.sleep(2)
     await init_db()
     await _check_alembic_head()
     await _cleanup_stale_checkpoints()

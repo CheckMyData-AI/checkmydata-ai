@@ -114,8 +114,11 @@ class AuthService:
         self,
         session: AsyncSession,
         google_payload: dict,
-    ) -> User:
+    ) -> tuple[User, bool]:
         """Find existing user by google_id or email, or create a new one.
+
+        Returns ``(user, created)`` where *created* is True when a brand-new
+        account was created (used to trigger the welcome email).
 
         If an email-registered user signs in with Google for the first time,
         their account is linked (google_id stored, auth_provider updated).
@@ -136,7 +139,7 @@ class AuthService:
                 await session.commit()
                 await session.refresh(user)
             logger.info("User logged in: %s (provider=google)", email)
-            return user
+            return user, False
 
         email_result = await session.execute(select(User).where(User.email == email))
         user = email_result.scalar_one_or_none()
@@ -148,7 +151,7 @@ class AuthService:
             await session.commit()
             await session.refresh(user)
             logger.info("Google account linked for existing user: %s", email)
-            return user
+            return user, False
 
         user = User(
             email=email,
@@ -162,4 +165,4 @@ class AuthService:
         await session.commit()
         await session.refresh(user)
         logger.info("User registered via Google: %s", email)
-        return user
+        return user, True

@@ -355,4 +355,21 @@ describe("ChatMessage", () => {
     expect(api.dataValidation.validateData).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it("renders session_continuation as SessionContinuationBanner", async () => {
+    await renderMessage(
+      {
+        role: "system",
+        content: "Session continued (15 earlier messages summarized)",
+        responseType: "session_continuation",
+      },
+      JSON.stringify({
+        old_session_id: "old-123",
+        summary_preview: "User explored revenue data.",
+        topics: ["revenue"],
+      }),
+    );
+
+    expect(screen.getByText(/15 messages summarized/)).toBeInTheDocument();
+  });
 });

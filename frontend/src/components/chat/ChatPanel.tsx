@@ -8,7 +8,6 @@ import { toast } from "@/stores/toast-store";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 import { SuggestionChips } from "./SuggestionChips";
-import { ToolCallIndicator } from "./ToolCallIndicator";
 import { ThinkingLog } from "./ThinkingLog";
 import { StageProgress, type PipelineStage } from "./StageProgress";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
@@ -287,10 +286,6 @@ export function ChatPanel() {
     async (content: string) => {
       if (!activeProject) return;
 
-      if (costEstimate && costEstimate.context_utilization_pct > 80) {
-        toast("Context budget is nearly full. Large schemas may affect query quality.", "info");
-      }
-
       const userMsg = {
         id: crypto.randomUUID(),
         role: "user" as const,
@@ -459,6 +454,30 @@ export function ChatPanel() {
         handlePipelineEvent,
         handleThinkingEvent,
         handleToken,
+        (rotationEvent) => {
+          const newSession = {
+            id: rotationEvent.new_session_id,
+            project_id: activeProject.id,
+            title: `Continued session`,
+            connection_id: activeConnection?.id ?? null,
+          };
+          setActiveSession(newSession);
+          useAppStore.setState((state) => ({
+            chatSessions: [newSession, ...state.chatSessions],
+          }));
+          addMessage({
+            id: `rotation-${rotationEvent.new_session_id}`,
+            role: "system",
+            content: `Session continued (${rotationEvent.message_count} earlier messages summarized)`,
+            timestamp: Date.now(),
+            responseType: "session_continuation",
+            metadataJson: JSON.stringify({
+              old_session_id: rotationEvent.old_session_id,
+              summary_preview: rotationEvent.summary_preview,
+              topics: rotationEvent.topics,
+            }),
+          });
+        },
       );
       abortRef.current = ctrl;
     },
@@ -681,9 +700,6 @@ export function ChatPanel() {
                     <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.1s]" />
                     <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
                   </div>
-                )}
-                {activeToolCalls.length > 0 && (
-                  <ToolCallIndicator events={activeToolCalls} />
                 )}
                 <button
                   onClick={handleStop}

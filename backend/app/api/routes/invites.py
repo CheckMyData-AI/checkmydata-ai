@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
+from app.services.email_service import EmailService
 from app.services.invite_service import InviteService
 from app.services.membership_service import MembershipService
 
 router = APIRouter()
 _invite_svc = InviteService()
 _membership_svc = MembershipService()
+_email_svc = EmailService()
 
 
 class InviteCreate(BaseModel):
@@ -69,6 +71,15 @@ async def create_invite(
         resource_type="invite",
         resource_id=invite.id,
         detail=body.email,
+    )
+    await _email_svc.send_invite_email(
+        invite_id=invite.id,
+        to_email=invite.email,
+        project_name=invite.project.name if invite.project else project_id,
+        inviter_name=(
+            invite.inviter.display_name if invite.inviter else user.get("email", "Someone")
+        ),
+        role=invite.role,
     )
     return InviteResponse(
         id=invite.id,
@@ -129,7 +140,7 @@ async def accept_invite(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    member = await _invite_svc.accept_invite(db, invite_id, user["user_id"])
+    member, invite = await _invite_svc.accept_invite(db, invite_id, user["user_id"])
     audit_log(
         "invite.accept",
         user_id=user["user_id"],
@@ -137,6 +148,15 @@ async def accept_invite(
         resource_type="invite",
         resource_id=invite_id,
     )
+    if invite.inviter:
+        await _email_svc.send_invite_accepted_email(
+            invite_id=invite_id,
+            inviter_email=invite.inviter.email,
+            inviter_name=invite.inviter.display_name,
+            accepted_user_email=user["email"],
+            accepted_user_name="",
+            project_name=invite.project.name if invite.project else member.project_id,
+        )
     return {
         "ok": True,
         "project_id": member.project_id,

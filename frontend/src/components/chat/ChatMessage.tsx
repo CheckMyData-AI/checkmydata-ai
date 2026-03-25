@@ -19,6 +19,7 @@ import { useNotesStore } from "@/stores/notes-store";
 import { Icon } from "@/components/ui/Icon";
 import { ClarificationCard } from "./ClarificationCard";
 import { InsightCards, type Insight } from "./InsightCards";
+import { SessionContinuationBanner } from "./SessionContinuationBanner";
 import { SQLExplainer } from "./SQLExplainer";
 import { VerificationBadge } from "./VerificationBadge";
 
@@ -168,6 +169,19 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
   }
 
   const responseType = message.responseType || metadata?.response_type || "text";
+
+  if (responseType === "session_continuation") {
+    const rotMeta = metadata as { old_session_id?: string; summary_preview?: string; topics?: string[] } | null;
+    const msgCount = parseInt(String(message.content).match(/\((\d+)/)?.[1] ?? "0", 10);
+    return (
+      <SessionContinuationBanner
+        messageCount={msgCount}
+        summaryPreview={rotMeta?.summary_preview}
+        topics={rotMeta?.topics}
+      />
+    );
+  }
+
   const isSqlResult = responseType === "sql_result";
   const isClarification = responseType === "clarification_request";
   const hasViz = !!message.visualization;
