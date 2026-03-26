@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ class TestSessionSummarizer:
         return router
 
     async def test_summarize_empty_session(self, mock_llm_router):
-        from app.services.session_summarizer import _fallback_summary
+        from app.services.session_summarizer import SessionSummary, _fallback_summary
 
         result = _fallback_summary([], [])
         assert result == "Previous conversation context."
@@ -30,10 +31,7 @@ class TestSessionSummarizer:
     async def test_fallback_summary_with_topics(self):
         from app.services.session_summarizer import _fallback_summary
 
-        result = _fallback_summary(
-            ["What are top sales?", "Show revenue"],
-            ["SELECT * FROM orders"],
-        )
+        result = _fallback_summary(["What are top sales?", "Show revenue"], ["SELECT * FROM orders"])
         assert "What are top sales?" in result
         assert "SQL queries executed: 1" in result
 

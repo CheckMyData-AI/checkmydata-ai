@@ -743,8 +743,8 @@ class OrchestratorAgent(BaseAgent):
         wf_id = context.workflow_id
 
         async with async_session_factory() as session:
-            db_result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
-            pipeline_run = db_result.scalar_one_or_none()
+            result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+            pipeline_run = result.scalar_one_or_none()
             if not pipeline_run:
                 return AgentResponse(
                     answer="Could not find the pipeline to resume. Please try your question again.",

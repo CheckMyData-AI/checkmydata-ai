@@ -33,8 +33,7 @@ async def init_task_queue(redis_url: str | None = None) -> None:
         logger.info("Task queue: ARQ connected to Redis")
     except Exception:
         logger.warning(
-            "Task queue: failed to connect to Redis, falling back to asyncio",
-            exc_info=True,
+            "Task queue: failed to connect to Redis, falling back to asyncio", exc_info=True,
         )
         _arq_pool = None
 
@@ -121,11 +120,10 @@ async def enqueue(
     def _cleanup(t: asyncio.Task) -> None:
         _fallback_tasks.pop(key, None)
         if not t.cancelled() and t.exception():
+            exc = t.exception()
             logger.error(
-                "Background task %s failed: %s",
-                key,
-                t.exception(),
-                exc_info=t.exception(),
+                "Background task %s failed: %s", key, exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
             )
 
     task.add_done_callback(_cleanup)

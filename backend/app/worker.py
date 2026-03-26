@@ -42,12 +42,12 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
 
     final_status = "failed"
     try:
-        from app.config import settings as app_settings
-        from app.knowledge.db_index_pipeline import DbIndexPipeline
-
         async with async_session_factory() as session:
             await idx_svc.set_indexing_status(session, connection_id, "running")
             await session.commit()
+
+        from app.config import settings as app_settings
+        from app.knowledge.db_index_pipeline import DbIndexPipeline
 
         pipeline = DbIndexPipeline(
             db_index_batch_size=app_settings.db_index_batch_size,
@@ -64,18 +64,14 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
                 result.get("error", "unknown"),
             )
         else:
-            final_status = "completed"
             logger.info("run_db_index completed: connection=%s", connection_id[:8])
+            final_status = "completed"
     except Exception:
         logger.exception("run_db_index failed for %s", connection_id[:8])
     finally:
         try:
             async with async_session_factory() as session:
-                await idx_svc.set_indexing_status(
-                    session,
-                    connection_id,
-                    final_status,
-                )
+                await idx_svc.set_indexing_status(session, connection_id, final_status)
                 await session.commit()
         except Exception:
             logger.debug("Failed to update indexing_status", exc_info=True)
@@ -89,11 +85,11 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
     sync_svc = CodeDbSyncService()
     final_status = "failed"
     try:
-        from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
-
         async with async_session_factory() as session:
             await sync_svc.set_sync_status(session, connection_id, "running")
             await session.commit()
+
+        from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
 
         pipeline = CodeDbSyncPipeline()
         result = await pipeline.run(
@@ -107,18 +103,14 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
                 result.get("error", "unknown"),
             )
         else:
-            final_status = "completed"
             logger.info("run_code_db_sync completed: connection=%s", connection_id[:8])
+            final_status = "completed"
     except Exception:
         logger.exception("run_code_db_sync failed for %s", connection_id[:8])
     finally:
         try:
             async with async_session_factory() as session:
-                await sync_svc.set_sync_status(
-                    session,
-                    connection_id,
-                    final_status,
-                )
+                await sync_svc.set_sync_status(session, connection_id, final_status)
                 await session.commit()
         except Exception:
             logger.debug("Failed to update sync_status", exc_info=True)

@@ -97,7 +97,10 @@ async def execute_batch(
             return
         exc = t.exception()
         if exc:
-            logger.error("Batch %s failed: %s", batch.id, exc, exc_info=exc)
+            logger.error(
+                "Batch %s failed: %s", batch.id, exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     task = asyncio.create_task(
         _svc.execute_batch(batch.id, body.connection_id, user_id=user["user_id"])

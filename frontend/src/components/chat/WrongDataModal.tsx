@@ -99,12 +99,16 @@ export function WrongDataModal({
   const handleStartInvestigation = async () => {
     const { activeProject, activeConnection } = useAppStore.getState();
     if (!activeProject || !complaintType) return;
+    if (!activeConnection?.id) {
+      toast("Please select a database connection first", "error");
+      return;
+    }
 
     setSubmitting(true);
     try {
       const res = await api.dataValidation.startInvestigation({
         project_id: activeProject.id,
-        connection_id: activeConnection?.id ?? "",
+        connection_id: activeConnection.id,
         session_id: sessionId,
         message_id: messageId,
         complaint_type: complaintType,

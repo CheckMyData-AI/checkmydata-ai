@@ -345,7 +345,7 @@ class SQLAgent(BaseAgent):
         wf_id: str,
         run_state: dict[str, Any] | None = None,
     ) -> str:
-        handlers: dict[str, Any] = {
+        handler = {
             "execute_query": self._handle_execute_query,
             "get_schema_info": self._handle_get_schema_info,
             "get_custom_rules": self._handle_get_custom_rules,
@@ -356,8 +356,7 @@ class SQLAgent(BaseAgent):
             "record_learning": self._handle_record_learning,
             "read_notes": self._handle_read_notes,
             "write_note": self._handle_write_note,
-        }
-        handler = handlers.get(tool_call.name)
+        }.get(tool_call.name)
 
         if handler is None:
             return f"Error: unknown tool '{tool_call.name}'"

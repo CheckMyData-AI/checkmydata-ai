@@ -192,7 +192,10 @@ async def index_repo(
                 return
             exc = t.exception()
             if exc:
-                logger.error("Repo index %s failed: %s", project_id, exc, exc_info=exc)
+                logger.error(
+                    "Repo index %s failed: %s", project_id, exc,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
 
         task = asyncio.create_task(
             _run_index_background(project_id, project, body, wf_id, lock),

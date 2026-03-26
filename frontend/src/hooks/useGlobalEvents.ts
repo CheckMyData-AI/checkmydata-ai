@@ -13,7 +13,7 @@ function toLogEntry(ev: WorkflowEvent) {
   return {
     timestamp: ev.timestamp,
     pipeline: ev.pipeline || "system",
-    workflowId: ev.workflow_id.slice(0, 8),
+    workflowId: ev.workflow_id ? ev.workflow_id.slice(0, 8) : "unknown",
     step: ev.step,
     status: ev.status,
     detail: ev.detail,

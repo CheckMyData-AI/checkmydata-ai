@@ -384,7 +384,10 @@ async def start_investigation(
             return
         exc = t.exception()
         if exc:
-            logger.error("Investigation %s failed: %s", investigation.id, exc, exc_info=exc)
+            logger.error(
+                "Investigation %s failed: %s", investigation.id, exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     task = asyncio.create_task(
         _run_investigation_background(
