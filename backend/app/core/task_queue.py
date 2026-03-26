@@ -120,14 +120,15 @@ async def enqueue(
 
     def _cleanup(t: asyncio.Task) -> None:
         _fallback_tasks.pop(key, None)
-        if not t.cancelled() and t.exception():
+        if not t.cancelled():
             exc = t.exception()
-            logger.error(
-                "Background task %s failed: %s",
-                key,
-                exc,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            if exc is not None:
+                logger.error(
+                    "Background task %s failed: %s",
+                    key,
+                    exc,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
 
     task.add_done_callback(_cleanup)
     logger.info("Task started in-process: %s", key)

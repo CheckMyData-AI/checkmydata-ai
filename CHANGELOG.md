@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Traceback logging in task callbacks** — 5 files passed exception instances to `exc_info=` in asyncio task done callbacks where `sys.exc_info()` is empty. Changed to explicit `(type, value, traceback)` tuples for reliable stack traces. Fixes #132
 - **chat.py missing ConnectionConfig import** — Added `TYPE_CHECKING` import for `ConnectionConfig`, resolving ruff F821 and mypy name-defined errors. Fixes #133
 - **Ruff lint violations** — Resolved all E501 (line too long) and I001 (import sorting) across `chat.py`, `task_queue.py`, `main.py`, `email_service.py`. `ruff check app/` now passes clean. Fixes #134
+- **Logout state leak** — Sign-out now resets all Zustand stores (app, notes, log, task) preventing previous user's chat messages and project data from persisting in memory. Fixes #135
+- **Knowledge agent raw tool fallback** — When max iterations exhausted, fallback now uses the last assistant message instead of raw tool output. Fixes #136
+- **task_queue.py mypy regression** — Fixed `exc_info` tuple type by adding explicit None guard on `t.exception()`. Fixes #137
+- **SSE premature connected flag** — Removed eager `setConnected(true)` after subscription setup; connected state now only set on first received event. Fixes #138
+- **Orchestrator shared SQL state** — Per-request SQL results (`_last_sql_result`) scoped per `workflow_id` to prevent data leakage between concurrent requests. Fixes #139
 
 ### Added
 - **Design system documentation** (`DESIGN_SYSTEM.md`) — Comprehensive visual guide covering semantic color tokens, typography scale, spacing, border-radius, shadows, icons, button variants, form inputs, cards, modals, tooltips, toasts, status indicators, animations, responsive rules, and accessibility guidelines

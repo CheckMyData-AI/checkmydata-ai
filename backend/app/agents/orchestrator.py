@@ -142,13 +142,24 @@ class OrchestratorAgent(BaseAgent):
             vector_store=self._vector_store,
         )
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
-        self._last_sql_result: SQLAgentResult | None = None
-        self._last_enriched_result: SQLAgentResult | None = None
-        self._enriched_at: float = 0.0
+        self._wf_sql_results: dict[str, SQLAgentResult] = {}
+        self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
 
     @property
     def name(self) -> str:
         return "orchestrator"
+
+    def _cleanup_stale_results(self, stale_seconds: float) -> None:
+        """Remove per-workflow SQL caches older than *stale_seconds*."""
+        import time as _time
+
+        now = _time.time()
+        stale_wf_ids = [
+            wid for wid, (_, ts) in self._wf_enriched.items() if (now - ts) > stale_seconds
+        ]
+        for wid in stale_wf_ids:
+            self._wf_enriched.pop(wid, None)
+            self._wf_sql_results.pop(wid, None)
 
     # ------------------------------------------------------------------
     # Public API
@@ -164,12 +175,15 @@ class OrchestratorAgent(BaseAgent):
         wf_id = context.workflow_id
         question = context.user_question
 
-        stale_seconds = 300  # 5 min staleness guard
-        if self._last_enriched_result and (_time.time() - self._enriched_at) < stale_seconds:
-            self._last_sql_result = self._last_enriched_result
+        stale_seconds = 300
+        enriched = self._wf_enriched.get(wf_id)
+        if enriched and (_time.time() - enriched[1]) < stale_seconds:
+            self._wf_sql_results[wf_id] = enriched[0]
         else:
-            self._last_sql_result = None
-            self._last_enriched_result = None
+            self._wf_sql_results.pop(wf_id, None)
+            self._wf_enriched.pop(wf_id, None)
+
+        self._cleanup_stale_results(stale_seconds)
 
         try:
             # Check for pipeline resume first
@@ -462,7 +476,7 @@ class OrchestratorAgent(BaseAgent):
 
                     if isinstance(sub_result, SQLAgentResult):
                         last_sql_result = sub_result
-                        self._last_sql_result = sub_result
+                        self._wf_sql_results[wf_id] = sub_result
                     elif isinstance(sub_result, KnowledgeResult):
                         knowledge_sources.extend(sub_result.sources)
 
@@ -1117,7 +1131,7 @@ class OrchestratorAgent(BaseAgent):
         if tc.name == "process_data":
             pd_text = await self._handle_process_data(tc, wf_id)
             operation = (tc.arguments or {}).get("operation", "")
-            pd_sub = self._last_sql_result if operation == "aggregate_data" else None
+            pd_sub = self._wf_sql_results.get(wf_id) if operation == "aggregate_data" else None
             return pd_text, pd_sub
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
@@ -1187,13 +1201,14 @@ class OrchestratorAgent(BaseAgent):
         args = tc.arguments or {}
         operation: str = args.get("operation", "")
 
-        if self._last_sql_result is None or self._last_sql_result.results is None:
+        wf_sql = self._wf_sql_results.get(wf_id)
+        if wf_sql is None or wf_sql.results is None:
             return (
                 "Error: no query results available to process. "
                 "Call query_database first to retrieve data, then use process_data."
             )
 
-        qr = self._last_sql_result.results
+        qr = wf_sql.results
         if qr.error or not qr.rows:
             return "Error: last query result has no data rows to process."
 
@@ -1210,9 +1225,9 @@ class OrchestratorAgent(BaseAgent):
 
         import time as _time
 
-        self._last_sql_result.results = processed.query_result
-        self._last_enriched_result = self._last_sql_result
-        self._enriched_at = _time.time()
+        wf_sql.results = processed.query_result
+        self._wf_sql_results[wf_id] = wf_sql
+        self._wf_enriched[wf_id] = (wf_sql, _time.time())
 
         result_qr = processed.query_result
         parts: list[str] = [f"**Data Processing:** {processed.summary}", ""]

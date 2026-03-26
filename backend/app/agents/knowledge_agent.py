@@ -156,7 +156,15 @@ class KnowledgeAgent(BaseAgent):
                 )
         else:
             if not result.answer:
-                result.answer = messages[-1].content if messages else ""
+                last_assistant = ""
+                for msg in reversed(messages):
+                    if msg.role == "assistant" and msg.content:
+                        last_assistant = msg.content
+                        break
+                result.answer = last_assistant or (
+                    "I found some relevant information but couldn't compose "
+                    "a complete answer. Please try rephrasing your question."
+                )
 
         result.token_usage = total_usage
         result.tool_call_log = tool_call_log

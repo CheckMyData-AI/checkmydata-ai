@@ -73,7 +73,6 @@ export function useGlobalEvents(enabled: boolean) {
       );
 
       unsubRef.current = unsub;
-      useLogStore.getState().setConnected(true);
     }
 
     connect();
