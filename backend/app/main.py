@@ -78,9 +78,7 @@ async def lifespan(app: FastAPI):
             if _attempt == 3:
                 logger.error("Alembic migrations failed after 3 attempts", exc_info=True)
                 raise
-            logger.warning(
-                "Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True
-            )
+            logger.warning("Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True)
             await asyncio.sleep(2)
     await init_db()
     await _check_alembic_head()

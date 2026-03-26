@@ -385,7 +385,9 @@ async def start_investigation(
         exc = t.exception()
         if exc:
             logger.error(
-                "Investigation %s failed: %s", investigation.id, exc,
+                "Investigation %s failed: %s",
+                investigation.id,
+                exc,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 

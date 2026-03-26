@@ -13,17 +13,12 @@ _BRAND_COLOR = "#2563eb"
 _BG_COLOR = "#f8fafc"
 
 
-_FONT_STACK = (
-    "-apple-system,BlinkMacSystemFont,"
-    "'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-)
+_FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 _CARD_STYLE = (
-    "background:#ffffff;border-radius:8px;"
-    "overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)"
+    "background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)"
 )
 _FOOTER_STYLE = (
-    "padding:16px 32px;border-top:1px solid #e2e8f0;"
-    "color:#94a3b8;font-size:12px;text-align:center"
+    "padding:16px 32px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;text-align:center"
 )
 
 

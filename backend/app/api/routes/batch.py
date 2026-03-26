@@ -98,7 +98,9 @@ async def execute_batch(
         exc = t.exception()
         if exc:
             logger.error(
-                "Batch %s failed: %s", batch.id, exc,
+                "Batch %s failed: %s",
+                batch.id,
+                exc,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 

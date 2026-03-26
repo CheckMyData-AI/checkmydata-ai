@@ -193,7 +193,9 @@ async def index_repo(
             exc = t.exception()
             if exc:
                 logger.error(
-                    "Repo index %s failed: %s", project_id, exc,
+                    "Repo index %s failed: %s",
+                    project_id,
+                    exc,
                     exc_info=(type(exc), exc, exc.__traceback__),
                 )
 

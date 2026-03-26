@@ -43,7 +43,10 @@ def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], No
         exc = t.exception()
         if exc:
             logger.error(
-                "%s %s failed: %s", label, resource_id, exc,
+                "%s %s failed: %s",
+                label,
+                resource_id,
+                exc,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
