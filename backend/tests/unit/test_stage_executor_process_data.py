@@ -39,11 +39,13 @@ class TestParseProcessDataParams:
         assert params["column"] == "user_ip"
 
     def test_json_aggregate_data(self):
-        ctx = json.dumps({
-            "operation": "aggregate_data",
-            "group_by": ["country"],
-            "aggregations": {"amount": "sum", "*": "count"},
-        })
+        ctx = json.dumps(
+            {
+                "operation": "aggregate_data",
+                "group_by": ["country"],
+                "aggregations": {"amount": "sum", "*": "count"},
+            }
+        )
         stage = _make_stage(input_context=ctx)
         qr = _make_qr(["country", "amount"])
 
@@ -56,11 +58,13 @@ class TestParseProcessDataParams:
         assert ("*", "count") in params["aggregations"]
 
     def test_json_aggregate_list_format(self):
-        ctx = json.dumps({
-            "operation": "aggregate_data",
-            "group_by": ["country"],
-            "aggregations": [["amount", "sum"], ["amount", "avg"], ["*", "count"]],
-        })
+        ctx = json.dumps(
+            {
+                "operation": "aggregate_data",
+                "group_by": ["country"],
+                "aggregations": [["amount", "sum"], ["amount", "avg"], ["*", "count"]],
+            }
+        )
         stage = _make_stage(input_context=ctx)
         qr = _make_qr(["country", "amount"])
 

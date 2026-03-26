@@ -279,7 +279,11 @@ class TestGoogleAuth:
         """Same-origin: both cookie and body present but values differ."""
         with patch(
             "app.services.auth_service.AuthService.verify_google_token",
-            return_value={**FAKE_GOOGLE_PAYLOAD, "email": _email(), "sub": f"gid-{uuid.uuid4().hex[:8]}"},
+            return_value={
+                **FAKE_GOOGLE_PAYLOAD,
+                "email": _email(),
+                "sub": f"gid-{uuid.uuid4().hex[:8]}",
+            },
         ):
             resp = await client.post(
                 "/api/auth/google",

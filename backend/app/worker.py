@@ -40,24 +40,88 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
             return
         config = await svc.to_config(session, conn)
 
+    final_status = "failed"
     try:
-        await idx_svc.set_indexing_status_standalone(connection_id, "running")
-        await idx_svc.index_connection(connection_id, config, project_id)
-        await idx_svc.set_indexing_status_standalone(connection_id, "completed")
+        from app.config import settings as app_settings
+        from app.knowledge.db_index_pipeline import DbIndexPipeline
+
+        async with async_session_factory() as session:
+            await idx_svc.set_indexing_status(session, connection_id, "running")
+            await session.commit()
+
+        pipeline = DbIndexPipeline(
+            db_index_batch_size=app_settings.db_index_batch_size,
+        )
+        result = await pipeline.run(
+            connection_id=connection_id,
+            connection_config=config,
+            project_id=project_id,
+        )
+        if isinstance(result, dict) and result.get("status") == "failed":
+            logger.error(
+                "run_db_index pipeline failure: connection=%s error=%s",
+                connection_id[:8],
+                result.get("error", "unknown"),
+            )
+        else:
+            final_status = "completed"
+            logger.info("run_db_index completed: connection=%s", connection_id[:8])
     except Exception:
         logger.exception("run_db_index failed for %s", connection_id[:8])
-        await idx_svc.set_indexing_status_standalone(connection_id, "failed")
+    finally:
+        try:
+            async with async_session_factory() as session:
+                await idx_svc.set_indexing_status(
+                    session,
+                    connection_id,
+                    final_status,
+                )
+                await session.commit()
+        except Exception:
+            logger.debug("Failed to update indexing_status", exc_info=True)
 
 
 async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) -> None:  # noqa: ARG001
     """Background code-DB sync for a single connection."""
+    from app.models.base import async_session_factory
     from app.services.code_db_sync_service import CodeDbSyncService
 
-    svc = CodeDbSyncService()
+    sync_svc = CodeDbSyncService()
+    final_status = "failed"
     try:
-        await svc.run_sync_standalone(connection_id, project_id)
+        from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
+
+        async with async_session_factory() as session:
+            await sync_svc.set_sync_status(session, connection_id, "running")
+            await session.commit()
+
+        pipeline = CodeDbSyncPipeline()
+        result = await pipeline.run(
+            connection_id=connection_id,
+            project_id=project_id,
+        )
+        if isinstance(result, dict) and result.get("status") == "failed":
+            logger.error(
+                "run_code_db_sync pipeline failure: connection=%s error=%s",
+                connection_id[:8],
+                result.get("error", "unknown"),
+            )
+        else:
+            final_status = "completed"
+            logger.info("run_code_db_sync completed: connection=%s", connection_id[:8])
     except Exception:
         logger.exception("run_code_db_sync failed for %s", connection_id[:8])
+    finally:
+        try:
+            async with async_session_factory() as session:
+                await sync_svc.set_sync_status(
+                    session,
+                    connection_id,
+                    final_status,
+                )
+                await session.commit()
+        except Exception:
+            logger.debug("Failed to update sync_status", exc_info=True)
 
 
 async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: str) -> None:  # noqa: ARG001

@@ -142,8 +142,6 @@ def _fallback_summary(topics: list[str], sql_queries: list[str]) -> str:
 
 async def get_session_title(db: AsyncSession, session_id: str) -> str:
     """Return the title of a session, or a default."""
-    result = await db.execute(
-        select(ChatSession.title).where(ChatSession.id == session_id)
-    )
+    result = await db.execute(select(ChatSession.title).where(ChatSession.id == session_id))
     title = result.scalar_one_or_none()
     return title or "Chat"

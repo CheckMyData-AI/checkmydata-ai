@@ -76,7 +76,9 @@ class SharedCache:
         if self._redis is not None:
             try:
                 await self._redis.set(
-                    self._rkey(key), raw, ex=int(ttl or self._ttl),
+                    self._rkey(key),
+                    raw,
+                    ex=int(ttl or self._ttl),
                 )
             except Exception:
                 logger.debug("Redis SET failed for %s", key, exc_info=True)

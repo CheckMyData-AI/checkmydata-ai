@@ -116,10 +116,7 @@ PROCESS_DATA_TOOL = Tool(
         ToolParameter(
             name="group_by",
             type="string",
-            description=(
-                "Comma-separated column names to group by "
-                "(required for aggregate_data)"
-            ),
+            description=("Comma-separated column names to group by (required for aggregate_data)"),
             required=False,
         ),
         ToolParameter(
@@ -170,8 +167,7 @@ PROCESS_DATA_TOOL = Tool(
             name="exclude_empty",
             type="string",
             description=(
-                "Set to 'true' to exclude rows where column is null or "
-                "empty (for filter_data)"
+                "Set to 'true' to exclude rows where column is null or empty (for filter_data)"
             ),
             required=False,
         ),

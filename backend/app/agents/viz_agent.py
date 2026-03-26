@@ -106,9 +106,7 @@ class VizAgent(BaseAgent):
             )
 
         if len(cols) >= 2:
-            has_numeric = any(
-                isinstance(rows[0][i], (int, float)) for i in range(len(cols))
-            )
+            has_numeric = any(isinstance(rows[0][i], (int, float)) for i in range(len(cols)))
             labels_col, data_cols = _auto_detect_columns(results, "bar_chart")
 
             if has_numeric and data_cols:

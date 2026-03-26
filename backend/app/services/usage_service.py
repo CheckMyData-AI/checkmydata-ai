@@ -75,17 +75,13 @@ class UsageService:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        daily_stmt = select(
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0)
-        ).where(
+        daily_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
             TokenUsage.user_id == user_id,
             TokenUsage.created_at >= today_start,
         )
         daily_used = int((await db.execute(daily_stmt)).scalar_one())
 
-        monthly_stmt = select(
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0)
-        ).where(
+        monthly_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
             TokenUsage.user_id == user_id,
             TokenUsage.created_at >= month_start,
         )

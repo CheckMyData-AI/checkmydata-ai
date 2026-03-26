@@ -1,6 +1,6 @@
 """Unit tests for EmailService."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -18,9 +18,7 @@ class TestSendWelcomeEmail:
     async def test_skips_when_api_key_empty(self, mock_settings, email_svc):
         mock_settings.resend_api_key = ""
         with patch("app.services.email_service.resend") as mock_resend:
-            await email_svc.send_welcome_email(
-                user_id="u1", email="a@b.com", display_name="Alice"
-            )
+            await email_svc.send_welcome_email(user_id="u1", email="a@b.com", display_name="Alice")
             mock_resend.Emails.send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -38,7 +36,7 @@ class TestSendWelcomeEmail:
 
         mock_to_thread.assert_called_once()
         call_args = mock_to_thread.call_args
-        send_fn = call_args[0][0]
+        _send_fn = call_args[0][0]  # noqa: F841
         params = call_args[0][1]
         assert params["to"] == ["alice@test.com"]
         assert "Welcome" in params["subject"]
@@ -55,9 +53,7 @@ class TestSendWelcomeEmail:
         mock_settings.app_url = "https://app.test.com"
         mock_to_thread.return_value = {"id": "email-123"}
 
-        await email_svc.send_welcome_email(
-            user_id="u1", email="bob@test.com", display_name=""
-        )
+        await email_svc.send_welcome_email(user_id="u1", email="bob@test.com", display_name="")
 
         params = mock_to_thread.call_args[0][1]
         assert "bob" in params["html"]
@@ -119,17 +115,13 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     @patch("app.services.email_service.asyncio.to_thread", new_callable=AsyncMock)
     @patch("app.services.email_service.settings")
-    async def test_does_not_raise_on_send_failure(
-        self, mock_settings, mock_to_thread, email_svc
-    ):
+    async def test_does_not_raise_on_send_failure(self, mock_settings, mock_to_thread, email_svc):
         mock_settings.resend_api_key = "re_test_key"
         mock_settings.resend_from_email = "Test <noreply@test.com>"
         mock_settings.app_url = "https://app.test.com"
         mock_to_thread.side_effect = Exception("API error")
 
-        await email_svc.send_welcome_email(
-            user_id="u1", email="fail@test.com", display_name="Fail"
-        )
+        await email_svc.send_welcome_email(user_id="u1", email="fail@test.com", display_name="Fail")
 
     @pytest.mark.asyncio
     @patch("app.services.email_service.asyncio.to_thread", new_callable=AsyncMock)
@@ -140,9 +132,7 @@ class TestErrorHandling:
         mock_settings.app_url = "https://app.test.com"
         mock_to_thread.return_value = {"id": "email-100"}
 
-        await email_svc.send_welcome_email(
-            user_id="u42", email="a@b.com", display_name="A"
-        )
+        await email_svc.send_welcome_email(user_id="u42", email="a@b.com", display_name="A")
 
         call_args = mock_to_thread.call_args[0]
         idempotency_opts = call_args[2]

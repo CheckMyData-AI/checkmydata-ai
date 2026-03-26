@@ -111,12 +111,8 @@ class SchemaInfo:
         new_fp = self.fingerprint()
         added = sorted(set(new_fp) - set(old_fp))
         removed = sorted(set(old_fp) - set(new_fp))
-        changed = sorted(
-            t for t in (set(new_fp) & set(old_fp)) if new_fp[t] != old_fp[t]
-        )
-        unchanged = sorted(
-            t for t in (set(new_fp) & set(old_fp)) if new_fp[t] == old_fp[t]
-        )
+        changed = sorted(t for t in (set(new_fp) & set(old_fp)) if new_fp[t] != old_fp[t])
+        unchanged = sorted(t for t in (set(new_fp) & set(old_fp)) if new_fp[t] == old_fp[t])
         return {
             "added": added,
             "removed": removed,

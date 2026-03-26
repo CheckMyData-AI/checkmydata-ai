@@ -126,20 +126,20 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
         "query": (
             'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            " --password \"$CLICKHOUSE_PASSWORD\" -d {db_name}"
+            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
             " --format TabSeparatedWithNames"
         ),
         "introspect_tables": (
             'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            " --password \"$CLICKHOUSE_PASSWORD\" -d {db_name}"
+            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
             " --format TabSeparatedWithNames"
             " -q \"SELECT name FROM system.tables WHERE database = '{db_name}'\""
         ),
         "introspect_columns": (
             'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            " --password \"$CLICKHOUSE_PASSWORD\" -d {db_name}"
+            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
             " --format TabSeparatedWithNames"
             ' -q "SELECT table, name, type FROM system.columns'
             " WHERE database = '{db_name}'"
@@ -148,7 +148,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
         "test": (
             'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            " --password \"$CLICKHOUSE_PASSWORD\" -d {db_name}"
+            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
             " --format TabSeparatedWithNames"
             ' -q "SELECT 1 AS ok"'
         ),

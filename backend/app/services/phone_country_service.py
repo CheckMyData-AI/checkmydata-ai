@@ -267,9 +267,7 @@ _DIALING_CODE_MAP: dict[str, tuple[str, str]] = {
 }
 # fmt: on
 
-_SORTED_PREFIXES: list[str] = sorted(
-    _DIALING_CODE_MAP.keys(), key=lambda p: -len(p)
-)
+_SORTED_PREFIXES: list[str] = sorted(_DIALING_CODE_MAP.keys(), key=lambda p: -len(p))
 
 
 @dataclass(frozen=True)

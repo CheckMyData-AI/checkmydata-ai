@@ -1006,16 +1006,19 @@ class TestCompilePromptCrossConnection:
             side_effect=[mock_result, empty_result, empty_result, empty_result, empty_result]
         )
 
-        with patch.object(
-            svc,
-            "_get_cross_connection_learnings",
-            new_callable=AsyncMock,
-            return_value=["- [from sibling] Use ISO dates [80% confidence]"],
-        ), patch.object(
-            svc,
-            "promote_global_patterns",
-            new_callable=AsyncMock,
-            return_value=[],
+        with (
+            patch.object(
+                svc,
+                "_get_cross_connection_learnings",
+                new_callable=AsyncMock,
+                return_value=["- [from sibling] Use ISO dates [80% confidence]"],
+            ),
+            patch.object(
+                svc,
+                "promote_global_patterns",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             prompt = await svc.compile_prompt(session, "conn-1")
 

@@ -28,6 +28,7 @@ Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](
 | [USAGE.md](USAGE.md) | How to use the application |
 | [API.md](API.md) | REST API reference |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and module overview |
+| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Deep-dive: orchestrator, memory, LLM routing, feedback loops |
 | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | UI design system, tokens, and component guidelines |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

@@ -6,7 +6,7 @@ import re
 import time
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import (
     APIRouter,
@@ -33,10 +33,13 @@ from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rag_feedback_service import RAGFeedbackService
-from app.services.suggestion_engine import SuggestionEngine
 from app.services.session_summarizer import SessionSummary, get_session_title, summarize_session
+from app.services.suggestion_engine import SuggestionEngine
 from app.services.usage_service import UsageService
 from app.viz.renderer import render
+
+if TYPE_CHECKING:
+    from app.connectors.base import ConnectionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +245,7 @@ async def estimate_cost(
 
     rotation_threshold = app_settings.session_rotation_threshold_pct
     rotation_imminent = (
-        app_settings.session_rotation_enabled
-        and utilization >= rotation_threshold - 5
+        app_settings.session_rotation_enabled and utilization >= rotation_threshold - 5
     )
 
     return CostEstimateResponse(
@@ -1022,9 +1024,7 @@ async def ask_stream(
         history_chars = sum(len(m.content) for m in history)
         history_tokens_est = history_chars // CHARS_PER_TOKEN
         threshold = int(
-            app_settings.max_context_tokens
-            * app_settings.session_rotation_threshold_pct
-            / 100
+            app_settings.max_context_tokens * app_settings.session_rotation_threshold_pct / 100
         )
         if history_tokens_est >= threshold:
             logger.info(
@@ -1060,11 +1060,11 @@ async def ask_stream(
                     db,
                     session_id,
                     "system",
-                    f"[Previous conversation summary ({rotation_summary.message_count} messages)]\n{rotation_summary.text}",
+                    f"[Previous conversation summary"
+                    f" ({rotation_summary.message_count} messages)]"
+                    f"\n{rotation_summary.text}",
                 )
-                user_msg = await _chat_svc.add_message(
-                    db, session_id, "user", body.message
-                )
+                user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
                 user_message_id = user_msg.id
                 history = await _chat_svc.get_history_as_messages(db, session_id)
 
@@ -1075,7 +1075,10 @@ async def ask_stream(
                     len(rotation_summary.text),
                 )
             except Exception:
-                logger.warning("Session rotation failed, continuing with original session", exc_info=True)
+                logger.warning(
+                    "Session rotation failed, continuing with original session",
+                    exc_info=True,
+                )
                 rotated_from = None
                 rotation_summary = None
 
@@ -1216,9 +1219,7 @@ async def ask_stream(
                     yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
                     return
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(task), timeout=min(20, remaining)
-                    )
+                    await asyncio.wait_for(asyncio.shield(task), timeout=min(20, remaining))
                 except TimeoutError:
                     yield ": heartbeat\n\n"
                 except Exception as exc:
@@ -1489,9 +1490,15 @@ async def chat_websocket(
                 try:
                     config = await _conn_svc.to_config(db, conn_model)
                 except ValueError:
-                    await websocket.send_json({
-                        "error": f"Cannot decrypt credentials for '{conn_model.name}'. Re-enter the password in Settings."
-                    })
+                    await websocket.send_json(
+                        {
+                            "error": (
+                                f"Cannot decrypt credentials for"
+                                f" '{conn_model.name}'."
+                                " Re-enter the password in Settings."
+                            ),
+                        }
+                    )
                     await websocket.close()
                     return
                 config.connection_id = connection_id

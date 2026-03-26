@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **ARQ worker crash** — `run_db_index` and `run_code_db_sync` worker tasks called non-existent service methods (`set_indexing_status_standalone`, `index_connection`, `run_sync_standalone`). Rewrote both to use the proper `DbIndexPipeline` and `CodeDbSyncPipeline` classes with correct session management. Fixes #126
+- **CI lint/format/type blockers** — Resolved 19 ruff lint errors (undefined name `ConnectionConfig`, unsorted imports, unused imports/variables, line-too-long), reformatted 30 files, and fixed 19 mypy type errors (variable shadowing in orchestrator, handler dict inference in sql_agent, dict.pop type safety in ssh_tunnel). Fixes #127
+
 ### Added
 - **Design system documentation** (`DESIGN_SYSTEM.md`) — Comprehensive visual guide covering semantic color tokens, typography scale, spacing, border-radius, shadows, icons, button variants, form inputs, cards, modals, tooltips, toasts, status indicators, animations, responsive rules, and accessibility guidelines
 - **Frontend design system skill** (`.cursor/skills/frontend-design-system/SKILL.md`) — Cursor agent skill that enforces design system compliance on all future frontend work

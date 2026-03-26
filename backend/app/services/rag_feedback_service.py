@@ -103,14 +103,16 @@ class RAGFeedbackService:
             avg_dist = float(row.avg_distance) if row.avg_distance is not None else 0.5
             relevance = max(0.0, 1.0 - avg_dist)
             quality_score = round(success_rate * 0.6 + relevance * 0.4, 3)
-            scored.append({
-                "source_path": row.source_path,
-                "doc_type": row.doc_type or "",
-                "total_usages": row.total,
-                "success_rate": round(success_rate, 3),
-                "avg_distance": round(avg_dist, 4),
-                "quality_score": quality_score,
-            })
+            scored.append(
+                {
+                    "source_path": row.source_path,
+                    "doc_type": row.doc_type or "",
+                    "total_usages": row.total,
+                    "success_rate": round(success_rate, 3),
+                    "avg_distance": round(avg_dist, 4),
+                    "quality_score": quality_score,
+                }
+            )
 
         scored.sort(key=lambda x: x["quality_score"])
         return scored
@@ -129,6 +131,8 @@ class RAGFeedbackService:
         doc generation.
         """
         scores = await self.get_quality_scores(
-            session, project_id, min_usages=min_usages,
+            session,
+            project_id,
+            min_usages=min_usages,
         )
         return [s["source_path"] for s in scores if s["quality_score"] < threshold]

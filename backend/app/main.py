@@ -78,9 +78,7 @@ async def lifespan(app: FastAPI):
             if _attempt == 3:
                 logger.error("Alembic migrations failed after 3 attempts", exc_info=True)
                 raise
-            logger.warning(
-                "Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True
-            )
+            logger.warning("Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True)
             await asyncio.sleep(2)
     await init_db()
     await _check_alembic_head()
@@ -802,7 +800,11 @@ async def _health_check_loop() -> None:
                     if mgr and hasattr(mgr, "cleanup_idle"):
                         closed = await mgr.cleanup_idle()
                         if closed:
-                            logger.info("Cleaned up %d idle SSH tunnel(s) from %s", closed, mod_path)
+                            logger.info(
+                                "Cleaned up %d idle SSH tunnel(s) from %s",
+                                closed,
+                                mod_path,
+                            )
                 except Exception:
                     logger.debug("Tunnel cleanup skipped for %s", mod_path, exc_info=True)
         except Exception:

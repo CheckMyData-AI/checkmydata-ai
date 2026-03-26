@@ -72,9 +72,7 @@ class BackupManager:
         db_url = settings.database_url
 
         if _is_heroku() and ("postgresql" in db_url or "postgres" in db_url):
-            logger.info(
-                "Skipping pg_dump on Heroku — use `heroku pg:backups` for managed backups"
-            )
+            logger.info("Skipping pg_dump on Heroku — use `heroku pg:backups` for managed backups")
             manifest["files"]["database"] = {
                 "skipped": True,
                 "reason": "Heroku managed Postgres; use heroku pg:backups",

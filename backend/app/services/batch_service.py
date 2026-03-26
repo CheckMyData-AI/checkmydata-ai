@@ -120,9 +120,7 @@ class BatchService:
             duration_ms = int((time.monotonic() - start) * 1000)
             cols = list(getattr(result, "columns", []))
             rows = getattr(result, "rows", []) or []
-            serialized = [
-                [serialize_value(v) for v in row] for row in rows[:_RAW_RESULT_ROW_CAP]
-            ]
+            serialized = [[serialize_value(v) for v in row] for row in rows[:_RAW_RESULT_ROW_CAP]]
 
             entry = {
                 "title": q_title,
@@ -196,7 +194,13 @@ class BatchService:
                 async def _throttled(idx: int, qi: dict) -> dict:
                     async with sem:
                         return await self._execute_single_query(
-                            idx, qi, conn_model.db_type, config, batch_id, total, wf_id,
+                            idx,
+                            qi,
+                            conn_model.db_type,
+                            config,
+                            batch_id,
+                            total,
+                            wf_id,
                         )
 
                 tasks = [_throttled(i, q) for i, q in enumerate(queries)]
@@ -204,21 +208,28 @@ class BatchService:
                 results: list[dict] = []
                 for i, r in enumerate(ordered_results):
                     if isinstance(r, BaseException):
-                        results.append({
-                            "title": queries[i].get("title", f"Query {i + 1}"),
-                            "sql": queries[i].get("sql", ""),
-                            "status": "failed",
-                            "error": str(r),
-                            "duration_ms": 0,
-                        })
+                        results.append(
+                            {
+                                "title": queries[i].get("title", f"Query {i + 1}"),
+                                "sql": queries[i].get("sql", ""),
+                                "status": "failed",
+                                "error": str(r),
+                                "duration_ms": 0,
+                            }
+                        )
                     else:
                         results.append(r)
             else:
                 results = []
                 for idx, query_item in enumerate(queries):
                     entry = await self._execute_single_query(
-                        idx, query_item, conn_model.db_type, config,
-                        batch_id, total, wf_id,
+                        idx,
+                        query_item,
+                        conn_model.db_type,
+                        config,
+                        batch_id,
+                        total,
+                        wf_id,
                     )
                     results.append(entry)
 

@@ -130,7 +130,10 @@ class QueryCache:
     # ------------------------------------------------------------------
 
     def _persist_to_disk(
-        self, key: str, result: QueryResult, schema_version: str | None,
+        self,
+        key: str,
+        result: QueryResult,
+        schema_version: str | None,
     ) -> None:
         if not self._persist_dir:
             return

@@ -142,6 +142,7 @@ class TestGetGeoIPService:
 # Cache integration tests
 # ------------------------------------------------------------------
 
+
 @pytest.fixture()
 def cache(tmp_path):
     db = os.path.join(str(tmp_path), "test_geoip.db")

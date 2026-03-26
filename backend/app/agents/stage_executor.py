@@ -381,9 +381,7 @@ class StageExecutor:
 
         try:
             processor = get_data_processor()
-            processed = processor.process(
-                source_qr, params.pop("operation"), params
-            )
+            processed = processor.process(source_qr, params.pop("operation"), params)
         except (ValueError, Exception) as exc:
             return StageResult(
                 stage_id=stage.stage_id,
@@ -406,9 +404,7 @@ class StageExecutor:
         )
 
     @staticmethod
-    def _parse_process_data_params(
-        stage: PlanStage, source_qr: QueryResult
-    ) -> dict[str, Any]:
+    def _parse_process_data_params(stage: PlanStage, source_qr: QueryResult) -> dict[str, Any]:
         """Extract operation params from ``input_context`` (JSON) with fallback heuristics."""
         params: dict[str, Any] = {}
         if stage.input_context:
@@ -431,7 +427,9 @@ class StageExecutor:
                 params["operation"] = "ip_to_country"
 
         needs_column = params["operation"] in (
-            "ip_to_country", "phone_to_country", "filter_data",
+            "ip_to_country",
+            "phone_to_country",
+            "filter_data",
         )
         if needs_column and "column" not in params:
             keyword = "ip" if params["operation"] == "ip_to_country" else "phone"

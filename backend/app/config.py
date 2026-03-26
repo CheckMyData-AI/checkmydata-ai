@@ -180,8 +180,8 @@ elif settings.master_encryption_key:
     except Exception as _e:
         _config_logger.error(
             "MASTER_ENCRYPTION_KEY is not a valid Fernet key (%s). "
-            "Generate one with: python -c \"from cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\"",
+            'Generate one with: python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"',
             _e,
         )
         raise SystemExit(1) from _e

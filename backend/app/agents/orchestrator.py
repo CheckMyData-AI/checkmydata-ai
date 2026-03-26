@@ -227,9 +227,7 @@ class OrchestratorAgent(BaseAgent):
                 result = await self._run_complex_pipeline(
                     context, wf_id, table_map, db_type, staleness_warning
                 )
-                await self._tracker.end(
-                    wf_id, "orchestrator", "completed", "complex_pipeline"
-                )
+                await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
                 return result
 
             project_overview = await self._load_project_overview(context.project_id)
@@ -425,9 +423,7 @@ class OrchestratorAgent(BaseAgent):
                     )
                 )
 
-                has_process_data = any(
-                    tc.name == "process_data" for tc in llm_resp.tool_calls
-                )
+                has_process_data = any(tc.name == "process_data" for tc in llm_resp.tool_calls)
 
                 if len(llm_resp.tool_calls) > 1 and not has_process_data:
                     gather_results = await asyncio.gather(
@@ -452,9 +448,7 @@ class OrchestratorAgent(BaseAgent):
                     tool_pairs = []
                     for single_tc in llm_resp.tool_calls:
                         tool_pairs.append(
-                            await self._handle_meta_tool(
-                                single_tc, context, wf_id, total_usage
-                            )
+                            await self._handle_meta_tool(single_tc, context, wf_id, total_usage)
                         )
 
                 for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
@@ -567,9 +561,7 @@ class OrchestratorAgent(BaseAgent):
                 except Exception:
                     logger.debug("Failed to generate follow-up suggestions", exc_info=True)
 
-            final_pct = int(
-                estimate_messages_tokens(messages) / max(loop_budget, 1) * 100
-            )
+            final_pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
 
             return AgentResponse(
                 answer=final_text,
@@ -751,8 +743,8 @@ class OrchestratorAgent(BaseAgent):
         wf_id = context.workflow_id
 
         async with async_session_factory() as session:
-            result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
-            pipeline_run = result.scalar_one_or_none()
+            db_result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+            pipeline_run = db_result.scalar_one_or_none()
             if not pipeline_run:
                 return AgentResponse(
                     answer="Could not find the pipeline to resume. Please try your question again.",
@@ -1259,9 +1251,7 @@ class OrchestratorAgent(BaseAgent):
         if args.get("column"):
             params["column"] = args["column"]
         if args.get("group_by"):
-            params["group_by"] = [
-                c.strip() for c in str(args["group_by"]).split(",") if c.strip()
-            ]
+            params["group_by"] = [c.strip() for c in str(args["group_by"]).split(",") if c.strip()]
         if args.get("aggregations"):
             agg_list: list[tuple[str, str]] = []
             for pair in str(args["aggregations"]).split(","):

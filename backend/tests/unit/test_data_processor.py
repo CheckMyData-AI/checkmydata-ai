@@ -55,7 +55,11 @@ class TestDataProcessorIPToCountry:
         result = proc.process(qr, "ip_to_country", {"column": "user_ip"})
 
         assert result.query_result.columns == [
-            "id", "user_ip", "amount", "user_ip_country_code", "user_ip_country_name"
+            "id",
+            "user_ip",
+            "amount",
+            "user_ip_country_code",
+            "user_ip_country_name",
         ]
         assert len(result.query_result.rows) == 2
         assert result.query_result.rows[0][-2] == "US"
@@ -159,7 +163,10 @@ class TestOrchestratorToolRegistration:
 
         op_param = next(p for p in PROCESS_DATA_TOOL.parameters if p.name == "operation")
         assert op_param.enum == [
-            "ip_to_country", "phone_to_country", "aggregate_data", "filter_data",
+            "ip_to_country",
+            "phone_to_country",
+            "aggregate_data",
+            "filter_data",
         ]
 
 
@@ -235,10 +242,14 @@ class TestDataProcessorAggregateData:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"*": "count"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"*": "count"},
+            },
+        )
 
         assert result.query_result.columns == ["country", "count_all"]
         assert result.query_result.row_count == 2
@@ -258,10 +269,14 @@ class TestDataProcessorAggregateData:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "sum", "*": "count"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "sum", "*": "count"},
+            },
+        )
 
         assert "sum_amount" in result.query_result.columns
         assert "count_all" in result.query_result.columns
@@ -277,10 +292,14 @@ class TestDataProcessorAggregateData:
             row_count=2,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "avg"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "avg"},
+            },
+        )
 
         assert result.query_result.rows[0][1] == 200.0
 
@@ -292,16 +311,24 @@ class TestDataProcessorAggregateData:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "min"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "min"},
+            },
+        )
         assert result.query_result.rows[0][1] == 50.0
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "max"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "max"},
+            },
+        )
         assert result.query_result.rows[0][1] == 300.0
 
     def test_multiple_group_by(self):
@@ -317,15 +344,17 @@ class TestDataProcessorAggregateData:
             row_count=4,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country", "product"],
-            "aggregations": {"*": "count", "amount": "sum"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country", "product"],
+                "aggregations": {"*": "count", "amount": "sum"},
+            },
+        )
 
         assert result.query_result.row_count == 3
-        assert result.query_result.columns == [
-            "country", "product", "count_all", "sum_amount"
-        ]
+        assert result.query_result.columns == ["country", "product", "count_all", "sum_amount"]
 
     def test_none_values_excluded_from_numeric_aggs(self):
         proc = DataProcessor(geoip=_mock_geoip())
@@ -335,10 +364,14 @@ class TestDataProcessorAggregateData:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "avg"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "avg"},
+            },
+        )
 
         assert result.query_result.rows[0][1] == 150.0
 
@@ -358,19 +391,27 @@ class TestDataProcessorAggregateData:
         proc = DataProcessor(geoip=_mock_geoip())
         qr = QueryResult(columns=["country", "amount"], rows=[["US", 100]], row_count=1)
         with pytest.raises(ValueError, match="group_by column 'bad' not found"):
-            proc.process(qr, "aggregate_data", {
-                "group_by": ["bad"],
-                "aggregations": {"*": "count"},
-            })
+            proc.process(
+                qr,
+                "aggregate_data",
+                {
+                    "group_by": ["bad"],
+                    "aggregations": {"*": "count"},
+                },
+            )
 
     def test_unsupported_function_raises(self):
         proc = DataProcessor(geoip=_mock_geoip())
         qr = QueryResult(columns=["country", "amount"], rows=[["US", 100]], row_count=1)
         with pytest.raises(ValueError, match="Unsupported aggregation 'percentile'"):
-            proc.process(qr, "aggregate_data", {
-                "group_by": ["country"],
-                "aggregations": {"amount": "percentile"},
-            })
+            proc.process(
+                qr,
+                "aggregate_data",
+                {
+                    "group_by": ["country"],
+                    "aggregations": {"amount": "percentile"},
+                },
+            )
 
     def test_summary_content(self):
         proc = DataProcessor(geoip=_mock_geoip())
@@ -380,10 +421,14 @@ class TestDataProcessorAggregateData:
             row_count=2,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"*": "count"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"*": "count"},
+            },
+        )
 
         assert "Aggregated 2 rows into 2 groups" in result.summary
         assert "country" in result.summary
@@ -400,10 +445,14 @@ class TestDataProcessorMultiAggPerColumn:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("amount", "sum"), ("amount", "avg"), ("*", "count")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("amount", "sum"), ("amount", "avg"), ("*", "count")],
+            },
+        )
 
         assert "sum_amount" in result.query_result.columns
         assert "avg_amount" in result.query_result.columns
@@ -420,18 +469,29 @@ class TestDataProcessorMultiAggPerColumn:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [
-                ("amount", "sum"), ("amount", "avg"), ("amount", "min"),
-                ("amount", "max"), ("*", "count"),
-            ],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [
+                    ("amount", "sum"),
+                    ("amount", "avg"),
+                    ("amount", "min"),
+                    ("amount", "max"),
+                    ("*", "count"),
+                ],
+            },
+        )
 
         cols = result.query_result.columns
         expected = [
-            "country", "sum_amount", "avg_amount",
-            "min_amount", "max_amount", "count_all",
+            "country",
+            "sum_amount",
+            "avg_amount",
+            "min_amount",
+            "max_amount",
+            "count_all",
         ]
         assert cols == expected
         row = result.query_result.rows[0]
@@ -439,7 +499,7 @@ class TestDataProcessorMultiAggPerColumn:
         assert row[2] == 200.0  # avg
         assert row[3] == 100.0  # min
         assert row[4] == 300.0  # max
-        assert row[5] == 3      # count
+        assert row[5] == 3  # count
 
     def test_legacy_dict_format_still_works(self):
         proc = DataProcessor(geoip=_mock_geoip())
@@ -449,10 +509,14 @@ class TestDataProcessorMultiAggPerColumn:
             row_count=2,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": {"amount": "sum", "*": "count"},
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": {"amount": "sum", "*": "count"},
+            },
+        )
 
         assert "sum_amount" in result.query_result.columns
         assert "count_all" in result.query_result.columns
@@ -465,15 +529,19 @@ class TestDataProcessorMultiAggPerColumn:
             row_count=2,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("amount", "avg"), ("amount", "sum"), ("*", "count")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("amount", "avg"), ("amount", "sum"), ("*", "count")],
+            },
+        )
 
         row = result.query_result.rows[0]
         assert row[1] is None  # avg
         assert row[2] is None  # sum
-        assert row[3] == 2     # count
+        assert row[3] == 2  # count
 
 
 class TestCountDistinct:
@@ -484,16 +552,23 @@ class TestCountDistinct:
         qr = QueryResult(
             columns=["country", "user_id"],
             rows=[
-                ["US", "u1"], ["US", "u1"], ["US", "u2"],
-                ["DE", "u3"], ["DE", "u3"],
+                ["US", "u1"],
+                ["US", "u1"],
+                ["US", "u2"],
+                ["DE", "u3"],
+                ["DE", "u3"],
             ],
             row_count=5,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("user_id", "count_distinct"), ("*", "count")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("user_id", "count_distinct"), ("*", "count")],
+            },
+        )
 
         rows_dict = {r[0]: (r[1], r[2]) for r in result.query_result.rows}
         assert rows_dict["US"] == (2, 3)  # 2 unique users, 3 rows
@@ -507,10 +582,14 @@ class TestCountDistinct:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("user_id", "count_distinct")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("user_id", "count_distinct")],
+            },
+        )
 
         assert result.query_result.rows[0][1] == 2
 
@@ -522,10 +601,14 @@ class TestCountDistinct:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("user_id", "count_distinct")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("user_id", "count_distinct")],
+            },
+        )
 
         assert result.query_result.rows[0][1] == 1
 
@@ -533,10 +616,14 @@ class TestCountDistinct:
         proc = DataProcessor(geoip=_mock_geoip())
         qr = QueryResult(columns=["country", "amount"], rows=[["US", 100]], row_count=1)
         with pytest.raises(ValueError, match="count_distinct requires a column name"):
-            proc.process(qr, "aggregate_data", {
-                "group_by": ["country"],
-                "aggregations": [("*", "count_distinct")],
-            })
+            proc.process(
+                qr,
+                "aggregate_data",
+                {
+                    "group_by": ["country"],
+                    "aggregations": [("*", "count_distinct")],
+                },
+            )
 
     def test_count_distinct_all_none(self):
         proc = DataProcessor(geoip=_mock_geoip())
@@ -546,10 +633,14 @@ class TestCountDistinct:
             row_count=2,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("user_id", "count_distinct")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("user_id", "count_distinct")],
+            },
+        )
 
         assert result.query_result.rows[0][1] == 0
 
@@ -565,10 +656,14 @@ class TestMedianAggregation:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("amount", "median")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("amount", "median")],
+            },
+        )
 
         assert result.query_result.rows[0][1] == 20
 
@@ -580,10 +675,14 @@ class TestMedianAggregation:
             row_count=4,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("amount", "median")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("amount", "median")],
+            },
+        )
 
         assert result.query_result.rows[0][1] == 25.0
 
@@ -599,12 +698,16 @@ class TestSortByOrder:
             row_count=4,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("*", "count")],
-            "sort_by": "count_all",
-            "order": "desc",
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("*", "count")],
+                "sort_by": "count_all",
+                "order": "desc",
+            },
+        )
 
         assert result.query_result.rows[0][0] == "US"
         assert result.query_result.rows[0][1] == 2
@@ -617,16 +720,20 @@ class TestSortByOrder:
             row_count=4,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("amount", "sum")],
-            "sort_by": "sum_amount",
-            "order": "asc",
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("amount", "sum")],
+                "sort_by": "sum_amount",
+                "order": "asc",
+            },
+        )
 
-        assert result.query_result.rows[0][0] == "DE"   # 50
-        assert result.query_result.rows[1][0] == "FR"   # 150
-        assert result.query_result.rows[2][0] == "US"   # 300
+        assert result.query_result.rows[0][0] == "DE"  # 50
+        assert result.query_result.rows[1][0] == "FR"  # 150
+        assert result.query_result.rows[2][0] == "US"  # 300
 
     def test_default_sort_alphabetical(self):
         proc = DataProcessor(geoip=_mock_geoip())
@@ -636,10 +743,14 @@ class TestSortByOrder:
             row_count=3,
         )
 
-        result = proc.process(qr, "aggregate_data", {
-            "group_by": ["country"],
-            "aggregations": [("*", "count")],
-        })
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {
+                "group_by": ["country"],
+                "aggregations": [("*", "count")],
+            },
+        )
 
         assert [r[0] for r in result.query_result.rows] == ["DE", "FR", "US"]
 
@@ -647,11 +758,15 @@ class TestSortByOrder:
         proc = DataProcessor(geoip=_mock_geoip())
         qr = QueryResult(columns=["country", "amount"], rows=[["US", 100]], row_count=1)
         with pytest.raises(ValueError, match="sort_by column 'nonexistent'"):
-            proc.process(qr, "aggregate_data", {
-                "group_by": ["country"],
-                "aggregations": [("*", "count")],
-                "sort_by": "nonexistent",
-            })
+            proc.process(
+                qr,
+                "aggregate_data",
+                {
+                    "group_by": ["country"],
+                    "aggregations": [("*", "count")],
+                    "sort_by": "nonexistent",
+                },
+            )
 
 
 class TestFilterData:
@@ -665,9 +780,15 @@ class TestFilterData:
             row_count=3,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "country", "op": "eq", "value": "US",
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "country",
+                "op": "eq",
+                "value": "US",
+            },
+        )
 
         assert result.query_result.row_count == 2
         assert all(r[0] == "US" for r in result.query_result.rows)
@@ -680,9 +801,15 @@ class TestFilterData:
             row_count=3,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "country", "op": "neq", "value": "US",
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "country",
+                "op": "neq",
+                "value": "US",
+            },
+        )
 
         assert result.query_result.row_count == 2
         assert all(r[0] != "US" for r in result.query_result.rows)
@@ -695,9 +822,15 @@ class TestFilterData:
             row_count=3,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "name", "op": "contains", "value": "United",
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "name",
+                "op": "contains",
+                "value": "United",
+            },
+        )
 
         assert result.query_result.row_count == 2
 
@@ -709,9 +842,15 @@ class TestFilterData:
             row_count=3,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "amount", "op": "gt", "value": "75",
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "amount",
+                "op": "gt",
+                "value": "75",
+            },
+        )
 
         assert result.query_result.row_count == 2
 
@@ -723,9 +862,14 @@ class TestFilterData:
             row_count=3,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "country", "exclude_empty": True,
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "country",
+                "exclude_empty": True,
+            },
+        )
 
         assert result.query_result.row_count == 1
         assert result.query_result.rows[0][0] == "US"
@@ -738,9 +882,15 @@ class TestFilterData:
             row_count=4,
         )
 
-        result = proc.process(qr, "filter_data", {
-            "column": "country", "op": "in", "value": "US,DE",
-        })
+        result = proc.process(
+            qr,
+            "filter_data",
+            {
+                "column": "country",
+                "op": "in",
+                "value": "US,DE",
+            },
+        )
 
         assert result.query_result.row_count == 2
 

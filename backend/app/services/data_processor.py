@@ -29,7 +29,10 @@ class ProcessedData:
 
 
 SUPPORTED_OPERATIONS = (
-    "ip_to_country", "phone_to_country", "aggregate_data", "filter_data",
+    "ip_to_country",
+    "phone_to_country",
+    "aggregate_data",
+    "filter_data",
 )
 
 _AGG_FUNCTIONS = {"count", "count_distinct", "sum", "avg", "min", "max", "median"}
@@ -65,8 +68,7 @@ class DataProcessor:
         if operation == "filter_data":
             return self._filter_data(query_result, params)
         raise ValueError(
-            f"Unknown operation '{operation}'. "
-            f"Supported: {', '.join(SUPPORTED_OPERATIONS)}"
+            f"Unknown operation '{operation}'. Supported: {', '.join(SUPPORTED_OPERATIONS)}"
         )
 
     # ------------------------------------------------------------------
@@ -84,8 +86,7 @@ class DataProcessor:
 
         if column not in qr.columns:
             raise ValueError(
-                f"Column '{column}' not found in result. "
-                f"Available columns: {', '.join(qr.columns)}"
+                f"Column '{column}' not found in result. Available columns: {', '.join(qr.columns)}"
             )
 
         col_idx = qr.columns.index(column)
@@ -139,8 +140,7 @@ class DataProcessor:
 
         if column not in qr.columns:
             raise ValueError(
-                f"Column '{column}' not found in result. "
-                f"Available columns: {', '.join(qr.columns)}"
+                f"Column '{column}' not found in result. Available columns: {', '.join(qr.columns)}"
             )
 
         col_idx = qr.columns.index(column)
@@ -217,8 +217,7 @@ class DataProcessor:
         for col in group_by:
             if col not in col_index:
                 raise ValueError(
-                    f"group_by column '{col}' not found. "
-                    f"Available: {', '.join(qr.columns)}"
+                    f"group_by column '{col}' not found. Available: {', '.join(qr.columns)}"
                 )
         for col, fn in agg_pairs:
             fn_lower = fn.lower()
@@ -231,8 +230,7 @@ class DataProcessor:
                 raise ValueError("count_distinct requires a column name, not '*'")
             if col != "*" and col not in col_index:
                 raise ValueError(
-                    f"Aggregation column '{col}' not found. "
-                    f"Available: {', '.join(qr.columns)}"
+                    f"Aggregation column '{col}' not found. Available: {', '.join(qr.columns)}"
                 )
 
         group_indices = [col_index[c] for c in group_by]
@@ -271,7 +269,7 @@ class DataProcessor:
                 reverse=reverse,
             )
         else:
-            result_rows.sort(key=lambda r: r[:len(group_by)])
+            result_rows.sort(key=lambda r: r[: len(group_by)])
 
         agg_qr = QueryResult(
             columns=result_columns,
@@ -348,9 +346,7 @@ class DataProcessor:
         if not column:
             raise ValueError("filter_data requires a 'column' parameter")
         if column not in qr.columns:
-            raise ValueError(
-                f"Column '{column}' not found. Available: {', '.join(qr.columns)}"
-            )
+            raise ValueError(f"Column '{column}' not found. Available: {', '.join(qr.columns)}")
 
         col_idx = qr.columns.index(column)
         filtered: list[list[Any]] = []
@@ -372,8 +368,7 @@ class DataProcessor:
         )
 
         summary = (
-            f"Filtered {len(qr.rows)} rows to {len(filtered)} rows "
-            f"on column '{column}' (op={op})."
+            f"Filtered {len(qr.rows)} rows to {len(filtered)} rows on column '{column}' (op={op})."
         )
         return ProcessedData(query_result=result_qr, summary=summary)
 

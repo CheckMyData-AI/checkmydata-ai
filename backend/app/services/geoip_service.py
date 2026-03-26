@@ -44,9 +44,7 @@ def _get_geoip() -> Any | None:
         from geoip2fast import GeoIP2Fast
 
         _geoip_instance = GeoIP2Fast(verbose=False)
-        logger.info(
-            "GeoIP2Fast loaded: %s", _geoip_instance.get_database_path()
-        )
+        logger.info("GeoIP2Fast loaded: %s", _geoip_instance.get_database_path())
     except Exception:
         logger.warning("geoip2fast unavailable — IP-to-country lookups will return Unknown")
         _geoip_instance = None

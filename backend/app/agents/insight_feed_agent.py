@@ -34,7 +34,6 @@ class FeedScanResult:
     errors: list[str] = field(default_factory=list)
 
 
-
 class InsightFeedAgent:
     """Runs autonomous scans on connected data sources."""
 

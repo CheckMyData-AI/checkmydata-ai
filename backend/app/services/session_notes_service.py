@@ -111,7 +111,8 @@ class SessionNotesService:
         note_text: str,
     ) -> SessionNote | None:
         result = await session.execute(
-            select(SessionNote).where(
+            select(SessionNote)
+            .where(
                 SessionNote.connection_id == connection_id,
                 SessionNote.category == category,
                 SessionNote.subject == subject,

@@ -13,27 +13,45 @@ _BRAND_COLOR = "#2563eb"
 _BG_COLOR = "#f8fafc"
 
 
-def _base_html(title: str, body: str) -> str:
-    return f"""\
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title}</title></head>
-<body style="margin:0;padding:0;background:{_BG_COLOR};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:{_BG_COLOR};padding:40px 0">
-<tr><td align="center">
-<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)">
-<tr><td style="background:{_BRAND_COLOR};padding:24px 32px">
-  <span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:-.3px">CheckMyData.ai</span>
-</td></tr>
-<tr><td style="padding:32px">{body}</td></tr>
-<tr><td style="padding:16px 32px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;text-align:center">
-  &copy; CheckMyData.ai &mdash; Intelligence layer for your databases
-</td></tr>
-</table>
-</td></tr>
-</table>
-</body></html>"""
+def _base_html(title: str, body: str) -> str:  # noqa: E501
+    _font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    _card = (
+        "background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)"
+    )
+    _footer = (
+        "padding:16px 32px;border-top:1px solid #e2e8f0;"
+        "color:#94a3b8;font-size:12px;text-align:center"
+    )
+    _brand_span = "color:#ffffff;font-size:20px;font-weight:700;letter-spacing:-.3px"
+    return (
+        "<!DOCTYPE html>"
+        '<html lang="en">'
+        "<head>"
+        '<meta charset="utf-8">'
+        '<meta name="viewport"'
+        ' content="width=device-width,initial-scale=1">'
+        f"<title>{title}</title>"
+        "</head>"
+        f'<body style="margin:0;padding:0;'
+        f'background:{_BG_COLOR};font-family:{_font}">'
+        '<table width="100%" cellpadding="0" cellspacing="0"'
+        f' style="background:{_BG_COLOR};padding:40px 0">'
+        '<tr><td align="center">'
+        f'<table width="560" cellpadding="0" cellspacing="0"'
+        f' style="{_card}">'
+        f'<tr><td style="background:{_BRAND_COLOR};padding:24px 32px">'
+        f'<span style="{_brand_span}">CheckMyData.ai</span>'
+        "</td></tr>"
+        f'<tr><td style="padding:32px">{body}</td></tr>'
+        f'<tr><td style="{_footer}">'
+        "&copy; CheckMyData.ai &mdash;"
+        " Intelligence layer for your databases"
+        "</td></tr>"
+        "</table>"
+        "</td></tr>"
+        "</table>"
+        "</body></html>"
+    )
 
 
 class EmailService:
@@ -154,8 +172,9 @@ class EmailService:
         greeting = inviter_name or inviter_email.split("@")[0]
         app_link = settings.app_url
 
+        _h2_style = "margin:0 0 16px;color:#1e293b;font-size:22px"
         body = f"""\
-<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">Hi {greeting}, your invite was accepted!</h2>
+<h2 style="{_h2_style}">Hi {greeting}, your invite was accepted!</h2>
 <p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 16px">
   <strong>{who}</strong> ({accepted_user_email}) has joined your project
   <strong>{project_name}</strong> on CheckMyData.ai.

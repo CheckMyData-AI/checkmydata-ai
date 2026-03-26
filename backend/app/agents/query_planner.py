@@ -106,8 +106,11 @@ async def detect_complexity_adaptive(
 # ------------------------------------------------------------------
 
 _VALID_TOOLS = {
-    "query_database", "search_codebase", "analyze_results",
-    "process_data", "synthesize",
+    "query_database",
+    "search_codebase",
+    "analyze_results",
+    "process_data",
+    "synthesize",
 }
 
 
