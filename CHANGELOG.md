@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Email service security and reliability hardening** (`backend/app/services/email_service.py`) — Fixed HTML injection vulnerability: all user-provided values (`display_name`, `project_name`, `inviter_name`, etc.) are now HTML-escaped via `html.escape()` before interpolation into email templates. Added retry with exponential backoff (1s, 2s, 4s) for transient Resend errors (429 rate-limit, 500 server error), max 3 retries. Moved `resend.api_key` assignment from every `_send()` call to `__init__()`. Email send results now log the Resend email ID for traceability. Added category tags (`welcome`, `invite`, `invite-accepted`) for Resend dashboard analytics.
 - **ARQ worker crash** — `run_db_index` and `run_code_db_sync` worker tasks referenced non-existent service methods (`set_indexing_status_standalone`, `index_connection`, `run_sync_standalone`). Rewrote both to use `DbIndexPipeline` and `CodeDbSyncPipeline` with proper session management. Fixes #128
 - **ReadinessBanner stale state** — Banner showing "index outdated" from a previous project was never cleared on project switch. Now resets `staleInfo` to null when the new project is not stale. Fixes #129
 - **WrongDataModal empty connection_id** — Investigation form sent `connection_id: ""` when no DB connection was selected, causing 422 errors. Now validates connection and shows user-friendly toast. Fixes #130

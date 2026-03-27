@@ -823,6 +823,7 @@ Project owners can invite other users to collaborate on a project via email:
    - Each user has **their own isolated chat sessions** — they cannot see other users' conversation history.
    - All users share the **same project data**: connections, indexed knowledge base, and custom rules.
    - Email notifications require `RESEND_API_KEY` to be configured. Without it, the invite flow works normally but no emails are sent.
+   - All user-provided values in email templates are HTML-escaped to prevent injection. Transient Resend errors (429 rate-limit, 500 server) are retried up to 3 times with exponential backoff. Emails include category tags (`welcome`, `invite`, `invite-accepted`) for Resend dashboard analytics.
 
 4. **Managing access**:
    - **Revoke** a pending invite before it's accepted
@@ -1872,7 +1873,7 @@ app/
 │   ├── rule_service.py, default_rule_template.py, auth_service.py
 │   ├── membership_service.py ← Role checking, member CRUD, accessible projects
 │   ├── invite_service.py ← Create/accept/revoke invites, auto-accept on registration
-│   ├── email_service.py ← Transactional emails via Resend (welcome, invite, acceptance)
+│   ├── email_service.py ← Transactional emails via Resend (welcome, invite, acceptance) with HTML-escaped user input, retry on transient errors, and category tags
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
 │   ├── checkpoint_service.py ← CRUD for indexing checkpoints (resumable pipeline state)
