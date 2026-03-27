@@ -128,6 +128,39 @@ const ROLE_STYLES: Record<string, string> = {
   viewer: "bg-surface-2 text-text-tertiary",
 };
 
+function AccessModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    panelRef.current?.focus();
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Manage project access"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-md mx-4 animate-in fade-in zoom-in-95 duration-150 outline-none"
+      >
+        <InviteManager projectId={projectId} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+
 interface ProjectSelectorProps {
   createRequested?: boolean;
   onCreateHandled?: () => void;
@@ -704,7 +737,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       </div>
 
       {managingAccessId && (
-        <InviteManager
+        <AccessModal
           projectId={managingAccessId}
           onClose={() => setManagingAccessId(null)}
         />

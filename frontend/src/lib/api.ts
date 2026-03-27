@@ -1117,6 +1117,10 @@ export const api = {
       request<{ ok: boolean }>(`/invites/${projectId}/invites/${inviteId}`, {
         method: "DELETE",
       }),
+    resend: (projectId: string, inviteId: string) =>
+      request<{ ok: boolean }>(`/invites/${projectId}/invites/${inviteId}/resend`, {
+        method: "POST",
+      }),
     listPending: () =>
       request<ProjectInvite[]>("/invites/pending"),
     accept: (inviteId: string) =>

@@ -603,7 +603,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-2 space-y-1">
-        <PendingInvites />
+        {!collapsed && <PendingInvites />}
 
         {/* Onboarding guide */}
         {showOnboarding && !collapsed && (

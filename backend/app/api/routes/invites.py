@@ -1,5 +1,6 @@
 """REST routes for project invitations and membership management."""
 
+import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -129,6 +130,46 @@ async def revoke_invite(
     revoked = await _invite_svc.revoke_invite(db, invite_id, user["user_id"], project_id=project_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="Invite not found")
+    audit_log(
+        "invite.revoke",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="invite",
+        resource_id=invite_id,
+    )
+    return {"ok": True}
+
+
+@router.post("/{project_id}/invites/{invite_id}/resend")
+@limiter.limit("5/minute")
+async def resend_invite(
+    request: Request,
+    project_id: str,
+    invite_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    invite = await _invite_svc.get_pending_invite(db, invite_id, project_id)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Pending invite not found")
+    audit_log(
+        "invite.resend",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="invite",
+        resource_id=invite_id,
+        detail=invite.email,
+    )
+    await _email_svc.send_invite_email(
+        invite_id=f"{invite.id}/resend/{int(time.time())}",
+        to_email=invite.email,
+        project_name=invite.project.name if invite.project else project_id,
+        inviter_name=(
+            invite.inviter.display_name if invite.inviter else user.get("email", "Someone")
+        ),
+        role=invite.role,
+    )
     return {"ok": True}
 
 
@@ -227,4 +268,11 @@ async def remove_member(
     removed = await _membership_svc.remove_member(db, project_id, member_user_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Member not found")
+    audit_log(
+        "member.remove",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="member",
+        resource_id=member_user_id,
+    )
     return {"ok": True}

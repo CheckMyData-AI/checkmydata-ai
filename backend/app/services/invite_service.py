@@ -57,7 +57,11 @@ class InviteService:
             status="pending",
         )
         db.add(invite)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Invite already pending for this email")
 
         result = await db.execute(
             select(ProjectInvite)
@@ -65,6 +69,25 @@ class InviteService:
             .where(ProjectInvite.id == invite.id)
         )
         return result.scalar_one()
+
+    async def get_pending_invite(
+        self,
+        db: AsyncSession,
+        invite_id: str,
+        project_id: str,
+    ) -> ProjectInvite | None:
+        result = await db.execute(
+            select(ProjectInvite)
+            .options(selectinload(ProjectInvite.inviter), selectinload(ProjectInvite.project))
+            .where(
+                and_(
+                    ProjectInvite.id == invite_id,
+                    ProjectInvite.project_id == project_id,
+                    ProjectInvite.status == "pending",
+                )
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def list_invites(
         self,

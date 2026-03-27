@@ -826,9 +826,10 @@ Project owners can invite other users to collaborate on a project via email:
    - All user-provided values in email templates are HTML-escaped to prevent injection. Transient Resend errors (429 rate-limit, 500 server) are retried up to 3 times with exponential backoff. Emails include category tags (`welcome`, `invite`, `invite-accepted`) for Resend dashboard analytics.
 
 4. **Managing access**:
-   - **Revoke** a pending invite before it's accepted
-   - **Remove** a member (owners cannot be removed)
-   - **View** all current members and their roles in the InviteManager panel
+   - **Delete** a pending invite before it's accepted (revokes the invitation)
+   - **Resend** a pending invite email if the invitee hasn't received it or needs a reminder (rate-limited to 5/min, uses a unique idempotency key per resend to bypass Resend dedup)
+   - **Remove** a member (owners cannot be removed). The removed user loses access immediately.
+   - **View** all current members and their roles in the InviteManager panel. Pending invites show relative timestamps (e.g. "Sent 2h ago").
 
 ### 16. Saved Queries (Notes Panel)
 
@@ -1872,7 +1873,7 @@ app/
 │   ├── ssh_key_service.py, chat_service.py
 │   ├── rule_service.py, default_rule_template.py, auth_service.py
 │   ├── membership_service.py ← Role checking, member CRUD, accessible projects
-│   ├── invite_service.py ← Create/accept/revoke invites, auto-accept on registration
+│   ├── invite_service.py ← Create/accept/revoke/resend invites, auto-accept on registration
 │   ├── email_service.py ← Transactional emails via Resend (welcome, invite, acceptance) with HTML-escaped user input, retry on transient errors, and category tags
 │   ├── rag_feedback_service.py ← Record & query RAG effectiveness (version-scoped)
 │   ├── project_cache_service.py ← Persist/load ProjectKnowledge + ProjectProfile between runs
@@ -2114,7 +2115,7 @@ src/
     │   └── ToolCallIndicator.tsx ← Real-time tool call progress during streaming
     ├── projects/
     │   ├── ProjectSelector.tsx  ← CRUD + role badges + active left bar + inline hover action overlay
-    │   └── InviteManager.tsx    ← Invite users, manage members, error toasts
+    │   └── InviteManager.tsx    ← Invite users, resend/delete invites, manage members, timestamps, toasts
     ├── invites/PendingInvites.tsx ← Accept/decline incoming invites with error toasts
     ├── connections/ConnectionSelector.tsx ← CRUD + StatusDot + active left bar + compact badges + inline hover actions
     ├── ssh/SshKeyManager.tsx ← Add/list/delete SSH keys with inline icon + type badge + hover delete
@@ -2198,6 +2199,7 @@ src/
 | `POST` | `/api/invites/{project_id}/invites` | Invite a user by email (owner only) |
 | `GET` | `/api/invites/{project_id}/invites` | List invites (owner only) |
 | `DELETE` | `/api/invites/{project_id}/invites/{id}` | Revoke a pending invite (owner only) |
+| `POST` | `/api/invites/{project_id}/invites/{id}/resend` | Resend invite email (owner only, 5/min) |
 | `POST` | `/api/invites/accept/{invite_id}` | Accept an invite |
 | `GET` | `/api/invites/pending` | List pending invites for current user |
 | `GET` | `/api/invites/{project_id}/members` | List project members |
@@ -2257,7 +2259,7 @@ src/
 | **Project sharing** | Email-based invite system. Invites auto-accept on registration. Session isolation per user. |
 | **Encryption at rest** | Fernet (AES-128-CBC + HMAC-SHA256) for SSH keys, passwords, connection strings |
 | **Query safety** | SafetyGuard blocks DML/DDL in read-only mode, dialect-aware parsing. Applied to all execution paths: agent queries, note execution, scheduled queries, and MCP raw queries. |
-| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat, 10/min note execute, 5/min change-password, 3/min delete-account, 10/min create-session, 10/min accept-invite |
+| **Rate limiting** | slowapi: 5/min register, 10/min login, 20/min chat, 10/min note execute, 5/min change-password, 3/min delete-account, 10/min create-session, 10/min accept-invite, 5/min resend-invite |
 | **MCP authentication** | API key or JWT required for all MCP tool calls. Anonymous access is rejected when no credentials are provided. |
 | **CORS** | Configurable origins via `CORS_ORIGINS` env var |
 | **SSH key handling** | In-memory for DB tunnels, temp file (0600) for Git only, never returned via API. Keys are user-scoped (user_id FK). `get_decrypted()` enforces ownership when `user_id` is provided. |
@@ -2272,7 +2274,7 @@ src/
 | Delete project, connection, repository | Yes | No | No |
 | Delete DB index, sync data, all learnings, single learning | Yes | No | No |
 | Delete custom rules | Yes | No | No |
-| Manage invites (create, revoke), remove members | Yes | No | No |
+| Manage invites (create, revoke, resend), remove members | Yes | No | No |
 | Trigger backup, view backups | Yes | No | No |
 | Create/edit custom rules | Yes | Yes | No |
 | Trigger DB indexing, repo indexing, code-DB sync | Yes | Yes | No |

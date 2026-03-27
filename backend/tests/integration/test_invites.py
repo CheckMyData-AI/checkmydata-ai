@@ -150,6 +150,65 @@ class TestInviteRoutes:
         )
         assert resp.status_code == 200
 
+    async def test_owner_can_resend_pending_invite(self, client):
+        owner, pid = await self._owner_project(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": _email(), "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/invites/{pid}/invites/{invite_id}/resend",
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+    async def test_resend_fails_for_revoked_invite(self, client):
+        owner, pid = await self._owner_project(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": _email()},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+        await client.delete(
+            f"/api/invites/{pid}/invites/{invite_id}",
+            headers=auth_headers(owner["token"]),
+        )
+        resp = await client.post(
+            f"/api/invites/{pid}/invites/{invite_id}/resend",
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 404
+
+    async def test_non_owner_cannot_resend_invite(self, client):
+        owner, pid = await self._owner_project(client)
+        viewer = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": viewer["email"], "role": "viewer"},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+        await client.post(
+            f"/api/invites/accept/{invite_id}",
+            headers=auth_headers(viewer["token"]),
+        )
+
+        new_invite_resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": _email(), "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        new_invite_id = new_invite_resp.json()["id"]
+        resp = await client.post(
+            f"/api/invites/{pid}/invites/{new_invite_id}/resend",
+            headers=auth_headers(viewer["token"]),
+        )
+        assert resp.status_code == 403
+
     async def test_non_owner_cannot_remove_members(self, client):
         owner, pid = await self._owner_project(client)
         member = await register_user(client)

@@ -194,6 +194,42 @@ class TestListPendingForEmail:
         assert pending[0].role == "editor"
 
 
+class TestGetPendingInvite:
+    @pytest.mark.asyncio
+    async def test_returns_pending_invite_with_relationships(self, db):
+        owner = await _make_user(db)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, "get@t.com", "editor", owner.id)
+        result = await inv_svc.get_pending_invite(db, invite.id, proj.id)
+        assert result is not None
+        assert result.id == invite.id
+        assert result.status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_non_pending(self, db):
+        owner = await _make_user(db)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, "rev3@t.com", "editor", owner.id)
+        await inv_svc.revoke_invite(db, invite.id, owner.id)
+        result = await inv_svc.get_pending_invite(db, invite.id, proj.id)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_wrong_project(self, db):
+        owner = await _make_user(db)
+        proj = await _make_project(db)
+        proj2 = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, "wrong@t.com", "editor", owner.id)
+        result = await inv_svc.get_pending_invite(db, invite.id, proj2.id)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_nonexistent_id(self, db):
+        proj = await _make_project(db)
+        result = await inv_svc.get_pending_invite(db, "nonexistent-id", proj.id)
+        assert result is None
+
+
 class TestAutoAcceptForUser:
     @pytest.mark.asyncio
     async def test_accepts_all_pending_invites(self, db):
