@@ -1,5 +1,7 @@
 # Agent Test Matrix
 
+> **Note:** This document is a historical snapshot from Cycle 3. For current test counts and CI status, see [agent-status.md](agent-status.md).
+
 Core user flow verification status. Updated each improvement cycle.
 
 ---

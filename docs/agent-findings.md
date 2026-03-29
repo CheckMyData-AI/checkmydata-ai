@@ -1,5 +1,7 @@
 # Agent Findings
 
+> **Note:** This document is a historical snapshot from Cycle 3. For current project status, see [agent-status.md](agent-status.md).
+
 Discoveries made during continuous improvement cycles.
 
 ---

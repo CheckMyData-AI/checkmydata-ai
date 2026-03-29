@@ -550,13 +550,9 @@ class OrchestratorAgent(BaseAgent):
                             wf_id,
                             exc_info=True,
                         )
-                        final_text = self._build_partial_text(
-                            last_sql_result, knowledge_sources
-                        )
+                        final_text = self._build_partial_text(last_sql_result, knowledge_sources)
                 else:
-                    final_text = self._build_partial_text(
-                        last_sql_result, knowledge_sources
-                    )
+                    final_text = self._build_partial_text(last_sql_result, knowledge_sources)
                 step_limit_hit = True
 
             if step_limit_hit:
@@ -566,8 +562,10 @@ class OrchestratorAgent(BaseAgent):
 
             viz_type = "text"
             viz_config: dict = {}
-            if last_sql_result and last_sql_result.results and response_type in (
-                "sql_result", "step_limit_reached"
+            if (
+                last_sql_result
+                and last_sql_result.results
+                and response_type in ("sql_result", "step_limit_reached")
             ):
                 try:
                     await self._tracker.emit(
@@ -1476,7 +1474,8 @@ class OrchestratorAgent(BaseAgent):
                             if action == "delete":
                                 return "Permission denied: only project owners can delete rules."
                             return (
-                                "Permission denied: requires at least 'editor' role to manage rules."
+                                "Permission denied: requires at least"
+                                " 'editor' role to manage rules."
                             )
                     else:
                         return "Error: user identity not available for permission check."
@@ -1692,8 +1691,7 @@ class OrchestratorAgent(BaseAgent):
             parts.append(f"I found {rc} rows of data from the database.")
         if knowledge_sources:
             parts.append(
-                f"I found {len(knowledge_sources)} relevant document(s) "
-                "from the knowledge base."
+                f"I found {len(knowledge_sources)} relevant document(s) from the knowledge base."
             )
         parts.append("Here is what I found so far based on the tools I used.")
         return " ".join(parts)
@@ -1710,8 +1708,10 @@ class OrchestratorAgent(BaseAgent):
         Keeps the system prompt and constructs a user message that summarises
         all collected data, staying within ~40% of the context window.
         """
-        system_msg = loop_messages[0] if loop_messages else Message(
-            role="system", content="You are a helpful data assistant."
+        system_msg = (
+            loop_messages[0]
+            if loop_messages
+            else Message(role="system", content="You are a helpful data assistant.")
         )
 
         data_parts: list[str] = []
@@ -1729,7 +1729,8 @@ class OrchestratorAgent(BaseAgent):
                     data_parts.append(f"  {row}")
         if knowledge_sources:
             for src in knowledge_sources[:5]:
-                snippet = getattr(src, "content", "")[:200] if hasattr(src, "content") else str(src)[:200]
+                raw = getattr(src, "content", "") if hasattr(src, "content") else str(src)
+                snippet = raw[:200]
                 data_parts.append(f"Knowledge source: {snippet}")
 
         tool_summaries: list[str] = []
@@ -1757,8 +1758,7 @@ class OrchestratorAgent(BaseAgent):
                 "The analysis reached its step limit before completing. "
                 "Based on all the data collected above, please provide a "
                 "comprehensive answer to the original question. Summarize "
-                "the findings clearly and note if the analysis is incomplete.\n\n"
-                + collected
+                "the findings clearly and note if the analysis is incomplete.\n\n" + collected
             ),
         )
 

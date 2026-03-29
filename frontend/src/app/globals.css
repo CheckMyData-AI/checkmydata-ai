@@ -2,6 +2,7 @@
 
 html, body {
   overflow-x: hidden;
+  background-color: #09090b;
 }
 
 :focus-visible {

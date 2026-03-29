@@ -2,10 +2,12 @@
 
 Comprehensive testing plan covering every module, expected behavior, and verification criteria.
 
-**Last Updated:** 2026-03-22
-**Backend Tests:** 2181 unit + 410 integration = 2591 total
+**Last Updated:** 2026-03-29
+**Backend Tests:** 2487 unit + 410 integration = 2897 total
 **Frontend Tests:** 346 total
-**Backend Coverage:** 70.03% (target: 80%)
+**Backend Coverage:** 72.03% (target: 80%)
+
+> Live metrics are tracked in [docs/agent-status.md](agent-status.md).
 
 ---
 

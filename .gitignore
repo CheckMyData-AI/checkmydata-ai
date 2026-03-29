@@ -14,24 +14,30 @@ htmlcov/
 
 # Backend data
 backend/data/
-backend/.env
 *.db
 *.sqlite3
 
-# Root local env (build scripts)
-.env.local
+# Environment files (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
 
 # Node
 node_modules/
 frontend/.next/
 frontend/out/
-frontend/.env.local
 
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
+
+# Build artifacts
+*.tsbuildinfo
 
 # OS
 .DS_Store

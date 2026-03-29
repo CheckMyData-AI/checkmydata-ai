@@ -2,6 +2,8 @@
 name = "checkmydata-ai"
 version = "0.1.0"
 description = "AI-powered database agent with Git repo analysis, multi-DB support, and data visualization"
+readme = "../README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -50,6 +52,12 @@ dev = [
     "mypy>=1.13.0",
     "types-croniter>=2.0.0",
 ]
+
+[project.urls]
+Homepage = "https://checkmydata.ai"
+Repository = "https://github.com/CheckMyData-AI/checkmydata-ai"
+Issues = "https://github.com/CheckMyData-AI/checkmydata-ai/issues"
+Documentation = "https://github.com/CheckMyData-AI/checkmydata-ai#readme"
 
 [tool.ruff]
 target-version = "py312"

@@ -13,7 +13,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/ssheleg/checkmydata-ai.git
+git clone https://github.com/CheckMyData-AI/checkmydata-ai.git
 cd checkmydata-ai
 
 # Install everything (Python venv, Node deps, .env, migrations)

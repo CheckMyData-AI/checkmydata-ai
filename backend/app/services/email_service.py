@@ -108,7 +108,9 @@ class EmailService:
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 result = await asyncio.to_thread(resend.Emails.send, params, options)
-                email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+                email_id = (
+                    result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+                )
                 logger.info("Email sent id=%s to=%s subject=%r", email_id, to, subject)
                 return
             except Exception as exc:

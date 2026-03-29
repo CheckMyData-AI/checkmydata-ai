@@ -5,7 +5,7 @@ const NAV_LINKS = [
   { href: "/about", label: "About" },
   { href: "/support", label: "Support" },
   {
-    href: "https://github.com/ssheleg/checkmydata-ai",
+    href: "https://github.com/CheckMyData-AI/checkmydata-ai",
     label: "GitHub",
     external: true,
   },
@@ -24,17 +24,17 @@ const FOOTER_LEGAL = [
 
 const FOOTER_COMMUNITY = [
   {
-    href: "https://github.com/ssheleg/checkmydata-ai",
+    href: "https://github.com/CheckMyData-AI/checkmydata-ai",
     label: "GitHub",
     external: true,
   },
   {
-    href: "https://github.com/ssheleg/checkmydata-ai/issues",
+    href: "https://github.com/CheckMyData-AI/checkmydata-ai/issues",
     label: "Issues",
     external: true,
   },
   {
-    href: "https://github.com/ssheleg/checkmydata-ai/discussions",
+    href: "https://github.com/CheckMyData-AI/checkmydata-ai/discussions",
     label: "Discussions",
     external: true,
   },
@@ -201,7 +201,7 @@ export default function MarketingLayout({
               </a>
               <span className="text-text-muted/40">|</span>
               <a
-                href="https://github.com/ssheleg/checkmydata-ai"
+                href="https://github.com/CheckMyData-AI/checkmydata-ai"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-text-tertiary hover:text-accent transition-colors"

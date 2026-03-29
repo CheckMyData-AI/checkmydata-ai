@@ -131,7 +131,7 @@ export default function LandingPage() {
             description:
               "Open-source AI-powered database agent that lets you query PostgreSQL, MySQL, ClickHouse, and MongoDB with natural language.",
             url: "https://checkmydata.ai",
-            downloadUrl: "https://github.com/ssheleg/checkmydata-ai",
+            downloadUrl: "https://github.com/CheckMyData-AI/checkmydata-ai",
             license: "https://opensource.org/licenses/MIT",
             offers: {
               "@type": "Offer",
@@ -172,7 +172,7 @@ export default function LandingPage() {
                 Get Started Free
               </Link>
               <a
-                href="https://github.com/ssheleg/checkmydata-ai"
+                href="https://github.com/CheckMyData-AI/checkmydata-ai"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full sm:w-auto px-8 py-3 text-sm font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors text-center inline-flex items-center justify-center gap-2"
@@ -290,7 +290,7 @@ export default function LandingPage() {
               </p>
               <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
                 <a
-                  href="https://github.com/ssheleg/checkmydata-ai"
+                  href="https://github.com/CheckMyData-AI/checkmydata-ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-6 py-3 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors inline-flex items-center gap-2"

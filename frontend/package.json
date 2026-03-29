@@ -2,6 +2,14 @@
   "name": "checkmydata-frontend",
   "version": "0.1.0",
   "private": true,
+  "description": "Next.js frontend for CheckMyData.ai — AI-powered database query agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CheckMyData-AI/checkmydata-ai.git",
+    "directory": "frontend"
+  },
+  "homepage": "https://checkmydata.ai",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

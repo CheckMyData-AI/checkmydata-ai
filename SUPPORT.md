@@ -7,7 +7,7 @@
 - **Documentation**: Start with the [README](README.md) for setup and usage
 - **Installation Issues**: See [INSTALLATION.md](INSTALLATION.md)
 - **Common Problems**: Check [FAQ.md](FAQ.md) for troubleshooting
-- **Bug Reports**: Open a [GitHub Issue](https://github.com/ssheleg/checkmydata-ai/issues/new?template=bug_report.md)
+- **Bug Reports**: Open a [GitHub Issue](https://github.com/CheckMyData-AI/checkmydata-ai/issues/new?template=bug_report.md)
 
 ### For Contributors
 
@@ -23,7 +23,7 @@
 
 ## Reporting Bugs
 
-Please use the [bug report template](https://github.com/ssheleg/checkmydata-ai/issues/new?template=bug_report.md)
+Please use the [bug report template](https://github.com/CheckMyData-AI/checkmydata-ai/issues/new?template=bug_report.md)
 and include:
 
 1. Steps to reproduce
