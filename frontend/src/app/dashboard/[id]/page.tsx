@@ -8,7 +8,6 @@ import { Icon } from "@/components/ui/Icon";
 import { toast } from "@/stores/toast-store";
 import { DashboardBuilder } from "@/components/dashboards/DashboardBuilder";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
-import { useAuthStore } from "@/stores/auth-store";
 
 function parseCards(json: string | null): DashboardCard[] {
   if (!json) return [];
@@ -86,7 +85,6 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
 export default function DashboardPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const user = useAuthStore((s) => s.user);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [notes, setNotes] = useState<Map<string, SavedNote>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -211,9 +209,9 @@ export default function DashboardPage() {
 
   const cards = parseCards(dashboard.cards_json);
   const layout = parseLayout(dashboard.layout_json);
-  const isCreator = user?.id === dashboard.creator_id;
+  const canEditDashboard = dashboard.user_role === "owner" || dashboard.user_role === "editor";
 
-  if (editing && isCreator) {
+  if (editing && canEditDashboard) {
     return (
       <div className="min-h-screen bg-surface-0 p-6">
         <DashboardBuilder
@@ -252,7 +250,7 @@ export default function DashboardPage() {
             <Icon name="refresh-cw" size={12} className={refreshing ? "animate-spin" : ""} />
             Refresh All
           </button>
-          {isCreator && (
+          {canEditDashboard && (
             <button
               onClick={() => setEditing(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors"
@@ -269,7 +267,7 @@ export default function DashboardPage() {
           <div className="flex flex-col items-center justify-center py-20">
             <Icon name="layout" size={32} className="text-text-muted mb-3" />
             <p className="text-sm text-text-muted">This dashboard has no cards yet.</p>
-            {isCreator && (
+            {canEditDashboard && (
               <button
                 onClick={() => setEditing(true)}
                 className="mt-3 text-xs text-accent hover:text-accent-hover transition-colors"

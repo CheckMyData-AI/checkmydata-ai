@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Project creation eligibility gate** — New `can_create_projects` flag on users table (default `false`). Only eligible users can create projects on the hosted version; others see a "Request Access" modal with email/description/message form that sends a request to `contact@checkmydata.yay`. Backend enforces with 403 on `POST /api/projects`. New `POST /api/projects/access-requests` endpoint. Admin users (`sergeysheleg4@gmail.com`, `sergey@appvillis.com`) are seeded with `can_create_projects=true` via Alembic migration. Non-eligible users can still join projects via invite or use the self-hosted version
+- **Analytics & Usage RBAC** — Analytics (`GET /chat/analytics/feedback/{pid}`, `GET /data-validation/analytics/{pid}`, `GET /data-validation/summary/{pid}`) and Usage sidebar panels are now restricted to project **owners** only. Non-owners no longer see these sections in the sidebar
+- **Dashboard RBAC** — Dashboard create/edit/delete operations now require at least **editor** role. Viewers can list and view shared dashboards but cannot modify them. The "New dashboard" sidebar action and Edit button on dashboard pages are hidden for viewers. Any editor/owner can edit or delete any dashboard in their project (not just the creator)
 - **`FormModal` component** (`frontend/src/components/ui/FormModal.tsx`) — Reusable modal shell with title bar, close (X) button, Escape key, backdrop click dismiss, focus trap, and scroll support
 - **KnowledgeResult.sources populated** — RAG search results now correctly wire `RAGSource` objects into `KnowledgeResult.sources`, enabling citation display in chat
 - **Global learning patterns** — `AgentLearningService` now identifies learnings that appear across 2+ connections and promotes them into every connection's prompt as universal patterns
@@ -28,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Authenticated user landing redirect** — Added `AuthRedirect` client component to the landing page so authenticated users visiting `/` are automatically redirected to `/app` instead of seeing the marketing page
 
 ### Changed
+- **Custom Rules editor enlarged** — Rule edit/create modal widened from `max-w-lg` (512px) to `max-w-3xl` (768px) with a taller monospaced textarea (rows=12, min-h-200px) for comfortable markdown editing
+- **Agent Learnings popup** — LearningsPanel converted from an inline accordion inside the sidebar to a centered `FormModal` popup (`max-w-3xl`) with 60vh scroll area, larger text, and roomier edit textareas
 - **Sidebar forms → centered modals** — All 6 sidebar create/edit forms (Project, Connection, SSH key, Rule, Schedule, Dashboard) now open as centered pop-up modals instead of rendering inline in the sidebar
 - **StageValidator configurable strictness** — Min/max row count checks can now fail (not just warn) via `strict_row_bounds` flag
 - **SSH tunnel idle cleanup** — `SSHTunnelManager` now tracks last-used time per tunnel and closes idle tunnels (default 30min TTL)

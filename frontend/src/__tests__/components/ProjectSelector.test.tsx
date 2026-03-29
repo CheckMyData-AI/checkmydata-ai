@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAppStore } from "@/stores/app-store";
+import { useAuthStore } from "@/stores/auth-store";
 import type { Project } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
@@ -11,6 +12,7 @@ vi.mock("@/lib/api", () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      requestAccess: vi.fn().mockResolvedValue({ ok: true }),
     },
     connections: { listByProject: vi.fn().mockResolvedValue([]) },
     chat: { listSessions: vi.fn().mockResolvedValue([]) },
@@ -21,6 +23,11 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/stores/toast-store", () => ({
   toast: vi.fn(),
+}));
+
+vi.mock("@/components/projects/RequestAccessModal", () => ({
+  RequestAccessModal: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? <div data-testid="request-access-modal"><button onClick={onClose}>Close</button></div> : null,
 }));
 
 vi.mock("@/components/ui/ConfirmModal", () => ({
@@ -97,6 +104,15 @@ beforeEach(() => {
     messages: [],
     isLoading: false,
     userRole: null,
+  });
+  useAuthStore.setState({
+    user: {
+      id: "u1",
+      email: "test@test.com",
+      display_name: "Test User",
+      can_create_projects: true,
+    },
+    token: "test-token",
   });
   (api.projects.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 });
@@ -187,5 +203,22 @@ describe("ProjectSelector", () => {
 
     await renderSelector();
     expect(screen.queryByRole("button", { name: /Alpha/i })).not.toBeInTheDocument();
+  });
+
+  it("shows request access modal for ineligible user", async () => {
+    useAuthStore.setState({
+      user: {
+        id: "u1",
+        email: "test@test.com",
+        display_name: "Test User",
+        can_create_projects: false,
+      },
+      token: "test-token",
+    });
+    const { ProjectSelector } = await import("@/components/projects/ProjectSelector");
+    const onHandled = vi.fn();
+    render(<ProjectSelector createRequested={true} onCreateHandled={onHandled} />);
+    expect(onHandled).toHaveBeenCalled();
+    expect(screen.getByTestId("request-access-modal")).toBeInTheDocument();
   });
 });

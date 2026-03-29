@@ -53,6 +53,7 @@ class UserResponse(BaseModel):
     picture_url: str | None = None
     auth_provider: str = "email"
     is_onboarded: bool = False
+    can_create_projects: bool = False
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -83,6 +84,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
             "is_onboarded": user.is_onboarded,
+            "can_create_projects": user.can_create_projects,
         },
     )
 
@@ -105,6 +107,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
             "is_onboarded": user.is_onboarded,
+            "can_create_projects": user.can_create_projects,
         },
     )
 
@@ -152,6 +155,7 @@ async def google_login(
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
             "is_onboarded": user.is_onboarded,
+            "can_create_projects": user.can_create_projects,
         },
     )
 
@@ -197,6 +201,7 @@ async def refresh_token(
             "picture_url": user.picture_url,
             "auth_provider": user.auth_provider,
             "is_onboarded": user.is_onboarded,
+            "can_create_projects": user.can_create_projects,
         },
     )
 
@@ -217,6 +222,7 @@ async def me(
         picture_url=user.picture_url,
         auth_provider=user.auth_provider,
         is_onboarded=user.is_onboarded,
+        can_create_projects=user.can_create_projects,
     )
 
 

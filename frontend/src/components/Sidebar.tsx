@@ -295,27 +295,29 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         </div>
       )}
 
-      <div className="flex gap-1.5">
-        <button
-          onClick={handleIndex}
-          disabled={indexing}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-surface-2 text-text-secondary rounded-lg hover:bg-surface-3 hover:text-text-primary disabled:opacity-50 transition-colors"
-        >
-          <Icon name="refresh-cw" size={12} className={indexing ? "animate-spin" : ""} />
-          {indexing ? "Indexing..." : "Index Repo"}
-        </button>
-        {repoStatus?.last_indexed_commit && (
+      {canEdit && (
+        <div className="flex gap-1.5">
           <button
-            onClick={handleCheckUpdates}
-            disabled={checking || indexing}
-            title="Check for new commits"
-            aria-label="Check for new commits"
-            className="px-3 py-2 text-xs bg-surface-2 text-text-tertiary rounded-lg hover:bg-surface-3 hover:text-text-secondary disabled:opacity-50 transition-colors"
+            onClick={handleIndex}
+            disabled={indexing}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-surface-2 text-text-secondary rounded-lg hover:bg-surface-3 hover:text-text-primary disabled:opacity-50 transition-colors"
           >
-            {checking ? "..." : "Check"}
+            <Icon name="refresh-cw" size={12} className={indexing ? "animate-spin" : ""} />
+            {indexing ? "Indexing..." : "Index Repo"}
           </button>
-        )}
-      </div>
+          {repoStatus?.last_indexed_commit && (
+            <button
+              onClick={handleCheckUpdates}
+              disabled={checking || indexing}
+              title="Check for new commits"
+              aria-label="Check for new commits"
+              className="px-3 py-2 text-xs bg-surface-2 text-text-tertiary rounded-lg hover:bg-surface-3 hover:text-text-secondary disabled:opacity-50 transition-colors"
+            >
+              {checking ? "..." : "Check"}
+            </button>
+          )}
+        </div>
+      )}
 
       {updateCheck && (
         <p
@@ -518,7 +520,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
                 </SidebarSection>
 
-                <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={{ label: "New dashboard", onClick: () => setDashCreateReq(true) }}>
+                <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}>
                   <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
                 </SidebarSection>
 
@@ -526,13 +528,17 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   <KnowledgeDocs />
                 </SidebarSection>
 
-                <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
-                  <UsageStatsPanel />
-                </SidebarSection>
+                {isOwner && (
+                  <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
+                    <UsageStatsPanel />
+                  </SidebarSection>
+                )}
 
-                <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
-                  <FeedbackAnalyticsPanel projectId={activeProject.id} />
-                </SidebarSection>
+                {isOwner && (
+                  <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
+                    <FeedbackAnalyticsPanel projectId={activeProject.id} />
+                  </SidebarSection>
+                )}
               </>
             )}
           </div>
@@ -790,7 +796,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={dashboardsCollapse.open}
               onToggle={dashboardsCollapse.toggle}
               collapsed={collapsed}
-              action={{ label: "New dashboard", onClick: () => setDashCreateReq(true) }}
+              action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}
             >
               <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
             </SidebarSection>
@@ -805,25 +811,29 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               <KnowledgeDocs />
             </SidebarSection>
 
-            <SidebarSection
-              icon="activity"
-              title="Usage"
-              open={usageCollapse.open}
-              onToggle={usageCollapse.toggle}
-              collapsed={collapsed}
-            >
-              <UsageStatsPanel />
-            </SidebarSection>
+            {isOwner && (
+              <SidebarSection
+                icon="activity"
+                title="Usage"
+                open={usageCollapse.open}
+                onToggle={usageCollapse.toggle}
+                collapsed={collapsed}
+              >
+                <UsageStatsPanel />
+              </SidebarSection>
+            )}
 
-            <SidebarSection
-              icon="bar-chart-2"
-              title="Analytics"
-              open={analyticsCollapse.open}
-              onToggle={analyticsCollapse.toggle}
-              collapsed={collapsed}
-            >
-              <FeedbackAnalyticsPanel projectId={activeProject.id} />
-            </SidebarSection>
+            {isOwner && (
+              <SidebarSection
+                icon="bar-chart-2"
+                title="Analytics"
+                open={analyticsCollapse.open}
+                onToggle={analyticsCollapse.toggle}
+                collapsed={collapsed}
+              >
+                <FeedbackAnalyticsPanel projectId={activeProject.id} />
+              </SidebarSection>
+            )}
           </>
         )}
       </div>

@@ -80,7 +80,7 @@ export default function SupportPage() {
             </p>
           </div>
           <a
-            href="https://github.com/CheckMyData-AI/checkmydata-ai/issues"
+            href="https://github.com/ssheleg/checkmydata-ai/issues"
             target="_blank"
             rel="noopener noreferrer"
             className="bg-surface-1 border border-border-subtle rounded-xl p-5 space-y-2 hover:border-accent/30 transition-colors block"
@@ -89,7 +89,7 @@ export default function SupportPage() {
               GitHub Issues
             </h3>
             <p className="text-sm text-accent font-medium">
-              github.com/CheckMyData-AI/checkmydata-ai/issues
+              github.com/ssheleg/checkmydata-ai/issues
             </p>
             <p className="text-xs text-text-tertiary">
               For bug reports, feature requests, and code contributions.
@@ -108,22 +108,22 @@ export default function SupportPage() {
             {
               title: "Installation Guide",
               desc: "Step-by-step setup for local and Docker deployments.",
-              href: "https://github.com/CheckMyData-AI/checkmydata-ai/blob/main/INSTALLATION.md",
+              href: "https://github.com/ssheleg/checkmydata-ai/blob/main/INSTALLATION.md",
             },
             {
               title: "Usage Guide",
               desc: "How to connect databases, ask questions, and visualize data.",
-              href: "https://github.com/CheckMyData-AI/checkmydata-ai/blob/main/USAGE.md",
+              href: "https://github.com/ssheleg/checkmydata-ai/blob/main/USAGE.md",
             },
             {
               title: "API Reference",
               desc: "Full REST API documentation for developers.",
-              href: "https://github.com/CheckMyData-AI/checkmydata-ai/blob/main/API.md",
+              href: "https://github.com/ssheleg/checkmydata-ai/blob/main/API.md",
             },
             {
               title: "FAQ",
               desc: "Common questions and troubleshooting tips.",
-              href: "https://github.com/CheckMyData-AI/checkmydata-ai/blob/main/FAQ.md",
+              href: "https://github.com/ssheleg/checkmydata-ai/blob/main/FAQ.md",
             },
           ].map((doc) => (
             <a

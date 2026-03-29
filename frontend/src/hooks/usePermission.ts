@@ -7,6 +7,7 @@ interface PermissionResult {
   isOwner: boolean;
   canDelete: boolean;
   canEdit: boolean;
+  canIndex: boolean;
   canManageMembers: boolean;
   canManageProject: boolean;
 }
@@ -19,6 +20,7 @@ export function usePermission(): PermissionResult {
     isOwner: userRole === "owner",
     canDelete: userRole === "owner",
     canEdit: userRole === "owner" || userRole === "editor",
+    canIndex: userRole === "owner" || userRole === "editor",
     canManageMembers: userRole === "owner",
     canManageProject: userRole === "owner",
   };

@@ -60,6 +60,14 @@ async def engine():
     eng = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "CREATE TRIGGER IF NOT EXISTS test_grant_can_create_projects "
+                "AFTER INSERT ON users BEGIN "
+                "UPDATE users SET can_create_projects = 1 WHERE id = NEW.id; "
+                "END;"
+            )
+        )
     yield eng
     await eng.dispose()
 
@@ -98,8 +106,12 @@ async def client(engine, db_session: AsyncSession):
 
 
 @pytest_asyncio.fixture()
-async def auth_client(client: AsyncClient):
-    """Authenticated client — registers a fresh user and sets the Bearer header."""
+async def auth_client(client: AsyncClient, db_session: AsyncSession):
+    """Authenticated client — registers a fresh user and sets the Bearer header.
+
+    The user is automatically granted ``can_create_projects`` so existing
+    project-related tests continue to pass.
+    """
     email = f"test-{uuid.uuid4().hex[:8]}@test.com"
     resp = await client.post(
         "/api/auth/register",
@@ -111,13 +123,38 @@ async def auth_client(client: AsyncClient):
     )
     assert resp.status_code == 200, f"Registration failed: {resp.text}"
     token = resp.json()["token"]
+    user_id = resp.json()["user"]["id"]
+
+    await _grant_project_creation(db_session, user_id)
+
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     client.headers.pop("Authorization", None)
 
 
-async def register_user(client: AsyncClient, email: str | None = None) -> dict:
-    """Helper: register a user and return {token, user_id, email}."""
+async def _grant_project_creation(db_session: AsyncSession, user_id: str) -> None:
+    """Set ``can_create_projects = True`` for a test user."""
+    from sqlalchemy import update
+
+    from app.models.user import User
+
+    await db_session.execute(
+        update(User).where(User.id == user_id).values(can_create_projects=True)
+    )
+    await db_session.flush()
+
+
+async def register_user(
+    client: AsyncClient,
+    email: str | None = None,
+    *,
+    db_session: AsyncSession | None = None,
+) -> dict:
+    """Helper: register a user and return {token, user_id, email}.
+
+    When ``db_session`` is passed the user is automatically granted
+    ``can_create_projects`` so it can own projects in tests.
+    """
     email = email or f"user-{uuid.uuid4().hex[:8]}@test.com"
     resp = await client.post(
         "/api/auth/register",
@@ -128,7 +165,12 @@ async def register_user(client: AsyncClient, email: str | None = None) -> dict:
     )
     assert resp.status_code == 200
     data = resp.json()
-    return {"token": data["token"], "user_id": data["user"]["id"], "email": email}
+    user_id = data["user"]["id"]
+
+    if db_session is not None:
+        await _grant_project_creation(db_session, user_id)
+
+    return {"token": data["token"], "user_id": user_id, "email": email}
 
 
 def auth_headers(token: str) -> dict[str, str]:

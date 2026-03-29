@@ -39,7 +39,7 @@ interface RulesManagerProps {
 export function RulesManager({ createRequested, onCreateHandled }: RulesManagerProps) {
   const activeProject = useAppStore((s) => s.activeProject);
   const rulesVersion = useAppStore((s) => s.rulesVersion);
-  const { canDelete, canEdit } = usePermission();
+  const { canEdit } = usePermission();
   const [rules, setRules] = useState<Rule[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -160,7 +160,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
         open={isFormOpen}
         onClose={cancel}
         title={editingId ? "Edit Rule" : "New Rule"}
-        maxWidth="max-w-lg"
+        maxWidth="max-w-3xl"
       >
         <div className="space-y-2.5">
           {editingRule?.is_default && (
@@ -182,9 +182,9 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             onChange={(e) => setContent(e.target.value)}
             placeholder="Rule content (markdown)"
             aria-label="Rule content"
-            rows={4}
+            rows={12}
             maxLength={50000}
-            className={inputCls + " resize-y min-h-[60px]"}
+            className={inputCls + " resize-y min-h-[200px] font-mono text-[13px]"}
           />
           <div className="flex gap-2 pt-1">
             <button
@@ -244,7 +244,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
                   size="xs"
                 />
               )}
-              {canDelete && (
+              {canEdit && (
                 <ActionButton
                   icon="trash"
                   title="Delete rule"

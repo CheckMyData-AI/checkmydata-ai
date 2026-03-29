@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { RequestAccessModal } from "@/components/projects/RequestAccessModal";
 
 const TOTAL_STEPS = 5;
 
@@ -72,6 +73,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const setConnections = useAppStore((s) => s.setConnections);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
   const user = useAuthStore((s) => s.user);
+  const canCreate = user?.can_create_projects ?? false;
+  const [showAccessRequest, setShowAccessRequest] = useState(false);
 
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -278,6 +281,28 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const renderStep = () => {
     switch (step) {
       case 0:
+        if (!canCreate) {
+          return (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg bg-accent-muted/50 border border-accent/20 p-4">
+                <p className="text-sm text-text-primary font-medium mb-2">
+                  Project creation requires approval
+                </p>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  To create your own project, you need to be approved first. You can request
+                  access below, or join an existing project via invite. You can also use the{" "}
+                  <strong>self-hosted version</strong> to create projects freely.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAccessRequest(true)}
+                className={btnPrimary + " w-full"}
+              >
+                Request project access
+              </button>
+            </div>
+          );
+        }
         return (
           <div className="space-y-4">
             <p className="text-sm text-text-secondary">
@@ -720,7 +745,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 Skip
               </button>
             )}
-            {step !== 1 && (
+            {step !== 1 && !(step === 0 && !canCreate) && (
               <button
                 onClick={handleNext}
                 disabled={!canProceed() || isSubmitting}
@@ -746,6 +771,11 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
           </button>
         </div>
       </div>
+
+      <RequestAccessModal
+        open={showAccessRequest}
+        onClose={() => setShowAccessRequest(false)}
+      />
     </div>
   );
 }

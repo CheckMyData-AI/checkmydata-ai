@@ -150,7 +150,7 @@ async def delete_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule.project_id:
-        await _membership_svc.require_role(db, rule.project_id, user["user_id"], "owner")
+        await _membership_svc.require_role(db, rule.project_id, user["user_id"], "editor")
     elif rule.is_default:
         raise HTTPException(status_code=403, detail="Default rules cannot be deleted")
     project_id = rule.project_id

@@ -661,7 +661,7 @@ async def get_feedback_analytics(
     user: dict = Depends(get_current_user),
 ):
     """Return aggregated feedback stats for a project."""
-    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from sqlalchemy import and_, case, func, select
 

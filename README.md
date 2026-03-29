@@ -381,7 +381,7 @@ The agent automatically **learns from query outcomes** and accumulates per-conne
 **Managing learnings:**
 - A blue **LEARN** badge with count appears on connections that have accumulated learnings
 - Hover over the badge for a **category breakdown tooltip** (e.g., "3 table prefs, 2 schema gotchas")
-- Click the badge to open the **LearningsPanel** — view, edit, deactivate, or delete individual lessons
+- Click the badge to open the **LearningsPanel** popup — view, edit, deactivate, or delete individual lessons
 - **Filter by category** using the filter pills above the learnings list
 - **Sort** by confidence, date, most confirmed, or most applied
 - **Recompile** the learnings prompt on demand using the refresh button
@@ -906,11 +906,11 @@ The **Dashboards** feature lets you compose saved queries into grid-based dashbo
    - **Remove Card** — removes a card from the dashboard
    - **Refresh All** — re-executes all card queries to get fresh data
    - **Save Dashboard** — persists the layout and card configuration
-   - **Edit** — opens the dashboard builder for the creator
+   - **Edit** — opens the dashboard builder (editor/owner only)
 
 4. **Viewing**: Click a dashboard in the sidebar to navigate to `/dashboard/{id}` — a full-screen page with the grid layout, header with title and last-updated time, and refresh controls.
 
-5. **Sharing**: Dashboards are shared with the team by default (`is_shared = true`). All project members with at least "viewer" role can see shared dashboards. Only the creator can edit or delete.
+5. **Sharing & Permissions**: Dashboards are shared with the team by default (`is_shared = true`). All project members with at least "viewer" role can see shared dashboards. Only **editors** and **owners** can create, edit, or delete dashboards. Viewers have read-only access.
 
 6. **Auto-refresh**: Cards can have a `refresh_interval` (seconds) configured per card. The dashboard page sets up intervals to automatically re-execute queries.
 
@@ -2312,6 +2312,9 @@ src/
 | Manage repositories (add, edit) | Yes | No | No |
 | Create/edit custom rules (Knowledge) | Yes | Yes | No |
 | Edit/toggle learnings, recompile (Learn) | Yes | Yes | No |
+| Create/edit/delete dashboards | Yes | Yes | No |
+| View dashboards | Yes | Yes | Yes |
+| View analytics & usage stats | Yes | No | No |
 | Create chat sessions, send messages | Yes | Yes | Yes |
 | Save/delete own notes | Yes | Yes | Yes |
 | Train agent (create learnings via feedback) | Yes | Yes | Yes |
@@ -2320,12 +2323,23 @@ src/
 
 The frontend enforces this via the `usePermission()` hook which reads the active project's `userRole` from the app store. Infrastructure and management buttons are hidden for non-owner users. The `canEdit` flag (owner + editor) gates custom rules and learnings editing. The `canManageProject` flag (owner only) gates connections, indexing, sync, schedules, insights, and other project infrastructure.
 
+#### Project Creation Eligibility
+
+On the hosted version, project creation is restricted to users with `can_create_projects = true` in the database. By default, all new users have this flag set to `false`. Admins (`sergeysheleg4@gmail.com`, `sergey@appvillis.com`) are seeded with `can_create_projects = true` via an Alembic migration.
+
+Non-eligible users who attempt to create a project see a **Request Access** modal with a form (email, description, message). Submitting the form sends an email to `contact@checkmydata.yay` via the `POST /api/projects/access-requests` endpoint. The backend enforces this with a 403 check in `create_project`.
+
+Non-eligible users can still:
+- Join existing projects via invite
+- Use the demo project
+- Use the self-hosted version where they control the database and can set the flag themselves
+
 ### Database Schema (Internal)
 
 The agent uses SQLite (default) or PostgreSQL (recommended for production) to store its own data:
 
 ```
-users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, picture_url, created_at
+users            — id, email, password_hash (nullable for Google users), display_name, is_active, auth_provider (email|google), google_id, picture_url, can_create_projects (default false), created_at
 projects         — id, name, description, repo_url, repo_branch, ssh_key_id, owner_id, default_rule_initialized, indexing_llm_provider, indexing_llm_model, agent_llm_provider, agent_llm_model, sql_llm_provider, sql_llm_model
 connections      — id, project_id, name, db_type, ssh_*, db_*, ssh_exec_mode, ssh_command_template, ssh_pre_commands, is_read_only, is_active
 ssh_keys         — id, user_id (FK→users), name, private_key_encrypted, passphrase_encrypted, fingerprint, key_type

@@ -110,7 +110,7 @@ export default function AboutPage() {
         </p>
         <div className="flex flex-col sm:flex-row gap-4">
           <a
-            href="https://github.com/CheckMyData-AI/checkmydata-ai"
+            href="https://github.com/ssheleg/checkmydata-ai"
             target="_blank"
             rel="noopener noreferrer"
             className="px-5 py-2.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center"

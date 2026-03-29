@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Project, type RepoCheckResult } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { InviteManager } from "./InviteManager";
+import { RequestAccessModal } from "./RequestAccessModal";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { invalidateRestore } from "@/hooks/useRestoreState";
@@ -181,7 +183,9 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   const setUserRole = useAppStore((s) => s.setUserRole);
   const triggerProjectEdit = useAppStore((s) => s.triggerProjectEdit);
   const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);
+  const canCreate = useAuthStore((s) => s.user?.can_create_projects ?? false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAccessRequest, setShowAccessRequest] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
@@ -281,12 +285,16 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
 
   useEffect(() => {
     if (createRequested) {
-      setEditingId(null);
-      resetForm();
-      setShowCreate(true);
+      if (canCreate) {
+        setEditingId(null);
+        resetForm();
+        setShowCreate(true);
+      } else {
+        setShowAccessRequest(true);
+      }
       onCreateHandled?.();
     }
-  }, [createRequested, onCreateHandled]);
+  }, [createRequested, onCreateHandled, canCreate]);
 
   const [nameError, setNameError] = useState("");
 
@@ -756,6 +764,11 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
           onClose={() => setManagingAccessId(null)}
         />
       )}
+
+      <RequestAccessModal
+        open={showAccessRequest}
+        onClose={() => setShowAccessRequest(false)}
+      />
     </div>
   );
 }

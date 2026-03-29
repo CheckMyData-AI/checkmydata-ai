@@ -45,6 +45,7 @@ class DashboardResponse(BaseModel):
     is_shared: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    user_role: str | None = None
 
 
 @router.post("", response_model=DashboardResponse)
@@ -55,7 +56,7 @@ async def create_dashboard(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "editor")
     dashboard = await _svc.create(
         db,
         project_id=body.project_id,
@@ -98,10 +99,12 @@ async def get_dashboard(
     dashboard = await _svc.get(db, dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
+    role = await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
     if dashboard.creator_id != user["user_id"] and not dashboard.is_shared:
         raise HTTPException(status_code=403, detail="Dashboard is private")
-    return dashboard
+    resp = DashboardResponse.model_validate(dashboard)
+    resp.user_role = role
+    return resp
 
 
 @router.patch("/{dashboard_id}", response_model=DashboardResponse)
@@ -116,9 +119,7 @@ async def update_dashboard(
     dashboard = await _svc.get(db, dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
-    if dashboard.creator_id != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Only the creator can update this dashboard")
+    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "editor")
     updates = body.model_dump(exclude_unset=True)
     updated = await _svc.update(db, dashboard.id, **updates)
     if not updated:
@@ -144,9 +145,7 @@ async def delete_dashboard(
     dashboard = await _svc.get(db, dashboard_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "viewer")
-    if dashboard.creator_id != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Only the creator can delete this dashboard")
+    await _membership_svc.require_role(db, dashboard.project_id, user["user_id"], "editor")
     await _svc.delete(db, dashboard.id)
     audit_log(
         "dashboard.delete",

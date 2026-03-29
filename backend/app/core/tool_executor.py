@@ -323,11 +323,13 @@ class ToolExecutor:
         async with self._tracker.step(wf_id, "manage_rules", f"Managing custom rule ({action})"):
             async with async_session_factory() as session:
                 if self._user_id:
+                    from app.services.membership_service import ROLE_HIERARCHY
+
                     role = await membership_svc.get_role(session, self._project_id, self._user_id)
-                    if role != "owner":
+                    if role is None or ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get("editor", 0):
                         return (
-                            "Permission denied: only project owners can manage rules. "
-                            "Ask the project owner to create this rule, or use the sidebar."
+                            "Permission denied: requires at least 'editor' role to manage rules. "
+                            "Ask the project owner to update your role, or use the sidebar."
                         )
                 else:
                     return "Error: user identity not available for permission check."

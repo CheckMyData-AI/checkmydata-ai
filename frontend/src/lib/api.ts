@@ -430,6 +430,7 @@ export interface Dashboard {
   is_shared: boolean;
   created_at: string | null;
   updated_at: string | null;
+  user_role?: string | null;
 }
 
 export interface ExecuteNoteResponse {
@@ -485,6 +486,7 @@ export interface AuthUser {
   picture_url?: string | null;
   auth_provider?: string;
   is_onboarded?: boolean;
+  can_create_projects?: boolean;
 }
 
 export interface AuthResponse {
@@ -821,6 +823,11 @@ export const api = {
       request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
     readiness: (id: string) =>
       request<ProjectReadiness>(`/projects/${id}/readiness`),
+    requestAccess: (data: { email: string; description: string; message: string }) =>
+      request<{ ok: boolean }>("/projects/access-requests", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   connections: {

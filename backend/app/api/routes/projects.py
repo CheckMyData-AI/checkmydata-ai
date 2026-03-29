@@ -11,6 +11,7 @@ from app.core.rate_limit import limiter
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
+from app.services.email_service import EmailService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rule_service import RuleService
@@ -24,6 +25,13 @@ _rule_svc = RuleService()
 _conn_svc = ConnectionService()
 _db_index_svc = DbIndexService()
 _sync_svc = CodeDbSyncService()
+_email_svc = EmailService()
+
+
+class AccessRequestBody(BaseModel):
+    email: str = Field(max_length=255)
+    description: str = Field(max_length=500)
+    message: str = Field(max_length=2000)
 
 
 class ProjectCreate(BaseModel):
@@ -95,6 +103,14 @@ async def create_project(
     from sqlalchemy import and_, select
 
     from app.models.project import Project
+    from app.models.user import User
+
+    user_obj = (await db.execute(select(User).where(User.id == user["user_id"]))).scalar_one_or_none()
+    if not user_obj or not user_obj.can_create_projects:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not eligible to create projects. Please request access.",
+        )
 
     data = body.model_dump()
     data["owner_id"] = user["user_id"]
@@ -134,6 +150,28 @@ async def create_project(
         **{k: getattr(project, k) for k in ProjectResponse.model_fields if k not in ("user_role",)},
         user_role="owner",
     )
+
+
+@router.post("/access-requests")
+@limiter.limit("3/hour")
+async def request_project_access(
+    request: Request,
+    body: AccessRequestBody,
+    user: dict = Depends(get_current_user),
+):
+    """Submit a request to be granted project creation privileges."""
+    await _email_svc.send_access_request_email(
+        requester_email=body.email,
+        description=body.description,
+        message=body.message,
+        user_id=user["user_id"],
+    )
+    audit_log(
+        "project.access_request",
+        user_id=user["user_id"],
+        detail=body.email,
+    )
+    return {"ok": True}
 
 
 @router.get("", response_model=list[ProjectResponse])

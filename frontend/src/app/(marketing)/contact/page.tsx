@@ -88,7 +88,7 @@ export default function ContactPage() {
         </p>
         <div className="grid sm:grid-cols-2 gap-4">
           <a
-            href="https://github.com/CheckMyData-AI/checkmydata-ai/issues"
+            href="https://github.com/ssheleg/checkmydata-ai/issues"
             target="_blank"
             rel="noopener noreferrer"
             className="bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
@@ -101,7 +101,7 @@ export default function ContactPage() {
             </p>
           </a>
           <a
-            href="https://github.com/CheckMyData-AI/checkmydata-ai/discussions"
+            href="https://github.com/ssheleg/checkmydata-ai/discussions"
             target="_blank"
             rel="noopener noreferrer"
             className="bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"

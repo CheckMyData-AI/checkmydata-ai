@@ -1469,10 +1469,7 @@ class OrchestratorAgent(BaseAgent):
                         role = await membership_svc.get_role(session, ctx.project_id, ctx.user_id)
                         if role is None:
                             return "Permission denied: not a member of this project."
-                        min_role = "owner" if action == "delete" else "editor"
-                        if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get(min_role, 0):
-                            if action == "delete":
-                                return "Permission denied: only project owners can delete rules."
+                        if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get("editor", 0):
                             return (
                                 "Permission denied: requires at least"
                                 " 'editor' role to manage rules."

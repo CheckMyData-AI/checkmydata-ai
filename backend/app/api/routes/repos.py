@@ -137,7 +137,7 @@ async def index_repo(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
     body = body or IndexRequest()
     project = await _project_svc.get(db, project_id)
     if not project:

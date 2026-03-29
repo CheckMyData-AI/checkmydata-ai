@@ -54,9 +54,16 @@ class TestProjectRoutes:
         mock_project.sql_llm_model = None
         mock_project.owner_id = "test-user-1"
 
-        exec_result = MagicMock()
-        exec_result.scalar_one_or_none.return_value = None
-        _FAKE_DB.execute = AsyncMock(return_value=exec_result)
+        mock_user = MagicMock()
+        mock_user.can_create_projects = True
+
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = mock_user
+
+        dup_result = MagicMock()
+        dup_result.scalar_one_or_none.return_value = None
+
+        _FAKE_DB.execute = AsyncMock(side_effect=[user_result, dup_result])
 
         with (
             patch("app.api.routes.projects._svc") as mock_svc,

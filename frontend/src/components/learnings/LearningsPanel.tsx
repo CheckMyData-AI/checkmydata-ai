@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AgentLearningDTO } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
+import { FormModal } from "@/components/ui/FormModal";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { usePermission } from "@/hooks/usePermission";
@@ -163,53 +164,46 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
     return acc;
   }, {});
 
+  const titleWithCount = `Agent Learnings (${learnings.length})`;
+
   return (
-    <div className="bg-surface-1 border border-border-subtle rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 bg-surface-2 border-b border-border-subtle">
-        <div className="flex items-center gap-2">
-          <Icon name="settings" size={14} className="text-accent" />
-          <span className="text-xs font-medium text-text-primary">Agent Learnings</span>
-          <span className="text-[10px] text-text-muted">({learnings.length})</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {learnings.length > 0 && (
-            <>
-              {canEdit && (
-                <button
-                  onClick={handleRecompile}
-                  className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
-                  title="Recompile learnings prompt"
-                  aria-label="Recompile learnings"
-                >
-                  <Icon name="refresh-cw" size={11} />
-                </button>
-              )}
-              {canDelete && (
-                <button
-                  onClick={handleClearAll}
-                  className="text-[10px] px-2 py-0.5 rounded text-error hover:bg-error-muted transition-colors"
-                >
-                  Clear all
-                </button>
-              )}
-            </>
+    <FormModal
+      open={true}
+      onClose={onClose}
+      title={titleWithCount}
+      maxWidth="max-w-3xl"
+    >
+      {/* Toolbar: recompile / clear all */}
+      {learnings.length > 0 && (
+        <div className="flex items-center gap-2 mb-3">
+          {canEdit && (
+            <button
+              onClick={handleRecompile}
+              className="text-xs px-2.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors flex items-center gap-1"
+              title="Recompile learnings prompt"
+              aria-label="Recompile learnings"
+            >
+              <Icon name="refresh-cw" size={12} />
+              Recompile
+            </button>
           )}
-          <button
-            onClick={onClose}
-            aria-label="Close learnings panel"
-            className="p-0.5 rounded hover:bg-surface-3 transition-colors text-text-muted hover:text-text-primary"
-          >
-            <Icon name="x" size={14} />
-          </button>
+          {canDelete && (
+            <button
+              onClick={handleClearAll}
+              className="text-xs px-2.5 py-1 rounded text-error hover:bg-error-muted transition-colors"
+            >
+              Clear all
+            </button>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Category filter pills + sort dropdown */}
       {learnings.length > 0 && (
-        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle overflow-x-auto">
+        <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-border-subtle overflow-x-auto">
           <button
             onClick={() => setFilterCategory(null)}
-            className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+            className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
               filterCategory === null
                 ? "bg-accent/20 text-accent"
                 : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -221,7 +215,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <button
               key={cat}
               onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
-              className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap ${
+              className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
                 filterCategory === cat
                   ? CATEGORY_COLORS[cat] || "bg-surface-3 text-text-primary"
                   : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -234,7 +228,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-[10px] bg-surface-1 border border-border-subtle rounded-lg px-1.5 py-0.5 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              className="text-[11px] bg-surface-1 border border-border-subtle rounded-lg px-2 py-1 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="confidence">Sort: Confidence</option>
               <option value="date">Sort: Newest</option>
@@ -245,7 +239,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         </div>
       )}
 
-      <div className="max-h-80 overflow-y-auto overflow-x-hidden sidebar-scroll">
+      <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden sidebar-scroll">
         {loading ? (
           <div className="p-4 space-y-3">
             {[...Array(4)].map((_, i) => (
@@ -257,56 +251,56 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             ))}
           </div>
         ) : learnings.length === 0 ? (
-          <div className="p-4 text-center text-text-muted text-xs">
+          <div className="p-6 text-center text-text-muted text-sm">
             No learnings yet. The agent will automatically learn from query outcomes.
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-4 text-center text-text-muted text-xs">
+          <div className="p-6 text-center text-text-muted text-sm">
             No learnings in this category.
           </div>
         ) : (
           <div className="divide-y divide-border-subtle">
             {Object.entries(grouped).map(([category, items]) => (
-              <div key={category} className="px-3 py-2">
-                <div className="flex items-center gap-2 mb-1.5">
+              <div key={category} className="px-1 py-2.5">
+                <div className="flex items-center gap-2 mb-2">
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
                       CATEGORY_COLORS[category] || "text-text-muted bg-surface-3"
                     }`}
                   >
                     {CATEGORY_LABELS[category] || category}
                   </span>
-                  <span className="text-[10px] text-text-muted">{items.length}</span>
+                  <span className="text-[11px] text-text-muted">{items.length}</span>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {items.map((l) => (
                     <div
                       key={l.id}
-                      className={`group relative rounded-md px-2.5 py-1.5 text-xs transition-colors ${
+                      className={`group relative rounded-lg px-3 py-2 text-sm transition-colors ${
                         l.is_active
                           ? "bg-surface-2/50 hover:bg-surface-2"
                           : "bg-surface-1 opacity-50"
                       }`}
                     >
                       {editingId === l.id ? (
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <textarea
                             value={editLesson}
                             onChange={(e) => setEditLesson(e.target.value)}
-                            rows={2}
+                            rows={3}
                             aria-label="Edit learning"
-                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-2 py-1.5 text-xs text-text-primary resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary resize-y min-h-[60px] focus:outline-none focus:ring-1 focus:ring-accent"
                           />
-                          <div className="flex gap-1">
+                          <div className="flex gap-1.5">
                             <button
                               onClick={() => handleSaveEdit(l.id)}
-                              className="text-[10px] px-2 py-0.5 rounded bg-accent text-white hover:bg-accent-hover"
+                              className="text-xs px-3 py-1 rounded bg-accent text-white hover:bg-accent-hover"
                             >
                               Save
                             </button>
                             <button
                               onClick={() => setEditingId(null)}
-                              className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-text-primary"
+                              className="text-xs px-3 py-1 rounded text-text-muted hover:text-text-primary"
                             >
                               Cancel
                             </button>
@@ -316,55 +310,49 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                         <>
                           <div className="flex items-start gap-2">
                             <div className="flex-1 min-w-0">
-                              <span className="text-[10px] font-mono text-text-tertiary">
+                              <span className="text-[11px] font-mono text-text-tertiary">
                                 {l.subject}
                               </span>
                               <p className="text-text-secondary leading-snug mt-0.5">
                                 {l.lesson}
                               </p>
                             </div>
-                            {(canEdit || canDelete) && (
+                            {canEdit && (
                               <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                                {canEdit && (
-                                  <button
-                                    onClick={() => {
-                                      setEditingId(l.id);
-                                      setEditLesson(l.lesson);
-                                    }}
-                                    className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
-                                    title="Edit"
-                                    aria-label="Edit"
-                                  >
-                                    <Icon name="pencil" size={11} />
-                                  </button>
-                                )}
-                                {canEdit && (
-                                  <button
-                                    onClick={() => handleToggleActive(l)}
-                                    className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
-                                    title={l.is_active ? "Deactivate" : "Activate"}
-                                    aria-label={l.is_active ? "Deactivate" : "Activate"}
-                                  >
-                                    <Icon name={l.is_active ? "x" : "check"} size={11} />
-                                  </button>
-                                )}
-                                {canDelete && (
-                                  <button
-                                    onClick={() => handleDelete(l.id)}
-                                    className="p-0.5 rounded hover:bg-error-muted text-text-muted hover:text-error"
-                                    title="Delete"
-                                    aria-label="Delete"
-                                  >
-                                    <Icon name="trash" size={11} />
-                                  </button>
-                                )}
+                                <button
+                                  onClick={() => {
+                                    setEditingId(l.id);
+                                    setEditLesson(l.lesson);
+                                  }}
+                                  className="p-1 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
+                                  title="Edit"
+                                  aria-label="Edit"
+                                >
+                                  <Icon name="pencil" size={12} />
+                                </button>
+                                <button
+                                  onClick={() => handleToggleActive(l)}
+                                  className="p-1 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
+                                  title={l.is_active ? "Deactivate" : "Activate"}
+                                  aria-label={l.is_active ? "Deactivate" : "Activate"}
+                                >
+                                  <Icon name={l.is_active ? "x" : "check"} size={12} />
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(l.id)}
+                                  className="p-1 rounded hover:bg-error-muted text-text-muted hover:text-error"
+                                  title="Delete"
+                                  aria-label="Delete"
+                                >
+                                  <Icon name="trash" size={12} />
+                                </button>
                               </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 mt-1 text-[10px] text-text-muted">
-                            <span className="flex items-center gap-0.5">
+                          <div className="flex items-center gap-2.5 mt-1.5 text-[11px] text-text-muted">
+                            <span className="flex items-center gap-1">
                               <span
-                                className="inline-block w-8 h-1 rounded-full bg-surface-3 overflow-hidden"
+                                className="inline-block w-10 h-1.5 rounded-full bg-surface-3 overflow-hidden"
                                 title={`${Math.round(l.confidence * 100)}% confidence`}
                               >
                                 <span
@@ -391,6 +379,6 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
           </div>
         )}
       </div>
-    </div>
+    </FormModal>
   );
 }

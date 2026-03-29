@@ -108,12 +108,12 @@ class TestProjectLlmFields:
 class TestProjectAccessControl:
     """Test role-based access control on projects endpoints."""
 
-    async def _setup_project_with_member(self, client, owner_token, role):
+    async def _setup_project_with_member(self, client, db_session, owner_token, role):
         """Create project as owner, register+invite+accept member.
 
         Returns (project_id, member_token).
         """
-        member = await register_user(client)
+        member = await register_user(client, db_session=db_session)
 
         resp = await client.post(
             "/api/projects",
@@ -136,9 +136,9 @@ class TestProjectAccessControl:
         assert resp.status_code == 200
         return pid, member["token"]
 
-    async def test_list_only_member_projects(self, client):
-        user1 = await register_user(client)
-        user2 = await register_user(client)
+    async def test_list_only_member_projects(self, client, db_session):
+        user1 = await register_user(client, db_session=db_session)
+        user2 = await register_user(client, db_session=db_session)
         await client.post(
             "/api/projects",
             json={"name": "User1 Proj"},
@@ -154,10 +154,11 @@ class TestProjectAccessControl:
         assert "User1 Proj" in names
         assert "User2 Proj" not in names
 
-    async def test_viewer_can_get_but_not_update_or_delete(self, client):
-        owner = await register_user(client)
+    async def test_viewer_can_get_but_not_update_or_delete(self, client, db_session):
+        owner = await register_user(client, db_session=db_session)
         pid, viewer_token = await self._setup_project_with_member(
             client,
+            db_session,
             owner["token"],
             "viewer",
         )
@@ -175,9 +176,9 @@ class TestProjectAccessControl:
         resp = await client.delete(f"/api/projects/{pid}", headers=auth_headers(viewer_token))
         assert resp.status_code == 403
 
-    async def test_non_member_gets_403(self, client):
-        owner = await register_user(client)
-        outsider = await register_user(client)
+    async def test_non_member_gets_403(self, client, db_session):
+        owner = await register_user(client, db_session=db_session)
+        outsider = await register_user(client, db_session=db_session)
         resp = await client.post(
             "/api/projects",
             json={"name": "Private"},
@@ -187,3 +188,91 @@ class TestProjectAccessControl:
 
         resp = await client.get(f"/api/projects/{pid}", headers=auth_headers(outsider["token"]))
         assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+class TestProjectCreationEligibility:
+    """Test that only eligible users can create projects."""
+
+    async def test_ineligible_user_gets_403(self, client, db_session):
+        """A user with can_create_projects=False cannot create projects."""
+        from sqlalchemy import update
+
+        from app.models.user import User
+
+        user = await register_user(client, db_session=db_session)
+        # Override the test trigger that auto-grants the flag
+        await db_session.execute(
+            update(User).where(User.id == user["user_id"]).values(can_create_projects=False)
+        )
+        await db_session.flush()
+
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Should Fail"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 403
+        assert "not eligible" in resp.json()["detail"].lower()
+
+    async def test_eligible_user_can_create(self, client, db_session):
+        """A user with can_create_projects=True can create projects."""
+        user = await register_user(client, db_session=db_session)
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Should Succeed"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Should Succeed"
+
+    async def test_auth_response_includes_flag(self, client, db_session):
+        """Login response includes can_create_projects field."""
+        email = f"flag-test-{__import__('uuid').uuid4().hex[:8]}@test.com"
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": email, "password": "testpass123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user"]["can_create_projects"] is False
+
+        resp = await client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "testpass123"},
+        )
+        assert resp.status_code == 200
+        assert "can_create_projects" in resp.json()["user"]
+
+    async def test_access_request_endpoint(self, client, db_session):
+        """POST /api/projects/access-requests sends the email and returns ok."""
+        from unittest.mock import AsyncMock, patch
+
+        user = await register_user(client)
+        with patch(
+            "app.api.routes.projects._email_svc.send_access_request_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp = await client.post(
+                "/api/projects/access-requests",
+                json={
+                    "email": "requester@example.com",
+                    "description": "Need a project for analytics",
+                    "message": "Please grant me access.",
+                },
+                headers=auth_headers(user["token"]),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        mock_send.assert_awaited_once()
+
+    async def test_access_request_requires_auth(self, client):
+        """Unauthenticated access-request call returns 401."""
+        resp = await client.post(
+            "/api/projects/access-requests",
+            json={
+                "email": "someone@example.com",
+                "description": "test",
+                "message": "test",
+            },
+        )
+        assert resp.status_code == 401

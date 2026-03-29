@@ -127,7 +127,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const activeConnection = useAppStore((s) => s.activeConnection);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
   const sshKeys = useAppStore((s) => s.sshKeys);
-  const { canDelete, canManageProject } = usePermission();
+  const { canDelete, canIndex, canManageProject } = usePermission();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
@@ -1187,7 +1187,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         IDX...
                       </span>
                     ) : idx?.is_indexed ? (
-                      canManageProject ? (
+                      canIndex ? (
                         <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
                           <button
                             type="button"
@@ -1208,7 +1208,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           </span>
                         </Tooltip>
                       )
-                    ) : isActive && canManageProject ? (
+                    ) : isActive && canIndex ? (
                       <Tooltip label="Index database schema" position="bottom">
                         <button
                           type="button"
@@ -1228,7 +1228,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         SYNC...
                       </span>
                     ) : sync?.is_synced ? (
-                      canManageProject ? (
+                      canIndex ? (
                         <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}. Click to re-sync`} position="bottom">
                           <button
                             type="button"
@@ -1250,7 +1250,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         </Tooltip>
                       )
                     ) : sync?.sync_status === "stale" ? (
-                      canManageProject ? (
+                      canIndex ? (
                         <Tooltip label="Sync data is stale -- click to re-sync" position="bottom">
                           <button
                             type="button"
@@ -1271,7 +1271,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           </span>
                         </Tooltip>
                       )
-                    ) : isActive && idx?.is_indexed && canManageProject ? (
+                    ) : isActive && idx?.is_indexed && canIndex ? (
                       <Tooltip label="Run Code-DB Sync" position="bottom">
                         <button
                           type="button"
@@ -1328,13 +1328,15 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     disabled={checking === c.id}
                     size="xs"
                   />
-                  <ActionButton
-                    icon="pencil"
-                    title="Edit"
-                    onClick={(e) => { e.stopPropagation(); handleEdit(c); }}
-                    size="xs"
-                  />
-                  {isActive && c.source_type !== "mcp" && canManageProject && (
+                  {canManageProject && (
+                    <ActionButton
+                      icon="pencil"
+                      title="Edit"
+                      onClick={(e) => { e.stopPropagation(); handleEdit(c); }}
+                      size="xs"
+                    />
+                  )}
+                  {isActive && c.source_type !== "mcp" && canIndex && (
                     <ActionButton
                       icon="database"
                       title="Refresh schema cache"
@@ -1361,15 +1363,13 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 </div>
               )}
               {showLearnings === c.id && (
-                <div className="px-2 pb-1.5">
-                  <LearningsPanel
-                    connectionId={c.id}
-                    onClose={() => setShowLearnings(null)}
-                    onCountChange={(count) =>
-                      setLearningsCount((prev) => ({ ...prev, [c.id]: count }))
-                    }
-                  />
-                </div>
+                <LearningsPanel
+                  connectionId={c.id}
+                  onClose={() => setShowLearnings(null)}
+                  onCountChange={(count) =>
+                    setLearningsCount((prev) => ({ ...prev, [c.id]: count }))
+                  }
+                />
               )}
             </div>
           );

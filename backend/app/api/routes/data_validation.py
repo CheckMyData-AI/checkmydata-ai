@@ -153,7 +153,7 @@ async def get_feedback_analytics(
         db,
         project_id,
         user["user_id"],
-        "viewer",
+        "owner",
     )
 
     from sqlalchemy import func as sa_func
@@ -264,7 +264,7 @@ async def get_analytics_summary(
     user: dict = Depends(get_current_user),
 ):
     """Lightweight summary: accuracy_rate, total_validations, active_learnings, benchmark_count."""
-    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from sqlalchemy import func as sa_func
 
