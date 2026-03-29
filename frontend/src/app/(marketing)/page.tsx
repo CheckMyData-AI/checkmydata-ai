@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
+import { AuthRedirect } from "@/components/auth/AuthRedirect";
 
 export const metadata: Metadata = {
   title: "CheckMyData.ai — Open-Source AI Database Agent",
@@ -116,6 +117,7 @@ const STEPS = [
 export default function LandingPage() {
   return (
     <>
+      <AuthRedirect />
       {/* JSON-LD structured data */}
       <script
         type="application/ld+json"

@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Branding assets** — Generated favicon.ico, icon-192.png, icon-512.png, apple-touch-icon.png, og-image.png (1200x630), and reusable `Logo.tsx` SVG component (`LogoMark` + `LogoFull` variants)
 - **SEO infrastructure** — robots.txt (disallows /app and /dashboard), dynamic sitemap.xml via Next.js `sitemap.ts`, `metadataBase` on root layout, canonical URLs and OG/Twitter Card metadata on all pages
 
+### Fixed
+- **Authenticated user landing redirect** — Added `AuthRedirect` client component to the landing page so authenticated users visiting `/` are automatically redirected to `/app` instead of seeing the marketing page
+
 ### Changed
 - **Route restructure** — Main application moved from `/` to `/app`. Unauthenticated users see the landing page at `/` instead of a login form
 - **AuthGate simplified** — Reduced from 293-line login form to a 42-line redirect guard that sends unauthenticated users to `/login`
