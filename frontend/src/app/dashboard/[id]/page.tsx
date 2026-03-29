@@ -200,7 +200,7 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-surface-0 flex flex-col items-center justify-center gap-3">
         <p className="text-sm text-text-muted">Dashboard not found</p>
         <button
-          onClick={() => router.push("/")}
+          onClick={() => router.push("/app")}
           className="text-xs text-accent hover:text-accent-hover transition-colors"
         >
           Back to home
@@ -230,7 +230,7 @@ export default function DashboardPage() {
       <header className="shrink-0 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-surface-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/app")}
             aria-label="Back to home"
             className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
           >

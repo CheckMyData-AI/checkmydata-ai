@@ -27,6 +27,7 @@ import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
 import { ScheduleManager } from "./schedules/ScheduleManager";
 import { DashboardList } from "./dashboards/DashboardList";
 import { NotificationBell } from "./ui/NotificationBell";
+import { usePermission } from "@/hooks/usePermission";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -55,6 +56,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarProps) {
+  const { isOwner, canEdit } = usePermission();
   const activeProject = useAppStore((s) => s.activeProject);
   const sshKeys = useAppStore((s) => s.sshKeys);
   const setSshKeys = useAppStore((s) => s.setSshKeys);
@@ -487,7 +489,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 )}
 
                 <div ref={connRef}>
-                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}>
+                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}>
                     <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
                     <SyncStatusIndicator />
                   </SidebarSection>
@@ -508,11 +510,11 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   )}
                 </SidebarSection>
 
-                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}>
+                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}>
                   <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
                 </SidebarSection>
 
-                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}>
+                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}>
                   <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
                 </SidebarSection>
 
@@ -731,7 +733,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 onToggle={connCollapse.toggle}
                 count={connections.length}
                 collapsed={collapsed}
-                action={{ label: "New connection", onClick: () => setConnCreateReq(true) }}
+                action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}
               >
                 <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
                 <SyncStatusIndicator />
@@ -766,7 +768,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={rulesCollapse.open}
               onToggle={rulesCollapse.toggle}
               collapsed={collapsed}
-              action={{ label: "New rule", onClick: () => setRulesCreateReq(true) }}
+              action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}
             >
               <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
             </SidebarSection>
@@ -777,7 +779,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               open={schedulesCollapse.open}
               onToggle={schedulesCollapse.toggle}
               collapsed={collapsed}
-              action={{ label: "New schedule", onClick: () => setSchedCreateReq(true) }}
+              action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}
             >
               <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
             </SidebarSection>

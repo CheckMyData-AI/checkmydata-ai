@@ -10,6 +10,7 @@ import { invalidateRestore } from "@/hooks/useRestoreState";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { FormModal } from "@/components/ui/FormModal";
 import {
   LlmModelSelector,
   formatProvider,
@@ -444,8 +445,14 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
 
   const isFormOpen = showCreate || editingId !== null;
 
+  const handleCancel = () => {
+    setEditingId(null);
+    setShowCreate(false);
+    resetForm();
+  };
+
   const formUI = (
-    <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle">
+    <div className="space-y-2.5">
       <div>
         <input
           value={form.name}
@@ -639,7 +646,14 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
 
   return (
     <div className="px-1">
-      {isFormOpen && <div className="mb-1.5">{formUI}</div>}
+      <FormModal
+        open={isFormOpen}
+        onClose={handleCancel}
+        title={editingId ? "Edit Project" : "New Project"}
+        maxWidth="max-w-lg"
+      >
+        {formUI}
+      </FormModal>
 
       {listLoading && <Spinner />}
       {!listLoading && projects.length === 0 && !isFormOpen && (

@@ -103,6 +103,7 @@ interface ChatMessageProps {
   metadataJson?: string | null;
   onRetry?: () => void;
   onSendMessage?: (text: string) => void;
+  onContinueAnalysis?: (continuationContext: string | null) => void;
   sessionId?: string;
 }
 
@@ -147,7 +148,7 @@ const complexityBadgeColors: Record<string, string> = {
   expert: "bg-error-muted text-error",
 };
 
-export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, sessionId }: ChatMessageProps) {
+export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onContinueAnalysis, sessionId }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -348,10 +349,18 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                   ? "bg-accent-muted text-accent"
                   : responseType === "clarification_request"
                   ? "bg-warning-muted text-warning"
+                  : responseType === "step_limit_reached"
+                  ? "bg-warning-muted text-warning"
                   : "bg-accent-muted text-accent"
               }`}
             >
-              {responseType === "sql_result" ? "SQL Result" : responseType === "clarification_request" ? "Question" : "Knowledge"}
+              {responseType === "sql_result"
+                ? "SQL Result"
+                : responseType === "clarification_request"
+                ? "Question"
+                : responseType === "step_limit_reached"
+                ? "Partial Result"
+                : "Knowledge"}
             </span>
             {isSqlResult && message.verificationStatus && (
               <VerificationBadge status={message.verificationStatus} />
@@ -557,6 +566,31 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, ses
                 Retry
               </button>
             )}
+          </div>
+        )}
+
+        {responseType === "step_limit_reached" && onContinueAnalysis && (
+          <div className="mt-3 p-3 rounded-lg bg-warning-muted/50 border border-warning/20">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-warning shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-xs text-warning font-medium">
+                Analysis reached step limit
+                {message.stepsUsed && message.stepsTotal
+                  ? ` (${message.stepsUsed}/${message.stepsTotal} steps used)`
+                  : ""}
+              </p>
+            </div>
+            <p className="text-xs text-text-secondary mb-2">
+              The analysis was cut short. Click below to continue from where it left off.
+            </p>
+            <button
+              onClick={() => onContinueAnalysis(message.continuationContext ?? null)}
+              className="text-xs px-3 py-1.5 rounded-md bg-accent text-white font-medium hover:bg-accent-hover transition-colors"
+            >
+              Continue analysis
+            </button>
           </div>
         )}
 

@@ -34,7 +34,7 @@ interface LearningsPanelProps {
 }
 
 export function LearningsPanel({ connectionId, onClose, onCountChange }: LearningsPanelProps) {
-  const { canDelete } = usePermission();
+  const { canDelete, canEdit } = usePermission();
   const [learnings, setLearnings] = useState<AgentLearningDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -174,14 +174,16 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         <div className="flex items-center gap-1">
           {learnings.length > 0 && (
             <>
-              <button
-                onClick={handleRecompile}
-                className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
-                title="Recompile learnings prompt"
-                aria-label="Recompile learnings"
-              >
-                <Icon name="refresh-cw" size={11} />
-              </button>
+              {canEdit && (
+                <button
+                  onClick={handleRecompile}
+                  className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
+                  title="Recompile learnings prompt"
+                  aria-label="Recompile learnings"
+                >
+                  <Icon name="refresh-cw" size={11} />
+                </button>
+              )}
               {canDelete && (
                 <button
                   onClick={handleClearAll}
@@ -321,37 +323,43 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                                 {l.lesson}
                               </p>
                             </div>
-                            <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                              <button
-                                onClick={() => {
-                                  setEditingId(l.id);
-                                  setEditLesson(l.lesson);
-                                }}
-                                className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
-                                title="Edit"
-                                aria-label="Edit"
-                              >
-                                <Icon name="pencil" size={11} />
-                              </button>
-                              <button
-                                onClick={() => handleToggleActive(l)}
-                                className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
-                                title={l.is_active ? "Deactivate" : "Activate"}
-                                aria-label={l.is_active ? "Deactivate" : "Activate"}
-                              >
-                                <Icon name={l.is_active ? "x" : "check"} size={11} />
-                              </button>
-                              {canDelete && (
-                                <button
-                                  onClick={() => handleDelete(l.id)}
-                                  className="p-0.5 rounded hover:bg-error-muted text-text-muted hover:text-error"
-                                  title="Delete"
-                                  aria-label="Delete"
-                                >
-                                  <Icon name="trash" size={11} />
-                                </button>
-                              )}
-                            </div>
+                            {(canEdit || canDelete) && (
+                              <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                                {canEdit && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingId(l.id);
+                                      setEditLesson(l.lesson);
+                                    }}
+                                    className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
+                                    title="Edit"
+                                    aria-label="Edit"
+                                  >
+                                    <Icon name="pencil" size={11} />
+                                  </button>
+                                )}
+                                {canEdit && (
+                                  <button
+                                    onClick={() => handleToggleActive(l)}
+                                    className="p-0.5 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary"
+                                    title={l.is_active ? "Deactivate" : "Activate"}
+                                    aria-label={l.is_active ? "Deactivate" : "Activate"}
+                                  >
+                                    <Icon name={l.is_active ? "x" : "check"} size={11} />
+                                  </button>
+                                )}
+                                {canDelete && (
+                                  <button
+                                    onClick={() => handleDelete(l.id)}
+                                    className="p-0.5 rounded hover:bg-error-muted text-text-muted hover:text-error"
+                                    title="Delete"
+                                    aria-label="Delete"
+                                  >
+                                    <Icon name="trash" size={11} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 mt-1 text-[10px] text-text-muted">
                             <span className="flex items-center gap-0.5">

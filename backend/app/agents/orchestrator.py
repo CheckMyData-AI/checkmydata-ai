@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 _LLM_CALL_MAX_RETRIES = 2
 _LLM_CALL_BASE_BACKOFF = 3.0
 
-MAX_SUB_AGENT_RETRIES = 2
+MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 
 
 class _ClarificationRequestError(Exception):
@@ -104,12 +104,15 @@ class AgentResponse:
     llm_provider: str = ""
     llm_model: str = ""
     staleness_warning: str | None = None
-    response_type: str = "text"  # text | sql_result | knowledge | error
+    response_type: str = "text"  # text | sql_result | knowledge | error | step_limit_reached
     tool_call_log: list[dict] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
     insights: list[dict] = field(default_factory=list)
     context_usage_pct: int = 0
+    steps_used: int = 0
+    steps_total: int = 0
+    continuation_context: str | None = None
 
 
 class OrchestratorAgent(BaseAgent):
@@ -186,6 +189,10 @@ class OrchestratorAgent(BaseAgent):
         self._cleanup_stale_results(stale_seconds)
 
         try:
+            # Check for continue_analysis (step-limit continuation)
+            if context.extra.get("pipeline_action") == "continue_analysis":
+                context = self._apply_continuation_context(context)
+
             # Check for pipeline resume first
             resume_info = await self._check_pipeline_resume(context)
             if resume_info:
@@ -306,8 +313,9 @@ class OrchestratorAgent(BaseAgent):
 
             loop_budget = context_window
             wrap_up_injected = False
+            step_limit_hit = False
 
-            max_iter = settings.max_orchestrator_iterations
+            max_iter = context.max_orchestrator_steps or settings.max_orchestrator_iterations
             for iteration in range(max_iter):
                 messages, did_trim = trim_loop_messages(messages, loop_budget)
                 if did_trim:
@@ -333,6 +341,27 @@ class OrchestratorAgent(BaseAgent):
                     wrap_up_injected = True
                     logger.info(
                         "Approaching context limit (wf=%s), finishing with available data",
+                        wf_id,
+                    )
+
+                remaining_steps = max_iter - iteration - 1
+                if not wrap_up_injected and remaining_steps <= settings.orchestrator_wrap_up_steps:
+                    messages.append(
+                        Message(
+                            role="system",
+                            content=(
+                                f"IMPORTANT: You have {remaining_steps} analysis step(s) "
+                                "remaining. Compose your final answer now using the data "
+                                "you have gathered so far. Only make another tool call if "
+                                "it is absolutely essential."
+                            ),
+                        )
+                    )
+                    wrap_up_injected = True
+                    logger.info(
+                        "Approaching step limit (%d/%d, wf=%s), finishing with available data",
+                        iteration + 1,
+                        max_iter,
                         wf_id,
                     )
 
@@ -493,25 +522,53 @@ class OrchestratorAgent(BaseAgent):
                     wf_id,
                     "thinking",
                     "in_progress",
-                    "Reached maximum iterations, composing from partial data…",
+                    "Reached step limit, synthesizing collected data…",
                 )
-                partial_parts: list[str] = ["I reached the maximum number of analysis steps."]
-                if last_sql_result and last_sql_result.results:
-                    rc = last_sql_result.results.row_count
-                    partial_parts.append(f"I found {rc} rows of data from the database.")
-                if knowledge_sources:
-                    partial_parts.append(
-                        f"I found {len(knowledge_sources)} relevant document(s) "
-                        "from the knowledge base."
+                if settings.orchestrator_final_synthesis:
+                    synthesis_messages = self._build_synthesis_messages(
+                        messages, last_sql_result, knowledge_sources, loop_budget
                     )
-                partial_parts.append("Here is what I found so far based on the tools I used.")
-                final_text = " ".join(partial_parts)
+                    try:
+                        async with self._tracker.step(
+                            wf_id,
+                            "orchestrator:llm_call",
+                            "Orchestrator LLM (final synthesis)",
+                        ):
+                            synth_resp = await self._llm_call_with_retry(
+                                messages=synthesis_messages,
+                                tools=None,
+                                preferred_provider=context.preferred_provider,
+                                model=context.model,
+                                wf_id=wf_id,
+                            )
+                        self.accum_usage(total_usage, synth_resp.usage)
+                        final_text = synth_resp.content or ""
+                        await self._stream_tokens(wf_id, final_text)
+                    except LLMError:
+                        logger.warning(
+                            "Final synthesis LLM call failed (wf=%s), using partial text",
+                            wf_id,
+                            exc_info=True,
+                        )
+                        final_text = self._build_partial_text(
+                            last_sql_result, knowledge_sources
+                        )
+                else:
+                    final_text = self._build_partial_text(
+                        last_sql_result, knowledge_sources
+                    )
+                step_limit_hit = True
 
-            response_type = self._determine_response_type(last_sql_result, knowledge_sources)
+            if step_limit_hit:
+                response_type = "step_limit_reached"
+            else:
+                response_type = self._determine_response_type(last_sql_result, knowledge_sources)
 
             viz_type = "text"
             viz_config: dict = {}
-            if last_sql_result and last_sql_result.results and response_type == "sql_result":
+            if last_sql_result and last_sql_result.results and response_type in (
+                "sql_result", "step_limit_reached"
+            ):
                 try:
                     await self._tracker.emit(
                         wf_id,
@@ -577,6 +634,24 @@ class OrchestratorAgent(BaseAgent):
 
             final_pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
 
+            continuation_ctx: str | None = None
+            if step_limit_hit:
+                import json as _cont_json
+
+                continuation_ctx = _cont_json.dumps(
+                    {
+                        "tool_call_log": tool_call_log,
+                        "has_sql_result": last_sql_result is not None,
+                        "row_count": (
+                            last_sql_result.results.row_count
+                            if last_sql_result and last_sql_result.results
+                            else 0
+                        ),
+                        "knowledge_source_count": len(knowledge_sources),
+                    },
+                    default=str,
+                )
+
             return AgentResponse(
                 answer=final_text,
                 query=last_sql_result.query if last_sql_result else None,
@@ -595,6 +670,9 @@ class OrchestratorAgent(BaseAgent):
                 insights=last_sql_result.insights if last_sql_result else [],
                 suggested_followups=followups,
                 context_usage_pct=final_pct,
+                steps_used=iteration + 1 if step_limit_hit else iteration + 1,
+                steps_total=max_iter,
+                continuation_context=continuation_ctx,
             )
 
         except _ClarificationRequestError as cr:
@@ -729,6 +807,25 @@ class OrchestratorAgent(BaseAgent):
         await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
 
         return self._build_pipeline_response(exec_result, wf_id, staleness_warning, pipeline_run.id)
+
+    @staticmethod
+    def _apply_continuation_context(context: AgentContext) -> AgentContext:
+        """Augment the user question with continuation context from a previous step-limited run."""
+        continuation = context.extra.get("continuation_context", "")
+        if continuation:
+            context.user_question = (
+                "Please continue the analysis from where you left off. "
+                "The previous run was cut short by the step limit. "
+                f"Previous context: {continuation}\n\n"
+                f"Original request: {context.user_question}"
+            )
+        else:
+            context.user_question = (
+                "Please continue the analysis from where you left off. "
+                f"Original request: {context.user_question}"
+            )
+        context.extra.pop("pipeline_action", None)
+        return context
 
     async def _check_pipeline_resume(self, context: AgentContext) -> dict | None:
         """Detect if the user message is a pipeline action (continue/modify/retry)."""
@@ -1369,11 +1466,17 @@ class OrchestratorAgent(BaseAgent):
             ):
                 async with async_session_factory() as session:
                     if ctx.user_id:
+                        from app.services.membership_service import ROLE_HIERARCHY
+
                         role = await membership_svc.get_role(session, ctx.project_id, ctx.user_id)
-                        if role != "owner":
+                        if role is None:
+                            return "Permission denied: not a member of this project."
+                        min_role = "owner" if action == "delete" else "editor"
+                        if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get(min_role, 0):
+                            if action == "delete":
+                                return "Permission denied: only project owners can delete rules."
                             return (
-                                "Permission denied: only project owners can manage rules. "
-                                "Ask the project owner to create this rule, or use the sidebar."
+                                "Permission denied: requires at least 'editor' role to manage rules."
                             )
                     else:
                         return "Error: user identity not available for permission check."
@@ -1572,6 +1675,94 @@ class OrchestratorAgent(BaseAgent):
             parts.append("Warnings: " + "; ".join(warnings))
 
         return "\n".join(parts) if parts else "No results."
+
+    # ------------------------------------------------------------------
+    # Synthesis helpers (step-limit exhaustion)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_partial_text(
+        sql_result: SQLAgentResult | None,
+        knowledge_sources: list[RAGSource],
+    ) -> str:
+        """Build a static fallback message when the step limit is reached."""
+        parts: list[str] = ["I reached the maximum number of analysis steps."]
+        if sql_result and sql_result.results:
+            rc = sql_result.results.row_count
+            parts.append(f"I found {rc} rows of data from the database.")
+        if knowledge_sources:
+            parts.append(
+                f"I found {len(knowledge_sources)} relevant document(s) "
+                "from the knowledge base."
+            )
+        parts.append("Here is what I found so far based on the tools I used.")
+        return " ".join(parts)
+
+    @staticmethod
+    def _build_synthesis_messages(
+        loop_messages: list[Message],
+        sql_result: SQLAgentResult | None,
+        knowledge_sources: list[RAGSource],
+        context_window: int,
+    ) -> list[Message]:
+        """Build a compact message list for a final synthesis LLM call.
+
+        Keeps the system prompt and constructs a user message that summarises
+        all collected data, staying within ~40% of the context window.
+        """
+        system_msg = loop_messages[0] if loop_messages else Message(
+            role="system", content="You are a helpful data assistant."
+        )
+
+        data_parts: list[str] = []
+        if sql_result and sql_result.query:
+            data_parts.append(f"SQL query executed: {sql_result.query}")
+        if sql_result and sql_result.results:
+            r = sql_result.results
+            data_parts.append(
+                f"Query returned {r.row_count} rows, {len(r.columns)} columns: "
+                f"{', '.join(r.columns[:20])}"
+            )
+            if r.rows:
+                sample = r.rows[:5]
+                for row in sample:
+                    data_parts.append(f"  {row}")
+        if knowledge_sources:
+            for src in knowledge_sources[:5]:
+                snippet = getattr(src, "content", "")[:200] if hasattr(src, "content") else str(src)[:200]
+                data_parts.append(f"Knowledge source: {snippet}")
+
+        tool_summaries: list[str] = []
+        for m in loop_messages:
+            if m.role == "tool" and m.content:
+                name = m.name or "tool"
+                preview = m.content[:300].replace("\n", " ").strip()
+                tool_summaries.append(f"[{name}] {preview}")
+
+        budget = int(context_window * 0.4)
+        chars_budget = budget * 4
+
+        collected = "DATA COLLECTED SO FAR:\n" + "\n".join(data_parts)
+        if tool_summaries:
+            tool_section = "\n\nTOOL RESULTS SUMMARY:\n" + "\n".join(tool_summaries)
+            if len(collected) + len(tool_section) < chars_budget:
+                collected += tool_section
+
+        if len(collected) > chars_budget:
+            collected = collected[:chars_budget] + "\n... (truncated)"
+
+        user_msg = Message(
+            role="user",
+            content=(
+                "The analysis reached its step limit before completing. "
+                "Based on all the data collected above, please provide a "
+                "comprehensive answer to the original question. Summarize "
+                "the findings clearly and note if the analysis is incomplete.\n\n"
+                + collected
+            ),
+        )
+
+        return [system_msg, user_msg]
 
     # ------------------------------------------------------------------
     # Response type detection

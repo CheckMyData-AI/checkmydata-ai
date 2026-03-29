@@ -19,7 +19,7 @@ interface ChatMessage {
   error?: string | null;
   metadataJson?: string | null;
   stalenessWarning?: string | null;
-  responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed" | "session_continuation";
+  responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed" | "session_continuation" | "step_limit_reached";
   userRating?: number | null;
   toolCallsJson?: string | null;
   rawResult?: RawResult | null;
@@ -32,6 +32,9 @@ interface ChatMessage {
   } | null;
   verificationStatus?: "verified" | "unverified" | "flagged" | null;
   isRetryable?: boolean;
+  stepsUsed?: number;
+  stepsTotal?: number;
+  continuationContext?: string | null;
 }
 
 interface ToolCallEvent {

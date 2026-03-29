@@ -8,6 +8,7 @@ import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { FormModal } from "@/components/ui/FormModal";
 
 const inputCls =
   "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
@@ -207,30 +208,30 @@ export function SshKeyManager() {
   const truncateFingerprint = (fp: string) =>
     fp.length > 16 ? `${fp.slice(0, 8)}...${fp.slice(-8)}` : fp;
 
+  const closeForm = () => {
+    setShowCreate(false);
+    setError(null);
+    setShowHelp(false);
+  };
+
   return (
     <div className="px-1">
       <div className="flex justify-end px-1 mb-1">
         <button
           onClick={() => {
-            setShowCreate(!showCreate);
+            setShowCreate(true);
             setError(null);
             setShowHelp(false);
           }}
           className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
         >
-          {showCreate ? (
-            "Cancel"
-          ) : (
-            <>
-              <Icon name="plus" size={12} />
-              Add
-            </>
-          )}
+          <Icon name="plus" size={12} />
+          Add
         </button>
       </div>
 
-      {showCreate && (
-        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle text-xs mb-1.5">
+      <FormModal open={showCreate} onClose={closeForm} title="Add SSH Key" maxWidth="max-w-md">
+        <div className="space-y-2.5 text-xs">
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -287,7 +288,7 @@ export function SshKeyManager() {
             {creating ? "Adding..." : "Add Key"}
           </button>
         </div>
-      )}
+      </FormModal>
 
       {listLoading && <Spinner />}
       <div>

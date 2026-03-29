@@ -106,7 +106,7 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, body.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
 
     if not SchedulerService.validate_cron(body.cron_expression):
         raise HTTPException(status_code=400, detail="Invalid cron expression")
@@ -173,7 +173,7 @@ async def update_schedule(
     schedule = await _svc.get_schedule(db, schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "owner")
 
     updates = body.model_dump(exclude_unset=True)
     cron = updates.get("cron_expression")
@@ -205,7 +205,7 @@ async def delete_schedule(
     schedule = await _svc.get_schedule(db, schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "owner")
 
     await _svc.delete_schedule(db, schedule_id)
     audit_log(
@@ -229,7 +229,7 @@ async def run_now(
     schedule = await _svc.get_schedule(db, schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, schedule.project_id, user["user_id"], "owner")
 
     conn_model = await _conn_svc.get(db, schedule.connection_id)
     if not conn_model:

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Landing page and full branding** — New public landing page at `/` with hero section, feature grid (6 cards), how-it-works flow, open-source CTA, and supported databases banner. Dark theme using existing design system tokens with JSON-LD structured data for SEO
+- **Marketing layout** — Shared `(marketing)` route group layout with sticky blurred header (logo, nav, Login, Get Started CTA) and 4-column footer (Product, Legal, Community links)
+- **Dedicated login page** (`/login`) — Standalone authentication page with CheckMyData.ai branding replacing the inline AuthGate form. Supports email/password and Google OAuth
+- **About page** (`/about`) — Product mission, technology stack overview, and open-source philosophy
+- **Contact page** (`/contact`) — Email channels (contact@checkmydata.ai, support@checkmydata.ai) and GitHub community links
+- **Support page** (`/support`) — FAQ with expandable details, documentation links, and support channels
+- **Branding assets** — Generated favicon.ico, icon-192.png, icon-512.png, apple-touch-icon.png, og-image.png (1200x630), and reusable `Logo.tsx` SVG component (`LogoMark` + `LogoFull` variants)
+- **SEO infrastructure** — robots.txt (disallows /app and /dashboard), dynamic sitemap.xml via Next.js `sitemap.ts`, `metadataBase` on root layout, canonical URLs and OG/Twitter Card metadata on all pages
+
+### Changed
+- **Route restructure** — Main application moved from `/` to `/app`. Unauthenticated users see the landing page at `/` instead of a login form
+- **AuthGate simplified** — Reduced from 293-line login form to a 42-line redirect guard that sends unauthenticated users to `/login`
+- **Legal pages moved** — `/terms` and `/privacy` migrated from `(legal)` to `(marketing)` route group to share the common header/footer
+- **401 redirect** — Session-expired handler in `api.ts` now redirects to `/login` instead of `/`
+- **manifest.json** — Updated `start_url` to `/app`, added enhanced description
+
+### Added
+- **Adaptive step budget system** — Replaced the hard 10-iteration orchestrator ceiling with an adaptive step budget (default 25). The LLM is now informed when it's running low on steps via a step-budget-aware wrap-up prompt (`orchestrator_wrap_up_steps`). When exhausted, a final LLM synthesis call (`orchestrator_final_synthesis`) produces a coherent summary instead of a static "maximum steps reached" message.
+- **Continuation protocol** — When the step limit is reached, the response includes `response_type: "step_limit_reached"` with `steps_used`, `steps_total`, and `continuation_context`. The frontend renders a "Continue analysis" button that lets users resume the analysis from where it left off.
+- **Per-project and per-request step overrides** — Added `max_orchestrator_steps` column to the `Project` model and `max_steps` field to the chat request body. Resolution order: request `max_steps` > project `max_orchestrator_steps` > global `max_orchestrator_iterations`.
+- **Consistent sub-agent iteration limits** — `KnowledgeAgent` and `InvestigationAgent` now use `settings.max_knowledge_iterations` and `settings.max_investigation_iterations` instead of hardcoded class constants. `MAX_SUB_AGENT_RETRIES` in the orchestrator uses `settings.max_sub_agent_retries`.
+- **Orchestrator prompt efficiency guideline** — Added a tool-usage efficiency guideline to the orchestrator system prompt encouraging the LLM to combine related questions and parallelize independent tool calls.
+
 ### Fixed
 - **Email service security and reliability hardening** (`backend/app/services/email_service.py`) — Fixed HTML injection vulnerability: all user-provided values (`display_name`, `project_name`, `inviter_name`, etc.) are now HTML-escaped via `html.escape()` before interpolation into email templates. Added retry with exponential backoff (1s, 2s, 4s) for transient Resend errors (429 rate-limit, 500 server error), max 3 retries. Moved `resend.api_key` assignment from every `_send()` call to `__init__()`. Email send results now log the Resend email ID for traceability. Added category tags (`welcome`, `invite`, `invite-accepted`) for Resend dashboard analytics.
 - **ARQ worker crash** — `run_db_index` and `run_code_db_sync` worker tasks referenced non-existent service methods (`set_indexing_status_standalone`, `index_connection`, `run_sync_standalone`). Rewrote both to use `DbIndexPipeline` and `CodeDbSyncPipeline` with proper session management. Fixes #128

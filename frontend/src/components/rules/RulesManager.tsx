@@ -9,6 +9,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { usePermission } from "@/hooks/usePermission";
+import { FormModal } from "@/components/ui/FormModal";
 
 interface Rule {
   id: string;
@@ -146,10 +147,22 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
 
   const isFormOpen = showCreate || editingId !== null;
 
+  const cancel = () => {
+    setEditingId(null);
+    setShowCreate(false);
+    setName("");
+    setContent("");
+  };
+
   return (
     <div className="px-1">
-      {isFormOpen && (
-        <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle mb-1.5">
+      <FormModal
+        open={isFormOpen}
+        onClose={cancel}
+        title={editingId ? "Edit Rule" : "New Rule"}
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-2.5">
           {editingRule?.is_default && (
             <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
               <Icon name="zap" size={10} />
@@ -183,11 +196,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             </button>
             {editingId && (
               <button
-                onClick={() => {
-                  setEditingId(null);
-                  setName("");
-                  setContent("");
-                }}
+                onClick={cancel}
                 className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
               >
                 Cancel
@@ -195,7 +204,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             )}
           </div>
         </div>
-      )}
+      </FormModal>
 
       {listLoading && <Spinner />}
       <div>

@@ -237,20 +237,24 @@ Each component is truncated to fit its budget if necessary.
 - Data verification protocol guidelines
 - Complex multi-step query instructions
 
-**Step 5 — Tool-Calling Loop**
+**Step 5 — Tool-Calling Loop (Adaptive Step Budget)**
 
-The loop runs up to `max_orchestrator_iterations` (configurable in settings):
+The loop runs up to `max_orchestrator_iterations` (default 25, configurable in settings and overrideable per-project or per-request via `max_steps`):
 
 ```
 for each iteration:
     1. Trim loop messages if approaching context limit
-    2. Inject "wrap up" message if near 70% capacity
-    3. Call LLM with messages + tools
-    4. If no tool calls → final text answer, break
-    5. If tool calls:
+    2. Inject "wrap up" message if near 70% context capacity
+    3. Inject step-budget wrap-up if ≤ orchestrator_wrap_up_steps remain
+    4. Call LLM with messages + tools
+    5. If no tool calls → final text answer, break
+    6. If tool calls:
        a. Dispatch to sub-agents (parallel if multiple, sequential for process_data)
        b. Append assistant message + tool results to message list
        c. Continue loop
+else (loop exhausted):
+    7. Final LLM synthesis call (no tools, summarize collected data)
+    8. Return step_limit_reached response with continuation_context
 ```
 
 **Parallel tool execution**: When the LLM requests multiple tools (except `process_data`), they are dispatched concurrently via `asyncio.gather`. Failures in parallel calls are caught individually and reported as error strings.
@@ -259,6 +263,12 @@ for each iteration:
 - At 80% capacity: older assistant+tool pairs are collapsed into summaries
 - At 70% capacity: a system message instructs the LLM to stop making tool calls and compose a final answer
 - On token limit error: context is aggressively compressed to 60% and retried
+
+**Step-budget awareness**: When `orchestrator_wrap_up_steps` (default 3) iterations remain, the LLM receives a system message urging it to compose a final answer. This works alongside context-pressure wrap-up.
+
+**Final synthesis on exhaustion**: When `orchestrator_final_synthesis` is enabled (default), the orchestrator makes one final LLM call without tools to synthesize all collected data into a coherent answer — instead of returning a static "maximum steps reached" message.
+
+**Continuation protocol**: When the step limit is reached, the response includes `response_type: "step_limit_reached"`, `steps_used`, `steps_total`, and a `continuation_context` payload. The frontend renders a "Continue analysis" button that resends the request with `pipeline_action: "continue_analysis"`, allowing the user to resume the analysis.
 
 **Step 6 — Visualization Selection**
 
@@ -1249,7 +1259,10 @@ Key settings from `backend/app/config.py` that affect system behavior:
 | `openrouter_api_key` | — | OpenRouter API key |
 | `max_context_tokens` | varies | Maximum tokens for context window |
 | `max_history_tokens` | varies | Maximum tokens for chat history |
-| `max_orchestrator_iterations` | varies | Tool-calling loop limit |
+| `max_orchestrator_iterations` | `25` | Tool-calling loop safety ceiling |
+| `orchestrator_wrap_up_steps` | `3` | Steps remaining to trigger wrap-up prompt |
+| `orchestrator_final_synthesis` | `true` | Enable LLM synthesis on step exhaustion |
+| `max_investigation_iterations` | `12` | Investigation agent loop limit |
 | `history_summary_model` | — | Model for history summarization |
 | `model_cache_ttl_seconds` | `3600` | How long to cache OpenRouter model list |
 | `max_pie_categories` | varies | Threshold for pie chart → bar chart fallback |

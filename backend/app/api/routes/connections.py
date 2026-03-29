@@ -402,7 +402,7 @@ async def index_database(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
 
     idx_start_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
     async with idx_start_lock:
@@ -644,7 +644,7 @@ async def trigger_sync(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
 
     sync_start_lock = _sync_start_locks.setdefault(connection_id, asyncio.Lock())
     async with sync_start_lock:

@@ -7,6 +7,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { FormModal } from "@/components/ui/FormModal";
 
 const CRON_PRESETS: { label: string; value: string }[] = [
   { label: "Every hour", value: "0 * * * *" },
@@ -432,8 +433,13 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
         </div>
       ))}
 
-      {showForm && (
-        <div className="bg-surface-1 border border-accent/30 rounded-lg p-2.5 space-y-2">
+      <FormModal
+        open={showForm}
+        onClose={() => { setShowForm(false); resetForm(); }}
+        title={editingId ? "Edit Schedule" : "New Schedule"}
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-2">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -570,10 +576,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
 
           <div className="flex gap-1.5 justify-end pt-1">
             <button
-              onClick={() => {
-                setShowForm(false);
-                resetForm();
-              }}
+              onClick={() => { setShowForm(false); resetForm(); }}
               className="text-[10px] px-2.5 py-1 rounded text-text-muted hover:text-text-secondary"
             >
               Cancel
@@ -587,7 +590,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             </button>
           </div>
         </div>
-      )}
+      </FormModal>
 
     </div>
   );

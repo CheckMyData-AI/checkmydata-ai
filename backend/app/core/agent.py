@@ -57,6 +57,7 @@ class ConversationalAgent:
         project_name: str | None = None,
         user_id: str | None = None,
         extra: dict | None = None,
+        max_steps: int | None = None,
     ) -> AgentResponse:
         wf_id = await self._tracker.begin(
             "agent",
@@ -77,6 +78,7 @@ class ConversationalAgent:
             sql_provider=sql_provider,
             sql_model=sql_model,
             project_name=project_name,
+            max_orchestrator_steps=max_steps,
             extra=extra or {},
         )
 

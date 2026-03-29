@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { FormModal } from "@/components/ui/FormModal";
 import { DashboardBuilder } from "./DashboardBuilder";
 
 interface DashboardListProps {
@@ -58,16 +59,16 @@ export function DashboardList({ createRequested, onCreateHandled }: DashboardLis
     router.push(`/dashboard/${d.id}`);
   };
 
-  if (creating) {
-    return (
-      <div className="px-2 py-1">
-        <DashboardBuilder onSave={handleCreated} onCancel={() => setCreating(false)} />
-      </div>
-    );
-  }
-
   return (
     <div className="px-1 space-y-1">
+      <FormModal
+        open={creating}
+        onClose={() => setCreating(false)}
+        title="New Dashboard"
+        maxWidth="max-w-2xl"
+      >
+        <DashboardBuilder onSave={handleCreated} onCancel={() => setCreating(false)} />
+      </FormModal>
       {loading ? (
         <div className="flex justify-center py-3">
           <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />

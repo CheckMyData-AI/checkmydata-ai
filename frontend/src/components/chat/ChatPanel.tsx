@@ -244,6 +244,97 @@ export function ChatPanel() {
     [activeProject, activeConnection, activeSession, pipelineRunId, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
+  const handleContinueAnalysis = useCallback(
+    (continuationContext: string | null) => {
+      if (!activeProject || !activeSession) return;
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      const message = lastUserMsg?.content ?? "Continue the analysis";
+
+      addMessage({
+        id: crypto.randomUUID(),
+        role: "user" as const,
+        content: "Continue analysis",
+        timestamp: Date.now(),
+      });
+      setThinking(true);
+      setLoading(true);
+      setThinkingLog([]);
+      setStreamingText("");
+
+      const extra: Record<string, unknown> = {
+        pipeline_action: "continue_analysis",
+      };
+      if (continuationContext) {
+        extra.continuation_context = continuationContext;
+      }
+
+      const ctrl = api.chat.askStream(
+        {
+          project_id: activeProject.id,
+          connection_id: activeConnection?.id,
+          message,
+          session_id: activeSession.id,
+          pipeline_action: "continue_analysis",
+          ...extra,
+        },
+        (step) => setStreamSteps((prev) => {
+          const next = [...prev, step as unknown as WorkflowEvent];
+          return next.length > 100 ? next.slice(-100) : next;
+        }),
+        (result: ChatResponse) => {
+          addMessage({
+            id: result.assistant_message_id || crypto.randomUUID(),
+            role: "assistant",
+            content: result.answer,
+            query: result.query || undefined,
+            queryExplanation: result.query_explanation || undefined,
+            visualization: result.visualization,
+            error: result.error,
+            responseType: result.response_type,
+            timestamp: Date.now(),
+            stepsUsed: result.steps_used ?? undefined,
+            stepsTotal: result.steps_total ?? undefined,
+            continuationContext: result.continuation_context ?? undefined,
+          });
+          setThinking(false);
+          setLoading(false);
+          setStreamSteps([]);
+          clearToolCalls();
+          setThinkingLog([]);
+          setStreamingText("");
+        },
+        (streamErr: StreamError) => {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: streamErr.error || "An error occurred.",
+            error: streamErr.error,
+            responseType: "error",
+            timestamp: Date.now(),
+          });
+          setThinking(false);
+          setLoading(false);
+          setStreamSteps([]);
+          clearToolCalls();
+          setThinkingLog([]);
+          setStreamingText("");
+        },
+        (toolEvent) => {
+          addToolCall({
+            step: (toolEvent as Record<string, string>).step ?? "",
+            status: (toolEvent as Record<string, string>).status ?? "",
+            detail: (toolEvent as Record<string, string>).detail ?? "",
+          });
+        },
+        handlePipelineEvent,
+        handleThinkingEvent,
+        handleToken,
+      );
+      abortRef.current = ctrl;
+    },
+    [activeProject, activeConnection, activeSession, messages, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
+  );
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -393,6 +484,9 @@ export function ChatPanel() {
             timestamp: Date.now(),
             clarificationData: result.clarification_data ?? undefined,
             verificationStatus: result.response_type === "sql_result" ? "unverified" : undefined,
+            stepsUsed: result.steps_used ?? undefined,
+            stepsTotal: result.steps_total ?? undefined,
+            continuationContext: result.continuation_context ?? undefined,
           });
 
           if (result.rules_changed) {
@@ -650,6 +744,9 @@ export function ChatPanel() {
               metadataJson={msg.metadataJson}
               onRetry={prevUserMsg ? () => handleSend(prevUserMsg.content) : undefined}
               onSendMessage={handleSend}
+              onContinueAnalysis={
+                msg.responseType === "step_limit_reached" ? handleContinueAnalysis : undefined
+              }
               sessionId={activeSession?.id ?? undefined}
             />
           );

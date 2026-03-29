@@ -13,6 +13,7 @@ import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 import { usePermission } from "@/hooks/usePermission";
+import { FormModal } from "@/components/ui/FormModal";
 
 const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"];
 
@@ -126,7 +127,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const activeConnection = useAppStore((s) => s.activeConnection);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
   const sshKeys = useAppStore((s) => s.sshKeys);
-  const { canDelete } = usePermission();
+  const { canDelete, canManageProject } = usePermission();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
@@ -675,8 +676,14 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
   const isFormOpen = showCreate || editingId !== null;
 
+  const cancelForm = () => {
+    setEditingId(null);
+    setShowCreate(false);
+    resetForm();
+  };
+
   const formUI = (
-    <div className="space-y-2.5 p-3 bg-surface-1 rounded-lg border border-border-subtle text-xs">
+    <div className="space-y-2.5 text-xs">
       <input
         value={form.name}
         onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -1100,7 +1107,14 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
   return (
     <div className="px-1">
-      {isFormOpen && <div className="mb-1.5">{formUI}</div>}
+      <FormModal
+        open={isFormOpen}
+        onClose={cancelForm}
+        title={editingId ? "Edit Connection" : "New Connection"}
+        maxWidth="max-w-lg"
+      >
+        {formUI}
+      </FormModal>
 
       {!isFormOpen && connections.length === 0 && (
         <div className="px-2 py-3 text-center">
@@ -1173,20 +1187,28 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         IDX...
                       </span>
                     ) : idx?.is_indexed ? (
-                      <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
-                        <button
-                          type="button"
-                          aria-label="Re-index database"
-                          className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleIndexDb(c.id);
-                          }}
-                        >
-                          IDX
-                        </button>
-                      </Tooltip>
-                    ) : isActive ? (
+                      canManageProject ? (
+                        <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
+                          <button
+                            type="button"
+                            aria-label="Re-index database"
+                            className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleIndexDb(c.id);
+                            }}
+                          >
+                            IDX
+                          </button>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}`} position="bottom">
+                          <span className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success leading-none">
+                            IDX
+                          </span>
+                        </Tooltip>
+                      )
+                    ) : isActive && canManageProject ? (
                       <Tooltip label="Index database schema" position="bottom">
                         <button
                           type="button"
@@ -1206,34 +1228,50 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         SYNC...
                       </span>
                     ) : sync?.is_synced ? (
-                      <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}. Click to re-sync`} position="bottom">
-                        <button
-                          type="button"
-                          aria-label="Re-sync database"
-                          className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSync(c.id);
-                          }}
-                        >
-                          SYNC
-                        </button>
-                      </Tooltip>
+                      canManageProject ? (
+                        <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}. Click to re-sync`} position="bottom">
+                          <button
+                            type="button"
+                            aria-label="Re-sync database"
+                            className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSync(c.id);
+                            }}
+                          >
+                            SYNC
+                          </button>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}`} position="bottom">
+                          <span className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success leading-none">
+                            SYNC
+                          </span>
+                        </Tooltip>
+                      )
                     ) : sync?.sync_status === "stale" ? (
-                      <Tooltip label="Sync data is stale -- click to re-sync" position="bottom">
-                        <button
-                          type="button"
-                          aria-label="Re-sync stale data"
-                          className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSync(c.id);
-                          }}
-                        >
-                          SYNC
-                        </button>
-                      </Tooltip>
-                    ) : isActive && idx?.is_indexed ? (
+                      canManageProject ? (
+                        <Tooltip label="Sync data is stale -- click to re-sync" position="bottom">
+                          <button
+                            type="button"
+                            aria-label="Re-sync stale data"
+                            className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSync(c.id);
+                            }}
+                          >
+                            SYNC
+                          </button>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip label="Sync data is stale" position="bottom">
+                          <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
+                            SYNC
+                          </span>
+                        </Tooltip>
+                      )
+                    ) : isActive && idx?.is_indexed && canManageProject ? (
                       <Tooltip label="Run Code-DB Sync" position="bottom">
                         <button
                           type="button"
@@ -1296,7 +1334,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     onClick={(e) => { e.stopPropagation(); handleEdit(c); }}
                     size="xs"
                   />
-                  {isActive && c.source_type !== "mcp" && (
+                  {isActive && c.source_type !== "mcp" && canManageProject && (
                     <ActionButton
                       icon="database"
                       title="Refresh schema cache"

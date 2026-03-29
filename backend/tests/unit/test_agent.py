@@ -212,10 +212,10 @@ class TestKnowledgeSearch:
 
 
 class TestMaxIterations:
-    """Agent respects the max iteration limit."""
+    """Agent respects the max iteration limit and uses adaptive step budget."""
 
-    @pytest.mark.asyncio
-    async def test_max_iterations_reached(self, agent, mock_llm, config):
+    def _setup_always_tool_call(self, mock_llm):
+        """Configure mock LLM to always return a tool call (never a final answer)."""
         mock_llm.complete = AsyncMock(
             return_value=LLMResponse(
                 content="",
@@ -230,28 +230,122 @@ class TestMaxIterations:
             )
         )
 
-        with (
-            patch.object(
-                agent._orchestrator._sql,
-                "run",
-                new_callable=AsyncMock,
-            ) as mock_sql_run,
-            patch.object(
-                agent._orchestrator,
-                "_resolve_connection_id",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                agent._orchestrator, "_build_table_map", new_callable=AsyncMock, return_value=""
-            ),
-        ):
-            from app.agents.sql_agent import SQLAgentResult
+    @pytest.mark.asyncio
+    async def test_max_iterations_reached(self, agent, mock_llm, config):
+        self._setup_always_tool_call(mock_llm)
 
-            mock_sql_run.return_value = SQLAgentResult(
-                status="no_result",
-                error="No query generated",
+        from app.agents.sql_agent import SQLAgentResult
+
+        with patch.object(
+            agent._orchestrator._sql,
+            "run",
+            new_callable=AsyncMock,
+            return_value=SQLAgentResult(status="no_result", error="No query generated"),
+        ), patch.object(
+            agent._orchestrator, "_resolve_connection_id",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            agent._orchestrator, "_build_table_map",
+            new_callable=AsyncMock, return_value="",
+        ), patch("app.agents.orchestrator.settings") as mock_settings:
+            mock_settings.max_orchestrator_iterations = 3
+            mock_settings.orchestrator_wrap_up_steps = 1
+            mock_settings.orchestrator_final_synthesis = False
+            mock_settings.max_sub_agent_retries = 2
+            mock_settings.max_context_tokens = 16000
+            mock_settings.max_history_tokens = 4000
+            mock_settings.schema_cache_ttl_seconds = 300
+
+            resp = await agent.run(
+                question="loop forever",
+                project_id="proj-1",
+                connection_config=config,
             )
+        assert resp.response_type == "step_limit_reached"
+        assert resp.steps_used == 3
+        assert resp.steps_total == 3
+        assert resp.continuation_context is not None
+
+    @pytest.mark.asyncio
+    async def test_final_synthesis_called_on_exhaustion(self, agent, mock_llm, config):
+        """When synthesis is enabled, the orchestrator makes a final LLM call."""
+        call_count = 0
+        synthesis_content = "Here is the synthesized answer based on partial data."
+
+        async def mock_complete(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if kwargs.get("tools") is None:
+                return LLMResponse(
+                    content=synthesis_content,
+                    tool_calls=[],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id=f"tc-{call_count}", name="query_database", arguments={"question": "test"}),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=mock_complete)
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        with patch.object(
+            agent._orchestrator._sql,
+            "run",
+            new_callable=AsyncMock,
+            return_value=SQLAgentResult(status="no_result", error="No query generated"),
+        ), patch.object(
+            agent._orchestrator, "_resolve_connection_id",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            agent._orchestrator, "_build_table_map",
+            new_callable=AsyncMock, return_value="",
+        ), patch("app.agents.orchestrator.settings") as mock_settings:
+            mock_settings.max_orchestrator_iterations = 3
+            mock_settings.orchestrator_wrap_up_steps = 1
+            mock_settings.orchestrator_final_synthesis = True
+            mock_settings.max_sub_agent_retries = 2
+            mock_settings.max_context_tokens = 16000
+            mock_settings.max_history_tokens = 4000
+            mock_settings.schema_cache_ttl_seconds = 300
+
+            resp = await agent.run(
+                question="complex analysis",
+                project_id="proj-1",
+                connection_config=config,
+            )
+        assert synthesis_content in resp.answer
+
+    @pytest.mark.asyncio
+    async def test_final_synthesis_disabled_fallback(self, agent, mock_llm, config):
+        """When synthesis is disabled, falls back to static partial text."""
+        self._setup_always_tool_call(mock_llm)
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        with patch.object(
+            agent._orchestrator._sql,
+            "run",
+            new_callable=AsyncMock,
+            return_value=SQLAgentResult(status="no_result", error="No query generated"),
+        ), patch.object(
+            agent._orchestrator, "_resolve_connection_id",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            agent._orchestrator, "_build_table_map",
+            new_callable=AsyncMock, return_value="",
+        ), patch("app.agents.orchestrator.settings") as mock_settings:
+            mock_settings.max_orchestrator_iterations = 3
+            mock_settings.orchestrator_wrap_up_steps = 1
+            mock_settings.orchestrator_final_synthesis = False
+            mock_settings.max_sub_agent_retries = 2
+            mock_settings.max_context_tokens = 16000
+            mock_settings.max_history_tokens = 4000
+            mock_settings.schema_cache_ttl_seconds = 300
 
             resp = await agent.run(
                 question="loop forever",
@@ -259,6 +353,42 @@ class TestMaxIterations:
                 connection_config=config,
             )
         assert "maximum" in resp.answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_per_request_max_steps_override(self, agent, mock_llm, config):
+        """Custom max_steps from the request overrides the global setting."""
+        self._setup_always_tool_call(mock_llm)
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        with patch.object(
+            agent._orchestrator._sql,
+            "run",
+            new_callable=AsyncMock,
+            return_value=SQLAgentResult(status="no_result", error="No query generated"),
+        ), patch.object(
+            agent._orchestrator, "_resolve_connection_id",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            agent._orchestrator, "_build_table_map",
+            new_callable=AsyncMock, return_value="",
+        ), patch("app.agents.orchestrator.settings") as mock_settings:
+            mock_settings.max_orchestrator_iterations = 25
+            mock_settings.orchestrator_wrap_up_steps = 1
+            mock_settings.orchestrator_final_synthesis = False
+            mock_settings.max_sub_agent_retries = 2
+            mock_settings.max_context_tokens = 16000
+            mock_settings.max_history_tokens = 4000
+            mock_settings.schema_cache_ttl_seconds = 300
+
+            resp = await agent.run(
+                question="loop forever",
+                project_id="proj-1",
+                connection_config=config,
+                max_steps=2,
+            )
+        assert resp.steps_total == 2
+        assert resp.steps_used == 2
 
 
 class TestErrorHandling:

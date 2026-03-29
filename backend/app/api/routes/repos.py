@@ -137,7 +137,7 @@ async def index_repo(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     body = body or IndexRequest()
     project = await _project_svc.get(db, project_id)
     if not project:
@@ -504,7 +504,7 @@ async def add_repository(
     user: dict = Depends(get_current_user),
 ):
     """Add a new repository to a project."""
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     project = await _project_svc.get(db, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -560,7 +560,7 @@ async def update_repository(
     repo = await _repo_svc.get(db, repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
-    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "owner")
 
     update_data = body.model_dump(exclude_unset=True)
     updated = await _repo_svc.update(db, repo_id, **update_data)

@@ -134,7 +134,7 @@ async def create_insight(
     user: dict = Depends(get_current_user),
 ):
     project_id = validate_safe_id(project_id, "project_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     record = await _insight_svc.store_insight(
         db,
         project_id,
@@ -163,7 +163,7 @@ async def confirm_insight(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from app.models.insight_record import InsightRecord
 
@@ -190,7 +190,7 @@ async def dismiss_insight(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from app.models.insight_record import InsightRecord
 
@@ -217,7 +217,7 @@ async def resolve_insight(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     insight_id = validate_safe_id(insight_id, "insight_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from app.models.insight_record import InsightRecord
 

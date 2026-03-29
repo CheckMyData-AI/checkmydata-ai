@@ -34,6 +34,7 @@ class AgentContext:
     sql_provider: str | None = None
     sql_model: str | None = None
     project_name: str | None = None
+    max_orchestrator_steps: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

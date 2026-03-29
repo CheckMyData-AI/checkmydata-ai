@@ -120,6 +120,12 @@ def build_orchestrator_system_prompt(
         "already in the conversation — do NOT re-run the same query."
     )
     n += 1
+    sections.append(
+        f"{n}. Plan your tool usage efficiently. Each tool call consumes one "
+        "analysis step. Combine related questions into single queries where "
+        "possible and prefer calling multiple independent tools in parallel."
+    )
+    n += 1
     sections.append(f"{n}. Always explain your reasoning and summarize results clearly.")
     n += 1
     if has_connection:

@@ -1,26 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "@/stores/auth-store";
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    auth: {
-      login: vi.fn().mockResolvedValue({ token: "t", user: { id: "u1", email: "a@b.com", display_name: "A" } }),
-      register: vi.fn().mockResolvedValue({ token: "t", user: { id: "u1", email: "a@b.com", display_name: "A" } }),
-      googleLogin: vi.fn().mockResolvedValue({ token: "t", user: { id: "u1", email: "a@b.com", display_name: "A" } }),
-    },
-  },
-}));
+const mockReplace = vi.fn();
 
-vi.mock("@/components/ui/Icon", () => ({
-  Icon: ({ name }: { name: string }) => <span data-testid={`icon-${name}`} />,
-}));
-
-vi.mock("next/link", () => ({
-  default: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => (
-    <a {...props}>{children}</a>
-  ),
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: mockReplace, push: vi.fn(), back: vi.fn(), forward: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => "/app",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 beforeEach(() => {
@@ -46,59 +33,24 @@ async function renderAuthGate() {
 }
 
 describe("AuthGate", () => {
-  it("renders login form when user is null", async () => {
+  it("redirects to /login when user is null", async () => {
     await renderAuthGate();
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
+      expect(mockReplace).toHaveBeenCalledWith("/login");
     });
   });
 
-  it("can switch to register form", async () => {
+  it("does not render children when user is null", async () => {
     await renderAuthGate();
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByText("Register"));
-    expect(screen.getByRole("heading", { name: "Create Account" })).toBeInTheDocument();
-  });
-
-  it("shows email and password inputs", async () => {
-    await renderAuthGate();
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
-    });
-    expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
-  });
-
-  it("has submit button", async () => {
-    await renderAuthGate();
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Sign In" })).toBeInTheDocument();
+      expect(screen.queryByTestId("child-content")).not.toBeInTheDocument();
     });
   });
 
-  it("shows display name input in register mode", async () => {
+  it("shows redirecting text while navigating to login", async () => {
     await renderAuthGate();
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sign In" })).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByText("Register"));
-    expect(screen.getByPlaceholderText("Display Name")).toBeInTheDocument();
-  });
-
-  it("displays error message from store", async () => {
-    useAuthStore.setState({ error: "Invalid credentials" });
-    await renderAuthGate();
-    await waitFor(() => {
-      expect(screen.getByText("Invalid credentials")).toBeInTheDocument();
-    });
-  });
-
-  it("shows loading state when isLoading is true", async () => {
-    useAuthStore.setState({ isLoading: true });
-    await renderAuthGate();
-    await waitFor(() => {
-      expect(screen.getByText("Signing in...")).toBeInTheDocument();
+      expect(screen.getByText("Redirecting...")).toBeInTheDocument();
     });
   });
 
@@ -115,6 +67,14 @@ describe("AuthGate", () => {
     await waitFor(() => {
       expect(screen.getByTestId("child-content")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Sign In")).not.toBeInTheDocument();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("shows loading state while restoring", async () => {
+    useAuthStore.setState({
+      restore: () => new Promise(() => {}),
+    });
+    await renderAuthGate();
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
   });
 });

@@ -96,7 +96,7 @@ class InvestigationAgent(BaseAgent):
         provider = context.sql_provider or context.preferred_provider
         model = context.sql_model or context.model
 
-        max_iters = getattr(settings, "max_investigation_iterations", 12)
+        max_iters = settings.max_investigation_iterations
 
         for iteration in range(max_iters):
             async with context.tracker.step(

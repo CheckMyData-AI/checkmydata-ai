@@ -39,8 +39,6 @@ class KnowledgeResult(AgentResult):
 class KnowledgeAgent(BaseAgent):
     """Codebase / RAG specialist agent."""
 
-    MAX_ITERATIONS = 2
-
     def __init__(
         self,
         vector_store: VectorStore | None = None,
@@ -84,18 +82,19 @@ class KnowledgeAgent(BaseAgent):
         wf_id = context.workflow_id
         kb_loop_budget = context.llm_router.get_context_window(context.model)
 
-        for iteration in range(self.MAX_ITERATIONS):
+        max_kb_iters = settings.max_knowledge_iterations
+        for iteration in range(max_kb_iters):
             messages, _ = trim_loop_messages(messages, kb_loop_budget)
             await tracker.emit(
                 wf_id,
                 "thinking",
                 "in_progress",
-                f"Knowledge Agent thinking (step {iteration + 1}/{self.MAX_ITERATIONS})…",
+                f"Knowledge Agent thinking (step {iteration + 1}/{max_kb_iters})…",
             )
             async with tracker.step(
                 wf_id,
                 "knowledge:llm_call",
-                f"Knowledge LLM call ({iteration + 1}/{self.MAX_ITERATIONS})",
+                f"Knowledge LLM call ({iteration + 1}/{max_kb_iters})",
             ):
                 llm_resp: LLMResponse = await context.llm_router.complete(
                     messages=messages,

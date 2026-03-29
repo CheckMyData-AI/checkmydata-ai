@@ -5,6 +5,15 @@ export const metadata: Metadata = {
   title: "Terms of Service | CheckMyData.ai",
   description:
     "Terms of Service for CheckMyData.ai — an open-source AI-powered database query agent.",
+  openGraph: {
+    title: "Terms of Service | CheckMyData.ai",
+    description:
+      "Terms of Service for CheckMyData.ai — an open-source AI-powered database query agent.",
+    url: "https://checkmydata.ai/terms",
+    siteName: "CheckMyData.ai",
+    type: "website",
+  },
+  alternates: { canonical: "https://checkmydata.ai/terms" },
 };
 
 const LAST_UPDATED = "March 19, 2026";

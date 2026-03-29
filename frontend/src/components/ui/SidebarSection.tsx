@@ -122,8 +122,8 @@ export function SidebarSection({
             aria-label={action.label}
             className={`p-1 rounded transition-all duration-150 shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent ${
               action.active
-                ? "text-accent opacity-100"
-                : "text-text-muted hover:text-accent opacity-0 group-hover/section:opacity-100 focus-visible:opacity-100"
+                ? "text-accent"
+                : "text-text-muted/50 hover:text-accent"
             }`}
           >
             <Icon name="plus" size={12} />

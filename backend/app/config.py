@@ -86,11 +86,14 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 10
+    max_orchestrator_iterations: int = 25
+    orchestrator_wrap_up_steps: int = 3
+    orchestrator_final_synthesis: bool = True
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 3
     max_mcp_iterations: int = 5
     max_knowledge_iterations: int = 2
+    max_investigation_iterations: int = 12
     rag_relevance_threshold: float = 1.3
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20

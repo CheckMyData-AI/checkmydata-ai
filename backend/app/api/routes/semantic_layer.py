@@ -32,7 +32,7 @@ async def build_catalog(
     """Build the semantic catalog for a connection from DB index data."""
     project_id = validate_safe_id(project_id, "project_id")
     connection_id = validate_safe_id(connection_id, "connection_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     candidates = await _semantic_svc.build_catalog(db, project_id, connection_id)
 
@@ -53,7 +53,7 @@ async def normalize_project(
 ) -> dict[str, Any]:
     """Normalize metrics across all connections in a project."""
     project_id = validate_safe_id(project_id, "project_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     results = await _semantic_svc.normalize_project(db, project_id)
 

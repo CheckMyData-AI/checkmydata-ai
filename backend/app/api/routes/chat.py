@@ -396,9 +396,11 @@ class ChatRequest(BaseModel):
     message: str = Field(max_length=20000)
     preferred_provider: str | None = None
     model: str | None = None
-    pipeline_action: Literal["continue", "modify", "retry"] | None = None
+    max_steps: int | None = Field(None, ge=1, le=100)
+    pipeline_action: Literal["continue", "modify", "retry", "continue_analysis"] | None = None
     pipeline_run_id: str | None = None
     modification: str | None = Field(None, max_length=5000)
+    continuation_context: str | None = None
 
 
 class WsChatMessage(BaseModel):
@@ -423,6 +425,9 @@ class ChatResponse(BaseModel):
     assistant_message_id: str | None = None
     user_message_id: str | None = None
     rules_changed: bool = False
+    steps_used: int = 0
+    steps_total: int = 0
+    continuation_context: str | None = None
 
 
 class SessionCreate(BaseModel):
@@ -820,6 +825,9 @@ async def ask(
     agent_model = body.model or (project.agent_llm_model if project else None)
     sql_provider = (project.sql_llm_provider if project else None) or agent_provider
     sql_model = (project.sql_llm_model if project else None) or agent_model
+    max_steps = body.max_steps or (
+        getattr(project, "max_orchestrator_steps", None) if project else None
+    )
 
     extra: dict = {"session_id": session_id}
     if body.pipeline_action:
@@ -828,6 +836,8 @@ async def ask(
         extra["pipeline_run_id"] = body.pipeline_run_id
     if body.modification:
         extra["modification"] = body.modification
+    if body.continuation_context:
+        extra["continuation_context"] = body.continuation_context
 
     result = await _agent.run(
         question=body.message,
@@ -841,6 +851,7 @@ async def ask(
         project_name=project.name if project else None,
         user_id=user["user_id"],
         extra=extra,
+        max_steps=max_steps,
     )
 
     viz_data = None
@@ -961,6 +972,9 @@ async def ask(
         assistant_message_id=assistant_msg.id,
         user_message_id=user_msg.id,
         rules_changed=_has_rules_changed(result.tool_call_log),
+        steps_used=result.steps_used,
+        steps_total=result.steps_total,
+        continuation_context=result.continuation_context,
     )
 
 
@@ -1010,6 +1024,9 @@ async def ask_stream(
     sql_provider = (project.sql_llm_provider if project else None) or agent_provider
     sql_model = (project.sql_llm_model if project else None) or agent_model
     project_name = project.name if project else None
+    stream_max_steps = body.max_steps or (
+        getattr(project, "max_orchestrator_steps", None) if project else None
+    )
 
     from app.config import settings as app_settings
 
@@ -1111,6 +1128,8 @@ async def ask_stream(
             stream_extra["pipeline_run_id"] = body.pipeline_run_id
         if body.modification:
             stream_extra["modification"] = body.modification
+        if body.continuation_context:
+            stream_extra["continuation_context"] = body.continuation_context
 
         async def _process():
             res = await _agent.run(
@@ -1125,6 +1144,7 @@ async def ask_stream(
                 project_name=project_name,
                 user_id=user["user_id"],
                 extra=stream_extra,
+                max_steps=stream_max_steps,
             )
             result_holder.append(res)
 
@@ -1361,6 +1381,9 @@ async def ask_stream(
                 "rules_changed": _has_rules_changed(result.tool_call_log),
                 "insights": result.insights or [],
                 "suggested_followups": result.suggested_followups or [],
+                "steps_used": result.steps_used,
+                "steps_total": result.steps_total,
+                "continuation_context": result.continuation_context,
             }
             yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
         finally:

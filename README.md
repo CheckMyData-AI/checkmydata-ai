@@ -17,7 +17,22 @@ make setup    # Install deps, create .env, run migrations
 make dev      # Backend on :8000, frontend on :3100
 ```
 
-Open `http://localhost:3100` and register to get started. See [INSTALLATION.md](INSTALLATION.md) for detailed setup instructions.
+Open `http://localhost:3100` to see the landing page, then click **Get Started** to register. See [INSTALLATION.md](INSTALLATION.md) for detailed setup instructions.
+
+### Website Structure
+
+| Route | Description |
+|-------|-------------|
+| `/` | Public landing page with product overview |
+| `/login` | Login / registration page |
+| `/app` | Main application (requires authentication) |
+| `/about` | About page — mission, tech stack |
+| `/contact` | Contact information and channels |
+| `/support` | FAQ, documentation links, support channels |
+| `/terms` | Terms of Service |
+| `/privacy` | Privacy Policy |
+| `/dashboard/[id]` | Shared dashboard viewer |
+| `/sitemap.xml` | Auto-generated sitemap |
 
 ## Documentation
 
@@ -93,7 +108,7 @@ The system has **five main flows**:
 
 1. **Onboarding flow**: New users see a guided 5-step wizard (connect database -> test connection -> index schema -> connect code repo -> ask first question). Users can skip any step or try a demo project with sample data via `POST /api/demo/setup`. The `is_onboarded` flag on the User model tracks completion (`POST /api/auth/complete-onboarding`).
 2. **Setup flow**: Register/login -> add SSH keys -> create project (with Git repo) -> create database connection (with SSH tunnel) -> index repository
-3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips. A cost/performance preview below the chat input shows estimated token usage, context budget utilization, and session running totals.
+3. **Chat flow**: Ask a question in natural language (or click a smart suggestion) -> the **OrchestratorAgent** routes to the appropriate sub-agent (SQLAgent for DB queries, KnowledgeAgent for codebase Q&A, or direct text response) -> VizAgent picks the best chart type for SQL results -> results returned with visualization and follow-up suggestions. Uses SSE streaming with agent-level progress events. Chat history is token-budget-managed and older messages are summarized to stay within limits. New sessions show schema-based and history-based query suggestions as clickable chips. A cost/performance preview below the chat input shows estimated token usage, context budget utilization, and session running totals. The orchestrator uses an **adaptive step budget** (default 25 iterations) with step-aware wrap-up prompts, final LLM synthesis on exhaustion, per-project/per-request step overrides, and a **continuation protocol** that lets users resume analysis cut short by the step limit.
 4. **Knowledge flow**: Git repo is analyzed via a multi-pass pipeline (project profiling -> entity extraction -> cross-file analysis -> enriched LLM doc generation) -> chunks stored in ChromaDB for RAG retrieval
 5. **Sharing flow**: Project owner invites collaborators by email -> invitee receives an email notification via Resend -> invited users register and are auto-accepted (the owner gets an acceptance confirmation email) -> each user gets isolated chat sessions while sharing the same project data and connections. New users also receive a welcome email on registration.
 
@@ -530,7 +545,7 @@ The orchestrator can enrich query results with derived data between query steps 
 - `backend/app/services/geoip_cache.py` — `GeoIPCache` with in-memory LRU (100k entries) + SQLite persistent storage (millions of records). Config: `GEOIP_CACHE_ENABLED`, `GEOIP_CACHE_DIR`, `GEOIP_MEMORY_CACHE_SIZE`
 - `backend/app/services/phone_country_service.py` — Singleton `PhoneCountryService` with offline E.164 dialing code mapping (including Canadian area codes)
 - `backend/app/services/data_processor.py` — `DataProcessor` with pluggable operations (`ip_to_country`, `phone_to_country`, `aggregate_data`, `filter_data`) that transform `QueryResult` objects
-- The `process_data` tool is available in both the simple orchestrator loop (up to 10 iterations) and the complex multi-stage pipeline (`QueryPlanner` + `StageExecutor`, up to 10 stages)
+- The `process_data` tool is available in both the simple orchestrator loop (up to 25 iterations, configurable) and the complex multi-stage pipeline (`QueryPlanner` + `StageExecutor`, up to 10 stages)
 - When `process_data` is included in parallel tool calls, the orchestrator forces sequential execution to prevent race conditions on shared state
 - After `aggregate_data`, VizAgent is triggered to produce visualizations for the aggregated result
 - Pipeline `process_data` stages emit fine-grained progress events for UI feedback
@@ -2074,8 +2089,18 @@ All components use semantic design tokens from DESIGN_SYSTEM.md (no raw Tailwind
 
 src/
 ├── app/
-│   ├── page.tsx           ← Main page: AuthGate → Sidebar + ChatPanel + LogPanel
-│   ├── layout.tsx         ← Root layout: DM Sans + JetBrains Mono fonts, wraps in ClientShell
+│   ├── (marketing)/       ← Public marketing pages (shared header/footer layout)
+│   │   ├── layout.tsx     ← Marketing layout: sticky header, footer with nav columns
+│   │   ├── page.tsx       ← Landing page: hero, features, how-it-works, open-source CTA
+│   │   ├── about/page.tsx ← About page: mission, tech stack, open-source philosophy
+│   │   ├── contact/page.tsx ← Contact page: email channels, GitHub links
+│   │   ├── support/page.tsx ← Support page: FAQ, docs links, support channels
+│   │   ├── terms/page.tsx ← Terms of Service
+│   │   └── privacy/page.tsx ← Privacy Policy
+│   ├── login/page.tsx     ← Dedicated login/register page (CheckMyData.ai branded)
+│   ├── app/page.tsx       ← Main app: AuthGate → Sidebar + ChatPanel + LogPanel
+│   ├── layout.tsx         ← Root layout: DM Sans + JetBrains Mono fonts, SEO metadata, wraps in ClientShell
+│   ├── sitemap.ts         ← Dynamic sitemap.xml for all public pages
 │   └── globals.css        ← Design tokens (CSS variables), animations, scrollbar styles
 ├── stores/
 │   ├── app-store.ts       ← Zustand: projects, connections, sessions, messages, chatMode
@@ -2101,9 +2126,10 @@ src/
     │   ├── ErrorBoundary.tsx  ← Global React error boundary (prevents white-screen crashes)
     │   ├── ToastContainer.tsx ← Toast notification renderer (bottom-right corner)
     │   ├── ConfirmModal.tsx   ← Reusable confirmation modal (replaces native confirm())
+    │   ├── FormModal.tsx      ← Reusable form modal shell (title, close, focus trap, backdrop)
     │   ├── LlmModelSelector.tsx ← Reusable LLM provider+model selector (stacked layout)
     │   └── Spinner.tsx        ← Reusable loading spinner
-    ├── auth/AuthGate.tsx   ← Login/register with branded header, Google OAuth
+    ├── auth/AuthGate.tsx   ← Route guard: redirects unauthenticated users to /login
     ├── auth/AccountMenu.tsx ← Account settings: change password, sign out, delete account
     ├── Sidebar.tsx         ← Collapsible sidebar (w-64 ↔ w-16), Notion/Linear-style navigation with
     │                          single scroll area, grouped Setup/Workspace sections, subtle dividers
@@ -2276,15 +2302,23 @@ src/
 | Delete custom rules | Yes | No | No |
 | Manage invites (create, revoke, resend), remove members | Yes | No | No |
 | Trigger backup, view backups | Yes | No | No |
-| Create/edit custom rules | Yes | Yes | No |
-| Trigger DB indexing, repo indexing, code-DB sync | Yes | Yes | No |
+| Create/edit connections | Yes | No | No |
+| Trigger DB indexing, repo indexing, code-DB sync | Yes | No | No |
+| Manage schedules (create, edit, delete, run) | Yes | No | No |
+| Manage insights (create, confirm, dismiss, resolve) | Yes | No | No |
+| Build/normalize semantic layer | Yes | No | No |
+| Trigger feed scan | Yes | No | No |
+| Manage data graph (metrics, relationships, discover) | Yes | No | No |
+| Manage repositories (add, edit) | Yes | No | No |
+| Create/edit custom rules (Knowledge) | Yes | Yes | No |
+| Edit/toggle learnings, recompile (Learn) | Yes | Yes | No |
 | Create chat sessions, send messages | Yes | Yes | Yes |
 | Save/delete own notes | Yes | Yes | Yes |
-| Train agent (create learnings via feedback) | Yes | Yes | No |
+| Train agent (create learnings via feedback) | Yes | Yes | Yes |
 | View all project data | Yes | Yes | Yes |
 | Delete own SSH keys | Own keys only | Own keys only | Own keys only |
 
-The frontend enforces this via the `usePermission()` hook which reads the active project's `userRole` from the app store. Delete buttons are hidden for non-owner users.
+The frontend enforces this via the `usePermission()` hook which reads the active project's `userRole` from the app store. Infrastructure and management buttons are hidden for non-owner users. The `canEdit` flag (owner + editor) gates custom rules and learnings editing. The `canManageProject` flag (owner only) gates connections, indexing, sync, schedules, insights, and other project infrastructure.
 
 ### Database Schema (Internal)
 
@@ -2964,6 +2998,18 @@ cp -r backend/data/chroma/ backup_chroma_$(date +%Y%m%d)/
 ---
 
 ## Changelog
+
+### 2026-03-28 — Sidebar Forms → Centered Modals
+
+- **New `FormModal` component** (`frontend/src/components/ui/FormModal.tsx`): reusable modal shell with title bar, close (X) button, Escape key, backdrop click dismiss, focus trap, and scroll support. Follows the existing design system (Section 2.4).
+- **All 6 sidebar create/edit forms now open as centered pop-up modals** instead of rendering inline in the sidebar:
+  - Project create/edit (`ProjectSelector`)
+  - Connection create/edit (`ConnectionSelector`)
+  - SSH key add (`SshKeyManager`)
+  - Rule create/edit (`RulesManager`)
+  - Schedule create/edit (`ScheduleManager`)
+  - Dashboard create (`DashboardList` → `DashboardBuilder`)
+- Sidebar lists remain unchanged; only the forms are affected.
 
 ### 2026-03-25 — System-Wide Reliability, Intelligence, Speed, Cost & Architecture Improvements
 

@@ -10,7 +10,7 @@ export function handleSessionExpired(): void {
   sessionExpiredHandled = true;
   useAuthStore.getState().logout();
   toast("Session expired, please log in again", "error");
-  window.location.href = "/";
+  window.location.href = "/login";
 }
 
 function getAuthHeaders(): Record<string, string> {
@@ -221,13 +221,16 @@ export interface ChatResponse {
   error: string | null;
   workflow_id: string | null;
   staleness_warning: string | null;
-  response_type?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed";
+  response_type?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed" | "step_limit_reached";
   assistant_message_id?: string | null;
   user_message_id?: string | null;
   raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
   rag_sources?: Array<{ source_path: string; distance?: number; doc_type?: string }> | null;
   token_usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
   rules_changed?: boolean;
+  steps_used?: number;
+  steps_total?: number;
+  continuation_context?: string | null;
   clarification_data?: {
     question: string;
     question_type: "yes_no" | "multiple_choice" | "numeric_range" | "free_text";
@@ -964,6 +967,7 @@ export const api = {
         pipeline_action?: string;
         pipeline_run_id?: string;
         modification?: string;
+        continuation_context?: string;
       },
       onStep: (event: Record<string, unknown>) => void,
       onResult: (result: ChatResponse) => void,

@@ -27,7 +27,7 @@ async def trigger_scan(
     """Trigger an autonomous insight scan for a specific connection."""
     project_id = validate_safe_id(project_id, "project_id")
     connection_id = validate_safe_id(connection_id, "connection_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from app.agents.insight_feed_agent import InsightFeedAgent
 
@@ -53,7 +53,7 @@ async def trigger_full_scan(
 ):
     """Trigger an insight scan across all connections in a project."""
     project_id = validate_safe_id(project_id, "project_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
 
     from sqlalchemy import select
 

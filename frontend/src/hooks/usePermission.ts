@@ -8,6 +8,7 @@ interface PermissionResult {
   canDelete: boolean;
   canEdit: boolean;
   canManageMembers: boolean;
+  canManageProject: boolean;
 }
 
 export function usePermission(): PermissionResult {
@@ -19,5 +20,6 @@ export function usePermission(): PermissionResult {
     canDelete: userRole === "owner",
     canEdit: userRole === "owner" || userRole === "editor",
     canManageMembers: userRole === "owner",
+    canManageProject: userRole === "owner",
   };
 }

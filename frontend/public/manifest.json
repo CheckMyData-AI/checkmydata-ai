@@ -1,8 +1,8 @@
 {
   "name": "CheckMyData.ai",
   "short_name": "CheckMyData",
-  "description": "AI-powered database query agent",
-  "start_url": "/",
+  "description": "Open-source AI-powered database agent. Query your databases with natural language.",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#3b82f6",

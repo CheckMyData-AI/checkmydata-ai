@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -44,6 +44,7 @@ class Project(Base):
     agent_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     sql_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     sql_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    max_orchestrator_steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     default_rule_initialized: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )

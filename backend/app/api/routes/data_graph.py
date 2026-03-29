@@ -136,7 +136,7 @@ async def upsert_metric(
     user: dict = Depends(get_current_user),
 ):
     project_id = validate_safe_id(project_id, "project_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     metric = await _graph_svc.upsert_metric(
         db,
         project_id,
@@ -193,7 +193,7 @@ async def add_relationship(
     user: dict = Depends(get_current_user),
 ):
     project_id = validate_safe_id(project_id, "project_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     rel = await _graph_svc.add_relationship(
         db,
         project_id,
@@ -221,7 +221,7 @@ async def discover_metrics(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     connection_id = validate_safe_id(connection_id, "connection_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     discovered = await _graph_svc.auto_discover_from_db_index(db, project_id, connection_id)
     await db.commit()
     return {"discovered_count": len(discovered)}
@@ -238,7 +238,7 @@ async def delete_metric(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     metric_id = validate_safe_id(metric_id, "metric_id")
-    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     deleted = await _graph_svc.delete_metric(db, metric_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Metric not found")

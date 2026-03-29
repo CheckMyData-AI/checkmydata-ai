@@ -5,6 +5,15 @@ export const metadata: Metadata = {
   title: "Privacy Policy | CheckMyData.ai",
   description:
     "Privacy Policy for CheckMyData.ai — how we handle your data in our open-source AI database query agent.",
+  openGraph: {
+    title: "Privacy Policy | CheckMyData.ai",
+    description:
+      "Privacy Policy for CheckMyData.ai — how we handle your data in our open-source AI database query agent.",
+    url: "https://checkmydata.ai/privacy",
+    siteName: "CheckMyData.ai",
+    type: "website",
+  },
+  alternates: { canonical: "https://checkmydata.ai/privacy" },
 };
 
 const LAST_UPDATED = "March 19, 2026";
