@@ -115,7 +115,7 @@ const FEATURES = [
     tagline: "Zero data leakage. Period.",
     desc: "No tracking. No telemetry. Verify everything in the code.",
   },
-] as const;
+] as const satisfies readonly { icon: JSX.Element; title: string; tagline: string; desc: string; highlight?: boolean }[];
 
 const USE_CASES = [
   "Find why revenue dropped last week",
