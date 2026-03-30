@@ -110,6 +110,17 @@ Authorization: Bearer <jwt-token>
 | PATCH | `/api/dashboards/{id}` | Update dashboard |
 | DELETE | `/api/dashboards/{id}` | Delete dashboard |
 
+## Request Logs (Owner-only)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/logs/{project_id}/users` | List users with request counts |
+| GET | `/api/logs/{project_id}/requests` | Paginated request traces |
+| GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans |
+| GET | `/api/logs/{project_id}/summary` | Aggregated summary (totals, success rate, cost) |
+
+All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, `status`, `date_from`, `date_to`, `page`, `page_size`.
+
 ## Health
 
 | Method | Endpoint | Description |

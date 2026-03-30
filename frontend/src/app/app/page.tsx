@@ -31,6 +31,10 @@ const BatchRunner = dynamic(
   () => import("@/components/batch/BatchRunner").then((m) => m.BatchRunner),
   { ssr: false },
 );
+const LogsScreen = dynamic(
+  () => import("@/components/logs/LogsScreen").then((m) => m.LogsScreen),
+  { ssr: false },
+);
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
@@ -50,6 +54,7 @@ export default function Home() {
   const notesOpen = useNotesStore((s) => s.isOpen);
   const toggleNotes = useNotesStore((s) => s.toggleOpen);
   const notesCount = useNotesStore((s) => s.notes.length);
+  const logsOpen = useAppStore((s) => s.logsOpen);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showBatchRunner, setShowBatchRunner] = useState(false);
@@ -186,6 +191,11 @@ export default function Home() {
               <SectionErrorBoundary sectionName="Chat">
                 <ChatPanel />
               </SectionErrorBoundary>
+              {logsOpen && (
+                <SectionErrorBoundary sectionName="Logs">
+                  <LogsScreen />
+                </SectionErrorBoundary>
+              )}
               <PersistentLogToggle />
             </div>
             {!isMobile && (

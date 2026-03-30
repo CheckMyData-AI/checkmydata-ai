@@ -527,6 +527,82 @@ export interface UsageStatsResponse {
   period_days: number;
 }
 
+export interface LogUser {
+  user_id: string;
+  display_name: string;
+  email: string;
+  picture_url: string | null;
+  request_count: number;
+  last_request_at: string | null;
+}
+
+export interface LogRequestTrace {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  workflow_id: string;
+  question: string;
+  response_type: string;
+  status: string;
+  error_message: string | null;
+  total_duration_ms: number | null;
+  total_llm_calls: number;
+  total_db_queries: number;
+  total_tokens: number;
+  estimated_cost_usd: number | null;
+  llm_provider: string;
+  llm_model: string;
+  steps_used: number;
+  steps_total: number;
+  created_at: string | null;
+}
+
+export interface LogRequestsPage {
+  items: LogRequestTrace[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface LogTraceSpan {
+  id: string;
+  parent_span_id: string | null;
+  span_type: string;
+  name: string;
+  status: string;
+  detail: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+  input_preview: string | null;
+  output_preview: string | null;
+  token_usage_json: string | null;
+  metadata_json: string | null;
+  order_index: number;
+}
+
+export interface LogTraceDetail {
+  trace: LogRequestTrace & {
+    project_id: string;
+    message_id: string | null;
+    assistant_message_id: string | null;
+  };
+  spans: LogTraceSpan[];
+}
+
+export interface LogSummary {
+  total_requests: number;
+  successful: number;
+  failed: number;
+  total_llm_calls: number;
+  total_db_queries: number;
+  avg_duration_ms: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  by_status: Record<string, number>;
+  by_type: Record<string, number>;
+}
+
 export interface CostEstimateBreakdown {
   schema_context: number;
   rules: number;
@@ -1371,6 +1447,33 @@ export const api = {
   usage: {
     getStats: (days: number = 30) =>
       request<UsageStatsResponse>(`/usage/stats?days=${days}`),
+  },
+
+  logs: {
+    getUsers: (projectId: string, days: number = 30) =>
+      request<LogUser[]>(`/logs/${projectId}/users?days=${days}`),
+    listRequests: (
+      projectId: string,
+      params: {
+        user_id?: string;
+        status?: string;
+        date_from?: string;
+        date_to?: string;
+        page?: number;
+        page_size?: number;
+      } = {},
+    ) => {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+      }
+      const q = qs.toString();
+      return request<LogRequestsPage>(`/logs/${projectId}/requests${q ? `?${q}` : ""}`);
+    },
+    getTraceDetail: (projectId: string, traceId: string) =>
+      request<LogTraceDetail>(`/logs/${projectId}/requests/${traceId}`),
+    getSummary: (projectId: string, days: number = 7) =>
+      request<LogSummary>(`/logs/${projectId}/summary?days=${days}`),
   },
 
   schedules: {

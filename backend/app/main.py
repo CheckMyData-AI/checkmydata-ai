@@ -30,6 +30,7 @@ from app.api.routes import (
     health_monitor,
     insights,
     invites,
+    logs,
     metrics,
     models,
     notes,
@@ -102,6 +103,13 @@ async def lifespan(app: FastAPI):
     _scheduler_task = asyncio.create_task(_scheduler_loop())
     _health_check_task = asyncio.create_task(_health_check_loop())
 
+    from app.core.workflow_tracker import tracker as _wf_tracker
+    from app.services.trace_persistence_service import TracePersistenceService
+
+    _trace_svc = TracePersistenceService(_wf_tracker)
+    await _trace_svc.start()
+    app.state.trace_persistence_service = _trace_svc
+
     try:
         llm_router_startup = chat._agent._orchestrator._llm
         await llm_router_startup.start_health_checks()
@@ -110,6 +118,8 @@ async def lifespan(app: FastAPI):
         logger.debug("Could not start LLM health checks", exc_info=True)
 
     yield
+
+    await _trace_svc.stop()
 
     for task in (_backup_task, _scheduler_task, _health_check_task):
         if task and not task.done():
@@ -305,6 +315,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])

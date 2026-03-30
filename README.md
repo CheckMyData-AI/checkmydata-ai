@@ -1881,7 +1881,8 @@ app/
 │   ├── dashboard.py    ← Dashboard: team dashboard with grid layout of note cards
 │   ├── session_note.py ← SessionNote: agent working memory (per-connection observations)
 │   ├── data_validation.py ← DataValidationFeedback + DataInvestigation models
-│   └── benchmark.py    ← DataBenchmark: verified metric values for sanity-checking
+│   ├── benchmark.py    ← DataBenchmark: verified metric values for sanity-checking
+│   └── request_trace.py ← RequestTrace + TraceSpan: persisted orchestrator execution traces
 ├── services/           ← Business logic layer
 │   ├── project_service.py, connection_service.py
 │   ├── repository_service.py ← CRUD for ProjectRepository
@@ -1904,6 +1905,8 @@ app/
 │   ├── feedback_pipeline.py ← Process validation feedback → learnings + notes + benchmarks
 │   ├── investigation_service.py ← Lifecycle management for data investigations
 │   ├── code_db_sync_service.py ← ... + add_runtime_enrichment() for investigation findings
+│   ├── trace_persistence_service.py ← Persist WorkflowTracker events as request traces + spans
+│   ├── logs_service.py  ← Query service for request logs (users, requests, trace detail, summary)
 │   └── encryption.py   ← Fernet encrypt/decrypt
 └── viz/                ← Visualization & export
     ├── renderer.py     ← Auto-detect viz type (table/chart/text)

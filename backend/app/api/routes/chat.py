@@ -958,6 +958,38 @@ async def ask(
     except Exception:
         logger.warning("Failed to record token usage", exc_info=True)
 
+    if result.workflow_id:
+        try:
+            trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+            if trace_svc is not None:
+                await trace_svc.finalize_trace(
+                    result.workflow_id,
+                    project_id=body.project_id,
+                    user_id=user["user_id"],
+                    session_id=session_id,
+                    message_id=user_msg.id,
+                    assistant_message_id=assistant_msg.id,
+                    question=body.message,
+                    response_type=result.response_type or "text",
+                    status="failed" if result.error else "completed",
+                    error_message=result.error,
+                    total_duration_ms=result.results.execution_time_ms if result.results else None,
+                    total_tokens=usage.get("total_tokens", 0)
+                    or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
+                    estimated_cost_usd=_estimate_cost(
+                        result.llm_model,
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                    ),
+                    llm_provider=result.llm_provider or "unknown",
+                    llm_model=result.llm_model or "unknown",
+                    steps_used=result.steps_used,
+                    steps_total=result.steps_total,
+                    tool_call_log=result.tool_call_log,
+                )
+        except Exception:
+            logger.warning("Failed to finalize request trace", exc_info=True)
+
     return ChatResponse(
         session_id=session_id,
         answer=result.answer,
@@ -1362,6 +1394,38 @@ async def ask_stream(
                     )
                 except Exception:
                     logger.warning("Failed to record token usage", exc_info=True)
+
+                if result.workflow_id:
+                    try:
+                        trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                        if trace_svc is not None:
+                            await trace_svc.finalize_trace(
+                                result.workflow_id,
+                                project_id=body.project_id,
+                                user_id=user["user_id"],
+                                session_id=session_id,
+                                message_id=user_message_id,
+                                assistant_message_id=assistant_msg.id,
+                                question=body.message,
+                                response_type=result.response_type or "text",
+                                status="failed" if result.error else "completed",
+                                error_message=result.error,
+                                total_duration_ms=result.results.execution_time_ms if result.results else None,
+                                total_tokens=stream_usage.get("total_tokens", 0)
+                                or (stream_usage.get("prompt_tokens", 0) + stream_usage.get("completion_tokens", 0)),
+                                estimated_cost_usd=_estimate_cost(
+                                    result.llm_model,
+                                    stream_usage.get("prompt_tokens", 0),
+                                    stream_usage.get("completion_tokens", 0),
+                                ),
+                                llm_provider=result.llm_provider or "unknown",
+                                llm_model=result.llm_model or "unknown",
+                                steps_used=result.steps_used,
+                                steps_total=result.steps_total,
+                                tool_call_log=result.tool_call_log,
+                            )
+                    except Exception:
+                        logger.warning("Failed to finalize request trace (stream)", exc_info=True)
 
             final = {
                 "session_id": session_id,

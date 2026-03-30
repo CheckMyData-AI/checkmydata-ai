@@ -539,6 +539,16 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                     <FeedbackAnalyticsPanel projectId={activeProject.id} />
                   </SidebarSection>
                 )}
+
+                {isOwner && (
+                  <SidebarSection icon="terminal" title="Request Logs" open={false} onToggle={() => {
+                    useAppStore.getState().setLogsOpen(true);
+                  }} collapsed={false}>
+                    <div className="px-2 py-1 text-[10px] text-text-tertiary">
+                      View detailed request traces
+                    </div>
+                  </SidebarSection>
+                )}
               </>
             )}
           </div>
@@ -832,6 +842,22 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 collapsed={collapsed}
               >
                 <FeedbackAnalyticsPanel projectId={activeProject.id} />
+              </SidebarSection>
+            )}
+
+            {isOwner && (
+              <SidebarSection
+                icon="terminal"
+                title="Request Logs"
+                open={false}
+                onToggle={() => {
+                  useAppStore.getState().setLogsOpen(true);
+                }}
+                collapsed={collapsed}
+              >
+                <div className="px-2 py-1 text-[10px] text-text-tertiary">
+                  View detailed request traces
+                </div>
               </SidebarSection>
             )}
           </>

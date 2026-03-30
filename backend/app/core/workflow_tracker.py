@@ -52,6 +52,11 @@ class WorkflowTracker:
         self._subscribers: list[asyncio.Queue[WorkflowEvent]] = []
         self._lock = asyncio.Lock()
         self._active_workflows: dict[str, dict[str, Any]] = {}
+        self._persistence_hooks: list[Any] = []
+
+    def add_persistence_hook(self, callback: Any) -> None:
+        """Register an async callback invoked on every broadcast (fire-and-forget)."""
+        self._persistence_hooks.append(callback)
 
     async def begin(self, pipeline: str, context: dict[str, Any] | None = None) -> str:
         wf_id = str(uuid.uuid4())
@@ -201,6 +206,11 @@ class WorkflowTracker:
                         self._subscribers.remove(q)
                     except ValueError:
                         pass
+        for hook in self._persistence_hooks:
+            try:
+                await hook(event)
+            except Exception:
+                logger.debug("Persistence hook error", exc_info=True)
 
 
 tracker = WorkflowTracker()

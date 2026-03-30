@@ -37,14 +37,14 @@ language questions into database queries with rich visualizations.
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| `api/routes/` | REST API endpoints | `auth.py`, `chat.py`, `connections.py`, `projects.py`, ... |
+| `api/routes/` | REST API endpoints | `auth.py`, `chat.py`, `connections.py`, `projects.py`, `logs.py`, ... |
 | `agents/` | Multi-agent orchestration | `orchestrator.py`, `sql_agent.py`, `knowledge_agent.py` |
 | `llm/` | LLM provider abstraction | `router.py`, `base.py` (OpenAI, Anthropic, OpenRouter) |
 | `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py` |
 | `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py` |
-| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py` |
-| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py` |
-| `core/` | Cross-cutting concerns | `rate_limit.py`, `audit.py`, `health_monitor.py` |
+| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py` |
+| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py` |
+| `core/` | Cross-cutting concerns | `rate_limit.py`, `audit.py`, `health_monitor.py`, `workflow_tracker.py` |
 | `pipelines/` | Long-running workflows | `mcp_pipeline.py` |
 
 ### Frontend (`frontend/src/`)
@@ -56,6 +56,7 @@ language questions into database queries with rich visualizations.
 | `components/viz/` | Data tables, charts, visualizations |
 | `components/batch/` | Batch query execution |
 | `components/learnings/` | Agent learning management |
+| `components/logs/` | Request Logs screen (owner-only trace viewer) |
 | `components/ui/` | Shared UI components (modals, buttons, icons) |
 | `stores/` | Zustand state management |
 | `lib/` | API client, utilities |
@@ -88,6 +89,19 @@ User connects Git repo
   → Available for RAG retrieval in chat
 ```
 
+### Trace Persistence Flow
+
+```
+Chat request arrives
+  → WorkflowTracker.begin() creates workflow_id
+    → Each orchestrator step emits events via WorkflowTracker
+    → TracePersistenceService hooks into _broadcast, accumulates spans
+  → WorkflowTracker.end() fires pipeline_end
+    → TracePersistenceService batch-inserts RequestTrace + TraceSpan rows
+  → chat.py calls finalize_trace() with message IDs and metadata
+  → Owner opens Logs screen → GET /api/logs/ queries request_traces + trace_spans
+```
+
 ## Key Dependencies
 
 ### Backend
@@ -117,6 +131,7 @@ Key models:
 - `Dashboard` — saved visualizations
 - `Repository` — linked Git repos
 - `KnowledgeDoc` — indexed documentation chunks
+- `RequestTrace` / `TraceSpan` — persisted orchestrator execution traces
 
 ## Security Boundaries
 

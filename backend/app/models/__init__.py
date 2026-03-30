@@ -23,6 +23,7 @@ from app.models.project_cache import ProjectCache  # noqa: F401
 from app.models.project_invite import ProjectInvite  # noqa: F401
 from app.models.project_member import ProjectMember  # noqa: F401
 from app.models.rag_feedback import RAGFeedback  # noqa: F401
+from app.models.request_trace import RequestTrace, TraceSpan  # noqa: F401
 from app.models.repository import ProjectRepository  # noqa: F401
 from app.models.saved_note import SavedNote  # noqa: F401
 from app.models.scheduled_query import ScheduledQuery, ScheduleRun  # noqa: F401
