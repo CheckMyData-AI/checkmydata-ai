@@ -104,7 +104,7 @@ class Settings(BaseSettings):
 
     # Streaming settings
     stream_timeout_seconds: int = 120
-    stream_safety_margin_seconds: int = 30
+    stream_safety_margin_seconds: int = 90
 
     # Backup settings
     backup_enabled: bool = True

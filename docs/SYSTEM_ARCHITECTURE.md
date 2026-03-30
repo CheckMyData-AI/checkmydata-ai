@@ -335,7 +335,7 @@ The orchestrator's LLM sees these meta-tools (defined in `backend/app/agents/too
 | `manage_rules` | DB connected | Direct (RuleService) | CRUD for project rules |
 | `query_mcp_source` | MCP connections | `MCPSourceAgent` | Query external MCP data sources |
 | `process_data` | DB connected | `DataProcessor` | In-memory data enrichment (IP→country, phone→country, aggregate, filter) |
-| `ask_user` | DB connected | None (raises exception) | Structured clarification question |
+| `ask_user` | Always available | None (raises exception) | Structured clarification question |
 
 Tools are assembled dynamically by `get_orchestrator_tools()` based on what the project has configured.
 
@@ -381,13 +381,17 @@ The orchestrator catches different error types and produces appropriate user-fac
 
 ### 2.9 Clarification Requests
 
-When the orchestrator's LLM calls `ask_user`, it raises `_ClarificationRequestError` which interrupts the tool loop and returns an `AgentResponse` with `response_type="clarification_request"`. The payload includes:
+The orchestrator proactively assesses request ambiguity via the **REQUEST ANALYSIS PROTOCOL** in its system prompt, using `ask_user` before executing tools when the intent is unclear, data coverage is uncertain, or assumptions would be required.
+
+When the orchestrator's LLM calls `ask_user`, it raises `_ClarificationRequestError` which interrupts the tool loop and returns an `AgentResponse` with `response_type="clarification_request"` and a dedicated `clarification_data` dict containing:
 - `question`: what to ask the user
 - `question_type`: `yes_no`, `multiple_choice`, `numeric_range`, or `free_text`
 - `options`: for multiple choice questions
 - `context`: explanation of why the question is being asked
 
-The frontend renders this as a special UI component and sends the user's answer as the next message.
+The `clarification_data` is passed through all three response paths (REST `/ask`, SSE `/ask/stream`, WebSocket) and persisted in message metadata so it survives session reload. The frontend renders a `ClarificationCard` component with type-appropriate UI controls (buttons for yes/no, selectable options for multiple choice, text input for free text). The user's answer is sent as the next chat message, which the orchestrator uses to proceed with the original task.
+
+The `ask_user` tool is always available regardless of whether a database or knowledge base is connected.
 
 ---
 

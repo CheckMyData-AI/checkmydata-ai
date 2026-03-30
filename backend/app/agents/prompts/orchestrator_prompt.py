@@ -69,6 +69,12 @@ def build_orchestrator_system_prompt(
             "Delegate code/architecture questions here."
         )
 
+    sections.append(
+        "- **ask_user**: Ask the user a structured clarification question. "
+        "Use when the request is ambiguous, you need to verify assumptions, "
+        "or confirm data accuracy before proceeding."
+    )
+
     if not has_connection and not has_knowledge_base:
         sections.append("- No database or knowledge base is connected.")
         sections.append("  You can only have a general conversation.")
@@ -163,6 +169,24 @@ def build_orchestrator_system_prompt(
             "`manage_rules` with action='create'."
         )
         n += 1
+
+    sections.append("")
+    sections.append(
+        "REQUEST ANALYSIS PROTOCOL:\n"
+        "Before executing any tool, assess the user's request:\n"
+        "1. Is the question clear and specific enough to act on? If not, use "
+        "`ask_user` to clarify before proceeding.\n"
+        "2. Does the available schema, knowledge base, or project context cover "
+        "what the user is asking about? If the request references tables, metrics, "
+        "or concepts not present in the available data, ask the user to clarify.\n"
+        "3. Are there ambiguous terms (e.g. 'revenue' could mean gross or net, "
+        "'users' could mean registered or active)? When multiple interpretations "
+        "exist, ask the user which one they mean.\n"
+        "4. Does the question require assumptions about time ranges, filters, or "
+        "grouping that the user did not specify? Ask rather than guess.\n"
+        "5. For follow-up messages that answer a previous clarification question, "
+        "use that context to proceed with the original task."
+    )
 
     if has_connection:
         sections.append("")

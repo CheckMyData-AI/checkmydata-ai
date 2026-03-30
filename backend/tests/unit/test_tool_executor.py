@@ -36,7 +36,7 @@ def mock_tracker():
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def fake_step(wf_id, step, detail=""):
+    async def fake_step(wf_id, step, detail="", **kwargs):
         yield
 
     t.step = MagicMock(side_effect=fake_step)

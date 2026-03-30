@@ -132,6 +132,16 @@ class SQLAgent(BaseAgent):
     def name(self) -> str:
         return "sql"
 
+    @staticmethod
+    def _messages_preview(msgs: list[Message], max_len: int = 500) -> str:
+        parts: list[str] = []
+        for m in reversed(msgs):
+            if m.role in ("user", "assistant"):
+                parts.append(f"[{m.role}] {(m.content or '')[:200]}")
+                if len("\n".join(parts)) > max_len:
+                    break
+        return "\n".join(reversed(parts))[:max_len]
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -233,10 +243,12 @@ class SQLAgent(BaseAgent):
                 "in_progress",
                 f"SQL Agent thinking (step {iteration + 1}/{max_sql_iter})…",
             )
+            _sd_llm: dict[str, Any] = {}
             async with tracker.step(
                 wf_id,
                 "sql:llm_call",
                 f"SQL LLM call ({iteration + 1}/{max_sql_iter})",
+                step_data=_sd_llm,
             ):
                 llm_resp: LLMResponse = await self._llm.complete(
                     messages=messages,
@@ -244,6 +256,13 @@ class SQLAgent(BaseAgent):
                     preferred_provider=provider,
                     model=model,
                 )
+                _sd_llm["input_preview"] = self._messages_preview(messages)
+                _sd_llm["output_preview"] = (llm_resp.content or "")[:500]
+                if llm_resp.model:
+                    _sd_llm["model"] = llm_resp.model
+                for _uk in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    if _uk in (llm_resp.usage or {}):
+                        _sd_llm[_uk] = llm_resp.usage[_uk]
 
             self.accum_usage(total_usage, llm_resp.usage)
 
@@ -274,13 +293,22 @@ class SQLAgent(BaseAgent):
                     "in_progress",
                     f"SQL Agent → {tool_desc}",
                 )
-                async with tracker.step(wf_id, f"sql:tool:{tc.name}", f"SQL tool: {tc.name}"):
+                _sd_tool: dict[str, Any] = {}
+                _tc_args = tc.arguments or {}
+                if tc.name == "execute_query":
+                    _sd_tool["input_preview"] = (_tc_args.get("query", ""))[:1000]
+                else:
+                    _sd_tool["input_preview"] = str(_tc_args)[:500]
+                async with tracker.step(
+                    wf_id, f"sql:tool:{tc.name}", f"SQL tool: {tc.name}", step_data=_sd_tool,
+                ):
                     result_text = await self._dispatch_tool(
                         tc,
                         context,
                         wf_id,
                         run_state,
                     )
+                    _sd_tool["output_preview"] = (result_text or "")[:500]
 
                 result_text = _cap_tool_result(tc.name, result_text)
 
@@ -1434,16 +1462,18 @@ class SQLAgent(BaseAgent):
     def _format_query_results(results: QueryResult, max_rows: int = 20) -> str:
         if not results.rows:
             return "Query executed successfully but returned no rows."
+        header = "| " + " | ".join(results.columns) + " |"
+        sep = "| " + " | ".join("---" for _ in results.columns) + " |"
         lines = [
-            f"Columns: {', '.join(results.columns)}",
-            f"Total rows: {results.row_count}",
-            f"Execution time: {results.execution_time_ms:.1f}ms",
+            f"Total rows: {results.row_count}, Execution time: {results.execution_time_ms:.1f}ms",
             "",
+            header,
+            sep,
         ]
         for row in results.rows[:max_rows]:
-            lines.append(" | ".join(str(v) for v in row))
+            lines.append("| " + " | ".join(str(v) for v in row) + " |")
         if results.row_count > max_rows:
-            lines.append(f"... and {results.row_count - max_rows} more rows")
+            lines.append(f"\n... and {results.row_count - max_rows} more rows")
         return "\n".join(lines)
 
     @staticmethod

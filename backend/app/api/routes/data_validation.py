@@ -590,7 +590,7 @@ async def _run_investigation_background(
     """Launch InvestigationAgent in the background and update status as it runs."""
     from app.agents.base import AgentContext
     from app.agents.investigation_agent import InvestigationAgent
-    from app.core.workflow_tracker import WorkflowTracker
+    from app.core.workflow_tracker import tracker as singleton_tracker
     from app.llm.router import LLMRouter
     from app.models.base import async_session_factory
     from app.services.connection_service import ConnectionService
@@ -619,8 +619,10 @@ async def _run_investigation_background(
                 raise RuntimeError(f"Connection {connection_id} not found")
             cfg = await conn_svc.to_config(session, conn)
 
-        tracker = WorkflowTracker()
-        wf_id = f"investigation:{investigation_id}"
+        wf_id = await singleton_tracker.begin(
+            "investigation",
+            context={"project_id": project_id, "investigation_id": investigation_id},
+        )
 
         ctx = AgentContext(
             project_id=project_id,
@@ -628,7 +630,7 @@ async def _run_investigation_background(
             user_question="",
             chat_history=[],
             llm_router=LLMRouter(),
-            tracker=tracker,
+            tracker=singleton_tracker,
             workflow_id=wf_id,
         )
 

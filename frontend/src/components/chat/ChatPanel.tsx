@@ -5,8 +5,13 @@ import { useAppStore } from "@/stores/app-store";
 import { api, type ChatResponse, type StreamError, type QuerySuggestion, type CostEstimate } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { toast } from "@/stores/toast-store";
+import dynamic from "next/dynamic";
 import { ChatInput } from "./ChatInput";
-import { ChatMessage } from "./ChatMessage";
+import { ChatMessage, mdComponents, remarkPlugins } from "./ChatMessage";
+
+const ReactMarkdown = dynamic(() => import("react-markdown"), {
+  loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
+});
 import { SuggestionChips } from "./SuggestionChips";
 import { ThinkingLog } from "./ThinkingLog";
 import { StageProgress, type PipelineStage } from "./StageProgress";
@@ -778,7 +783,10 @@ export function ChatPanel() {
           <div className="flex gap-3">
             {streamingText ? (
               <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
-                <p className="text-text-primary text-sm whitespace-pre-wrap break-words">{streamingText}<span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" /></p>
+                <div className="chat-markdown overflow-hidden">
+                  <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents}>{streamingText}</ReactMarkdown>
+                  <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" />
+                </div>
                 <button
                   onClick={handleStop}
                   className="mt-2 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"

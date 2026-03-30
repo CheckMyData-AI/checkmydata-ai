@@ -230,11 +230,11 @@ def get_orchestrator_tools(
         tools.append(QUERY_DATABASE_TOOL)
         tools.append(PROCESS_DATA_TOOL)
         tools.append(MANAGE_RULES_TOOL)
-        tools.append(ASK_USER_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_CODEBASE_TOOL)
     if has_mcp_sources:
         from app.agents.tools.mcp_tools import QUERY_MCP_SOURCE_TOOL
 
         tools.append(QUERY_MCP_SOURCE_TOOL)
+    tools.append(ASK_USER_TOOL)
     return tools

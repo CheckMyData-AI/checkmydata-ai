@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const ReactMarkdown = dynamic(() => import("react-markdown"), {
   loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
@@ -23,7 +24,9 @@ import { SessionContinuationBanner } from "./SessionContinuationBanner";
 import { SQLExplainer } from "./SQLExplainer";
 import { VerificationBadge } from "./VerificationBadge";
 
-const mdComponents: Components = {
+export const remarkPlugins = [remarkGfm];
+
+export const mdComponents: Components = {
   p: ({ children }) => <p className="text-sm mb-2 last:mb-0">{children}</p>,
   h1: ({ children }) => <h1 className="text-lg font-semibold mb-2 mt-3 first:mt-0 break-words">{children}</h1>,
   h2: ({ children }) => <h2 className="text-base font-semibold mb-2 mt-3 first:mt-0 break-words">{children}</h2>,
@@ -372,7 +375,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
           <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
           <div className="chat-markdown overflow-hidden">
-            <ReactMarkdown components={mdComponents}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents}>{message.content}</ReactMarkdown>
           </div>
         )}
 

@@ -2,12 +2,13 @@
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────
-BACKEND_APP="checkmydata-api"
-FRONTEND_APP="checkmydata-web"
-BACKEND_API_URL="https://api.checkmydata.ai/api"
-BACKEND_WS_URL="wss://api.checkmydata.ai/api/chat/ws"
-FRONTEND_URL="https://checkmydata.ai"
-GOOGLE_CLIENT_ID="687379670843-rlce3csi6d8hbmd8iks863b7cmolid9o.apps.googleusercontent.com"
+# Override any of these via environment variables before running.
+BACKEND_APP="${BACKEND_APP:-checkmydata-api}"
+FRONTEND_APP="${FRONTEND_APP:-checkmydata-web}"
+BACKEND_API_URL="${BACKEND_API_URL:-https://api.checkmydata.ai/api}"
+BACKEND_WS_URL="${BACKEND_WS_URL:-wss://api.checkmydata.ai/api/chat/ws}"
+FRONTEND_URL="${FRONTEND_URL:-https://checkmydata.ai}"
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID env var (Google OAuth Web Client ID)}"
 
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
@@ -27,7 +28,7 @@ for arg in "$@"; do
     --frontend-only) DEPLOY_BACKEND=false ;;
     --all)           ;;
     --help|-h)       usage ;;
-    *) echo "Unknown option: $arg"; usage ;;
+    *) echo "Unknown option: $arg"; exit 1 ;;
   esac
 done
 

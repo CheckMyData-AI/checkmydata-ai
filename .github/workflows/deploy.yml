@@ -12,11 +12,11 @@ concurrency:
 
 env:
   HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-  BACKEND_APP: checkmydata-api
-  FRONTEND_APP: checkmydata-web
-  BACKEND_API_URL: https://api.checkmydata.ai/api
-  BACKEND_WS_URL: wss://api.checkmydata.ai/api/chat/ws
-  FRONTEND_URL: https://checkmydata.ai
+  BACKEND_APP: ${{ vars.BACKEND_APP || 'checkmydata-api' }}
+  FRONTEND_APP: ${{ vars.FRONTEND_APP || 'checkmydata-web' }}
+  BACKEND_API_URL: ${{ vars.BACKEND_API_URL || 'https://api.checkmydata.ai/api' }}
+  BACKEND_WS_URL: ${{ vars.BACKEND_WS_URL || 'wss://api.checkmydata.ai/api/chat/ws' }}
+  FRONTEND_URL: ${{ vars.FRONTEND_URL || 'https://checkmydata.ai' }}
 
 jobs:
   deploy:
@@ -25,6 +25,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Login to Heroku Container Registry
         run: echo "$HEROKU_API_KEY" | docker login -u _ --password-stdin registry.heroku.com

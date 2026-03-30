@@ -92,14 +92,41 @@ User connects Git repo
 ### Trace Persistence Flow
 
 ```
-Chat request arrives
-  → WorkflowTracker.begin() creates workflow_id
-    → Each orchestrator step emits events via WorkflowTracker
+Chat request arrives (any path)
+  → WorkflowTracker.begin() creates workflow_id (with project_id, user_id)
+    → Each step emits events via WorkflowTracker.step(step_data={...})
+      → step_data carries input_preview, output_preview, token_usage
+      → Noise events (token, thinking, warning) are filtered out
     → TracePersistenceService hooks into _broadcast, accumulates spans
   → WorkflowTracker.end() fires pipeline_end
     → TracePersistenceService batch-inserts RequestTrace + TraceSpan rows
-  → chat.py calls finalize_trace() with message IDs and metadata
+      → TraceSpan.input_preview  — LLM prompt / SQL query / tool args
+      → TraceSpan.output_preview — LLM response / query results / tool output
+      → TraceSpan.token_usage_json — model, prompt/completion/total tokens
+  → finalize_trace() enriches with message IDs and metadata
   → Owner opens Logs screen → GET /api/logs/ queries request_traces + trace_spans
+
+Error trace guarantees:
+  → ConversationalAgent.run() wraps orchestrator in try/except/finally
+    → If orchestrator raises without calling end(), safety net emits pipeline_end
+    → WorkflowTracker.has_ended(wf_id) prevents duplicate pipeline_end events
+  → _persist_workflow no longer skips traces with empty project_id/user_id
+    → Traces are persisted with empty IDs; finalize_trace() updates them later
+  → Stale buffers (pipeline_end never received) are persisted as failed traces
+    → _cleanup_stale_buffers creates synthetic pipeline_end event
+  → Non-streaming /ask wraps _agent.run() in try/except to finalize on crash
+  → Streaming _finalize_on_error uses fallback wf_id when original is None
+
+Traced request paths:
+  POST /api/chat/ask              — non-streaming chat (finalize on success/error/crash)
+  POST /api/chat/ask/stream       — SSE streaming (finalize on success + error/timeout)
+  WebSocket /api/chat/ws/{project}/{connection} — WebSocket chat (finalize after each message)
+  MCP tools              — query_database, search_codebase (singleton tracker)
+  Data validation        — investigation agent (singleton tracker)
+  Batch execute          — batch queries (project_id in context)
+  POST /generate-title   — lightweight LLM call (generate_title pipeline)
+  POST /explain-sql      — lightweight LLM call (explain_sql pipeline)
+  POST /summarize        — lightweight LLM call (summarize pipeline)
 ```
 
 ## Key Dependencies
@@ -135,10 +162,14 @@ Key models:
 
 ## Security Boundaries
 
-- All routes require JWT authentication (except `/auth/*` and `/health`)
+- All routes require JWT authentication (except `/auth/*` and `/api/health`)
 - Project access enforced via `ProjectMember` role checks
 - Database credentials encrypted with Fernet (MASTER_ENCRYPTION_KEY)
 - SSH tunnels for remote database access
 - Rate limiting on all mutating endpoints
 - Input validation on all Pydantic models
 - Path traversal protection on filesystem-facing parameters
+
+---
+
+For the full deep-dive into orchestrator internals, memory system, LLM routing, and data flow diagrams, see [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).

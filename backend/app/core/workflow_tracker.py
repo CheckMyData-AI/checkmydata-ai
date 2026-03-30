@@ -48,11 +48,14 @@ BACKGROUND_PIPELINES = frozenset({"index_repo", "db_index", "code_db_sync"})
 class WorkflowTracker:
     """In-memory event bus that broadcasts workflow step events to subscribers."""
 
+    _ENDED_SET_MAX = 2000
+
     def __init__(self) -> None:
         self._subscribers: list[asyncio.Queue[WorkflowEvent]] = []
         self._lock = asyncio.Lock()
         self._active_workflows: dict[str, dict[str, Any]] = {}
         self._persistence_hooks: list[Any] = []
+        self._ended_workflows: set[str] = set()
 
     def add_persistence_hook(self, callback: Any) -> None:
         """Register an async callback invoked on every broadcast (fire-and-forget)."""
@@ -86,6 +89,10 @@ class WorkflowTracker:
         self, workflow_id: str, pipeline: str, status: str = "completed", detail: str = ""
     ) -> None:
         self._active_workflows.pop(workflow_id, None)
+        self._ended_workflows.add(workflow_id)
+        if len(self._ended_workflows) > self._ENDED_SET_MAX:
+            to_remove = list(self._ended_workflows)[: self._ENDED_SET_MAX // 2]
+            self._ended_workflows -= set(to_remove)
 
         event = WorkflowEvent(
             workflow_id=workflow_id,
@@ -105,6 +112,10 @@ class WorkflowTracker:
         finally:
             workflow_id_var.set(None)
 
+    def has_ended(self, workflow_id: str) -> bool:
+        """Check whether ``end()`` was already called for *workflow_id*."""
+        return workflow_id in self._ended_workflows
+
     def get_active(self) -> list[dict[str, Any]]:
         """Return a snapshot of currently running background workflows."""
         return list(self._active_workflows.values())
@@ -114,7 +125,20 @@ class WorkflowTracker:
         return entry["pipeline"] if entry else ""
 
     @asynccontextmanager
-    async def step(self, workflow_id: str, step_name: str, detail: str = ""):
+    async def step(
+        self,
+        workflow_id: str,
+        step_name: str,
+        detail: str = "",
+        step_data: dict[str, Any] | None = None,
+    ):
+        """Context manager that emits started/completed/failed events.
+
+        ``step_data`` is a mutable dict that the caller can populate inside the
+        ``async with`` block.  Its contents are forwarded as ``extra`` on the
+        completion (or failure) event so that TracePersistenceService can store
+        input/output previews and token usage alongside the span.
+        """
         pipeline = self._resolve_pipeline(workflow_id)
         start_event = WorkflowEvent(
             workflow_id=workflow_id,
@@ -135,6 +159,7 @@ class WorkflowTracker:
                 detail=detail,
                 elapsed_ms=round(elapsed, 1),
                 pipeline=pipeline,
+                extra=dict(step_data) if step_data else {},
             )
             await self._broadcast(end_event)
         except Exception as exc:
@@ -146,6 +171,7 @@ class WorkflowTracker:
                 detail=str(exc),
                 elapsed_ms=round(elapsed, 1),
                 pipeline=pipeline,
+                extra=dict(step_data) if step_data else {},
             )
             await self._broadcast(fail_event)
             raise

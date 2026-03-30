@@ -22,6 +22,7 @@ from app.core.query_validation import (
 from app.core.retry_strategy import RetryStrategy
 from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import WorkflowTracker
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -192,13 +193,19 @@ class ValidationLoop:
                 all_warnings.extend(explain_result.warnings)
 
             # --- Execute ---
+            _sd_eq: dict[str, Any] = {"input_preview": current_query[:1000]}
             async with self._tracker.step(
                 workflow_id,
                 "execute_query",
                 f"Running query (attempt {attempt_num}/{self._config.max_retries})",
+                step_data=_sd_eq,
             ):
                 try:
                     results = await connector.execute_query(current_query)
+                    _sd_eq["output_preview"] = (
+                        f"{results.row_count} rows, {len(results.columns)} cols "
+                        f"in {results.execution_time_ms:.0f}ms"
+                    )
                 except Exception as exc:
                     logger.warning("execute_query raised: %s", exc)
                     classified = self._classifier.classify(
@@ -283,12 +290,6 @@ class ValidationLoop:
 
             # --- Success ---
             attempts.append(attempt)
-            await self._tracker.emit(
-                workflow_id,
-                "execute_query",
-                "completed",
-                f"{results.row_count} rows in {results.execution_time_ms:.0f}ms",
-            )
             return ValidationLoopResult(
                 success=True,
                 query=current_query,

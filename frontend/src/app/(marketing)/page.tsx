@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://checkmydata.ai" },
 };
 
-const GITHUB_URL = "https://github.com/ssheleg/checkmydata-ai";
+const GITHUB_URL = "https://github.com/CheckMyData-AI/checkmydata-ai";
 
 const GitHubIcon = ({ size = 18 }: { size?: number }) => (
   <svg

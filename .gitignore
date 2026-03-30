@@ -43,6 +43,24 @@ frontend/out/
 .DS_Store
 Thumbs.db
 
+# Certificates, keys, and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+credentials.json
+service-account*.json
+
+# SQLite journals
+*.db-journal
+*.db-wal
+
+# direnv
+.envrc
+
 # Dev tooling
 .pids/
 logs/

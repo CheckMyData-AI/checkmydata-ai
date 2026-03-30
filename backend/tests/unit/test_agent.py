@@ -32,11 +32,12 @@ def mock_tracker():
     t.begin = AsyncMock(return_value="wf-1")
     t.end = AsyncMock()
     t.emit = AsyncMock()
+    t.has_ended = MagicMock(return_value=True)
 
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def fake_step(wf_id, step, detail=""):
+    async def fake_step(wf_id, step, detail="", **kwargs):
         yield
 
     t.step = MagicMock(side_effect=fake_step)
@@ -867,6 +868,127 @@ class TestClarificationFlow:
         resp = await agent.run(question="show me data", project_id="proj-1")
         assert resp.response_type == "clarification_request"
         assert "Which table?" in resp.answer
+
+    @pytest.mark.asyncio
+    async def test_clarification_data_payload_is_populated(self, agent, mock_llm):
+        """Verify the structured clarification_data dict reaches the response."""
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-ask-mc",
+                        name="ask_user",
+                        arguments={
+                            "question": "Which currency?",
+                            "question_type": "multiple_choice",
+                            "options": "USD, EUR, GBP",
+                            "context": "Revenue can be in different currencies",
+                        },
+                    ),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        resp = await agent.run(question="show me revenue", project_id="proj-1")
+        assert resp.response_type == "clarification_request"
+        assert resp.clarification_data is not None
+        assert resp.clarification_data["question"] == "Which currency?"
+        assert resp.clarification_data["question_type"] == "multiple_choice"
+        assert resp.clarification_data["options"] == ["USD", "EUR", "GBP"]
+        assert resp.clarification_data["context"] == "Revenue can be in different currencies"
+
+    @pytest.mark.asyncio
+    async def test_ask_user_available_without_db_connection(self, agent, mock_llm):
+        """ask_user tool must be available even when no DB is connected."""
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-ask-kb",
+                        name="ask_user",
+                        arguments={
+                            "question": "Which module are you asking about?",
+                            "question_type": "free_text",
+                        },
+                    ),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        resp = await agent.run(
+            question="how does authentication work?",
+            project_id="proj-1",
+            connection_config=None,
+        )
+        assert resp.response_type == "clarification_request"
+        assert resp.clarification_data is not None
+        assert resp.clarification_data["question"] == "Which module are you asking about?"
+        assert resp.clarification_data["question_type"] == "free_text"
+
+    @pytest.mark.asyncio
+    async def test_yes_no_clarification_has_no_options(self, agent, mock_llm):
+        """yes_no type should work and options list should be empty."""
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-yn",
+                        name="ask_user",
+                        arguments={
+                            "question": "Is the amount in cents?",
+                            "question_type": "yes_no",
+                        },
+                    ),
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        resp = await agent.run(question="show amounts", project_id="proj-1")
+        assert resp.response_type == "clarification_request"
+        assert resp.clarification_data is not None
+        assert resp.clarification_data["question_type"] == "yes_no"
+        assert resp.clarification_data["options"] == []
+
+
+class TestAskUserToolAvailability:
+    """Verify ask_user tool is always in the orchestrator tool set."""
+
+    def test_ask_user_present_with_connection(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_connection=True)
+        tool_names = [t.name for t in tools]
+        assert "ask_user" in tool_names
+
+    def test_ask_user_present_without_connection(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_connection=False)
+        tool_names = [t.name for t in tools]
+        assert "ask_user" in tool_names
+
+    def test_ask_user_present_with_knowledge_base_only(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_connection=False, has_knowledge_base=True)
+        tool_names = [t.name for t in tools]
+        assert "ask_user" in tool_names
+        assert "search_codebase" in tool_names
+
+    def test_ask_user_present_with_no_capabilities(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(
+            has_connection=False, has_knowledge_base=False, has_mcp_sources=False
+        )
+        tool_names = [t.name for t in tools]
+        assert "ask_user" in tool_names
 
 
 class TestVizFallback:

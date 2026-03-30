@@ -13,7 +13,7 @@ from typing import Any
 from app.agents.base import AgentContext
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent
 from app.connectors.base import QueryResult
-from app.core.workflow_tracker import WorkflowTracker
+from app.core.workflow_tracker import tracker as _singleton_tracker
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 _project_svc = ProjectService()
 _connection_svc = ConnectionService()
 _db_index_svc = DbIndexService()
+
+
+def _get_trace_svc():
+    """Best-effort retrieval of the global TracePersistenceService."""
+    try:
+        import app.main as _main_mod
+        _app = getattr(_main_mod, "app", None)
+        if _app:
+            return getattr(_app.state, "trace_persistence_service", None)
+    except Exception:
+        pass
+    return None
 
 
 def _make_orchestrator() -> OrchestratorAgent:
@@ -93,8 +105,10 @@ async def query_database(
         config = await _connection_svc.to_config(session, conn)
         config.connection_id = conn.id
 
-    tracker = WorkflowTracker()
-    wf_id = await tracker.begin("mcp_query_database")
+    wf_id = await _singleton_tracker.begin(
+        "mcp_query_database",
+        context={"project_id": project_id, "user_id": "mcp-user"},
+    )
 
     ctx = AgentContext(
         project_id=project_id,
@@ -102,7 +116,7 @@ async def query_database(
         user_question=question,
         chat_history=[],
         llm_router=LLMRouter(),
-        tracker=tracker,
+        tracker=_singleton_tracker,
         workflow_id=wf_id,
         user_id="mcp-user",
         project_name=project.name if project else None,
@@ -110,6 +124,22 @@ async def query_database(
 
     orchestrator = _make_orchestrator()
     resp: AgentResponse = await orchestrator.run(ctx)
+
+    try:
+        trace_svc = _get_trace_svc()
+        if trace_svc is not None:
+            await trace_svc.finalize_trace(
+                wf_id,
+                project_id=project_id,
+                user_id="mcp-user",
+                question=question,
+                response_type=resp.response_type or "text",
+                status="failed" if resp.error else "completed",
+                error_message=resp.error,
+            )
+    except Exception:
+        logger.warning("MCP: failed to finalize trace", exc_info=True)
+
     return json.dumps(_agent_response_to_dict(resp), default=str)
 
 
@@ -120,8 +150,10 @@ async def search_codebase(project_id: str, question: str) -> str:
         if not project:
             return json.dumps({"error": f"Project '{project_id}' not found"})
 
-    tracker = WorkflowTracker()
-    wf_id = await tracker.begin("mcp_search_codebase")
+    wf_id = await _singleton_tracker.begin(
+        "mcp_search_codebase",
+        context={"project_id": project_id, "user_id": "mcp-user"},
+    )
 
     ctx = AgentContext(
         project_id=project_id,
@@ -129,7 +161,7 @@ async def search_codebase(project_id: str, question: str) -> str:
         user_question=question,
         chat_history=[],
         llm_router=LLMRouter(),
-        tracker=tracker,
+        tracker=_singleton_tracker,
         workflow_id=wf_id,
         user_id="mcp-user",
         project_name=project.name if project else None,
@@ -137,6 +169,22 @@ async def search_codebase(project_id: str, question: str) -> str:
 
     orchestrator = _make_orchestrator()
     resp: AgentResponse = await orchestrator.run(ctx)
+
+    try:
+        trace_svc = _get_trace_svc()
+        if trace_svc is not None:
+            await trace_svc.finalize_trace(
+                wf_id,
+                project_id=project_id,
+                user_id="mcp-user",
+                question=question,
+                response_type=resp.response_type or "text",
+                status="failed" if resp.error else "completed",
+                error_message=resp.error,
+            )
+    except Exception:
+        logger.warning("MCP: failed to finalize trace", exc_info=True)
+
     return json.dumps(_agent_response_to_dict(resp), default=str)
 
 

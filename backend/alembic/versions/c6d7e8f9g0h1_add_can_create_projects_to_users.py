@@ -5,6 +5,8 @@ Revises: b4c5d6e7f8g9
 Create Date: 2026-03-29
 """
 
+import os
+
 import sqlalchemy as sa
 
 from alembic import op
@@ -14,7 +16,9 @@ down_revision = "b4c5d6e7f8g9"
 branch_labels = None
 depends_on = None
 
-_ADMIN_EMAILS = ("sergeysheleg4@gmail.com", "sergey@appvillis.com")
+_ADMIN_EMAILS = tuple(
+    e.strip() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()
+)
 
 
 def upgrade() -> None:
@@ -23,16 +27,17 @@ def upgrade() -> None:
             sa.Column("can_create_projects", sa.Boolean(), server_default="0", nullable=False),
         )
 
-    users = sa.table(
-        "users",
-        sa.column("email", sa.String),
-        sa.column("can_create_projects", sa.Boolean),
-    )
-    op.execute(
-        users.update()
-        .where(users.c.email.in_(_ADMIN_EMAILS))
-        .values(can_create_projects=True)
-    )
+    if _ADMIN_EMAILS:
+        users = sa.table(
+            "users",
+            sa.column("email", sa.String),
+            sa.column("can_create_projects", sa.Boolean),
+        )
+        op.execute(
+            users.update()
+            .where(users.c.email.in_(_ADMIN_EMAILS))
+            .values(can_create_projects=True)
+        )
 
 
 def downgrade() -> None:

@@ -51,6 +51,16 @@ class KnowledgeAgent(BaseAgent):
     def name(self) -> str:
         return "knowledge"
 
+    @staticmethod
+    def _messages_preview(msgs: list[Message], max_len: int = 500) -> str:
+        parts: list[str] = []
+        for m in reversed(msgs):
+            if m.role in ("user", "assistant"):
+                parts.append(f"[{m.role}] {(m.content or '')[:200]}")
+                if len("\n".join(parts)) > max_len:
+                    break
+        return "\n".join(reversed(parts))[:max_len]
+
     async def run(  # type: ignore[override]
         self,
         context: AgentContext,
@@ -91,10 +101,12 @@ class KnowledgeAgent(BaseAgent):
                 "in_progress",
                 f"Knowledge Agent thinking (step {iteration + 1}/{max_kb_iters})…",
             )
+            _sd_kllm: dict[str, Any] = {}
             async with tracker.step(
                 wf_id,
                 "knowledge:llm_call",
                 f"Knowledge LLM call ({iteration + 1}/{max_kb_iters})",
+                step_data=_sd_kllm,
             ):
                 llm_resp: LLMResponse = await context.llm_router.complete(
                     messages=messages,
@@ -102,6 +114,13 @@ class KnowledgeAgent(BaseAgent):
                     preferred_provider=context.preferred_provider,
                     model=context.model,
                 )
+                _sd_kllm["input_preview"] = self._messages_preview(messages)
+                _sd_kllm["output_preview"] = (llm_resp.content or "")[:500]
+                if llm_resp.model:
+                    _sd_kllm["model"] = llm_resp.model
+                for _uk in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    if _uk in (llm_resp.usage or {}):
+                        _sd_kllm[_uk] = llm_resp.usage[_uk]
 
             self.accum_usage(total_usage, llm_resp.usage)
 
@@ -130,12 +149,17 @@ class KnowledgeAgent(BaseAgent):
                     "in_progress",
                     f"Knowledge Agent → {tc.name}",
                 )
+                _sd_ktool: dict[str, Any] = {
+                    "input_preview": str(tc.arguments or {})[:500],
+                }
                 async with tracker.step(
                     wf_id,
                     f"knowledge:tool:{tc.name}",
                     f"Knowledge tool: {tc.name}",
+                    step_data=_sd_ktool,
                 ):
                     result_text = await self._dispatch_tool(tc, context)
+                    _sd_ktool["output_preview"] = (result_text or "")[:500]
 
                 tool_call_log.append(
                     {

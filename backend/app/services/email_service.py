@@ -245,7 +245,7 @@ class EmailService:
 </table>"""
 
         await self._send(
-            to="contact@checkmydata.yay",
+            to="contact@checkmydata.ai",
             subject=f"Project access request from {safe_email}",
             html=_base_html("Access Request", body),
             idempotency_key=f"access-request/{user_id}",

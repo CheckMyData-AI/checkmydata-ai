@@ -428,6 +428,7 @@ class ChatResponse(BaseModel):
     steps_used: int = 0
     steps_total: int = 0
     continuation_context: str | None = None
+    clarification_data: dict | None = None
 
 
 class SessionCreate(BaseModel):
@@ -544,26 +545,50 @@ async def generate_session_title(
     if not first_user:
         raise HTTPException(status_code=400, detail="No user messages in session")
 
+    session_obj = await _chat_svc.get_session(db, session_id)
+    _gt_project_id = session_obj.project_id if session_obj else ""
+    wf_id = await tracker.begin(
+        "generate_title",
+        context={"project_id": _gt_project_id, "user_id": user["user_id"]},
+    )
+    _gt_error: str | None = None
     try:
         router = LLMRouter()
-        resp = await router.complete(
-            messages=[
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "Generate a short title (max 6 words) for a database chat session"
-                        " based on the user's first question."
-                        " Reply with ONLY the title, no quotes."
+        async with tracker.step(wf_id, "generate_title:llm_call", "Generate session title"):
+            resp = await router.complete(
+                messages=[
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            "Generate a short title (max 6 words) for a database chat session"
+                            " based on the user's first question."
+                            " Reply with ONLY the title, no quotes."
+                        ),
                     ),
-                ),
-                LLMMessage(role="user", content=first_user[:300]),
-            ],
-            max_tokens=30,
-            temperature=0.3,
-        )
+                    LLMMessage(role="user", content=first_user[:300]),
+                ],
+                max_tokens=30,
+                temperature=0.3,
+            )
         title = resp.content.strip().strip('"').strip("'")[:80] or first_user[:50]
     except Exception:
         title = first_user[:50]
+        _gt_error = "LLM call failed, used fallback title"
+    finally:
+        trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+        if trace_svc:
+            try:
+                await trace_svc.finalize_trace(
+                    wf_id,
+                    project_id=_gt_project_id,
+                    user_id=user["user_id"],
+                    question=f"[generate-title] {first_user[:100]}",
+                    response_type="generate_title",
+                    status="failed" if _gt_error else "completed",
+                    error_message=_gt_error,
+                )
+            except Exception:
+                logger.warning("Failed to finalize generate-title trace", exc_info=True)
 
     updated = await _chat_svc.update_session_title(db, session_id, title)
     return updated
@@ -839,20 +864,44 @@ async def ask(
     if body.continuation_context:
         extra["continuation_context"] = body.continuation_context
 
-    result = await _agent.run(
-        question=body.message,
-        project_id=body.project_id,
-        connection_config=config,
-        chat_history=history[:-1],
-        preferred_provider=agent_provider,
-        model=agent_model,
-        sql_provider=sql_provider,
-        sql_model=sql_model,
-        project_name=project.name if project else None,
-        user_id=user["user_id"],
-        extra=extra,
-        max_steps=max_steps,
-    )
+    try:
+        result = await _agent.run(
+            question=body.message,
+            project_id=body.project_id,
+            connection_config=config,
+            chat_history=history[:-1],
+            preferred_provider=agent_provider,
+            model=agent_model,
+            sql_provider=sql_provider,
+            sql_model=sql_model,
+            project_name=project.name if project else None,
+            user_id=user["user_id"],
+            extra=extra,
+            max_steps=max_steps,
+        )
+    except Exception as agent_exc:
+        logger.exception("Agent run raised an exception")
+        _exc_msg = str(agent_exc)[:500]
+        try:
+            trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+            if trace_svc is not None:
+                await trace_svc.finalize_trace(
+                    f"unknown-{session_id}",
+                    project_id=body.project_id,
+                    user_id=user["user_id"],
+                    session_id=session_id,
+                    message_id=user_msg.id,
+                    question=body.message,
+                    response_type="error",
+                    status="failed",
+                    error_message=_exc_msg,
+                )
+        except Exception:
+            logger.warning("Failed to finalize trace after agent crash", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred while processing your request.",
+        ) from agent_exc
 
     viz_data = None
     if result.results and not result.error:
@@ -914,6 +963,7 @@ async def ask(
             "staleness_warning": result.staleness_warning,
             "insights": result.insights or [],
             "suggested_followups": result.suggested_followups or [],
+            "clarification_data": result.clarification_data,
         },
         tool_calls_json=tool_calls_str,
     )
@@ -1007,6 +1057,7 @@ async def ask(
         steps_used=result.steps_used,
         steps_total=result.steps_total,
         continuation_context=result.continuation_context,
+        clarification_data=result.clarification_data,
     )
 
 
@@ -1182,6 +1233,30 @@ async def ask_stream(
 
         task = asyncio.create_task(_process())
 
+        async def _finalize_on_error(workflow_id: str | None, error_msg: str) -> None:
+            effective_wf_id = workflow_id or f"stream-error-{session_id}"
+            if not workflow_id:
+                logger.warning(
+                    "Stream error but wf_id is None; using fallback ID %s",
+                    effective_wf_id[:16],
+                )
+            try:
+                trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                if trace_svc is not None:
+                    await trace_svc.finalize_trace(
+                        effective_wf_id,
+                        project_id=body.project_id,
+                        user_id=user["user_id"],
+                        session_id=session_id,
+                        message_id=user_message_id,
+                        question=body.message,
+                        response_type="error",
+                        status="failed",
+                        error_message=error_msg[:500],
+                    )
+            except Exception:
+                logger.warning("Failed to finalize trace on error path", exc_info=True)
+
         try:
             wf_id = None
             safety = app_settings.stream_safety_margin_seconds
@@ -1259,6 +1334,7 @@ async def ask_stream(
                 remaining = wait_deadline - time.monotonic()
                 if remaining <= 0:
                     task.cancel()
+                    await _finalize_on_error(wf_id, "Request timed out")
                     error_payload = {
                         "error": "Request timed out",
                         "error_type": "timeout",
@@ -1275,11 +1351,21 @@ async def ask_stream(
                 except TimeoutError:
                     yield ": heartbeat\n\n"
                 except Exception as exc:
+                    await _finalize_on_error(wf_id, str(exc))
                     error_payload = _build_structured_error(exc)
                     yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
                     return
             result = result_holder[0] if result_holder else None
             if not result:
+                _task_err_msg = "No result produced"
+                if task.done() and not task.cancelled():
+                    try:
+                        task_exc = task.exception()
+                        if task_exc:
+                            _task_err_msg = f"Agent error: {task_exc}"[:500]
+                    except Exception:
+                        pass
+                await _finalize_on_error(wf_id, _task_err_msg)
                 error_payload = {
                     "error": "No result",
                     "error_type": "internal",
@@ -1357,6 +1443,7 @@ async def ask_stream(
                         "staleness_warning": result.staleness_warning,
                         "insights": result.insights or [],
                         "suggested_followups": result.suggested_followups or [],
+                        "clarification_data": result.clarification_data,
                     },
                     tool_calls_json=tool_calls_str,
                 )
@@ -1448,6 +1535,7 @@ async def ask_stream(
                 "steps_used": result.steps_used,
                 "steps_total": result.steps_total,
                 "continuation_context": result.continuation_context,
+                "clarification_data": result.clarification_data,
             }
             yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
         finally:
@@ -1625,7 +1713,8 @@ async def chat_websocket(
                 continue
 
             async with async_session_factory() as db:
-                await _chat_svc.add_message(db, session_id, "user", message)
+                ws_user_msg = await _chat_svc.add_message(db, session_id, "user", message)
+                ws_user_message_id = ws_user_msg.id
                 history = await _chat_svc.get_history_as_messages(db, session_id)
 
             queue = await tracker.subscribe()
@@ -1702,6 +1791,7 @@ async def chat_websocket(
                             "response_type": result.response_type,
                             "staleness_warning": result.staleness_warning,
                             "suggested_followups": result.suggested_followups or [],
+                            "clarification_data": result.clarification_data,
                         },
                         tool_calls_json=ws_tool_calls_str,
                     )
@@ -1728,6 +1818,43 @@ async def chat_websocket(
                     except Exception:
                         logger.warning("WS: Failed to record token usage", exc_info=True)
 
+                    if result.workflow_id:
+                        try:
+                            trace_svc = getattr(websocket.app.state, "trace_persistence_service", None)
+                            if trace_svc is not None:
+                                await trace_svc.finalize_trace(
+                                    result.workflow_id,
+                                    project_id=project_id,
+                                    user_id=user_id,
+                                    session_id=session_id,
+                                    message_id=ws_user_message_id,
+                                    assistant_message_id=ws_assistant_msg.id,
+                                    question=message,
+                                    response_type=result.response_type or "text",
+                                    status="failed" if result.error else "completed",
+                                    error_message=result.error,
+                                    total_duration_ms=(
+                                        result.results.execution_time_ms if result.results else None
+                                    ),
+                                    total_tokens=ws_usage.get("total_tokens", 0)
+                                    or (
+                                        ws_usage.get("prompt_tokens", 0)
+                                        + ws_usage.get("completion_tokens", 0)
+                                    ),
+                                    estimated_cost_usd=_estimate_cost(
+                                        result.llm_model,
+                                        ws_usage.get("prompt_tokens", 0),
+                                        ws_usage.get("completion_tokens", 0),
+                                    ),
+                                    llm_provider=result.llm_provider or "unknown",
+                                    llm_model=result.llm_model or "unknown",
+                                    steps_used=result.steps_used,
+                                    steps_total=result.steps_total,
+                                    tool_call_log=result.tool_call_log,
+                                )
+                        except Exception:
+                            logger.warning("WS: Failed to finalize request trace", exc_info=True)
+
                 await websocket.send_json(
                     {
                         "type": "response",
@@ -1744,6 +1871,7 @@ async def chat_websocket(
                         "assistant_message_id": ws_assistant_msg.id,
                         "rules_changed": _has_rules_changed(result.tool_call_log),
                         "suggested_followups": result.suggested_followups or [],
+                        "clarification_data": result.clarification_data,
                     }
                 )
             finally:
@@ -1805,28 +1933,50 @@ async def explain_sql(
 
     db_hint = f" (Database: {body.db_type})" if body.db_type else ""
     llm_router = LLMRouter()
+    _es_wf_id = await tracker.begin(
+        "explain_sql",
+        context={"project_id": body.project_id, "user_id": user["user_id"]},
+    )
+    _es_error: str | None = None
     try:
-        resp = await llm_router.complete(
-            messages=[
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "Explain this SQL query in plain English. "
-                        "For each clause, explain what it does and why. "
-                        "Be concise." + db_hint
+        async with tracker.step(_es_wf_id, "explain_sql:llm_call", "Explain SQL"):
+            resp = await llm_router.complete(
+                messages=[
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            "Explain this SQL query in plain English. "
+                            "For each clause, explain what it does and why. "
+                            "Be concise." + db_hint
+                        ),
                     ),
-                ),
-                LLMMessage(role="user", content=body.sql),
-            ],
-            max_tokens=1024,
-            temperature=0.2,
-            preferred_provider=provider,
-            model=model,
-        )
+                    LLMMessage(role="user", content=body.sql),
+                ],
+                max_tokens=1024,
+                temperature=0.2,
+                preferred_provider=provider,
+                model=model,
+            )
         explanation = resp.content.strip()
     except Exception as exc:
+        _es_error = str(exc)
         logger.warning("SQL explanation LLM call failed: %s", exc)
         raise HTTPException(status_code=502, detail="Failed to generate explanation") from exc
+    finally:
+        trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+        if trace_svc:
+            try:
+                await trace_svc.finalize_trace(
+                    _es_wf_id,
+                    project_id=body.project_id,
+                    user_id=user["user_id"],
+                    question=f"[explain-sql] {body.sql[:100]}",
+                    response_type="explain_sql",
+                    status="failed" if _es_error else "completed",
+                    error_message=_es_error,
+                )
+            except Exception:
+                logger.warning("Failed to finalize explain-sql trace", exc_info=True)
 
     result = {"explanation": explanation, "complexity": complexity}
 
@@ -1916,20 +2066,42 @@ async def summarize_message(
         prompt_parts.append(f"\nData:\n{data_preview[:3000]}")
 
     llm_router = LLMRouter()
+    _sm_wf_id = await tracker.begin(
+        "summarize",
+        context={"project_id": body.project_id, "user_id": user["user_id"]},
+    )
+    _sm_error: str | None = None
     try:
-        resp = await llm_router.complete(
-            messages=[
-                LLMMessage(role="system", content="\n".join(prompt_parts)),
-                LLMMessage(role="user", content="Summarize."),
-            ],
-            max_tokens=512,
-            temperature=0.3,
-            preferred_provider=provider,
-            model=model,
-        )
+        async with tracker.step(_sm_wf_id, "summarize:llm_call", "Summarize message"):
+            resp = await llm_router.complete(
+                messages=[
+                    LLMMessage(role="system", content="\n".join(prompt_parts)),
+                    LLMMessage(role="user", content="Summarize."),
+                ],
+                max_tokens=512,
+                temperature=0.3,
+                preferred_provider=provider,
+                model=model,
+            )
         summary = resp.content.strip()
     except Exception as exc:
+        _sm_error = str(exc)
         logger.warning("Summarize LLM call failed: %s", exc)
         raise HTTPException(status_code=502, detail="Failed to generate summary") from exc
+    finally:
+        trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+        if trace_svc:
+            try:
+                await trace_svc.finalize_trace(
+                    _sm_wf_id,
+                    project_id=body.project_id,
+                    user_id=user["user_id"],
+                    question=f"[summarize] {question[:100]}",
+                    response_type="summarize",
+                    status="failed" if _sm_error else "completed",
+                    error_message=_sm_error,
+                )
+            except Exception:
+                logger.warning("Failed to finalize summarize trace", exc_info=True)
 
     return {"summary": summary}

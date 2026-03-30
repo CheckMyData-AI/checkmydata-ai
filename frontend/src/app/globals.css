@@ -168,11 +168,8 @@ select:focus-visible {
 }
 
 .chat-markdown table {
-  display: block;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .sidebar-scroll::-webkit-scrollbar,

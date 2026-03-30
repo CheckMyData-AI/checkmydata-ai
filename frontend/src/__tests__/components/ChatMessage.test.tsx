@@ -55,9 +55,23 @@ vi.mock("@/lib/viz-utils", () => ({
   rerenderViz: vi.fn(),
 }));
 
+vi.mock("@/components/chat/ClarificationCard", () => ({
+  ClarificationCard: ({ data, onSubmit }: { data: { question: string }; onSubmit: (answer: string) => void }) => (
+    <div data-testid="clarification-card">
+      <span>{data.question}</span>
+      <button onClick={() => onSubmit("test-answer")}>Submit</button>
+    </div>
+  ),
+}));
+
+vi.mock("remark-gfm", () => ({
+  __esModule: true,
+  default: () => {},
+}));
+
 vi.mock("react-markdown", () => ({
   __esModule: true,
-  default: ({ children, components }: { children: string; components?: Record<string, unknown> }) => {
+  default: ({ children, components }: { children: string; remarkPlugins?: unknown[]; components?: Record<string, unknown> }) => {
     const P = (components?.p as React.FC<{ children: React.ReactNode }>) || (({ children: c }: { children: React.ReactNode }) => <p>{c}</p>);
     return <P>{children}</P>;
   },
@@ -371,5 +385,93 @@ describe("ChatMessage", () => {
     );
 
     expect(screen.getByText(/15 messages summarized/)).toBeInTheDocument();
+  });
+
+  it("renders ClarificationCard when clarificationData is present", async () => {
+    const onSend = vi.fn();
+    await renderMessage(
+      {
+        role: "assistant",
+        content: "Which currency are you asking about?",
+        responseType: "clarification_request",
+        clarificationData: {
+          question: "Which currency?",
+          question_type: "multiple_choice",
+          options: ["USD", "EUR", "GBP"],
+          context: "Revenue can be reported in different currencies",
+        },
+      },
+      null,
+      undefined,
+      onSend,
+    );
+
+    expect(screen.getByTestId("clarification-card")).toBeInTheDocument();
+    expect(screen.getByText("Which currency?")).toBeInTheDocument();
+  });
+
+  it("does not render ClarificationCard without clarificationData", async () => {
+    await renderMessage(
+      {
+        role: "assistant",
+        content: "Which currency are you asking about?",
+        responseType: "clarification_request",
+      },
+      null,
+      undefined,
+      vi.fn(),
+    );
+
+    expect(screen.queryByTestId("clarification-card")).not.toBeInTheDocument();
+  });
+
+  it("does not render ClarificationCard without onSendMessage callback", async () => {
+    await renderMessage(
+      {
+        role: "assistant",
+        content: "Which currency are you asking about?",
+        responseType: "clarification_request",
+        clarificationData: {
+          question: "Which currency?",
+          question_type: "free_text",
+        },
+      },
+    );
+
+    expect(screen.queryByTestId("clarification-card")).not.toBeInTheDocument();
+  });
+
+  it("ClarificationCard submit sends message via onSendMessage", async () => {
+    const onSend = vi.fn();
+    await renderMessage(
+      {
+        role: "assistant",
+        content: "Is the amount in cents?",
+        responseType: "clarification_request",
+        clarificationData: {
+          question: "Is the amount in cents?",
+          question_type: "yes_no",
+        },
+      },
+      null,
+      undefined,
+      onSend,
+    );
+
+    expect(screen.getByTestId("clarification-card")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Submit"));
+    expect(onSend).toHaveBeenCalledWith("test-answer");
+  });
+
+  it("shows Question badge for clarification_request response type", async () => {
+    await renderMessage(
+      {
+        role: "assistant",
+        content: "Clarification needed",
+        responseType: "clarification_request",
+      },
+    );
+
+    expect(screen.getByText("Question")).toBeInTheDocument();
   });
 });

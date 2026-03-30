@@ -186,7 +186,14 @@ class BatchService:
             batch.status = "running"
             await db.commit()
 
-            wf_id = await tracker.begin("batch_execute", context={"batch_id": batch_id})
+            wf_id = await tracker.begin(
+                "batch_execute",
+                context={
+                    "batch_id": batch_id,
+                    "project_id": batch.project_id,
+                    "user_id": user_id or "",
+                },
+            )
 
             if parallel and total > 1:
                 sem = asyncio.Semaphore(_MAX_BATCH_CONCURRENCY)

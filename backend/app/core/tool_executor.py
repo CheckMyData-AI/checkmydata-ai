@@ -1056,16 +1056,18 @@ class ToolExecutor:
         if not results.rows:
             return "Query executed successfully but returned no rows."
 
+        header = "| " + " | ".join(results.columns) + " |"
+        sep = "| " + " | ".join("---" for _ in results.columns) + " |"
         lines = [
-            f"Columns: {', '.join(results.columns)}",
-            f"Total rows: {results.row_count}",
-            f"Execution time: {results.execution_time_ms:.1f}ms",
+            f"Total rows: {results.row_count}, Execution time: {results.execution_time_ms:.1f}ms",
             "",
+            header,
+            sep,
         ]
         for row in results.rows[:max_rows]:
-            lines.append(" | ".join(str(v) for v in row))
+            lines.append("| " + " | ".join(str(v) for v in row) + " |")
         if results.row_count > max_rows:
-            lines.append(f"... and {results.row_count - max_rows} more rows")
+            lines.append(f"\n... and {results.row_count - max_rows} more rows")
         return "\n".join(lines)
 
     @staticmethod

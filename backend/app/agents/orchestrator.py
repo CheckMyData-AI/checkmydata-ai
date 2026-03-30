@@ -78,6 +78,38 @@ class _ClarificationRequestError(Exception):
 
 PROMPT_VERSION = "v2.1"
 
+_PREVIEW_MAX = 500
+
+
+def _messages_preview(messages: list[Message], max_len: int = _PREVIEW_MAX) -> str:
+    """Build a truncated summary of the last user/assistant messages for trace previews."""
+    parts: list[str] = []
+    for m in reversed(messages):
+        if m.role in ("user", "assistant"):
+            snippet = m.content[:200] if m.content else ""
+            parts.append(f"[{m.role}] {snippet}")
+            if len("\n".join(parts)) > max_len:
+                break
+    return "\n".join(reversed(parts))[:max_len]
+
+
+def _llm_step_data(
+    messages: list[Message],
+    resp: LLMResponse,
+) -> dict[str, Any]:
+    """Build step_data dict for an LLM call span."""
+    data: dict[str, Any] = {
+        "input_preview": _messages_preview(messages),
+        "output_preview": (resp.content or "")[:_PREVIEW_MAX],
+    }
+    if resp.model:
+        data["model"] = resp.model
+    usage = resp.usage or {}
+    for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        if k in usage:
+            data[k] = usage[k]
+    return data
+
 
 def _is_token_limit_error(exc: BaseException) -> bool:
     """Return True if *exc* (or its __cause__) is a token limit error."""
@@ -104,7 +136,7 @@ class AgentResponse:
     llm_provider: str = ""
     llm_model: str = ""
     staleness_warning: str | None = None
-    response_type: str = "text"  # text | sql_result | knowledge | error | step_limit_reached
+    response_type: str = "text"  # text | sql_result | knowledge | error | clarification_request | step_limit_reached
     tool_call_log: list[dict] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
@@ -113,6 +145,7 @@ class AgentResponse:
     steps_used: int = 0
     steps_total: int = 0
     continuation_context: str | None = None
+    clarification_data: dict | None = None
 
 
 class OrchestratorAgent(BaseAgent):
@@ -376,10 +409,12 @@ class OrchestratorAgent(BaseAgent):
                     f"Analyzing request (step {iteration + 1}/{max_iter})…",
                 )
                 try:
+                    _sd: dict[str, Any] = {}
                     async with self._tracker.step(
                         wf_id,
                         "orchestrator:llm_call",
                         f"Orchestrator LLM ({iteration + 1}/{max_iter})",
+                        step_data=_sd,
                     ):
                         llm_resp = await self._llm_call_with_retry(
                             messages=messages,
@@ -388,6 +423,7 @@ class OrchestratorAgent(BaseAgent):
                             model=context.model,
                             wf_id=wf_id,
                         )
+                        _sd.update(_llm_step_data(messages, llm_resp))
                 except (LLMAllProvidersFailedError, LLMTokenLimitError) as exc:
                     if _is_token_limit_error(exc):
                         logger.info(
@@ -397,10 +433,12 @@ class OrchestratorAgent(BaseAgent):
                         aggressive = int(loop_budget * 0.6)
                         messages, _ = trim_loop_messages(messages, aggressive)
                         try:
+                            _sd_r: dict[str, Any] = {}
                             async with self._tracker.step(
                                 wf_id,
                                 "orchestrator:llm_call",
                                 "Orchestrator LLM (recovery)",
+                                step_data=_sd_r,
                             ):
                                 llm_resp = await self._llm_call_with_retry(
                                     messages=messages,
@@ -409,6 +447,7 @@ class OrchestratorAgent(BaseAgent):
                                     model=context.model,
                                     wf_id=wf_id,
                                 )
+                                _sd_r.update(_llm_step_data(messages, llm_resp))
                         except LLMError:
                             partial = [
                                 "Note: This answer is based on partial analysis. "
@@ -529,10 +568,12 @@ class OrchestratorAgent(BaseAgent):
                         messages, last_sql_result, knowledge_sources, loop_budget
                     )
                     try:
+                        _sd_s: dict[str, Any] = {}
                         async with self._tracker.step(
                             wf_id,
                             "orchestrator:llm_call",
                             "Orchestrator LLM (final synthesis)",
+                            step_data=_sd_s,
                         ):
                             synth_resp = await self._llm_call_with_retry(
                                 messages=synthesis_messages,
@@ -541,6 +582,7 @@ class OrchestratorAgent(BaseAgent):
                                 model=context.model,
                                 wf_id=wf_id,
                             )
+                            _sd_s.update(_llm_step_data(synthesis_messages, synth_resp))
                         self.accum_usage(total_usage, synth_resp.usage)
                         final_text = synth_resp.content or ""
                         await self._stream_tokens(wf_id, final_text)
@@ -574,16 +616,21 @@ class OrchestratorAgent(BaseAgent):
                         "in_progress",
                         "Choosing the best visualization…",
                     )
+                    _sd_viz: dict[str, Any] = {"input_preview": question[:_PREVIEW_MAX]}
                     async with self._tracker.step(
                         wf_id,
                         "orchestrator:viz",
                         "Choosing visualization",
+                        step_data=_sd_viz,
                     ):
                         last_viz_result = await self._viz.run(
                             context,
                             results=last_sql_result.results,
                             question=question,
                             query=last_sql_result.query or "",
+                        )
+                        _sd_viz["output_preview"] = (
+                            f"type={last_viz_result.viz_type}"
                         )
                     self.accum_usage(total_usage, last_viz_result.token_usage)
                     viz_type = last_viz_result.viz_type
@@ -668,7 +715,7 @@ class OrchestratorAgent(BaseAgent):
                 insights=last_sql_result.insights if last_sql_result else [],
                 suggested_followups=followups,
                 context_usage_pct=final_pct,
-                steps_used=iteration + 1 if step_limit_hit else iteration + 1,
+                steps_used=iteration + 1 if step_limit_hit else iteration,
                 steps_total=max_iter,
                 continuation_context=continuation_ctx,
             )
@@ -685,7 +732,7 @@ class OrchestratorAgent(BaseAgent):
                 answer=payload.get("question", ""),
                 workflow_id=wf_id,
                 response_type="clarification_request",
-                viz_config=payload,
+                clarification_data=payload,
             )
 
         except LLMError as llm_exc:
@@ -745,7 +792,10 @@ class OrchestratorAgent(BaseAgent):
         )
         planner = QueryPlanner(self._llm)
 
-        async with self._tracker.step(wf_id, "orchestrator:planning", "Creating execution plan"):
+        _sd_plan: dict[str, Any] = {"input_preview": context.user_question[:_PREVIEW_MAX]}
+        async with self._tracker.step(
+            wf_id, "orchestrator:planning", "Creating execution plan", step_data=_sd_plan,
+        ):
             plan = await planner.plan(
                 context.user_question,
                 table_map=table_map,
@@ -753,6 +803,8 @@ class OrchestratorAgent(BaseAgent):
                 preferred_provider=context.preferred_provider,
                 model=context.model,
             )
+            if plan:
+                _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
 
         if not plan:
             await self._tracker.emit(
@@ -855,6 +907,7 @@ class OrchestratorAgent(BaseAgent):
             result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
             pipeline_run = result.scalar_one_or_none()
             if not pipeline_run:
+                await self._tracker.end(wf_id, "orchestrator", "failed", "Pipeline not found")
                 return AgentResponse(
                     answer="Could not find the pipeline to resume. Please try your question again.",
                     workflow_id=wf_id,
@@ -1249,12 +1302,23 @@ class OrchestratorAgent(BaseAgent):
 
         for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
             try:
+                _sd_sql: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
                 async with self._tracker.step(
                     wf_id,
                     "orchestrator:sql_agent",
                     f"SQL Agent (attempt {attempt + 1})",
+                    step_data=_sd_sql,
                 ):
                     sql_result = await self._sql.run(context, question=sub_question)
+                    preview_parts = []
+                    if sql_result.query:
+                        preview_parts.append(f"SQL: {sql_result.query[:300]}")
+                    if sql_result.results:
+                        preview_parts.append(
+                            f"{sql_result.results.row_count} rows, "
+                            f"{len(sql_result.results.columns)} cols"
+                        )
+                    _sd_sql["output_preview"] = "\n".join(preview_parts)[:_PREVIEW_MAX]
 
                 self.accum_usage(total_usage, sql_result.token_usage)
 
@@ -1395,12 +1459,18 @@ class OrchestratorAgent(BaseAgent):
 
         for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
             try:
+                _sd_ka: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
                 async with self._tracker.step(
                     wf_id,
                     "orchestrator:knowledge_agent",
                     f"Knowledge Agent (attempt {attempt + 1})",
+                    step_data=_sd_ka,
                 ):
                     knowledge_result = await self._knowledge.run(context, question=sub_question)
+                    src_count = len(knowledge_result.sources) if knowledge_result.sources else 0
+                    _sd_ka["output_preview"] = (
+                        f"{src_count} source(s)\n{(knowledge_result.answer or '')[:400]}"
+                    )[:_PREVIEW_MAX]
 
                 self.accum_usage(total_usage, knowledge_result.token_usage)
 
@@ -1457,10 +1527,14 @@ class OrchestratorAgent(BaseAgent):
         rule_svc = RuleService()
 
         try:
+            _sd_rules: dict[str, Any] = {
+                "input_preview": f"action={action} name={name} rule_id={rule_id}"[:_PREVIEW_MAX],
+            }
             async with self._tracker.step(
                 wf_id,
                 "orchestrator:manage_rules",
                 f"Managing rule ({action})",
+                step_data=_sd_rules,
             ):
                 async with async_session_factory() as session:
                     if ctx.user_id:
@@ -1595,10 +1669,14 @@ class OrchestratorAgent(BaseAgent):
                 try:
                     await adapter.connect(config)
 
+                    _sd_mcp: dict[str, Any] = {
+                        "input_preview": f"source={conn.name}\n{sub_question[:400]}"[:_PREVIEW_MAX],
+                    }
                     async with self._tracker.step(
                         wf_id,
                         "orchestrator:mcp_source_agent",
                         f"MCP Source Agent (attempt {attempt + 1})",
+                        step_data=_sd_mcp,
                     ):
                         result = await self._mcp_source.run(
                             context,
@@ -1606,6 +1684,9 @@ class OrchestratorAgent(BaseAgent):
                             source_name=conn.name,
                             adapter=adapter,
                         )
+                        _sd_mcp["output_preview"] = (
+                            f"status={result.status}\n{(result.answer or '')[:400]}"
+                        )[:_PREVIEW_MAX]
 
                     self.accum_usage(total_usage, result.token_usage)
 

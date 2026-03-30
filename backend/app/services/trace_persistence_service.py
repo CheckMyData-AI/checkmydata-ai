@@ -25,7 +25,29 @@ _STALE_BUFFER_SECONDS = 300  # 5 minutes
 
 
 SPAN_TYPE_MAP: dict[str, str] = {
+    # Orchestrator
     "orchestrator:llm_call": "llm_call",
+    "orchestrator:planning": "tool_call",
+    "orchestrator:sql_agent": "sub_agent",
+    "orchestrator:knowledge_agent": "sub_agent",
+    "orchestrator:mcp_source_agent": "sub_agent",
+    "orchestrator:manage_rules": "tool_call",
+    "orchestrator:viz": "viz",
+    # SQL agent
+    "sql:llm_call": "llm_call",
+    "sql:tool:execute_query": "db_query",
+    "sql:tool:get_schema_info": "db_query",
+    "sql:tool:get_db_index": "rag",
+    "sql:tool:get_query_context": "rag",
+    "sql:tool:get_sync_context": "rag",
+    "sql:tool:record_learning": "tool_call",
+    "sql:tool:read_notes": "tool_call",
+    "sql:tool:write_note": "tool_call",
+    # Knowledge agent
+    "knowledge:llm_call": "llm_call",
+    "knowledge:tool:search_knowledge": "rag",
+    "knowledge:tool:get_entity_info": "rag",
+    # Validation loop
     "execute_query": "db_query",
     "safety_check": "validation",
     "pre_validate": "validation",
@@ -33,6 +55,11 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "explain_check": "validation",
     "error_classify": "validation",
     "query_repair": "validation",
+    # Standalone LLM endpoints
+    "generate_title:llm_call": "llm_call",
+    "explain_sql:llm_call": "llm_call",
+    "summarize:llm_call": "llm_call",
+    # Other
     "build_query": "tool_call",
     "render_viz": "viz",
     "rag_context": "rag",
@@ -41,7 +68,10 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "load_context": "rag",
 }
 
-_SUB_AGENT_PREFIXES = ("sql_agent:", "knowledge_agent:", "viz_agent:", "mcp_source_agent:")
+_SUB_AGENT_PREFIXES = (
+    "sql_agent:", "knowledge_agent:", "viz_agent:", "mcp_source_agent:",
+    "orchestrator:", "sql:", "knowledge:",
+)
 
 
 def classify_span_type(step_name: str) -> str:
@@ -251,6 +281,8 @@ class TracePersistenceService:
         for entry in tool_call_log:
             name = entry.get("tool", entry.get("name", "unknown"))
             span_type = classify_span_type(name)
+            raw_args = entry.get("arguments") or entry.get("args") or {}
+            raw_result = entry.get("result_preview") or entry.get("result") or ""
             spans.append({
                 "span_type": span_type,
                 "name": name,
@@ -258,13 +290,35 @@ class TracePersistenceService:
                 "detail": str(entry.get("error", ""))[:500],
                 "duration_ms": entry.get("elapsed_ms"),
                 "input_preview": _truncate(
-                    json.dumps(entry.get("args", {}), default=str)
-                    if entry.get("args")
-                    else None
+                    json.dumps(raw_args, default=str) if raw_args else None
                 ),
-                "output_preview": _truncate(str(entry.get("result", ""))[:500] if entry.get("result") else None),
+                "output_preview": _truncate(str(raw_result)[:500] if raw_result else None),
             })
         return spans
+
+    _SKIP_STEPS = frozenset({
+        "pipeline_start", "pipeline_end", "thinking", "token",
+        "orchestrator:warning", "orchestrator:llm_retry",
+    })
+
+    _TOKEN_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "model")
+
+    @staticmethod
+    def _extract_token_usage(extra: dict[str, Any]) -> str | None:
+        if not any(k in extra for k in TracePersistenceService._TOKEN_USAGE_KEYS):
+            return None
+        return json.dumps(
+            {k: extra[k] for k in TracePersistenceService._TOKEN_USAGE_KEYS if k in extra}
+        )
+
+    @staticmethod
+    def _extra_to_metadata(extra: dict[str, Any]) -> str | None:
+        """Serialize extra dict to JSON, excluding keys already stored in dedicated columns."""
+        remaining = {
+            k: v for k, v in extra.items()
+            if k not in ("input_preview", "output_preview", *TracePersistenceService._TOKEN_USAGE_KEYS)
+        }
+        return json.dumps(remaining, default=str) if remaining else None
 
     async def _persist_workflow(self, buf: _WorkflowBuffer, end_event: WorkflowEvent) -> None:
         """Batch-insert a RequestTrace with all its spans."""
@@ -280,17 +334,27 @@ class TracePersistenceService:
             db_count = 0
 
             for evt in events:
-                if evt.step in ("pipeline_start", "pipeline_end", "thinking"):
+                if evt.step in self._SKIP_STEPS:
+                    continue
+
+                if evt.status == "started":
+                    continue
+
+                # Deduplicate: emit-based execute_query has no elapsed_ms
+                if evt.step == "execute_query" and evt.elapsed_ms is None:
                     continue
 
                 span_type = classify_span_type(evt.step)
-                if evt.status == "started":
-                    continue
 
                 if span_type == "llm_call":
                     llm_count += 1
                 elif span_type == "db_query":
                     db_count += 1
+
+                extra = evt.extra or {}
+                input_preview = _truncate(extra.get("input_preview"))
+                output_preview = _truncate(extra.get("output_preview"))
+                token_usage = self._extract_token_usage(extra)
 
                 span_dicts.append({
                     "span_type": span_type,
@@ -303,7 +367,10 @@ class TracePersistenceService:
                     ),
                     "ended_at": datetime.fromtimestamp(evt.timestamp, tz=UTC),
                     "duration_ms": evt.elapsed_ms,
-                    "metadata_json": json.dumps(evt.extra, default=str) if evt.extra else None,
+                    "input_preview": input_preview,
+                    "output_preview": output_preview,
+                    "token_usage_json": token_usage,
+                    "metadata_json": self._extra_to_metadata(extra),
                     "order_index": order,
                 })
                 order += 1
@@ -317,10 +384,20 @@ class TracePersistenceService:
                 trace_status = "failed"
 
             context = buf.context
+            project_id = context.get("project_id") or ""
+            user_id = context.get("user_id") or ""
+
+            if not project_id or not user_id:
+                logger.debug(
+                    "TracePersistence: persisting wf=%s with empty project_id/user_id "
+                    "(finalize_trace will update later)",
+                    buf.workflow_id[:8],
+                )
+
             async with async_session_factory() as session:
                 trace = RequestTrace(
-                    project_id=context.get("project_id", ""),
-                    user_id=context.get("user_id", ""),
+                    project_id=project_id,
+                    user_id=user_id,
                     workflow_id=buf.workflow_id,
                     question=_truncate(context.get("question", ""), 500) or "",
                     status=trace_status,
@@ -344,6 +421,9 @@ class TracePersistenceService:
                         started_at=sd["started_at"],
                         ended_at=sd["ended_at"],
                         duration_ms=sd["duration_ms"],
+                        input_preview=sd.get("input_preview"),
+                        output_preview=sd.get("output_preview"),
+                        token_usage_json=sd.get("token_usage_json"),
                         metadata_json=sd.get("metadata_json"),
                         order_index=sd["order_index"],
                     )
@@ -364,22 +444,42 @@ class TracePersistenceService:
             )
 
     async def _cleanup_stale_buffers(self) -> None:
-        """Periodically remove in-memory buffers that never received pipeline_end."""
+        """Periodically persist stale buffers that never received pipeline_end."""
         while True:
             await asyncio.sleep(60)
             try:
                 now = time.time()
+                stale_bufs: list[_WorkflowBuffer] = []
                 async with self._lock:
-                    stale = [
+                    stale_ids = [
                         wf_id
                         for wf_id, buf in self._buffers.items()
                         if now - buf.started_at > _STALE_BUFFER_SECONDS
                     ]
-                    for wf_id in stale:
-                        self._buffers.pop(wf_id, None)
-                if stale:
+                    for wf_id in stale_ids:
+                        buf = self._buffers.pop(wf_id, None)
+                        if buf is not None:
+                            stale_bufs.append(buf)
+                for buf in stale_bufs:
+                    synthetic_end = WorkflowEvent(
+                        workflow_id=buf.workflow_id,
+                        step="pipeline_end",
+                        status="failed",
+                        detail="Stale: pipeline_end never received",
+                        pipeline=buf.pipeline,
+                    )
+                    try:
+                        await self._persist_workflow(buf, synthetic_end)
+                    except Exception:
+                        logger.warning(
+                            "TracePersistence: failed to persist stale buffer wf=%s",
+                            buf.workflow_id[:8],
+                            exc_info=True,
+                        )
+                if stale_bufs:
                     logger.info(
-                        "TracePersistence: cleaned up %d stale buffer(s)", len(stale)
+                        "TracePersistence: persisted %d stale buffer(s) as failed traces",
+                        len(stale_bufs),
                     )
             except asyncio.CancelledError:
                 raise

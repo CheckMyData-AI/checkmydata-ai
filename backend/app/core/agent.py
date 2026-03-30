@@ -61,7 +61,12 @@ class ConversationalAgent:
     ) -> AgentResponse:
         wf_id = await self._tracker.begin(
             "agent",
-            {"question": question[:100], "has_connection": connection_config is not None},
+            {
+                "question": question[:100],
+                "has_connection": connection_config is not None,
+                "project_id": project_id,
+                "user_id": user_id or "",
+            },
         )
 
         context = AgentContext(
@@ -82,4 +87,20 @@ class ConversationalAgent:
             extra=extra or {},
         )
 
-        return await self._orchestrator.run(context)
+        try:
+            return await self._orchestrator.run(context)
+        except Exception as exc:
+            if not self._tracker.has_ended(wf_id):
+                try:
+                    await self._tracker.end(wf_id, "agent", "failed", str(exc)[:500])
+                except Exception:
+                    logger.warning("Failed to emit safety-net pipeline_end", exc_info=True)
+            raise
+        finally:
+            if not self._tracker.has_ended(wf_id):
+                try:
+                    await self._tracker.end(
+                        wf_id, "agent", "failed", "pipeline_end never emitted"
+                    )
+                except Exception:
+                    logger.warning("Failed to emit fallback pipeline_end", exc_info=True)

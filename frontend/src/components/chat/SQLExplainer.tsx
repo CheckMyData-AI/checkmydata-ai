@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
+import remarkGfm from "remark-gfm";
 
 const ReactMarkdown = dynamic(() => import("react-markdown"), {
   loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
@@ -97,7 +98,7 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
               )}
               {explanation && (
                 <div className="text-xs text-text-primary leading-relaxed prose prose-invert prose-xs max-w-none overflow-hidden break-words">
-                  <ReactMarkdown components={{
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     a: ({ href, children }) => {
                       const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined;
                       return <a href={safeHref} target="_blank" rel="noopener noreferrer">{children}</a>;
