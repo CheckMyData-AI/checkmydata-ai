@@ -1,3 +1,4 @@
+import type React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
@@ -115,7 +116,7 @@ const FEATURES = [
     tagline: "Zero data leakage. Period.",
     desc: "No tracking. No telemetry. Verify everything in the code.",
   },
-] as const satisfies readonly { icon: JSX.Element; title: string; tagline: string; desc: string; highlight?: boolean }[];
+] as { icon: React.ReactNode; title: string; tagline: string; desc: string; highlight?: boolean }[];
 
 const USE_CASES = [
   "Find why revenue dropped last week",
