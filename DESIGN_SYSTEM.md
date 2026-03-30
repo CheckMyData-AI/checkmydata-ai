@@ -33,7 +33,7 @@ The app uses a **dark-only** theme. All colors are defined as semantic tokens in
 |-------|-----|----------------|-------|
 | `--color-text-primary` | `#fafafa` | `text-text-primary` | Headings, primary body text, active labels |
 | `--color-text-secondary` | `#a1a1aa` | `text-text-secondary` | Secondary labels, descriptions |
-| `--color-text-tertiary` | `#71717a` | `text-text-tertiary` | Tertiary captions, timestamps |
+| `--color-text-tertiary` | `#84848e` | `text-text-tertiary` | Tertiary captions, timestamps |
 | `--color-text-muted` | `#52525b` | `text-text-muted` | Placeholders, disabled text, idle icons |
 
 #### Accent

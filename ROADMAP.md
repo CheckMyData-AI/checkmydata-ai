@@ -9,7 +9,7 @@
 - Performance optimization
 
 ### Documentation (Active)
-- API reference completion
+- ~~API reference completion~~ (done — see API.md)
 - Video tutorials
 - Deployment guides for AWS, GCP, self-hosted
 
@@ -42,9 +42,9 @@
 ### UX Enhancements
 - [ ] Dark/light theme toggle
 - [ ] Keyboard-driven navigation
-- [ ] Query history search
+- [x] Query history search (Cmd+K / Ctrl+K)
 - [ ] Natural language query templates
-- [ ] Mobile-responsive improvements
+- [x] Mobile-responsive sidebar drawer and layout
 
 ## Medium Term
 
@@ -55,9 +55,9 @@
 - [ ] Slack/Discord integration for notifications
 
 ### Data Pipeline
-- [ ] Scheduled query execution with alerting
-- [ ] Data quality monitoring
-- [ ] Automated anomaly detection
+- [x] Scheduled query execution with alerting (ScheduleManager, cron + threshold alerts)
+- [x] Data quality monitoring (Data Validation, sanity checks, benchmarks)
+- [x] Automated anomaly detection (AnomalyIntelligenceEngine, proactive scans)
 - [ ] Report generation (PDF/email)
 
 ### Enterprise Features

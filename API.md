@@ -121,6 +121,178 @@ Authorization: Bearer <jwt-token>
 
 All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, `status`, `date_from`, `date_to`, `page`, `page_size`.
 
+## SSH Keys
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/ssh-keys` | Create SSH key for current user |
+| GET | `/api/ssh-keys` | List current user's SSH keys |
+| GET | `/api/ssh-keys/{key_id}` | Get SSH key by id |
+| DELETE | `/api/ssh-keys/{key_id}` | Delete SSH key (409 if in use by a connection) |
+
+## Invites & Members
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/invites/{project_id}/invites` | Create invite (owner); sends email |
+| GET | `/api/invites/{project_id}/invites` | List project invites (owner) |
+| DELETE | `/api/invites/{project_id}/invites/{invite_id}` | Revoke invite (owner) |
+| POST | `/api/invites/{project_id}/invites/{invite_id}/resend` | Resend pending invite email (owner) |
+| POST | `/api/invites/accept/{invite_id}` | Accept invite for current user |
+| GET | `/api/invites/pending` | List pending invites for current user |
+| GET | `/api/invites/{project_id}/members` | List project members |
+| DELETE | `/api/invites/{project_id}/members/{member_user_id}` | Remove member (owner) |
+
+## Schedules
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/schedules` | Create SQL schedule (cron expression, alert conditions) |
+| GET | `/api/schedules?project_id=` | List schedules |
+| GET | `/api/schedules/{id}` | Get schedule |
+| PATCH | `/api/schedules/{id}` | Update schedule |
+| DELETE | `/api/schedules/{id}` | Delete schedule |
+| POST | `/api/schedules/{id}/run-now` | Execute schedule SQL immediately; evaluate alerts |
+| GET | `/api/schedules/{id}/history` | Get run history |
+
+## Notifications
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/notifications` | List notifications (query: `unread_only`, `limit`) |
+| GET | `/api/notifications/count` | Unread notification count |
+| PATCH | `/api/notifications/{id}/read` | Mark notification as read |
+| POST | `/api/notifications/read-all` | Mark all notifications as read |
+
+## Visualizations & Export
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/visualizations/render` | Render visualization from columns/rows and config |
+| POST | `/api/visualizations/export` | Export query result as CSV, JSON, or XLSX |
+
+## Workflows
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/workflows/events` | SSE stream of workflow step events (query: `workflow_id`) |
+
+## Data Validation
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/data-validation/validate-data` | Record validation verdict and run feedback pipeline |
+| GET | `/api/data-validation/validation-stats/{connection_id}` | Accuracy stats for connection |
+| GET | `/api/data-validation/benchmarks/{connection_id}` | Benchmarks for connection |
+| GET | `/api/data-validation/analytics/{project_id}` | Project-wide feedback analytics (owner) |
+| GET | `/api/data-validation/summary/{project_id}` | Lightweight analytics summary (owner) |
+| POST | `/api/data-validation/investigate` | Start async data investigation |
+| GET | `/api/data-validation/investigate/{investigation_id}` | Get investigation detail |
+| POST | `/api/data-validation/investigate/{investigation_id}/confirm-fix` | Accept or reject proposed fix |
+| POST | `/api/data-validation/anomaly-analysis` | Run anomaly intelligence on posted rows/columns |
+| POST | `/api/data-validation/anomaly-scan/{connection_id}` | Probe tables for anomalies |
+
+## LLM Models
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/models` | List available LLM models (query: `provider`) |
+
+## Tasks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks/active` | List currently running background workflows |
+
+## Usage
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/usage/stats` | Token usage comparison and daily breakdown (query: `days`, `project_id`) |
+
+## Metrics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/metrics` | App metrics: active workflows, per-path request stats, uptime |
+
+## Backup
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/backup/trigger` | Run manual backup |
+| GET | `/api/backup/list` | List backup files on disk |
+| GET | `/api/backup/history` | Recent backup records from DB |
+
+## Demo
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/demo/setup` | Create demo project with sample in-memory database |
+
+## Data Graph
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/data-graph/{project_id}/summary` | Graph summary (metric and relationship counts) |
+| GET | `/api/data-graph/{project_id}/metrics` | List metrics (query: `connection_id`, `category`) |
+| POST | `/api/data-graph/{project_id}/metrics` | Upsert metric definition |
+| GET | `/api/data-graph/{project_id}/relationships` | List relationships (query: `metric_id`) |
+| POST | `/api/data-graph/{project_id}/relationships` | Add metric relationship |
+| POST | `/api/data-graph/{project_id}/discover/{connection_id}` | Auto-discover metrics from DB index |
+| DELETE | `/api/data-graph/{project_id}/metrics/{metric_id}` | Delete metric |
+
+## Insights
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/insights/{project_id}` | List insights (filters: connection, type, severity, status, confidence) |
+| GET | `/api/insights/{project_id}/summary` | Counts by type and severity |
+| POST | `/api/insights/{project_id}` | Create insight (owner) |
+| PATCH | `/api/insights/{project_id}/{insight_id}/confirm` | Confirm insight |
+| PATCH | `/api/insights/{project_id}/{insight_id}/dismiss` | Dismiss insight |
+| PATCH | `/api/insights/{project_id}/{insight_id}/resolve` | Resolve insight |
+| GET | `/api/insights/{project_id}/actions` | Prioritized actions from active insights |
+
+## Feed (Autonomous Scans)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/feed/{project_id}/scan/{connection_id}` | Run autonomous insight scan for one connection |
+| POST | `/api/feed/{project_id}/scan` | Scan all connections in project |
+| POST | `/api/feed/{project_id}/opportunities/{connection_id}` | Scan for growth opportunities |
+| POST | `/api/feed/{project_id}/losses/{connection_id}` | Scan for revenue/conversion losses |
+
+## Reconciliation
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/reconciliation/{project_id}/row-counts` | Compare row counts between two connections |
+| POST | `/api/reconciliation/{project_id}/values` | Compare aggregate values |
+| POST | `/api/reconciliation/{project_id}/schemas` | Compare table/column schemas |
+| POST | `/api/reconciliation/{project_id}/full` | Full reconciliation with insight storage |
+
+## Semantic Layer
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/semantic-layer/{project_id}/build/{connection_id}` | Build semantic catalog from DB index |
+| POST | `/api/semantic-layer/{project_id}/normalize` | Normalize metrics across connections |
+| GET | `/api/semantic-layer/{project_id}/catalog` | Browse metric catalog (query: `connection_id`, `category`) |
+
+## Exploration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/explore/{project_id}` | Query-less investigation report (query: `connection_id`) |
+
+## Temporal Intelligence
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/temporal/{project_id}/analyze` | Time-series analysis (trend, seasonality, anomalies) |
+| POST | `/api/temporal/{project_id}/lag` | Lag/lead detection between two series |
+
 ## Health
 
 | Method | Endpoint | Description |

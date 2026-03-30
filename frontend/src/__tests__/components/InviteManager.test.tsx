@@ -9,6 +9,7 @@ const mockCreateInvite = vi.fn();
 const mockRevoke = vi.fn();
 const mockResend = vi.fn();
 const mockRemoveMember = vi.fn();
+const mockUpdateMemberRole = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", () => ({
       revoke: (...args: unknown[]) => mockRevoke(...(args as [])),
       resend: (...args: unknown[]) => mockResend(...(args as [])),
       removeMember: (...args: unknown[]) => mockRemoveMember(...(args as [])),
+      updateMemberRole: (...args: unknown[]) => mockUpdateMemberRole(...(args as [])),
     },
   },
 }));
@@ -69,6 +71,14 @@ beforeEach(() => {
   mockResend.mockResolvedValue({ ok: true });
   mockRevoke.mockResolvedValue({ ok: true });
   mockRemoveMember.mockResolvedValue({ ok: true });
+  mockUpdateMemberRole.mockResolvedValue({
+    id: "m2",
+    project_id: "proj1",
+    user_id: "u2",
+    role: "viewer",
+    email: "bob@test.com",
+    display_name: "Bob",
+  });
 });
 
 async function renderInviteManager() {
@@ -258,6 +268,66 @@ describe("InviteManager", () => {
     await renderInviteManager();
     await waitFor(() => {
       expect(screen.getByText("Members (2)")).toBeInTheDocument();
+    });
+  });
+
+  it("shows role dropdown for non-owner members", async () => {
+    mockListMembers.mockResolvedValue([
+      makeMember({ id: "m1", email: "alice@test.com", role: "owner" }),
+      makeMember({
+        id: "m2",
+        user_id: "u2",
+        email: "bob@test.com",
+        role: "editor",
+        display_name: "Bob",
+      }),
+    ]);
+
+    await renderInviteManager();
+    await waitFor(() => {
+      expect(screen.getByText("Bob")).toBeInTheDocument();
+    });
+
+    const roleSelect = screen.getByLabelText("Change role for bob@test.com");
+    expect(roleSelect).toBeInTheDocument();
+    expect(roleSelect).toHaveValue("editor");
+  });
+
+  it("owner member shows static badge, not dropdown", async () => {
+    mockListMembers.mockResolvedValue([
+      makeMember({ id: "m1", email: "alice@test.com", role: "owner" }),
+    ]);
+
+    await renderInviteManager();
+    await waitFor(() => {
+      expect(screen.getByText("alice@test.com")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("owner")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Change role for alice@test.com")).not.toBeInTheDocument();
+  });
+
+  it("changing role calls updateMemberRole API", async () => {
+    mockListMembers.mockResolvedValue([
+      makeMember({ id: "m1", email: "alice@test.com", role: "owner" }),
+      makeMember({
+        id: "m2",
+        user_id: "u2",
+        email: "bob@test.com",
+        role: "editor",
+        display_name: "Bob",
+      }),
+    ]);
+
+    await renderInviteManager();
+    await waitFor(() => {
+      expect(screen.getByText("Bob")).toBeInTheDocument();
+    });
+
+    const roleSelect = screen.getByLabelText("Change role for bob@test.com");
+    await userEvent.selectOptions(roleSelect, "viewer");
+    await waitFor(() => {
+      expect(mockUpdateMemberRole).toHaveBeenCalledWith("proj1", "u2", "viewer");
     });
   });
 });

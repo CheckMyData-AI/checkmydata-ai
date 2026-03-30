@@ -983,6 +983,16 @@ export const api = {
   chat: {
     listSessions: (projectId: string) =>
       request<ChatSession[]>(`/chat/sessions/${projectId}`),
+    createSession: (data: { project_id: string; title?: string; connection_id?: string }) =>
+      request<ChatSession>("/chat/sessions", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    ensureWelcome: (projectId: string, connectionId?: string) =>
+      request<ChatSession & { created: boolean }>("/chat/sessions/ensure-welcome", {
+        method: "POST",
+        body: JSON.stringify({ project_id: projectId, connection_id: connectionId }),
+      }),
     updateSession: (sessionId: string, data: { title: string }) =>
       request<ChatSession>(`/chat/sessions/${sessionId}`, {
         method: "PATCH",
@@ -1217,6 +1227,11 @@ export const api = {
       ),
     listMembers: (projectId: string) =>
       request<ProjectMember[]>(`/invites/${projectId}/members`),
+    updateMemberRole: (projectId: string, userId: string, role: string) =>
+      request<ProjectMember>(`/invites/${projectId}/members/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      }),
     removeMember: (projectId: string, userId: string) =>
       request<{ ok: boolean }>(`/invites/${projectId}/members/${userId}`, {
         method: "DELETE",

@@ -388,11 +388,14 @@ class TracePersistenceService:
             user_id = context.get("user_id") or ""
 
             if not project_id or not user_id:
-                logger.debug(
-                    "TracePersistence: persisting wf=%s with empty project_id/user_id "
-                    "(finalize_trace will update later)",
+                logger.warning(
+                    "TracePersistence: skipping initial persist for wf=%s — "
+                    "empty project_id=%r / user_id=%r (finalize_trace will create it)",
                     buf.workflow_id[:8],
+                    project_id,
+                    user_id,
                 )
+                return
 
             async with async_session_factory() as session:
                 trace = RequestTrace(

@@ -1,10 +1,28 @@
 import json
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
+
+WELCOME_MESSAGE = """\
+Hello! I'm your data assistant for this project.
+
+Here's what I can do:
+- **Query your database** in natural language — just ask a question and I'll generate, validate, and run the SQL for you
+- **Analyze your codebase** — I understand your project's code structure, ORM models, and business logic
+- **Visualize results** — tables, charts (bar, line, pie, scatter), with export to XLSX/CSV/JSON
+- **Learn and improve** — I remember patterns, conventions, and your corrections to get better over time
+- **Validate data** — I can check for anomalies, verify results against benchmarks, and investigate suspicious data
+
+Feel free to communicate with me in any language you're comfortable with — I understand and respond in multiple languages.
+
+To get started, try asking something like:
+- "How many users registered this month?"
+- "Show me the top 10 products by revenue"
+- "What tables are in my database?"\
+"""
 
 
 class ChatService:
@@ -128,3 +146,40 @@ class ChatService:
         await session.delete(chat)
         await session.commit()
         return True
+
+    async def ensure_welcome_session(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        user_id: str,
+        connection_id: str | None = None,
+    ) -> tuple[ChatSession, bool]:
+        """Return the user's first chat session, creating one with a welcome message if none exist."""
+        count_stmt = (
+            select(func.count())
+            .select_from(ChatSession)
+            .where(
+                ChatSession.project_id == project_id,
+                (ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None)),
+            )
+        )
+        total = (await session.execute(count_stmt)).scalar_one()
+        if total > 0:
+            first = await self.list_sessions(session, project_id, user_id=user_id, limit=1)
+            return first[0], False
+
+        chat = await self.create_session(
+            session,
+            project_id,
+            title="Welcome",
+            user_id=user_id,
+            connection_id=connection_id,
+        )
+        await self.add_message(
+            session,
+            chat.id,
+            role="assistant",
+            content=WELCOME_MESSAGE,
+            metadata={"response_type": "text", "is_welcome": True},
+        )
+        return chat, True

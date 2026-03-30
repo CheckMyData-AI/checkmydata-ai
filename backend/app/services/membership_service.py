@@ -93,6 +93,32 @@ class MembershipService:
         await db.commit()
         return True
 
+    async def update_member_role(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
+        new_role: str,
+    ) -> ProjectMember | None:
+        """Change a non-owner member's role. Returns updated member or None."""
+        result = await db.execute(
+            select(ProjectMember)
+            .where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+            )
+            .options(selectinload(ProjectMember.user))
+        )
+        member = result.scalar_one_or_none()
+        if not member:
+            return None
+        if member.role == "owner":
+            raise HTTPException(status_code=400, detail="Cannot change the owner's role")
+        member.role = new_role
+        await db.commit()
+        await db.refresh(member, attribute_names=["user"])
+        return member
+
     async def list_members(
         self,
         db: AsyncSession,

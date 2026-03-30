@@ -72,5 +72,5 @@ _No performance issues discovered this cycle. Needs browser-based profiling in n
 
 | # | Title | Problem | User Impact | Solution | Priority | Complexity |
 |---|-------|---------|-------------|----------|----------|------------|
-| 7 | README.md is 3600+ lines | Single massive README hard to navigate | Contributor friction, hard to find information | Consider splitting into focused topic docs | P3 | Medium |
-| 8 | CI coverage threshold at 70% | Raised from 69% in Cycle 3; still below 80% target | Low bar allows coverage regression | Continue incrementally raising threshold | P2 | Trivial |
+| 7 | README.md is 3600+ lines | Single massive README hard to navigate | Contributor friction, hard to find information | **Resolved: README split into focused docs (INSTALLATION.md, USAGE.md, API.md, ARCHITECTURE.md, FAQ.md, etc.)** | P3 (resolved) | Medium |
+| 8 | CI coverage threshold at 72% | Raised from 70% in Cycle 4; still below 80% target | Low bar allows coverage regression | Continue incrementally raising threshold toward 80% | P2 | Trivial |

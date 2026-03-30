@@ -37,29 +37,46 @@ language questions into database queries with rich visualizations.
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| `api/routes/` | REST API endpoints | `auth.py`, `chat.py`, `connections.py`, `projects.py`, `logs.py`, ... |
-| `agents/` | Multi-agent orchestration | `orchestrator.py`, `sql_agent.py`, `knowledge_agent.py` |
-| `llm/` | LLM provider abstraction | `router.py`, `base.py` (OpenAI, Anthropic, OpenRouter) |
-| `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py` |
-| `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py` |
-| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py` |
-| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py` |
-| `core/` | Cross-cutting concerns | `rate_limit.py`, `audit.py`, `health_monitor.py`, `workflow_tracker.py` |
+| `api/routes/` | REST API endpoints (31 routers) | `auth.py`, `chat.py`, `connections.py`, `projects.py`, `logs.py`, `batch.py`, `dashboards.py`, `schedules.py`, `notifications.py`, `insights.py`, `feed.py`, `data_graph.py`, `reconciliation.py`, `semantic_layer.py`, `exploration.py`, `temporal.py`, ... |
+| `agents/` | Multi-agent orchestration | `orchestrator.py`, `sql_agent.py`, `knowledge_agent.py`, `viz_agent.py`, `mcp_source_agent.py`, `query_planner.py`, `stage_executor.py`, `stage_validator.py` |
+| `llm/` | LLM provider abstraction | `router.py`, `base.py`, `openai_adapter.py`, `anthropic_adapter.py`, `openrouter_adapter.py` |
+| `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py`, `ssh_tunnel.py`, `mcp_client.py` |
+| `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py`, `learning_analyzer.py` |
+| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py`, `schedule_service.py`, `notification_service.py`, `insight_memory_service.py`, `action_engine.py`, ... |
+| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py`, `insight.py`, `schedule.py`, `notification.py`, `agent_learning.py`, ... |
+| `core/` | Cross-cutting concerns | `agent.py`, `context_budget.py`, `history_trimmer.py`, `insight_memory.py`, `validation_loop.py`, `workflow_tracker.py`, `health_monitor.py`, `rate_limit.py`, `audit.py` |
 | `pipelines/` | Long-running workflows | `mcp_pipeline.py` |
+| `mcp_server/` | MCP protocol server | `server.py`, `tools.py`, `resources.py`, `auth.py` |
 
 ### Frontend (`frontend/src/`)
 
 | Module | Purpose |
 |--------|---------|
-| `components/chat/` | Chat panel, input, message rendering, streaming |
-| `components/connections/` | Database connection management |
-| `components/viz/` | Data tables, charts, visualizations |
-| `components/batch/` | Batch query execution |
-| `components/learnings/` | Agent learning management |
+| `components/chat/` | Chat panel, input, message rendering, streaming, result cards |
+| `components/connections/` | Database connection management, health monitoring |
+| `components/viz/` | Data tables, charts, visualizations, export (CSV/JSON/XLSX) |
+| `components/batch/` | Batch query execution and results |
+| `components/dashboards/` | Dashboard builder and list |
 | `components/logs/` | Request Logs screen (owner-only trace viewer) |
-| `components/ui/` | Shared UI components (modals, buttons, icons) |
-| `stores/` | Zustand state management |
-| `lib/` | API client, utilities |
+| `components/projects/` | Project selector, invite manager, access requests |
+| `components/onboarding/` | 5-step onboarding wizard |
+| `components/schedules/` | Scheduled queries and alert conditions |
+| `components/insights/` | Insight feed panel, metric catalog |
+| `components/learnings/` | Agent learning management |
+| `components/notes/` | Saved queries panel |
+| `components/knowledge/` | Knowledge docs browser |
+| `components/rules/` | Custom rules manager |
+| `components/ssh/` | SSH key manager |
+| `components/auth/` | AuthGate, AuthRedirect, AccountMenu |
+| `components/workflow/` | Workflow and investigation progress |
+| `components/usage/` | Usage statistics panel |
+| `components/analytics/` | Feedback analytics panel |
+| `components/tasks/` | Active tasks widget |
+| `components/invites/` | Pending invites |
+| `components/ui/` | Shared UI components (modals, buttons, icons, tooltips) |
+| `stores/` | Zustand state management (app, auth, notes, toast, task, log) |
+| `hooks/` | Custom hooks (permissions, mobile layout, global events) |
+| `lib/` | API client, SSE, utilities, polling |
 
 ## Data Flow
 
@@ -151,7 +168,7 @@ Key models:
 
 - `User` — authentication, profile
 - `Project` — workspace container
-- `ProjectMember` — multi-tenant access control
+- `ProjectMember` — multi-tenant access control (owner/editor/viewer)
 - `Connection` — encrypted database credentials
 - `ChatSession` / `ChatMessage` — conversation history
 - `SavedNote` — bookmarked queries
@@ -159,10 +176,16 @@ Key models:
 - `Repository` — linked Git repos
 - `KnowledgeDoc` — indexed documentation chunks
 - `RequestTrace` / `TraceSpan` — persisted orchestrator execution traces
+- `AgentLearning` — per-connection learned patterns and knowledge
+- `Schedule` / `ScheduleResult` — recurring query schedules and results
+- `Notification` — in-app notification delivery
+- `InsightRecord` / `TrustScore` — proactive insights with confidence scores
+- `MetricDefinition` / `MetricRelationship` — semantic layer metric catalog
+- `CodeDbSync` — code-database sync results
 
 ## Security Boundaries
 
-- All routes require JWT authentication (except `/auth/*` and `/api/health`)
+- All routes require JWT authentication (except `/api/auth/*` and `/api/health`)
 - Project access enforced via `ProjectMember` role checks
 - Database credentials encrypted with Fernet (MASTER_ENCRYPTION_KEY)
 - SSH tunnels for remote database access

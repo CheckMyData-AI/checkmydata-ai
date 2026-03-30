@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
+import { MobileMenu } from "@/components/ui/MobileMenu";
 
 const NAV_LINKS = [
   { href: "/about", label: "About" },
@@ -94,12 +95,13 @@ export default function MarketingLayout({
             >
               Get Started
             </Link>
+            <MobileMenu links={NAV_LINKS} />
           </div>
         </div>
       </header>
 
       {/* Main content */}
-      <main className="flex-1">{children}</main>
+      <main id="main-content" className="flex-1">{children}</main>
 
       {/* Footer */}
       <footer className="border-t border-border-subtle">
@@ -188,7 +190,7 @@ export default function MarketingLayout({
           </div>
 
           <div className="mt-10 pt-6 border-t border-border-subtle flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-tertiary">
               &copy; {new Date().getFullYear()} CheckMyData.ai &mdash; Open
               Source Project. MIT License.
             </p>

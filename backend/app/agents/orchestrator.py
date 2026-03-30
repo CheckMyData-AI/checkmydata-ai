@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -180,6 +181,7 @@ class OrchestratorAgent(BaseAgent):
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
         self._wf_sql_results: dict[str, SQLAgentResult] = {}
         self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
+        self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
 
     @property
     def name(self) -> str:
@@ -347,6 +349,8 @@ class OrchestratorAgent(BaseAgent):
             loop_budget = context_window
             wrap_up_injected = False
             step_limit_hit = False
+            wall_clock_start = time.monotonic()
+            wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
             max_iter = context.max_orchestrator_steps or settings.max_orchestrator_iterations
             for iteration in range(max_iter):
@@ -357,6 +361,27 @@ class OrchestratorAgent(BaseAgent):
                         "thinking",
                         "in_progress",
                         "Compacting earlier analysis to free context space…",
+                    )
+
+                elapsed_wall = time.monotonic() - wall_clock_start
+                if not wrap_up_injected and elapsed_wall > wall_clock_limit:
+                    messages.append(
+                        Message(
+                            role="system",
+                            content=(
+                                "TIME LIMIT REACHED. You have exceeded the allowed "
+                                "processing time. Do NOT make any more tool calls. "
+                                "Compose your final answer NOW using only the data "
+                                "you have gathered so far."
+                            ),
+                        )
+                    )
+                    wrap_up_injected = True
+                    logger.warning(
+                        "Wall-clock timeout (%.1fs > %ds, wf=%s), forcing wrap-up",
+                        elapsed_wall,
+                        wall_clock_limit,
+                        wf_id,
                     )
 
                 if not wrap_up_injected and should_wrap_up(messages, loop_budget):
@@ -485,6 +510,21 @@ class OrchestratorAgent(BaseAgent):
                     await self._stream_tokens(wf_id, final_text)
                     break
 
+                hard_elapsed = time.monotonic() - wall_clock_start
+                if hard_elapsed > wall_clock_limit * 1.5:
+                    logger.warning(
+                        "Hard wall-clock cutoff (%.1fs > %.1fs, wf=%s), "
+                        "LLM returned tool calls despite wrap-up — forcing break",
+                        hard_elapsed,
+                        wall_clock_limit * 1.5,
+                        wf_id,
+                    )
+                    final_text = llm_resp.content or self._build_partial_text(
+                        last_sql_result, knowledge_sources
+                    )
+                    await self._stream_tokens(wf_id, final_text)
+                    break
+
                 tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
                 thinking_detail = f"Decided to use: {tool_names}"
                 if llm_resp.content:
@@ -508,11 +548,15 @@ class OrchestratorAgent(BaseAgent):
                 has_process_data = any(tc.name == "process_data" for tc in llm_resp.tool_calls)
 
                 if len(llm_resp.tool_calls) > 1 and not has_process_data:
+
+                    async def _throttled_meta_tool(
+                        _tc: ToolCall,
+                    ) -> tuple[str, Any]:
+                        async with self._parallel_tool_sem:
+                            return await self._handle_meta_tool(_tc, context, wf_id, total_usage)
+
                     gather_results = await asyncio.gather(
-                        *(
-                            self._handle_meta_tool(tc, context, wf_id, total_usage)
-                            for tc in llm_resp.tool_calls
-                        ),
+                        *(_throttled_meta_tool(tc) for tc in llm_resp.tool_calls),
                         return_exceptions=True,
                     )
                     tool_pairs: list[tuple[str, Any]] = []

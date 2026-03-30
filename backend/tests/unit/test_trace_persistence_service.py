@@ -363,23 +363,14 @@ class TestMCPToolsUseSingletonTracker:
 
 
 class TestPersistWorkflowWithEmptyIds:
-    """Verify _persist_workflow persists traces even when project_id/user_id are empty.
+    """Verify _persist_workflow skips INSERT when project_id is empty to avoid FK violation.
 
-    finalize_trace will later UPDATE the row with real IDs.
+    finalize_trace will later CREATE the row with real IDs via its else branch.
     """
 
     @pytest.mark.asyncio
-    async def test_persists_when_project_id_empty(self):
-        """No longer silently skips — persists so finalize_trace can update later."""
-        import inspect
-        from app.services import trace_persistence_service as tps_mod
-        source = inspect.getsource(tps_mod.TracePersistenceService._persist_workflow)
-        assert "skipping persist" not in source
-        assert "skipping" not in source.lower()
-
-    @pytest.mark.asyncio
-    async def test_no_early_return_on_empty_ids(self):
-        """The early-return guard has been replaced by a debug log that continues."""
+    async def test_returns_early_when_project_id_empty(self):
+        """Empty project_id causes FK violation — skip persist, let finalize_trace handle it."""
         import inspect
         from app.services import trace_persistence_service as tps_mod
         source = inspect.getsource(tps_mod.TracePersistenceService._persist_workflow)
@@ -387,9 +378,12 @@ class TestPersistWorkflowWithEmptyIds:
         for i, line in enumerate(lines):
             if "not project_id or not user_id" in line:
                 remaining = "\n".join(lines[i:i+6])
-                assert "return" not in remaining, (
-                    "_persist_workflow should not return early on empty IDs"
+                assert "return" in remaining, (
+                    "_persist_workflow should return early on empty IDs"
                 )
+                break
+        else:
+            pytest.fail("Expected empty-id guard not found in _persist_workflow")
 
 
 class TestBatchServiceProjectIdInContext:

@@ -227,7 +227,7 @@ export default function LandingPage() {
               </a>
             </div>
 
-            <p className="mt-5 text-xs text-text-muted">
+            <p className="mt-5 text-xs text-text-tertiary">
               No credit card. Deploy in minutes. Self-host or use hosted.
             </p>
           </div>

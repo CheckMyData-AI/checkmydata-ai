@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Support | CheckMyData.ai",
+  title: "Support",
   description:
     "Get help with CheckMyData.ai — FAQs, troubleshooting, and support channels for the open-source AI database agent.",
   openGraph: {
@@ -12,6 +12,12 @@ export const metadata: Metadata = {
     url: "https://checkmydata.ai/support",
     siteName: "CheckMyData.ai",
     type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Support | CheckMyData.ai",
+    description:
+      "Get help with CheckMyData.ai — FAQs, troubleshooting, and support channels.",
   },
   alternates: { canonical: "https://checkmydata.ai/support" },
 };

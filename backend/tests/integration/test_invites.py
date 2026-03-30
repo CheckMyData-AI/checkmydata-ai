@@ -228,3 +228,77 @@ class TestInviteRoutes:
             headers=auth_headers(member["token"]),
         )
         assert resp.status_code == 403
+
+    async def _owner_project_with_member(self, client, member_role="editor"):
+        """Create a project, invite+accept a member, return (owner, member, pid)."""
+        owner, pid = await self._owner_project(client)
+        member = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": member["email"], "role": member_role},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+        await client.post(
+            f"/api/invites/accept/{invite_id}",
+            headers=auth_headers(member["token"]),
+        )
+        return owner, member, pid
+
+    async def test_owner_can_update_member_role(self, client):
+        owner, member, pid = await self._owner_project_with_member(client, "editor")
+        resp = await client.patch(
+            f"/api/invites/{pid}/members/{member['user_id']}",
+            json={"role": "viewer"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["role"] == "viewer"
+        assert data["user_id"] == member["user_id"]
+
+    async def test_cannot_update_owner_role(self, client):
+        owner, pid = await self._owner_project(client)
+        resp = await client.patch(
+            f"/api/invites/{pid}/members/{owner['user_id']}",
+            json={"role": "viewer"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 400
+
+    async def test_non_owner_cannot_update_role(self, client):
+        owner, member, pid = await self._owner_project_with_member(client, "editor")
+        another = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": another["email"], "role": "viewer"},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+        await client.post(
+            f"/api/invites/accept/{invite_id}",
+            headers=auth_headers(another["token"]),
+        )
+
+        resp = await client.patch(
+            f"/api/invites/{pid}/members/{member['user_id']}",
+            json={"role": "viewer"},
+            headers=auth_headers(another["token"]),
+        )
+        assert resp.status_code == 403
+
+    async def test_update_role_invalid_value(self, client):
+        owner, member, pid = await self._owner_project_with_member(client, "editor")
+        resp = await client.patch(
+            f"/api/invites/{pid}/members/{member['user_id']}",
+            json={"role": "owner"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 422
+
+        resp = await client.patch(
+            f"/api/invites/{pid}/members/{member['user_id']}",
+            json={"role": "admin"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 422

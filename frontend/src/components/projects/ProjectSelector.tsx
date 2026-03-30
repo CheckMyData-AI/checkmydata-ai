@@ -405,6 +405,31 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       setConnections(conns);
       setActiveConnection(conns[0] || null);
       setChatSessions(sessions);
+
+      if (sessions.length === 0) {
+        try {
+          const welcome = await api.chat.ensureWelcome(project.id, conns[0]?.id);
+          if (seq !== selectSeqRef.current) return;
+          const welcomeSession = { id: welcome.id, project_id: welcome.project_id, title: welcome.title, connection_id: welcome.connection_id };
+          setChatSessions([welcomeSession]);
+          setActiveSession(welcomeSession);
+          const msgs = await api.chat.getMessages(welcome.id);
+          if (seq !== selectSeqRef.current) return;
+          const mapped = msgs.map((m) => {
+            let meta: Record<string, unknown> = {};
+            try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* ignore */ }
+            return {
+              id: m.id,
+              role: m.role as "user" | "assistant" | "system",
+              content: m.content,
+              responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
+              metadataJson: m.metadata_json || undefined,
+              timestamp: new Date(m.created_at).getTime(),
+            };
+          });
+          useAppStore.getState().setMessages(mapped);
+        } catch { /* welcome session is best-effort */ }
+      }
     } catch (err) {
       if (seq !== selectSeqRef.current) return;
       setConnections([]);

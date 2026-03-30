@@ -1,6 +1,6 @@
 {
   "name": "checkmydata-frontend",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Next.js frontend for CheckMyData.ai — AI-powered database query agent",
   "license": "MIT",

@@ -92,8 +92,9 @@ encryption (`MASTER_ENCRYPTION_KEY`). The key is never stored in the database.
 Click the export button on any query result. Supported formats:
 - CSV
 - JSON
+- XLSX (Excel)
 
-Batch queries can also be exported as a combined file.
+Batch queries export as a multi-sheet XLSX file with one sheet per query.
 
 ## Contributing Questions
 

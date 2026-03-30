@@ -4,7 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.0] - 2026-03-31
+
+### Added
+- **Welcome chat for new users** — When a user enters a project with no existing chats, a default "Welcome" session is automatically created with an agent greeting that explains capabilities (database queries, codebase analysis, visualizations, learning, data validation) and invites the user to communicate in any language. Backend endpoint `POST /chat/sessions/ensure-welcome` is idempotent. Frontend triggers it on project restore and project switch
+
+### Fixed
+- **Agent timeout hang (330s)** — Complex queries could hang for 330 seconds before timing out due to no wall-clock budget on the orchestrator loop and a double SSE timeout cascade (210s event loop + 120s wait loop). Fixed with three changes: (1) Added `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (default 90s) that forces the orchestrator to wrap up when elapsed time exceeds the limit, with a hard cutoff at 1.5x; (2) Reduced the SSE post-event grace period from `stream_timeout_seconds` (120s) to 20s, bringing worst-case total from 330s to ~230s; (3) Added `MAX_PARALLEL_TOOL_CALLS` (default 2) semaphore to cap concurrent tool executions, preventing resource exhaustion from unbounded parallel `query_database` calls
+- **Trace persistence FK violation** — `_persist_workflow` was inserting into `request_traces` with empty `project_id` which violated the foreign key constraint. Now skips the initial persist when `project_id` or `user_id` is empty; `finalize_trace()` creates the trace row with correct IDs via its else branch
+
+### Fixed
+- **Favicon looked squished in browser tabs** — Regenerated `favicon.ico` as multi-size ICO (16x16, 32x32, 48x48) instead of single 32x32. Added `favicon.svg` for modern browsers. Removed unused `favicon-32.png`
+- **OG image dimensions mismatch and size** — Resized `og-image.png` from 1376x768 to standard 1200x630 and compressed from 985KB to 74KB. Optimized all icons from SVG source (icon-512.png 247KB → 20KB, icon-192.png 31KB → 6KB)
+- **Duplicate `<head>` tags in HTML output** — Removed manual `<link>` and `<meta>` tags from root layout `<head>` that duplicated what the Next.js `metadata` export already generates
+- **Sub-page titles bypassed template** — Changed all marketing sub-pages from hardcoded `"Title | CheckMyData.ai"` to just `"Title"` so the root `template: "%s | CheckMyData.ai"` applies consistently
+- **Missing Twitter cards on sub-pages** — Added `twitter` metadata to About, Contact, Support, Privacy, and Terms pages
+- **`/login` in sitemap** — Removed auth page from sitemap and added `robots: { index: false }` via a login layout
+- **`#main-content` skip link target missing** — Added `id="main-content"` to `<main>` in the marketing layout so the skip-to-content link actually works for keyboard users
+- **`text-tertiary` failed WCAG AA** — Lightened token from `#71717a` (4.12:1) to `#84848e` (5.37:1 on surface-0, 4.79:1 on surface-1). Fixed `text-muted` usage on meaningful content (copyright, CTA notes) by switching to `text-tertiary`
+- **No mobile navigation on marketing pages** — Added hamburger menu component (`MobileMenu`) with animated dropdown for About, Support, GitHub, and Log in links
+- **PWA manifest missing icon purpose** — Added `"purpose": "any maskable"` to manifest.json icon entries for Android adaptive icon support
 
 ### Fixed
 - **Orchestrator `steps_used` always same** — Fixed dead ternary `iteration + 1 if step_limit_hit else iteration + 1` (both branches identical); now correctly reports `iteration` when the agent finished before the step limit

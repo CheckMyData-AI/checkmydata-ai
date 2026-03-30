@@ -135,7 +135,7 @@ Examples:
 - **Frontend**: Add tests for new components and utility functions.
   Tests live alongside components as `*.test.tsx` files.
   Use Vitest with React Testing Library.
-- **Coverage**: Backend CI enforces ≥68% coverage. Don't decrease it.
+- **Coverage**: Backend CI enforces ≥72% coverage. Don't decrease it.
 
 ## What We Accept
 

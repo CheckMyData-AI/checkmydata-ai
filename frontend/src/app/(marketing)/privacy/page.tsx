@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | CheckMyData.ai",
+  title: "Privacy Policy",
   description:
     "Privacy Policy for CheckMyData.ai — how we handle your data in our open-source AI database query agent.",
   openGraph: {
@@ -12,6 +12,12 @@ export const metadata: Metadata = {
     url: "https://checkmydata.ai/privacy",
     siteName: "CheckMyData.ai",
     type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Privacy Policy | CheckMyData.ai",
+    description:
+      "Privacy Policy for CheckMyData.ai — how we handle your data in our open-source AI database query agent.",
   },
   alternates: { canonical: "https://checkmydata.ai/privacy" },
 };

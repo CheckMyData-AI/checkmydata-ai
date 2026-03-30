@@ -87,11 +87,11 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 
 **Five main flows:**
 
-1. **Onboarding** -- Guided 5-step wizard: connect database, test, index schema, connect code repo, ask first question. Or try a demo project with sample data.
+1. **Onboarding** -- Guided 5-step wizard: connect database, test, index schema, connect code repo, ask first question. A welcome chat with an agent greeting is created automatically for new users. Or try a demo project with sample data.
 2. **Setup** -- Register/login, add SSH keys, create project (with Git repo), create database connections (with optional SSH tunnels).
 3. **Chat** -- Ask questions in natural language. The OrchestratorAgent routes to SQLAgent (DB queries), KnowledgeAgent (codebase Q&A), or responds directly. Results include rich visualizations, follow-up suggestions, and data insights.
 4. **Knowledge** -- Git repos are analyzed via multi-pass pipeline (profiling, entity extraction, cross-file analysis, LLM doc generation) and stored in ChromaDB for RAG retrieval.
-5. **Sharing** -- Invite collaborators by email with role-based access (owner/editor/viewer). Each user gets isolated chat sessions while sharing project data.
+5. **Sharing** -- Invite collaborators by email with role-based access (owner/editor/viewer). Owners can change member roles on the fly and remove members. Each user gets isolated chat sessions while sharing project data.
 
 ## Key Features
 
@@ -137,7 +137,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `JWT_SECRET` | Secret for signing JWT tokens (change from default in production) |
 | One LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
 
-**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production). See `backend/.env.example` for all options.
+**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 90s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2). See `backend/.env.example` for all options.
 
 ## Development Commands
 
@@ -162,7 +162,7 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **3,005 total tests** (1,952 backend unit + 411 integration + 345 frontend + 9 performance smoke)
+- **3,252 total tests** (2,487 backend unit + 410 integration + 346 frontend + 9 performance smoke)
 - **72%+ backend coverage** (CI-enforced minimum)
 - Zero flaky tests, zero skipped tests
 

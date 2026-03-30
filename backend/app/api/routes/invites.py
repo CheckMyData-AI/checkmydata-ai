@@ -37,6 +37,10 @@ class InviteResponse(BaseModel):
     project_name: str | None = None
 
 
+class RoleUpdate(BaseModel):
+    role: Literal["editor", "viewer"]
+
+
 class MemberResponse(BaseModel):
     id: str
     project_id: str
@@ -253,6 +257,40 @@ async def list_members(
             )
         )
     return result
+
+
+@router.patch("/{project_id}/members/{member_user_id}", response_model=MemberResponse)
+@limiter.limit("20/minute")
+async def update_member_role(
+    request: Request,
+    project_id: str,
+    member_user_id: str,
+    body: RoleUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    member = await _membership_svc.update_member_role(
+        db, project_id, member_user_id, body.role,
+    )
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    audit_log(
+        "member.role_change",
+        user_id=user["user_id"],
+        project_id=project_id,
+        resource_type="member",
+        resource_id=member_user_id,
+        detail=body.role,
+    )
+    return MemberResponse(
+        id=member.id,
+        project_id=member.project_id,
+        user_id=member.user_id,
+        role=member.role,
+        email=member.user.email if member.user else None,
+        display_name=member.user.display_name if member.user else None,
+    )
 
 
 @router.delete("/{project_id}/members/{member_user_id}")

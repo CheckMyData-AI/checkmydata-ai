@@ -72,7 +72,10 @@ Core user flow verification status. Updated each improvement cycle.
 | Mobile responsiveness | All core flows on mobile viewport | NOT TESTED |
 | Error states | Network errors, auth expiry, connection failures | NOT TESTED |
 
-## Coverage Improvement Targets (Next Cycle)
+## Coverage Improvement Targets
+
+> Updated after Cycle 4 (see [agent-status.md](agent-status.md) for live numbers).
+> Overall backend coverage: **72.03%** (CI threshold: 72%, target: 80%).
 
 | Service | Current | Target | Gap |
 |---------|---------|--------|-----|
@@ -82,6 +85,6 @@ Core user flow verification status. Updated each improvement cycle.
 | code_db_sync_service.py | 93% | — | Done |
 | viz/export.py | 100% | — | Done |
 | viz/utils.py | 100% | — | Done |
-| agent_learning_service.py | 66% | 80% | +14% |
-| benchmark_service.py | 66% | 80% | +14% |
-| db_index_service.py | 69% | 80% | +11% |
+| agent_learning_service.py | 100% | — | Done (Cycle 4) |
+| benchmark_service.py | 100% | — | Done (Cycle 4) |
+| db_index_service.py | 100% | — | Done (Cycle 4) |

@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     max_orchestrator_iterations: int = 25
     orchestrator_wrap_up_steps: int = 3
     orchestrator_final_synthesis: bool = True
+    agent_wall_clock_timeout_seconds: int = 90
+    max_parallel_tool_calls: int = 2
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 3
     max_mcp_iterations: int = 5

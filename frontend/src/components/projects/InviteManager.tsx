@@ -41,6 +41,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshLoading, setRefreshLoading] = useState(true);
+  const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
   const [resending, setResending] = useState<string | null>(null);
   const [resentIds, setResentIds] = useState<Set<string>>(new Set());
   const resendTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -145,6 +146,24 @@ export function InviteManager({ projectId, onClose }: Props) {
     }
   };
 
+  const handleRoleChange = async (userId: string, newRole: string, prevRole: string) => {
+    setUpdatingRoleId(userId);
+    setMembers((prev) =>
+      prev.map((m) => (m.user_id === userId ? { ...m, role: newRole } : m)),
+    );
+    try {
+      await api.invites.updateMemberRole(projectId, userId, newRole);
+      toast("Role updated", "success");
+    } catch (err) {
+      setMembers((prev) =>
+        prev.map((m) => (m.user_id === userId ? { ...m, role: prevRole } : m)),
+      );
+      toast(err instanceof Error ? err.message : "Failed to update role", "error");
+    } finally {
+      setUpdatingRoleId(null);
+    }
+  };
+
   const pendingInvites = invites.filter((i) => i.status === "pending");
 
   return (
@@ -215,11 +234,24 @@ export function InviteManager({ projectId, onClose }: Props) {
                     </span>
                   )}
                 </div>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${ROLE_COLORS[m.role] || ROLE_COLORS.viewer}`}
-                >
-                  {m.role}
-                </span>
+                {m.role === "owner" ? (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${ROLE_COLORS.owner}`}
+                  >
+                    owner
+                  </span>
+                ) : (
+                  <select
+                    value={m.role}
+                    onChange={(e) => handleRoleChange(m.user_id, e.target.value, m.role)}
+                    disabled={updatingRoleId === m.user_id}
+                    aria-label={`Change role for ${m.email || m.display_name || "member"}`}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 border-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent transition-colors ${ROLE_COLORS[m.role] || ROLE_COLORS.viewer} ${updatingRoleId === m.user_id ? "opacity-50" : ""}`}
+                  >
+                    <option value="editor">editor</option>
+                    <option value="viewer">viewer</option>
+                  </select>
+                )}
               </div>
               {m.role !== "owner" && (
                 <button

@@ -27,7 +27,7 @@ import app.models.ssh_key  # noqa: F401
 from app.models.base import Base
 from app.models.project import Project
 from app.models.user import User
-from app.services.chat_service import ChatService
+from app.services.chat_service import WELCOME_MESSAGE, ChatService
 
 svc = ChatService()
 
@@ -317,3 +317,85 @@ class TestDeleteSession:
     async def test_returns_false_for_missing(self, db):
         result = await svc.delete_session(db, "nonexistent-id")
         assert result is False
+
+
+class TestEnsureWelcomeSession:
+    @pytest.mark.asyncio
+    async def test_creates_session_when_none_exist(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        session, created = await svc.ensure_welcome_session(db, proj.id, user.id)
+
+        assert created is True
+        assert session.id is not None
+        assert session.title == "Welcome"
+        assert session.project_id == proj.id
+        assert session.user_id == user.id
+
+    @pytest.mark.asyncio
+    async def test_welcome_message_inserted(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        session, _ = await svc.ensure_welcome_session(db, proj.id, user.id)
+        history = await svc.get_history_as_messages(db, session.id, limit=10)
+
+        assert len(history) == 1
+        assert history[0].role == "assistant"
+        assert "data assistant" in history[0].content
+        assert "any language" in history[0].content
+
+    @pytest.mark.asyncio
+    async def test_welcome_message_has_correct_metadata(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        session, _ = await svc.ensure_welcome_session(db, proj.id, user.id)
+
+        from sqlalchemy import select as sa_select
+        from app.models.chat_session import ChatMessage as CM
+        result = await db.execute(sa_select(CM).where(CM.session_id == session.id))
+        msg = result.scalar_one()
+
+        assert msg.role == "assistant"
+        assert msg.content == WELCOME_MESSAGE
+        meta = json.loads(msg.metadata_json)
+        assert meta["response_type"] == "text"
+        assert meta["is_welcome"] is True
+
+    @pytest.mark.asyncio
+    async def test_idempotent_when_sessions_exist(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        first_session, created1 = await svc.ensure_welcome_session(db, proj.id, user.id)
+        assert created1 is True
+
+        second_session, created2 = await svc.ensure_welcome_session(db, proj.id, user.id)
+        assert created2 is False
+        assert second_session.id == first_session.id
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_when_user_has_chats(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        existing = await svc.create_session(db, proj.id, title="My Chat", user_id=user.id)
+
+        session, created = await svc.ensure_welcome_session(db, proj.id, user.id)
+
+        assert created is False
+        assert session.id == existing.id
+
+    @pytest.mark.asyncio
+    async def test_passes_connection_id(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        session, created = await svc.ensure_welcome_session(
+            db, proj.id, user.id, connection_id="conn-123"
+        )
+
+        assert created is True
+        assert session.connection_id == "conn-123"

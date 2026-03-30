@@ -466,6 +466,47 @@ async def create_session(
     return session
 
 
+class EnsureWelcomeRequest(BaseModel):
+    project_id: str
+    connection_id: str | None = None
+
+
+class EnsureWelcomeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    title: str
+    connection_id: str | None = None
+    created_at: datetime | None = None
+    created: bool = False
+
+
+@router.post("/sessions/ensure-welcome", response_model=EnsureWelcomeResponse)
+@limiter.limit("10/minute")
+async def ensure_welcome_session(
+    request: Request,
+    body: EnsureWelcomeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+    session, created = await _chat_svc.ensure_welcome_session(
+        db,
+        body.project_id,
+        user_id=user["user_id"],
+        connection_id=body.connection_id,
+    )
+    return EnsureWelcomeResponse(
+        id=session.id,
+        project_id=session.project_id,
+        title=session.title,
+        connection_id=session.connection_id,
+        created_at=session.created_at,
+        created=created,
+    )
+
+
 @router.get("/sessions/{project_id}", response_model=list[SessionResponse])
 async def list_sessions(
     project_id: str,
@@ -1329,7 +1370,8 @@ async def ask_stream(
                 if event.step == "pipeline_end":
                     break
 
-            wait_deadline = time.monotonic() + stream_timeout_seconds
+            _grace_period = min(20, stream_timeout_seconds)
+            wait_deadline = time.monotonic() + _grace_period
             while not task.done():
                 remaining = wait_deadline - time.monotonic()
                 if remaining <= 0:

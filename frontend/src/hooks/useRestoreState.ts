@@ -7,6 +7,29 @@ import { useAppStore, getPersistedId } from "@/stores/app-store";
 import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 
+function mapMessages(msgs: { id: string; role: string; content: string; metadata_json?: string | null; tool_calls_json?: string | null; user_rating?: number | null; created_at: string }[]): ChatMessage[] {
+  return msgs.map((m) => {
+    let meta: Record<string, unknown> = {};
+    try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
+    return {
+      id: m.id,
+      role: m.role as "user" | "assistant" | "system",
+      content: m.content,
+      query: (meta.query as string) || undefined,
+      queryExplanation: (meta.query_explanation as string) || undefined,
+      visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
+      error: (meta.error as string) || undefined,
+      metadataJson: m.metadata_json || undefined,
+      stalenessWarning: (meta.staleness_warning as string) || undefined,
+      responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
+      userRating: m.user_rating ?? undefined,
+      toolCallsJson: m.tool_calls_json || undefined,
+      rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
+      timestamp: new Date(m.created_at).getTime(),
+    };
+  });
+}
+
 function isAccessError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
@@ -85,34 +108,25 @@ export function useRestoreState(isAuthenticated: boolean) {
           (connectionId && conns.find((c) => c.id === connectionId)) || conns[0] || null;
         store.setActiveConnection(restoredConn);
 
-        if (sessionId) {
+        if (sessions.length === 0) {
+          try {
+            const welcome = await api.chat.ensureWelcome(project.id, restoredConn?.id);
+            if (isStale()) return;
+            const welcomeSession = { id: welcome.id, project_id: welcome.project_id, title: welcome.title, connection_id: welcome.connection_id };
+            store.setChatSessions([welcomeSession]);
+            store.setActiveSession(welcomeSession);
+            const msgs = await api.chat.getMessages(welcome.id);
+            if (isStale()) return;
+            store.setMessages(mapMessages(msgs));
+          } catch { /* welcome session is best-effort */ }
+        } else if (sessionId) {
           const session = sessions.find((s) => s.id === sessionId);
           if (session) {
             store.setActiveSession(session);
             try {
               const msgs = await api.chat.getMessages(sessionId);
               if (isStale()) return;
-              const mapped: ChatMessage[] = msgs.map((m) => {
-                let meta: Record<string, unknown> = {};
-                try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
-                return {
-                  id: m.id,
-                  role: m.role as "user" | "assistant" | "system",
-                  content: m.content,
-                  query: (meta.query as string) || undefined,
-                  queryExplanation: (meta.query_explanation as string) || undefined,
-                  visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
-                  error: (meta.error as string) || undefined,
-                  metadataJson: m.metadata_json || undefined,
-                  stalenessWarning: (meta.staleness_warning as string) || undefined,
-                  responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
-                  userRating: m.user_rating ?? undefined,
-                  toolCallsJson: m.tool_calls_json || undefined,
-                  rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
-                  timestamp: new Date(m.created_at).getTime(),
-                };
-              });
-              store.setMessages(mapped);
+              store.setMessages(mapMessages(msgs));
             } catch {
               storage.removeItem("active_session_id");
             }
