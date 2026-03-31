@@ -7,20 +7,28 @@ const mockSetActiveProject = vi.fn();
 const mockSetConnections = vi.fn();
 const mockSetActiveConnection = vi.fn();
 
+const mockAppState = {
+  sshKeys: [] as unknown[],
+  setProjects: mockSetProjects,
+  setActiveProject: mockSetActiveProject,
+  setConnections: mockSetConnections,
+  setActiveConnection: mockSetActiveConnection,
+};
 vi.mock("@/stores/app-store", () => ({
-  useAppStore: vi.fn(() => ({
-    sshKeys: [],
-    setProjects: mockSetProjects,
-    setActiveProject: mockSetActiveProject,
-    setConnections: mockSetConnections,
-    setActiveConnection: mockSetActiveConnection,
-  })),
+  useAppStore: Object.assign(
+    (selector?: (s: typeof mockAppState) => unknown) =>
+      selector ? selector(mockAppState) : mockAppState,
+    { setState: vi.fn(), getState: () => mockAppState },
+  ),
 }));
 
+const mockAuthState = { user: { id: "u1", email: "test@test.com", can_create_projects: true } };
 vi.mock("@/stores/auth-store", () => ({
-  useAuthStore: Object.assign(vi.fn(() => ({ user: { id: "u1", email: "test@test.com" } })), {
-    setState: vi.fn(),
-  }),
+  useAuthStore: Object.assign(
+    (selector?: (s: typeof mockAuthState) => unknown) =>
+      selector ? selector(mockAuthState) : mockAuthState,
+    { setState: vi.fn(), getState: () => mockAuthState },
+  ),
 }));
 
 vi.mock("@/lib/api", () => ({

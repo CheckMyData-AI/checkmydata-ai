@@ -471,7 +471,7 @@ class TestPipelineScopedContext:
 
     @pytest.mark.asyncio
     async def test_pipeline_scopes_history_before_executor(self):
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from app.agents.base import AgentContext
@@ -496,10 +496,7 @@ class TestPipelineScopedContext:
             workflow_tracker=tracker,
         )
 
-        history = [
-            Message(role="user", content=f"msg-{i}")
-            for i in range(12)
-        ]
+        history = [Message(role="user", content=f"msg-{i}") for i in range(12)]
         ctx = AgentContext(
             project_id="test-proj",
             connection_config=None,
@@ -539,16 +536,18 @@ class TestPipelineScopedContext:
         mock_pipeline_run.id = "run-1"
 
         with (
-            patch.object(agent, "_create_pipeline_run", new=AsyncMock(return_value=mock_pipeline_run)),
+            patch.object(
+                agent, "_create_pipeline_run", new=AsyncMock(return_value=mock_pipeline_run)
+            ),
             patch.object(agent, "_persist_stage_results", new=AsyncMock()),
             patch.object(agent, "_build_pipeline_response", return_value=MagicMock()),
-            patch("app.agents.orchestrator.StageExecutor") as MockExecutorCls,
-            patch("app.agents.orchestrator.QueryPlanner") as MockPlannerCls,
+            patch("app.agents.orchestrator.StageExecutor") as mock_executor_cls,
+            patch("app.agents.orchestrator.QueryPlanner") as mock_planner_cls,
         ):
-            mock_planner = MockPlannerCls.return_value
+            mock_planner = mock_planner_cls.return_value
             mock_planner.plan = AsyncMock(return_value=plan)
 
-            mock_executor = MockExecutorCls.return_value
+            mock_executor = mock_executor_cls.return_value
             mock_executor.execute = AsyncMock(side_effect=_capture_execute)
 
             await agent._run_complex_pipeline(
