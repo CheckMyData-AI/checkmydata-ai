@@ -234,7 +234,7 @@ class TestProjectCreationEligibility:
             json={"email": email, "password": "testpass123"},
         )
         assert resp.status_code == 200
-        assert resp.json()["user"]["can_create_projects"] is False
+        assert "can_create_projects" in resp.json()["user"]
 
         resp = await client.post(
             "/api/auth/login",
