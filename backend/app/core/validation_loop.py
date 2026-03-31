@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 from app.connectors.base import BaseConnector, ConnectionConfig, SchemaInfo
 from app.core.context_enricher import ContextEnricher
@@ -22,7 +23,6 @@ from app.core.query_validation import (
 from app.core.retry_strategy import RetryStrategy
 from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import WorkflowTracker
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

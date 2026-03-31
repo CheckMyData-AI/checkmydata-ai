@@ -220,29 +220,36 @@ class EmailService:
         safe_desc = escape(description)
         safe_msg = escape(message).replace("\n", "<br>")
 
-        body = f"""\
-<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">Project Access Request</h2>
-<p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 8px">
-  A user has requested the ability to create projects on CheckMyData.ai.
-</p>
-<table style="width:100%;border-collapse:collapse;margin:16px 0">
-  <tr>
-    <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0;width:120px">Email</td>
-    <td style="padding:8px 12px;color:#1e293b;font-size:14px;border-bottom:1px solid #e2e8f0">{safe_email}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0">User ID</td>
-    <td style="padding:8px 12px;color:#1e293b;font-size:14px;border-bottom:1px solid #e2e8f0">{escape(user_id)}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0">Description</td>
-    <td style="padding:8px 12px;color:#1e293b;font-size:14px;border-bottom:1px solid #e2e8f0">{safe_desc}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;vertical-align:top">Message</td>
-    <td style="padding:8px 12px;color:#1e293b;font-size:14px;line-height:1.5">{safe_msg}</td>
-  </tr>
-</table>"""
+        hdr = "padding:8px 12px;color:#64748b;font-size:13px;font-weight:600"
+        bdr = "border-bottom:1px solid #e2e8f0"
+        val = "padding:8px 12px;color:#1e293b;font-size:14px"
+        body = (
+            '<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">'
+            "Project Access Request</h2>\n"
+            '<p style="color:#475569;font-size:15px;line-height:1.6'
+            ';margin:0 0 8px">\n'
+            "  A user has requested the ability to create projects"
+            " on CheckMyData.ai.\n</p>\n"
+            '<table style="width:100%;border-collapse:collapse'
+            ';margin:16px 0">\n'
+            f"  <tr>\n"
+            f'    <td style="{hdr};{bdr};width:120px">Email</td>\n'
+            f'    <td style="{val};{bdr}">{safe_email}</td>\n'
+            f"  </tr>\n"
+            f"  <tr>\n"
+            f'    <td style="{hdr};{bdr}">User ID</td>\n'
+            f'    <td style="{val};{bdr}">{escape(user_id)}</td>\n'
+            f"  </tr>\n"
+            f"  <tr>\n"
+            f'    <td style="{hdr};{bdr}">Description</td>\n'
+            f'    <td style="{val};{bdr}">{safe_desc}</td>\n'
+            f"  </tr>\n"
+            f"  <tr>\n"
+            f'    <td style="{hdr};vertical-align:top">Message</td>\n'
+            f'    <td style="{val};line-height:1.5">{safe_msg}</td>\n'
+            f"  </tr>\n"
+            f"</table>"
+        )
 
         await self._send(
             to="contact@checkmydata.ai",

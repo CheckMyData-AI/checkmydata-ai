@@ -1,17 +1,16 @@
 """Unit tests for TracePersistenceService — span classification, filtering, and enrichment."""
 
 import json
-import time
 
 import pytest
 
+from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker
 from app.services.trace_persistence_service import (
     TracePersistenceService,
+    _truncate,
     _WorkflowBuffer,
     classify_span_type,
-    _truncate,
 )
-from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker
 
 
 class TestClassifySpanType:
@@ -141,14 +140,16 @@ class TestBuildSpansFromToolLog:
 
     def test_single_tool_call_with_args(self):
         svc = TracePersistenceService.__new__(TracePersistenceService)
-        spans = svc._build_spans_from_tool_log([
-            {
-                "tool": "execute_query",
-                "args": {"sql": "SELECT 1"},
-                "result": "OK",
-                "elapsed_ms": 42.5,
-            }
-        ])
+        spans = svc._build_spans_from_tool_log(
+            [
+                {
+                    "tool": "execute_query",
+                    "args": {"sql": "SELECT 1"},
+                    "result": "OK",
+                    "elapsed_ms": 42.5,
+                }
+            ]
+        )
         assert len(spans) == 1
         assert spans[0]["span_type"] == "db_query"
         assert spans[0]["name"] == "execute_query"
@@ -160,14 +161,16 @@ class TestBuildSpansFromToolLog:
     def test_single_tool_call_with_arguments_key(self):
         """Verify the key mismatch fix: 'arguments' and 'result_preview' keys work."""
         svc = TracePersistenceService.__new__(TracePersistenceService)
-        spans = svc._build_spans_from_tool_log([
-            {
-                "tool": "search_codebase",
-                "arguments": {"query": "auth"},
-                "result_preview": "Found 3 results",
-                "elapsed_ms": 100,
-            }
-        ])
+        spans = svc._build_spans_from_tool_log(
+            [
+                {
+                    "tool": "search_codebase",
+                    "arguments": {"query": "auth"},
+                    "result_preview": "Found 3 results",
+                    "elapsed_ms": 100,
+                }
+            ]
+        )
         assert len(spans) == 1
         assert '"query"' in spans[0]["input_preview"]
         assert "auth" in spans[0]["input_preview"]
@@ -175,9 +178,7 @@ class TestBuildSpansFromToolLog:
 
     def test_failed_tool_call(self):
         svc = TracePersistenceService.__new__(TracePersistenceService)
-        spans = svc._build_spans_from_tool_log([
-            {"tool": "execute_query", "error": "syntax error"}
-        ])
+        spans = svc._build_spans_from_tool_log([{"tool": "execute_query", "error": "syntax error"}])
         assert spans[0]["status"] == "failed"
         assert "syntax error" in spans[0]["detail"]
 
@@ -372,15 +373,15 @@ class TestPersistWorkflowWithEmptyIds:
     async def test_returns_early_when_project_id_empty(self):
         """Empty project_id causes FK violation — skip persist, let finalize_trace handle it."""
         import inspect
+
         from app.services import trace_persistence_service as tps_mod
+
         source = inspect.getsource(tps_mod.TracePersistenceService._persist_workflow)
         lines = source.split("\n")
         for i, line in enumerate(lines):
             if "not project_id or not user_id" in line:
-                remaining = "\n".join(lines[i:i+6])
-                assert "return" in remaining, (
-                    "_persist_workflow should return early on empty IDs"
-                )
+                remaining = "\n".join(lines[i : i + 12])
+                assert "return" in remaining, "_persist_workflow should return early on empty IDs"
                 break
         else:
             pytest.fail("Expected empty-id guard not found in _persist_workflow")
@@ -439,8 +440,9 @@ class TestAgentSafetyNet:
     @pytest.mark.asyncio
     async def test_pipeline_end_on_orchestrator_success(self):
         from unittest.mock import AsyncMock, MagicMock, patch
-        from app.core.agent import ConversationalAgent
+
         from app.agents.orchestrator import AgentResponse
+        from app.core.agent import ConversationalAgent
 
         tracker = WorkflowTracker()
         received: list[WorkflowEvent] = []
@@ -459,7 +461,7 @@ class TestAgentSafetyNet:
 
         with patch.object(agent._orchestrator, "run", new=AsyncMock(return_value=mock_resp)):
             with patch.object(agent._orchestrator, "_llm", MagicMock()):
-                result = await agent.run(
+                await agent.run(
                     question="test",
                     project_id="p1",
                     user_id="u1",
@@ -471,6 +473,7 @@ class TestAgentSafetyNet:
     @pytest.mark.asyncio
     async def test_pipeline_end_on_orchestrator_exception(self):
         from unittest.mock import AsyncMock, MagicMock, patch
+
         from app.core.agent import ConversationalAgent
 
         tracker = WorkflowTracker()
@@ -484,7 +487,8 @@ class TestAgentSafetyNet:
         agent = ConversationalAgent(workflow_tracker=tracker)
 
         with patch.object(
-            agent._orchestrator, "run",
+            agent._orchestrator,
+            "run",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ):
             with patch.object(agent._orchestrator, "_llm", MagicMock()):
@@ -506,7 +510,9 @@ class TestStaleBufferPersistence:
 
     def test_cleanup_does_not_discard(self):
         import inspect
+
         from app.services import trace_persistence_service as tps_mod
+
         source = inspect.getsource(tps_mod.TracePersistenceService._cleanup_stale_buffers)
         assert "_persist_workflow" in source
         assert "Stale: pipeline_end never received" in source

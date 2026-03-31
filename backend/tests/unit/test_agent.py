@@ -237,18 +237,27 @@ class TestMaxIterations:
 
         from app.agents.sql_agent import SQLAgentResult
 
-        with patch.object(
-            agent._orchestrator._sql,
-            "run",
-            new_callable=AsyncMock,
-            return_value=SQLAgentResult(status="no_result", error="No query generated"),
-        ), patch.object(
-            agent._orchestrator, "_resolve_connection_id",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
-            agent._orchestrator, "_build_table_map",
-            new_callable=AsyncMock, return_value="",
-        ), patch("app.agents.orchestrator.settings") as mock_settings:
+        with (
+            patch.object(
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="no_result", error="No query generated"),
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
             mock_settings.max_orchestrator_iterations = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
@@ -285,7 +294,9 @@ class TestMaxIterations:
             return LLMResponse(
                 content="",
                 tool_calls=[
-                    ToolCall(id=f"tc-{call_count}", name="query_database", arguments={"question": "test"}),
+                    ToolCall(
+                        id=f"tc-{call_count}", name="query_database", arguments={"question": "test"}
+                    ),
                 ],
                 usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             )
@@ -294,18 +305,27 @@ class TestMaxIterations:
 
         from app.agents.sql_agent import SQLAgentResult
 
-        with patch.object(
-            agent._orchestrator._sql,
-            "run",
-            new_callable=AsyncMock,
-            return_value=SQLAgentResult(status="no_result", error="No query generated"),
-        ), patch.object(
-            agent._orchestrator, "_resolve_connection_id",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
-            agent._orchestrator, "_build_table_map",
-            new_callable=AsyncMock, return_value="",
-        ), patch("app.agents.orchestrator.settings") as mock_settings:
+        with (
+            patch.object(
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="no_result", error="No query generated"),
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
             mock_settings.max_orchestrator_iterations = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = True
@@ -328,18 +348,27 @@ class TestMaxIterations:
 
         from app.agents.sql_agent import SQLAgentResult
 
-        with patch.object(
-            agent._orchestrator._sql,
-            "run",
-            new_callable=AsyncMock,
-            return_value=SQLAgentResult(status="no_result", error="No query generated"),
-        ), patch.object(
-            agent._orchestrator, "_resolve_connection_id",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
-            agent._orchestrator, "_build_table_map",
-            new_callable=AsyncMock, return_value="",
-        ), patch("app.agents.orchestrator.settings") as mock_settings:
+        with (
+            patch.object(
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="no_result", error="No query generated"),
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
             mock_settings.max_orchestrator_iterations = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
@@ -362,18 +391,27 @@ class TestMaxIterations:
 
         from app.agents.sql_agent import SQLAgentResult
 
-        with patch.object(
-            agent._orchestrator._sql,
-            "run",
-            new_callable=AsyncMock,
-            return_value=SQLAgentResult(status="no_result", error="No query generated"),
-        ), patch.object(
-            agent._orchestrator, "_resolve_connection_id",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
-            agent._orchestrator, "_build_table_map",
-            new_callable=AsyncMock, return_value="",
-        ), patch("app.agents.orchestrator.settings") as mock_settings:
+        with (
+            patch.object(
+                agent._orchestrator._sql,
+                "run",
+                new_callable=AsyncMock,
+                return_value=SQLAgentResult(status="no_result", error="No query generated"),
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_resolve_connection_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                agent._orchestrator,
+                "_build_table_map",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
             mock_settings.max_orchestrator_iterations = 25
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False

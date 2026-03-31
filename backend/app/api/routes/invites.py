@@ -271,7 +271,10 @@ async def update_member_role(
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
     member = await _membership_svc.update_member_role(
-        db, project_id, member_user_id, body.role,
+        db,
+        project_id,
+        member_user_id,
+        body.role,
     )
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")

@@ -474,6 +474,7 @@ class TestKnowledgeAgent:
         result = await agent.run(context, question="infinite loop?")
 
         from app.config import settings
+
         assert mock_llm.complete.call_count == settings.max_knowledge_iterations
         assert result.status == "no_result" or result.answer != ""
 

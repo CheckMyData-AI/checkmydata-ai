@@ -44,7 +44,7 @@ _COMPLEXITY_KEYWORDS = [
 # ------------------------------------------------------------------
 
 
-def detect_complexity(question: str, chat_history: list[Message] | None = None) -> bool:
+def detect_complexity(question: str) -> bool:
     """Fast heuristic check — no LLM call."""
     q_lower = question.lower()
     indicators = [
@@ -59,7 +59,6 @@ def detect_complexity(question: str, chat_history: list[Message] | None = None) 
 async def detect_complexity_adaptive(
     question: str,
     llm_router: LLMRouter,
-    chat_history: list[Message] | None = None,
     preferred_provider: str | None = None,
     model: str | None = None,
 ) -> bool:

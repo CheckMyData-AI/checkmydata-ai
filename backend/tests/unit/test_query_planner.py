@@ -87,8 +87,8 @@ class TestDetectComplexity:
         q = "Compare a, b, c, d, and e from the table"
         assert detect_complexity(q) is True
 
-    def test_chat_history_ignored_gracefully(self):
-        assert detect_complexity("simple question", chat_history=[]) is False
+    def test_plain_short_question(self):
+        assert detect_complexity("simple question") is False
 
 
 # ==================================================================

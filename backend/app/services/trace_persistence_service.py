@@ -69,8 +69,13 @@ SPAN_TYPE_MAP: dict[str, str] = {
 }
 
 _SUB_AGENT_PREFIXES = (
-    "sql_agent:", "knowledge_agent:", "viz_agent:", "mcp_source_agent:",
-    "orchestrator:", "sql:", "knowledge:",
+    "sql_agent:",
+    "knowledge_agent:",
+    "viz_agent:",
+    "mcp_source_agent:",
+    "orchestrator:",
+    "sql:",
+    "knowledge:",
 )
 
 
@@ -190,11 +195,7 @@ class TracePersistenceService:
             async with async_session_factory() as session:
                 from sqlalchemy import select, update
 
-                stmt = (
-                    select(RequestTrace)
-                    .where(RequestTrace.workflow_id == workflow_id)
-                    .limit(1)
-                )
+                stmt = select(RequestTrace).where(RequestTrace.workflow_id == workflow_id).limit(1)
                 result = await session.execute(stmt)
                 trace = result.scalar_one_or_none()
 
@@ -283,23 +284,31 @@ class TracePersistenceService:
             span_type = classify_span_type(name)
             raw_args = entry.get("arguments") or entry.get("args") or {}
             raw_result = entry.get("result_preview") or entry.get("result") or ""
-            spans.append({
-                "span_type": span_type,
-                "name": name,
-                "status": "completed" if not entry.get("error") else "failed",
-                "detail": str(entry.get("error", ""))[:500],
-                "duration_ms": entry.get("elapsed_ms"),
-                "input_preview": _truncate(
-                    json.dumps(raw_args, default=str) if raw_args else None
-                ),
-                "output_preview": _truncate(str(raw_result)[:500] if raw_result else None),
-            })
+            spans.append(
+                {
+                    "span_type": span_type,
+                    "name": name,
+                    "status": "completed" if not entry.get("error") else "failed",
+                    "detail": str(entry.get("error", ""))[:500],
+                    "duration_ms": entry.get("elapsed_ms"),
+                    "input_preview": _truncate(
+                        json.dumps(raw_args, default=str) if raw_args else None
+                    ),
+                    "output_preview": _truncate(str(raw_result)[:500] if raw_result else None),
+                }
+            )
         return spans
 
-    _SKIP_STEPS = frozenset({
-        "pipeline_start", "pipeline_end", "thinking", "token",
-        "orchestrator:warning", "orchestrator:llm_retry",
-    })
+    _SKIP_STEPS = frozenset(
+        {
+            "pipeline_start",
+            "pipeline_end",
+            "thinking",
+            "token",
+            "orchestrator:warning",
+            "orchestrator:llm_retry",
+        }
+    )
 
     _TOKEN_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "model")
 
@@ -315,8 +324,10 @@ class TracePersistenceService:
     def _extra_to_metadata(extra: dict[str, Any]) -> str | None:
         """Serialize extra dict to JSON, excluding keys already stored in dedicated columns."""
         remaining = {
-            k: v for k, v in extra.items()
-            if k not in ("input_preview", "output_preview", *TracePersistenceService._TOKEN_USAGE_KEYS)
+            k: v
+            for k, v in extra.items()
+            if k
+            not in ("input_preview", "output_preview", *TracePersistenceService._TOKEN_USAGE_KEYS)
         }
         return json.dumps(remaining, default=str) if remaining else None
 
@@ -356,23 +367,25 @@ class TracePersistenceService:
                 output_preview = _truncate(extra.get("output_preview"))
                 token_usage = self._extract_token_usage(extra)
 
-                span_dicts.append({
-                    "span_type": span_type,
-                    "name": evt.step,
-                    "status": evt.status,
-                    "detail": _truncate(evt.detail, 500) or "",
-                    "started_at": datetime.fromtimestamp(
-                        evt.timestamp - (evt.elapsed_ms / 1000 if evt.elapsed_ms else 0),
-                        tz=UTC,
-                    ),
-                    "ended_at": datetime.fromtimestamp(evt.timestamp, tz=UTC),
-                    "duration_ms": evt.elapsed_ms,
-                    "input_preview": input_preview,
-                    "output_preview": output_preview,
-                    "token_usage_json": token_usage,
-                    "metadata_json": self._extra_to_metadata(extra),
-                    "order_index": order,
-                })
+                span_dicts.append(
+                    {
+                        "span_type": span_type,
+                        "name": evt.step,
+                        "status": evt.status,
+                        "detail": _truncate(evt.detail, 500) or "",
+                        "started_at": datetime.fromtimestamp(
+                            evt.timestamp - (evt.elapsed_ms / 1000 if evt.elapsed_ms else 0),
+                            tz=UTC,
+                        ),
+                        "ended_at": datetime.fromtimestamp(evt.timestamp, tz=UTC),
+                        "duration_ms": evt.elapsed_ms,
+                        "input_preview": input_preview,
+                        "output_preview": output_preview,
+                        "token_usage_json": token_usage,
+                        "metadata_json": self._extra_to_metadata(extra),
+                        "order_index": order,
+                    }
+                )
                 order += 1
 
             end_status = end_event.status

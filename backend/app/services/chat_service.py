@@ -6,23 +6,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
 
-WELCOME_MESSAGE = """\
-Hello! I'm your data assistant for this project.
-
-Here's what I can do:
-- **Query your database** in natural language — just ask a question and I'll generate, validate, and run the SQL for you
-- **Analyze your codebase** — I understand your project's code structure, ORM models, and business logic
-- **Visualize results** — tables, charts (bar, line, pie, scatter), with export to XLSX/CSV/JSON
-- **Learn and improve** — I remember patterns, conventions, and your corrections to get better over time
-- **Validate data** — I can check for anomalies, verify results against benchmarks, and investigate suspicious data
-
-Feel free to communicate with me in any language you're comfortable with — I understand and respond in multiple languages.
-
-To get started, try asking something like:
-- "How many users registered this month?"
-- "Show me the top 10 products by revenue"
-- "What tables are in my database?"\
-"""
+WELCOME_MESSAGE = (
+    "Hello! I'm your data assistant for this project.\n"
+    "\n"
+    "Here's what I can do:\n"
+    "- **Query your database** in natural language — just ask a question "
+    "and I'll generate, validate, and run the SQL for you\n"
+    "- **Analyze your codebase** — I understand your project's code "
+    "structure, ORM models, and business logic\n"
+    "- **Visualize results** — tables, charts (bar, line, pie, scatter), "
+    "with export to XLSX/CSV/JSON\n"
+    "- **Learn and improve** — I remember patterns, conventions, and your "
+    "corrections to get better over time\n"
+    "- **Validate data** — I can check for anomalies, verify results "
+    "against benchmarks, and investigate suspicious data\n"
+    "\n"
+    "Feel free to communicate with me in any language you're comfortable "
+    "with — I understand and respond in multiple languages.\n"
+    "\n"
+    "To get started, try asking something like:\n"
+    '- "How many users registered this month?"\n'
+    '- "Show me the top 10 products by revenue"\n'
+    '- "What tables are in my database?"'
+)
 
 
 class ChatService:
@@ -107,21 +113,18 @@ class ChatService:
                 except (json.JSONDecodeError, TypeError):
                     meta = {}
                 context_parts: list[str] = []
-                if meta.get("query"):
-                    context_parts.append(f"SQL Query: {meta['query']}")
                 if meta.get("viz_type"):
-                    context_parts.append(f"Visualization: {meta['viz_type']}")
+                    context_parts.append(f"viz: {meta['viz_type']}")
                 row_count = meta.get("row_count")
                 if row_count is not None:
-                    context_parts.append(f"Rows: {row_count}")
+                    context_parts.append(f"{row_count} rows")
                 raw = meta.get("raw_result")
                 if raw and raw.get("columns"):
-                    context_parts.append(f"Columns: {', '.join(raw['columns'])}")
-                    sample = raw.get("rows", [])[:3]
-                    if sample:
-                        context_parts.append(f"Sample data: {sample}")
+                    context_parts.append(f"columns: {', '.join(raw['columns'])}")
                 if context_parts:
-                    content += "\n\n[Context: " + " | ".join(context_parts) + "]"
+                    content += (
+                        "\n\n[Previous result (completed): " + " | ".join(context_parts) + "]"
+                    )
             result.append(Message(role=m.role, content=content))
         return result
 
@@ -154,7 +157,7 @@ class ChatService:
         user_id: str,
         connection_id: str | None = None,
     ) -> tuple[ChatSession, bool]:
-        """Return the user's first chat session, creating one with a welcome message if none exist."""
+        """Return the user's first chat session, creating one with welcome message if needed."""
         count_stmt = (
             select(func.count())
             .select_from(ChatSession)

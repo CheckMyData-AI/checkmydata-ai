@@ -279,9 +279,7 @@ class TestRetryLogic:
         mock_settings.resend_from_email = "Test <noreply@test.com>"
         mock_settings.app_url = "https://app.test.com"
 
-        val_err = ValidationError(
-            message="Bad request", error_type="validation_error", code=400
-        )
+        val_err = ValidationError(message="Bad request", error_type="validation_error", code=400)
         mock_to_thread.side_effect = val_err
 
         await email_svc.send_welcome_email(user_id="u-v", email="a@b.com", display_name="V")

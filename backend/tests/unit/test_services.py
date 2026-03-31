@@ -203,12 +203,12 @@ class TestChatServiceHistoryEnrichment:
         history = await svc.get_history_as_messages(db_session, session.id)
         assert len(history) == 2
         assistant_content = history[1].content
-        assert "[Context:" in assistant_content
-        assert "SQL Query: SELECT * FROM sales" in assistant_content
-        assert "Visualization: bar_chart" in assistant_content
-        assert "Rows: 5" in assistant_content
-        assert "Columns: product, amount" in assistant_content
-        assert "Sample data:" in assistant_content
+        assert "[Previous result (completed):" in assistant_content
+        assert "viz: bar_chart" in assistant_content
+        assert "5 rows" in assistant_content
+        assert "columns: product, amount" in assistant_content
+        assert "SQL Query:" not in assistant_content
+        assert "Sample data:" not in assistant_content
 
     @pytest.mark.asyncio
     async def test_history_no_context_for_plain_messages(self, db_session):

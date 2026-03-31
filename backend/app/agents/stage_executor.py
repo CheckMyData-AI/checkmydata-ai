@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from typing import Any
 
 from app.agents.base import AgentContext, BaseAgent
@@ -247,14 +248,22 @@ class StageExecutor:
     # Stage runners
     # ------------------------------------------------------------------
 
+    _SUB_AGENT_HISTORY_TAIL = 4
+
     async def _run_sql_stage(
         self,
         question: str,
         stage: PlanStage,
         context: AgentContext,
     ) -> StageResult:
+        scoped = replace(
+            context,
+            chat_history=context.chat_history[-self._SUB_AGENT_HISTORY_TAIL :]
+            if context.chat_history
+            else [],
+        )
         try:
-            sql_result = await self._sql.run(context, question=question)
+            sql_result = await self._sql.run(scoped, question=question)
         except (AgentRetryableError, AgentFatalError, AgentError) as e:
             return StageResult(stage_id=stage.stage_id, status="error", error=str(e))
         except RETRYABLE_LLM_ERRORS as e:
@@ -287,8 +296,14 @@ class StageExecutor:
         stage: PlanStage,
         context: AgentContext,
     ) -> StageResult:
+        scoped = replace(
+            context,
+            chat_history=context.chat_history[-self._SUB_AGENT_HISTORY_TAIL :]
+            if context.chat_history
+            else [],
+        )
         try:
-            kb_result = await self._knowledge.run(context, question=question)
+            kb_result = await self._knowledge.run(scoped, question=question)
         except (AgentRetryableError, AgentFatalError, AgentError) as e:
             return StageResult(stage_id=stage.stage_id, status="error", error=str(e))
         except RETRYABLE_LLM_ERRORS as e:

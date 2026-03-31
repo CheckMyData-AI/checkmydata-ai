@@ -300,7 +300,10 @@ class SQLAgent(BaseAgent):
                 else:
                     _sd_tool["input_preview"] = str(_tc_args)[:500]
                 async with tracker.step(
-                    wf_id, f"sql:tool:{tc.name}", f"SQL tool: {tc.name}", step_data=_sd_tool,
+                    wf_id,
+                    f"sql:tool:{tc.name}",
+                    f"SQL tool: {tc.name}",
+                    step_data=_sd_tool,
                 ):
                     result_text = await self._dispatch_tool(
                         tc,

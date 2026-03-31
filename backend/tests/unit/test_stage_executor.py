@@ -456,3 +456,77 @@ class TestExecuteWithRetries:
 
         assert result.status == "error"
         assert mock_sql_agent.run.call_count == 2  # initial + 1 retry
+
+
+# ------------------------------------------------------------------
+# History scoping (GAP 1)
+# ------------------------------------------------------------------
+
+
+class TestHistoryScoping:
+    """Verify that _run_sql_stage and _run_knowledge_stage pass scoped history."""
+
+    @pytest.fixture
+    def context_with_history(self, mock_llm, mock_tracker) -> AgentContext:
+        from app.llm.base import Message
+
+        history = [Message(role="user", content=f"old question {i}") for i in range(10)]
+        return AgentContext(
+            project_id="proj-1",
+            connection_config=ConnectionConfig(db_type="postgres"),
+            user_question="test question",
+            chat_history=history,
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+        )
+
+    @pytest.mark.asyncio
+    async def test_sql_stage_receives_scoped_history(
+        self, executor, context_with_history, mock_sql_agent
+    ):
+        qr = QueryResult(columns=["id"], rows=[[1]], row_count=1)
+        sql_result = MagicMock(spec=AgentResult)
+        sql_result.status = "success"
+        sql_result.results = qr
+        sql_result.query = "SELECT 1"
+        sql_result.token_usage = {}
+        mock_sql_agent.run.return_value = sql_result
+
+        stage = _sql_stage("s1")
+        await executor._run_sql_stage("test q", stage, context_with_history)
+
+        call_ctx = mock_sql_agent.run.call_args[0][0]
+        assert len(call_ctx.chat_history) == StageExecutor._SUB_AGENT_HISTORY_TAIL
+        assert len(context_with_history.chat_history) == 10
+
+    @pytest.mark.asyncio
+    async def test_knowledge_stage_receives_scoped_history(
+        self, executor, context_with_history, mock_knowledge_agent
+    ):
+        kb_result = MagicMock()
+        kb_result.answer = "Found info"
+        kb_result.token_usage = {}
+        mock_knowledge_agent.run.return_value = kb_result
+
+        stage = _kb_stage("kb1")
+        await executor._run_knowledge_stage("test q", stage, context_with_history)
+
+        call_ctx = mock_knowledge_agent.run.call_args[0][0]
+        assert len(call_ctx.chat_history) == StageExecutor._SUB_AGENT_HISTORY_TAIL
+
+    @pytest.mark.asyncio
+    async def test_sql_stage_handles_empty_history(self, executor, context, mock_sql_agent):
+        qr = QueryResult(columns=["id"], rows=[[1]], row_count=1)
+        sql_result = MagicMock(spec=AgentResult)
+        sql_result.status = "success"
+        sql_result.results = qr
+        sql_result.query = "SELECT 1"
+        sql_result.token_usage = {}
+        mock_sql_agent.run.return_value = sql_result
+
+        stage = _sql_stage("s1")
+        await executor._run_sql_stage("test q", stage, context)
+
+        call_ctx = mock_sql_agent.run.call_args[0][0]
+        assert call_ctx.chat_history == []

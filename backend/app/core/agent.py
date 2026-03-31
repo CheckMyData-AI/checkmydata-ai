@@ -99,8 +99,6 @@ class ConversationalAgent:
         finally:
             if not self._tracker.has_ended(wf_id):
                 try:
-                    await self._tracker.end(
-                        wf_id, "agent", "failed", "pipeline_end never emitted"
-                    )
+                    await self._tracker.end(wf_id, "agent", "failed", "pipeline_end never emitted")
                 except Exception:
                     logger.warning("Failed to emit fallback pipeline_end", exc_info=True)

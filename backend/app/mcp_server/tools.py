@@ -31,6 +31,7 @@ def _get_trace_svc():
     """Best-effort retrieval of the global TracePersistenceService."""
     try:
         import app.main as _main_mod
+
         _app = getattr(_main_mod, "app", None)
         if _app:
             return getattr(_app.state, "trace_persistence_service", None)

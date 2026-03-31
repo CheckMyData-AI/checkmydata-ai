@@ -177,7 +177,10 @@ class TestDashboardRBAC:
     async def test_viewer_can_list_dashboards(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token, _ = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.get(
             f"/api/dashboards?project_id={pid}",
@@ -188,7 +191,10 @@ class TestDashboardRBAC:
     async def test_viewer_cannot_create_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token, _ = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.post(
             "/api/dashboards",
@@ -200,7 +206,10 @@ class TestDashboardRBAC:
     async def test_viewer_cannot_update_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token, dash_id = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.patch(
             f"/api/dashboards/{dash_id}",
@@ -212,7 +221,10 @@ class TestDashboardRBAC:
     async def test_viewer_cannot_delete_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token, dash_id = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.delete(
             f"/api/dashboards/{dash_id}",
@@ -223,7 +235,10 @@ class TestDashboardRBAC:
     async def test_editor_can_create_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, editor_token, _ = await self._setup(
-            client, db_session, owner_token, "editor",
+            client,
+            db_session,
+            owner_token,
+            "editor",
         )
         resp = await client.post(
             "/api/dashboards",
@@ -235,7 +250,10 @@ class TestDashboardRBAC:
     async def test_editor_can_update_any_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, editor_token, dash_id = await self._setup(
-            client, db_session, owner_token, "editor",
+            client,
+            db_session,
+            owner_token,
+            "editor",
         )
         resp = await client.patch(
             f"/api/dashboards/{dash_id}",
@@ -248,7 +266,10 @@ class TestDashboardRBAC:
     async def test_editor_can_delete_any_dashboard(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, editor_token, dash_id = await self._setup(
-            client, db_session, owner_token, "editor",
+            client,
+            db_session,
+            owner_token,
+            "editor",
         )
         resp = await client.delete(
             f"/api/dashboards/{dash_id}",
@@ -295,7 +316,10 @@ class TestAnalyticsRBAC:
     async def test_viewer_cannot_access_feedback_analytics(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.get(
             f"/api/chat/analytics/feedback/{pid}",
@@ -306,7 +330,10 @@ class TestAnalyticsRBAC:
     async def test_editor_cannot_access_feedback_analytics(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, editor_token = await self._setup(
-            client, db_session, owner_token, "editor",
+            client,
+            db_session,
+            owner_token,
+            "editor",
         )
         resp = await client.get(
             f"/api/chat/analytics/feedback/{pid}",
@@ -324,7 +351,10 @@ class TestAnalyticsRBAC:
     async def test_viewer_cannot_access_validation_analytics(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, viewer_token = await self._setup(
-            client, db_session, owner_token, "viewer",
+            client,
+            db_session,
+            owner_token,
+            "viewer",
         )
         resp = await client.get(
             f"/api/data-validation/analytics/{pid}",
@@ -342,7 +372,10 @@ class TestAnalyticsRBAC:
     async def test_editor_cannot_access_analytics_summary(self, client, auth_client, db_session):
         owner_token = auth_client.headers["Authorization"].split()[-1]
         pid, editor_token = await self._setup(
-            client, db_session, owner_token, "editor",
+            client,
+            db_session,
+            owner_token,
+            "editor",
         )
         resp = await client.get(
             f"/api/data-validation/summary/{pid}",

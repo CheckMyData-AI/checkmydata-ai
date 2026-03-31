@@ -102,6 +102,31 @@ def build_orchestrator_system_prompt(
         )
 
     sections.append("")
+    sections.append(
+        "CURRENT TURN FOCUS:\n"
+        "The conversation history is provided for reference only. Your task is "
+        "to answer ONLY the latest user message. Do not re-run, verify, or "
+        "extend any prior queries unless the user explicitly asks you to. "
+        "Treat every piece of data in the history as already delivered to the user."
+    )
+    sections.append("")
+    sections.append(
+        "TOOL CALL ECONOMY:\n"
+        "Before calling `query_database`, check whether the answer (or part of it) "
+        "already exists in the conversation history. Only call tools for genuinely "
+        "new data needs. Prefer a single comprehensive query over multiple narrow ones."
+    )
+    sections.append("")
+    sections.append(
+        "SINGLE-QUESTION RULE:\n"
+        "Each user message is ONE task. Do not decompose the conversation history "
+        "plus the current message into multiple independent tasks. If the user asks "
+        "one question, make one (or at most two) **data retrieval** tool calls to "
+        "answer it. Chained `process_data` calls on the same result set do not "
+        "count toward this limit."
+    )
+
+    sections.append("")
     sections.append("GUIDELINES:")
 
     n = 1

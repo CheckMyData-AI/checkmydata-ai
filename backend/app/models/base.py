@@ -82,11 +82,11 @@ def _fallback_create_all() -> None:
         project_member,
         rag_feedback,
         repository,
+        request_trace,
         saved_note,
         scheduled_query,
         session_note,
         ssh_key,
-        request_trace,
         token_usage,
         user,
     )

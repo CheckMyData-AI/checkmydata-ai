@@ -98,8 +98,16 @@ VISUALIZATION_TOOL = Tool(
 )
 
 
+_HISTORY_TAIL = 4
+
+
 class QueryBuilder:
-    """Translates natural language questions into database queries using LLM."""
+    """Translates natural language questions into database queries using LLM.
+
+    .. deprecated::
+        Prefer the agent-based SQL pipeline (``app.agents.sql_agent``).
+        This class is retained for backward-compatible test/demo flows.
+    """
 
     def __init__(self, llm_router: LLMRouter):
         self._llm = llm_router
@@ -128,8 +136,20 @@ class QueryBuilder:
         if rules_context:
             messages.append(Message(role="system", content=rules_context))
 
-        if chat_history:
-            messages.extend(chat_history)
+        scoped = chat_history[-_HISTORY_TAIL:] if chat_history else []
+        if scoped:
+            messages.extend(scoped)
+            messages.append(
+                Message(
+                    role="system",
+                    content=(
+                        "--- END OF CONVERSATION HISTORY ---\n"
+                        "The messages above are COMPLETED past exchanges. "
+                        "Do NOT re-execute any prior queries. "
+                        "Focus EXCLUSIVELY on the new user message below."
+                    ),
+                )
+            )
 
         messages.append(Message(role="user", content=question))
 

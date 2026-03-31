@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     query_explain_row_warning_threshold: int = 100_000
     query_timeout_seconds: int = 30
 
-    max_history_tokens: int = 4000
+    max_history_tokens: int = 2500
     history_summary_model: str = ""
 
     # Database index settings

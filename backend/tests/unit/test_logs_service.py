@@ -1,7 +1,7 @@
 """Unit tests for LogsService — query logic, aggregation, pagination."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -213,7 +213,16 @@ class TestGetSummary:
     async def test_summary_counts(self, db):
         proj = await _project(db)
         user = await _user(db)
-        await _trace(db, proj.id, user.id, status="completed", tokens=200, llm_calls=2, db_queries=1, cost=0.01)
+        await _trace(
+            db,
+            proj.id,
+            user.id,
+            status="completed",
+            tokens=200,
+            llm_calls=2,
+            db_queries=1,
+            cost=0.01,
+        )
         await _trace(db, proj.id, user.id, status="failed", tokens=50, llm_calls=1, cost=0.005)
 
         result = await svc.get_summary(db, proj.id, days=7)

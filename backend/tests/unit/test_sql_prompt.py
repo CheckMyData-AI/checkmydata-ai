@@ -91,6 +91,11 @@ class TestBuildSqlSystemPrompt:
         assert "COLUMN VALUE MEANINGS" in prompt
         assert "status: 1=active, 2=inactive" in prompt
 
+    def test_current_question_focus_directive(self):
+        prompt = build_sql_system_prompt()
+        assert "CURRENT QUESTION FOCUS" in prompt
+        assert "do not treat prior queries" in prompt
+
     def test_all_options_combined(self):
         prompt = build_sql_system_prompt(
             db_type="postgres",

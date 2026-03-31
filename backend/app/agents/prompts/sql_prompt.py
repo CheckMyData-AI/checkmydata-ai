@@ -84,6 +84,14 @@ def build_sql_system_prompt(
         sections.append("3. Write and execute the query with `execute_query`.")
 
     sections.append("")
+    sections.append(
+        "CURRENT QUESTION FOCUS:\n"
+        "Focus on the specific question provided. Conversation history, if any, "
+        "is for reference during query repair — do not treat prior queries or "
+        "results as new tasks to execute."
+    )
+
+    sections.append("")
     sections.append("RULES:")
     sections.append("- Only generate SELECT / read-only queries unless explicitly asked otherwise.")
     sections.append("- Use the EXACT table and column names from the schema.")

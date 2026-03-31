@@ -239,12 +239,12 @@ class TestGetHistoryAsMessages:
 
         asst_msg = history[1]
         assert asst_msg.role == "assistant"
-        assert "SQL Query: SELECT name FROM users" in asst_msg.content
-        assert "Visualization: bar" in asst_msg.content
-        assert "Rows: 10" in asst_msg.content
-        assert "Columns: name, age" in asst_msg.content
-        assert "Sample data:" in asst_msg.content
-        assert "[Context:" in asst_msg.content
+        assert "Previous result (completed):" in asst_msg.content
+        assert "viz: bar" in asst_msg.content
+        assert "10 rows" in asst_msg.content
+        assert "columns: name, age" in asst_msg.content
+        assert "SQL Query:" not in asst_msg.content
+        assert "Sample data:" not in asst_msg.content
 
     @pytest.mark.asyncio
     async def test_respects_limit(self, db):
@@ -354,8 +354,10 @@ class TestEnsureWelcomeSession:
         session, _ = await svc.ensure_welcome_session(db, proj.id, user.id)
 
         from sqlalchemy import select as sa_select
-        from app.models.chat_session import ChatMessage as CM
-        result = await db.execute(sa_select(CM).where(CM.session_id == session.id))
+
+        from app.models.chat_session import ChatMessage as ChatMsg
+
+        result = await db.execute(sa_select(ChatMsg).where(ChatMsg.session_id == session.id))
         msg = result.scalar_one()
 
         assert msg.role == "assistant"

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.agents.base import AgentContext, BaseAgent
@@ -137,7 +137,9 @@ class AgentResponse:
     llm_provider: str = ""
     llm_model: str = ""
     staleness_warning: str | None = None
-    response_type: str = "text"  # text | sql_result | knowledge | error | clarification_request | step_limit_reached
+    response_type: str = (
+        "text"  # text | sql_result | knowledge | error | clarification_request | step_limit_reached
+    )
     tool_call_log: list[dict] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
@@ -269,12 +271,11 @@ class OrchestratorAgent(BaseAgent):
                     table_map = await self._build_table_map(cid, wf_id)
 
             # Complexity detection — branch to multi-stage pipeline
-            is_complex = detect_complexity(question, context.chat_history)
+            is_complex = detect_complexity(question)
             if not is_complex and not context.extra.get("_skip_complexity"):
                 is_complex = await detect_complexity_adaptive(
                     question,
                     self._llm,
-                    context.chat_history,
                     preferred_provider=context.preferred_provider,
                     model=context.model,
                 )
@@ -330,6 +331,17 @@ class OrchestratorAgent(BaseAgent):
             messages: list[Message] = [Message(role="system", content=system_prompt)]
             if context.chat_history:
                 messages.extend(context.chat_history)
+                messages.append(
+                    Message(
+                        role="system",
+                        content=(
+                            "--- END OF CONVERSATION HISTORY ---\n"
+                            "The messages above are COMPLETED past exchanges for reference only. "
+                            "Do NOT re-execute any queries or tools from the history. "
+                            "Focus EXCLUSIVELY on the new user message below."
+                        ),
+                    )
+                )
             messages.append(Message(role="user", content=question))
 
             total_usage: dict[str, int] = {
@@ -545,9 +557,13 @@ class OrchestratorAgent(BaseAgent):
                     )
                 )
 
-                has_process_data = any(tc.name == "process_data" for tc in llm_resp.tool_calls)
+                active_calls, skipped_map = self._dedup_tool_calls(
+                    llm_resp.tool_calls, context.chat_history
+                )
 
-                if len(llm_resp.tool_calls) > 1 and not has_process_data:
+                has_process_data = any(tc.name == "process_data" for tc in active_calls)
+
+                if len(active_calls) > 1 and not has_process_data:
 
                     async def _throttled_meta_tool(
                         _tc: ToolCall,
@@ -556,26 +572,34 @@ class OrchestratorAgent(BaseAgent):
                             return await self._handle_meta_tool(_tc, context, wf_id, total_usage)
 
                     gather_results = await asyncio.gather(
-                        *(_throttled_meta_tool(tc) for tc in llm_resp.tool_calls),
+                        *(_throttled_meta_tool(tc) for tc in active_calls),
                         return_exceptions=True,
                     )
-                    tool_pairs: list[tuple[str, Any]] = []
+                    executed_pairs: dict[str, tuple[str, Any]] = {}
                     for i, res in enumerate(gather_results):
+                        tc_id = active_calls[i].id
                         if isinstance(res, Exception):
                             logger.warning(
                                 "Parallel tool call %s failed: %s",
-                                llm_resp.tool_calls[i].name,
+                                active_calls[i].name,
                                 res,
                             )
-                            tool_pairs.append((f"Error: {res}", None))
+                            executed_pairs[tc_id] = (f"Error: {res}", None)
                         else:
-                            tool_pairs.append(res)  # type: ignore[arg-type]
+                            executed_pairs[tc_id] = res  # type: ignore[assignment]
                 else:
-                    tool_pairs = []
-                    for single_tc in llm_resp.tool_calls:
-                        tool_pairs.append(
-                            await self._handle_meta_tool(single_tc, context, wf_id, total_usage)
+                    executed_pairs = {}
+                    for single_tc in active_calls:
+                        executed_pairs[single_tc.id] = await self._handle_meta_tool(
+                            single_tc, context, wf_id, total_usage
                         )
+
+                tool_pairs: list[tuple[str, Any]] = []
+                for tc in llm_resp.tool_calls:
+                    if tc.id in skipped_map:
+                        tool_pairs.append((skipped_map[tc.id], None))
+                    else:
+                        tool_pairs.append(executed_pairs[tc.id])
 
                 for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
                     tool_call_log.append(
@@ -673,9 +697,7 @@ class OrchestratorAgent(BaseAgent):
                             question=question,
                             query=last_sql_result.query or "",
                         )
-                        _sd_viz["output_preview"] = (
-                            f"type={last_viz_result.viz_type}"
-                        )
+                        _sd_viz["output_preview"] = f"type={last_viz_result.viz_type}"
                     self.accum_usage(total_usage, last_viz_result.token_usage)
                     viz_type = last_viz_result.viz_type
                     viz_config = last_viz_result.viz_config
@@ -838,7 +860,10 @@ class OrchestratorAgent(BaseAgent):
 
         _sd_plan: dict[str, Any] = {"input_preview": context.user_question[:_PREVIEW_MAX]}
         async with self._tracker.step(
-            wf_id, "orchestrator:planning", "Creating execution plan", step_data=_sd_plan,
+            wf_id,
+            "orchestrator:planning",
+            "Creating execution plan",
+            step_data=_sd_plan,
         ):
             plan = await planner.plan(
                 context.user_question,
@@ -896,7 +921,11 @@ class OrchestratorAgent(BaseAgent):
         )
 
         stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
-        exec_result = await executor.execute(plan, context, stage_ctx=stage_ctx)
+        pipeline_ctx = replace(
+            context,
+            chat_history=context.chat_history[-4:] if context.chat_history else [],
+        )
+        exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
 
         await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
 
@@ -998,8 +1027,12 @@ class OrchestratorAgent(BaseAgent):
             tracker=self._tracker,
             validator=StageValidator(),
         )
+        resume_ctx = replace(
+            context,
+            chat_history=context.chat_history[-4:] if context.chat_history else [],
+        )
         exec_result = await executor.execute(
-            plan, context, resume_from=resume_from, stage_ctx=stage_ctx
+            plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
         )
 
         await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
@@ -1258,6 +1291,62 @@ class OrchestratorAgent(BaseAgent):
         return "An unexpected error occurred. Please try again shortly."
 
     # ------------------------------------------------------------------
+    # Tool-call deduplication
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dedup_tool_calls(
+        tool_calls: list[ToolCall],
+        chat_history: list[Message],
+    ) -> tuple[list[ToolCall], dict[str, str]]:
+        """Remove duplicate ``query_database`` calls and those already answered in history.
+
+        Returns ``(deduped_calls, skipped_map)`` where *skipped_map* maps
+        ``tool_call.id`` to a synthetic result string for skipped calls.
+        """
+        skipped: dict[str, str] = {}
+        seen_questions: dict[str, str] = {}  # normalised question -> first tc.id
+
+        history_text = (
+            " ".join(m.content for m in chat_history if m.role == "assistant").lower()
+            if chat_history
+            else ""
+        )
+
+        kept: list[ToolCall] = []
+        for tc in tool_calls:
+            if tc.name != "query_database":
+                kept.append(tc)
+                continue
+
+            args = tc.arguments or {}
+            q = (args.get("question") or "").strip()
+            q_norm = q.lower()
+
+            if q_norm in seen_questions:
+                skipped[tc.id] = (
+                    "Duplicate request — this question is identical to another "
+                    "tool call in this batch. Results will come from the first call."
+                )
+                logger.info("Dedup: skipped duplicate query_database call: %s", q[:80])
+                continue
+
+            if q_norm and len(q_norm) > 15 and q_norm in history_text:
+                skipped[tc.id] = (
+                    "This data was already retrieved in a previous conversation turn. "
+                    "Refer to the conversation history for the results."
+                )
+                logger.info("Dedup: skipped history-matched query_database call: %s", q[:80])
+                continue
+
+            seen_questions[q_norm] = tc.id
+            kept.append(tc)
+
+        if skipped:
+            logger.info("Tool-call dedup: kept %d, skipped %d", len(kept), len(skipped))
+        return kept, skipped
+
+    # ------------------------------------------------------------------
     # Meta-tool dispatch
     # ------------------------------------------------------------------
 
@@ -1344,6 +1433,10 @@ class OrchestratorAgent(BaseAgent):
         args = tc.arguments or {}
         sub_question: str = args.get("question", context.user_question)
 
+        _sql_history_tail = 4  # last 2 user-assistant exchanges
+        scoped_history = context.chat_history[-_sql_history_tail:] if context.chat_history else []
+        sql_context = replace(context, chat_history=scoped_history)
+
         for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
             try:
                 _sd_sql: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
@@ -1353,7 +1446,7 @@ class OrchestratorAgent(BaseAgent):
                     f"SQL Agent (attempt {attempt + 1})",
                     step_data=_sd_sql,
                 ):
-                    sql_result = await self._sql.run(context, question=sub_question)
+                    sql_result = await self._sql.run(sql_context, question=sub_question)
                     preview_parts = []
                     if sql_result.query:
                         preview_parts.append(f"SQL: {sql_result.query[:300]}")
@@ -1510,7 +1603,11 @@ class OrchestratorAgent(BaseAgent):
                     f"Knowledge Agent (attempt {attempt + 1})",
                     step_data=_sd_ka,
                 ):
-                    knowledge_result = await self._knowledge.run(context, question=sub_question)
+                    kb_ctx = replace(
+                        context,
+                        chat_history=context.chat_history[-4:] if context.chat_history else [],
+                    )
+                    knowledge_result = await self._knowledge.run(kb_ctx, question=sub_question)
                     src_count = len(knowledge_result.sources) if knowledge_result.sources else 0
                     _sd_ka["output_preview"] = (
                         f"{src_count} source(s)\n{(knowledge_result.answer or '')[:400]}"
@@ -1722,8 +1819,12 @@ class OrchestratorAgent(BaseAgent):
                         f"MCP Source Agent (attempt {attempt + 1})",
                         step_data=_sd_mcp,
                     ):
-                        result = await self._mcp_source.run(
+                        mcp_ctx = replace(
                             context,
+                            chat_history=context.chat_history[-4:] if context.chat_history else [],
+                        )
+                        result = await self._mcp_source.run(
+                            mcp_ctx,
                             question=sub_question,
                             source_name=conn.name,
                             adapter=adapter,

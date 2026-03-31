@@ -105,7 +105,9 @@ async def create_project(
     from app.models.project import Project
     from app.models.user import User
 
-    user_obj = (await db.execute(select(User).where(User.id == user["user_id"]))).scalar_one_or_none()
+    user_obj = (
+        await db.execute(select(User).where(User.id == user["user_id"]))
+    ).scalar_one_or_none()
     if not user_obj or not user_obj.can_create_projects:
         raise HTTPException(
             status_code=403,

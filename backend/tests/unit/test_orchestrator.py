@@ -2,9 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agents.orchestrator import OrchestratorAgent
 from app.connectors.base import ConnectionConfig, QueryResult, SchemaInfo
 from app.core.orchestrator import Orchestrator, OrchestratorResponse
-from app.llm.base import LLMResponse, ToolCall
+from app.llm.base import LLMResponse, Message, ToolCall
 
 
 @pytest.fixture
@@ -314,3 +315,190 @@ class TestOrchestratorDisconnect:
         mock_conn.disconnect.assert_called_once()
         assert len(orchestrator._connectors) == 0
         assert len(orchestrator._schema_cache) == 0
+
+
+# -------------------------------------------------------------------
+# OrchestratorAgent tool-call dedup & history boundary tests
+# -------------------------------------------------------------------
+
+
+class TestDedupToolCalls:
+    """Tests for OrchestratorAgent._dedup_tool_calls static method."""
+
+    def _tc(self, id: str, name: str = "query_database", question: str = "") -> ToolCall:
+        args = {"question": question} if question else {}
+        return ToolCall(id=id, name=name, arguments=args)
+
+    def test_no_duplicates_passes_through(self):
+        calls = [
+            self._tc("1", question="revenue last month"),
+            self._tc("2", question="user count"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        assert len(kept) == 2
+        assert len(skipped) == 0
+
+    def test_exact_duplicate_removed(self):
+        calls = [
+            self._tc("1", question="revenue last month"),
+            self._tc("2", question="revenue last month"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        assert len(kept) == 1
+        assert kept[0].id == "1"
+        assert "2" in skipped
+        assert "Duplicate" in skipped["2"]
+
+    def test_non_query_database_not_deduped(self):
+        calls = [
+            self._tc("1", name="process_data", question="some op"),
+            self._tc("2", name="process_data", question="some op"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        assert len(kept) == 2
+        assert len(skipped) == 0
+
+    def test_history_matched_question_skipped(self):
+        history = [
+            Message(role="user", content="show revenue last month"),
+            Message(role="assistant", content="here is the revenue last month data"),
+        ]
+        calls = [
+            self._tc("1", question="revenue last month"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, history)
+        assert len(kept) == 0
+        assert "1" in skipped
+        assert "already retrieved" in skipped["1"]
+
+    def test_short_question_not_history_matched(self):
+        history = [
+            Message(role="assistant", content="here is data for total users"),
+        ]
+        calls = [
+            self._tc("1", question="total"),  # too short (<=15 chars)
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, history)
+        assert len(kept) == 1
+        assert len(skipped) == 0
+
+    def test_mixed_kept_and_skipped(self):
+        calls = [
+            self._tc("1", question="revenue by country"),
+            self._tc("2", question="revenue by country"),  # duplicate
+            self._tc("3", question="active users today"),
+            self._tc("4", name="search_codebase", question="what is X"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        assert len(kept) == 3
+        assert "2" in skipped
+
+    def test_empty_calls(self):
+        kept, skipped = OrchestratorAgent._dedup_tool_calls([], [])
+        assert kept == []
+        assert skipped == {}
+
+
+class TestHistoryBoundaryInPrompt:
+    """Verify the orchestrator prompt builder includes focus directives."""
+
+    def test_current_turn_focus_in_prompt(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "CURRENT TURN FOCUS" in prompt
+        assert "TOOL CALL ECONOMY" in prompt
+        assert "SINGLE-QUESTION RULE" in prompt
+
+    def test_guidelines_still_present(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "GUIDELINES:" in prompt
+        assert "query_database" in prompt
+        assert "REQUEST ANALYSIS PROTOCOL" in prompt
+
+    def test_single_question_rule_excludes_process_data(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "data retrieval" in prompt
+        assert "process_data" in prompt
+        assert "do not count toward this limit" in prompt
+
+
+class TestLegacyQueryBuilderBoundary:
+    """Verify the legacy QueryBuilder injects a history boundary."""
+
+    @pytest.mark.asyncio
+    async def test_boundary_injected_when_history_present(self):
+        from app.core.query_builder import QueryBuilder
+
+        mock_router = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.tool_calls = [
+            MagicMock(
+                name="execute_query",
+                arguments={"query": "SELECT 1", "explanation": "test"},
+            )
+        ]
+        mock_resp.usage = {}
+        mock_router.complete = AsyncMock(return_value=mock_resp)
+
+        from app.llm.base import Message
+
+        history = [
+            Message(role="user", content="old question"),
+            Message(role="assistant", content="old answer"),
+            Message(role="user", content="another old question"),
+            Message(role="assistant", content="another old answer"),
+            Message(role="user", content="yet another"),
+            Message(role="assistant", content="yet another answer"),
+        ]
+
+        qb = QueryBuilder(mock_router)
+        await qb.build_query("new question", "schema", "", "postgres", chat_history=history)
+
+        call_messages = mock_router.complete.call_args.kwargs.get(
+            "messages",
+            mock_router.complete.call_args[0][0] if mock_router.complete.call_args[0] else [],
+        )
+        texts = [m.content for m in call_messages]
+        assert any("END OF CONVERSATION HISTORY" in t for t in texts)
+        assert (
+            len([m for m in call_messages if m.role == "user" and m.content == "old question"]) == 0
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_boundary_when_no_history(self):
+        from app.core.query_builder import QueryBuilder
+
+        mock_router = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.tool_calls = [
+            MagicMock(
+                name="execute_query",
+                arguments={"query": "SELECT 1", "explanation": "test"},
+            )
+        ]
+        mock_resp.usage = {}
+        mock_router.complete = AsyncMock(return_value=mock_resp)
+
+        qb = QueryBuilder(mock_router)
+        await qb.build_query("new question", "schema", "", "postgres")
+
+        call_messages = mock_router.complete.call_args.kwargs.get(
+            "messages",
+            mock_router.complete.call_args[0][0] if mock_router.complete.call_args[0] else [],
+        )
+        texts = [m.content for m in call_messages]
+        assert not any("END OF CONVERSATION HISTORY" in t for t in texts)

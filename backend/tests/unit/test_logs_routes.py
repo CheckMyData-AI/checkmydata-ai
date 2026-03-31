@@ -1,12 +1,9 @@
 """Unit tests for /api/logs/ routes — auth enforcement and response shape."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
-from app.main import app
 
 
 def _mock_user(user_id: str = "test-user-id") -> dict:
@@ -22,7 +19,7 @@ class TestLogsRoutesAuth:
 
     @pytest.mark.asyncio
     async def test_users_requires_owner(self):
-        from app.api.routes.logs import get_log_users, _membership_svc
+        from app.api.routes.logs import _membership_svc, get_log_users
 
         mock_db = _mock_db()
         mock_user = _mock_user()
@@ -49,7 +46,7 @@ class TestLogsRoutesAuth:
 
     @pytest.mark.asyncio
     async def test_requests_requires_owner(self):
-        from app.api.routes.logs import list_log_requests, _membership_svc
+        from app.api.routes.logs import _membership_svc, list_log_requests
 
         mock_db = _mock_db()
         mock_user = _mock_user()
@@ -77,7 +74,7 @@ class TestLogsRoutesAuth:
 
     @pytest.mark.asyncio
     async def test_trace_detail_requires_owner(self):
-        from app.api.routes.logs import get_trace_detail, _membership_svc
+        from app.api.routes.logs import _membership_svc, get_trace_detail
 
         mock_db = _mock_db()
         mock_user = _mock_user()
@@ -100,7 +97,7 @@ class TestLogsRoutesAuth:
 
     @pytest.mark.asyncio
     async def test_summary_requires_owner(self):
-        from app.api.routes.logs import get_logs_summary, _membership_svc
+        from app.api.routes.logs import _membership_svc, get_logs_summary
 
         mock_db = _mock_db()
         mock_user = _mock_user()
@@ -125,7 +122,7 @@ class TestLogsRoutesAuth:
 class TestTraceDetailNotFound:
     @pytest.mark.asyncio
     async def test_returns_404(self):
-        from app.api.routes.logs import get_trace_detail, _membership_svc, _logs_svc
+        from app.api.routes.logs import _logs_svc, _membership_svc, get_trace_detail
 
         mock_db = _mock_db()
         mock_user = _mock_user()

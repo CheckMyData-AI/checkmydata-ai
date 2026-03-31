@@ -214,11 +214,11 @@ async def estimate_cost(
     except Exception:
         logger.debug("Cost estimate: overview lookup failed", exc_info=True)
 
-    max_budget = app_settings.max_history_tokens
-    used_context = schema_tokens + rules_tokens + learnings_tokens + overview_tokens
-    history_remaining = max(0, max_budget - used_context)
+    static_context = schema_tokens + rules_tokens + learnings_tokens + overview_tokens
+    history_budget = app_settings.max_history_tokens
+    history_remaining = history_budget
 
-    total_prompt = used_context + history_remaining
+    total_prompt = static_context + history_remaining
 
     avg_completion = 500
     try:
@@ -237,7 +237,8 @@ async def estimate_cost(
         logger.debug("Cost estimate: avg completion lookup failed", exc_info=True)
 
     total_tokens = total_prompt + avg_completion
-    utilization = round((used_context / max_budget * 100) if max_budget > 0 else 0, 1)
+    combined_budget = static_context + history_budget
+    utilization = round((static_context / combined_budget * 100) if combined_budget > 0 else 0, 1)
 
     project = await _project_svc.get(db, project_id)
     model = (project.agent_llm_model if project else None) or None
@@ -1539,9 +1540,14 @@ async def ask_stream(
                                 response_type=result.response_type or "text",
                                 status="failed" if result.error else "completed",
                                 error_message=result.error,
-                                total_duration_ms=result.results.execution_time_ms if result.results else None,
+                                total_duration_ms=result.results.execution_time_ms
+                                if result.results
+                                else None,
                                 total_tokens=stream_usage.get("total_tokens", 0)
-                                or (stream_usage.get("prompt_tokens", 0) + stream_usage.get("completion_tokens", 0)),
+                                or (
+                                    stream_usage.get("prompt_tokens", 0)
+                                    + stream_usage.get("completion_tokens", 0)
+                                ),
                                 estimated_cost_usd=_estimate_cost(
                                     result.llm_model,
                                     stream_usage.get("prompt_tokens", 0),
@@ -1862,7 +1868,9 @@ async def chat_websocket(
 
                     if result.workflow_id:
                         try:
-                            trace_svc = getattr(websocket.app.state, "trace_persistence_service", None)
+                            trace_svc = getattr(
+                                websocket.app.state, "trace_persistence_service", None
+                            )
                             if trace_svc is not None:
                                 await trace_svc.finalize_trace(
                                     result.workflow_id,
