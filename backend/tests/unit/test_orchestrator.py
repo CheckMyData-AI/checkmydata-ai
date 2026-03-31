@@ -1075,7 +1075,11 @@ class TestOrchestratorIntentRouting:
             ]
         )
         with (
-            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             resp = await orch.run(base_context)
 
@@ -1095,12 +1099,35 @@ class TestOrchestratorIntentRouting:
             ]
         )
         with (
-            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
-            patch("app.agents.orchestrator.OrchestratorAgent._check_staleness", new_callable=AsyncMock, return_value=None),
-            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock, return_value=None),
-            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock, return_value=None),
-            patch("app.agents.orchestrator.detect_complexity", return_value=False),
-            patch("app.agents.orchestrator.detect_complexity_adaptive", new_callable=AsyncMock, return_value=False),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._check_staleness",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.detect_complexity",
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.detect_complexity_adaptive",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             resp = await orch.run(base_context)
 
@@ -1136,12 +1163,35 @@ class TestOrchestratorIntentRouting:
             ]
         )
         with (
-            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
-            patch("app.agents.orchestrator.OrchestratorAgent._build_table_map", new_callable=AsyncMock, return_value="users: id, email"),
-            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock, return_value=None),
-            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock, return_value=None),
-            patch("app.agents.orchestrator.detect_complexity", return_value=False),
-            patch("app.agents.orchestrator.detect_complexity_adaptive", new_callable=AsyncMock, return_value=False),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._build_table_map",
+                new_callable=AsyncMock,
+                return_value="users: id, email",
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.detect_complexity",
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.detect_complexity_adaptive",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             resp = await orch.run(ctx)
 
@@ -1164,8 +1214,16 @@ class TestOrchestratorIntentRouting:
         base_context.user_question = "What does the User model look like?"
 
         with (
-            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
-            patch("app.agents.orchestrator.OrchestratorAgent._check_staleness", new_callable=AsyncMock, return_value=None),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._check_staleness",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             resp = await orch.run(base_context)
 
@@ -1182,10 +1240,23 @@ class TestOrchestratorIntentRouting:
             ]
         )
         with (
-            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
-            patch("app.agents.orchestrator.OrchestratorAgent._build_table_map", new_callable=AsyncMock) as mock_table_map,
-            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock) as mock_overview,
-            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock) as mock_learnings,
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._build_table_map",
+                new_callable=AsyncMock,
+            ) as mock_table_map,
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                new_callable=AsyncMock,
+            ) as mock_overview,
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                new_callable=AsyncMock,
+            ) as mock_learnings,
         ):
             base_context.user_question = "What can you do?"
             await orch.run(base_context)

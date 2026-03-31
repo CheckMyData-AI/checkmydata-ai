@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - 2026-03-31
+
+### Fixed
+- **CI lint fixes** — resolve 24 ruff errors: `IntentType` migrated from `(str, Enum)` to `StrEnum` (UP042), unused `ClassifiedIntent` imports removed (F401), import blocks sorted (I001), line-length violations fixed (E501), local variable naming corrected (N806), format inconsistencies resolved
+
 ## [1.3.0] - 2026-03-31
 
 ### Fixed

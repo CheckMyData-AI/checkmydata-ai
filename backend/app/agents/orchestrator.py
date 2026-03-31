@@ -21,14 +21,13 @@ from app.agents.errors import (
     AgentFatalError,
     AgentRetryableError,
 )
-from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
-from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
-from app.agents.prompts import get_current_datetime_str
 from app.agents.intent_classifier import (
-    ClassifiedIntent,
     IntentType,
     classify_intent,
 )
+from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
+from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
+from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import (
     build_direct_response_prompt,
     build_orchestrator_system_prompt,
@@ -254,9 +253,7 @@ class OrchestratorAgent(BaseAgent):
                 )
 
             # --- Phase 1: LLM intent classification ---
-            await self._tracker.emit(
-                wf_id, "thinking", "in_progress", "Classifying request…"
-            )
+            await self._tracker.emit(wf_id, "thinking", "in_progress", "Classifying request…")
             intent_result = await classify_intent(
                 context.user_question,
                 self._llm,
@@ -282,7 +279,13 @@ class OrchestratorAgent(BaseAgent):
 
             # --- Phase 2: Route to the appropriate execution chain ---
             if intent_result.intent == IntentType.DIRECT_RESPONSE:
-                return await self._run_direct_response(context, wf_id, has_connection, has_kb, has_mcp)
+                return await self._run_direct_response(
+                    context,
+                    wf_id,
+                    has_connection,
+                    has_kb,
+                    has_mcp,
+                )
 
             if intent_result.intent == IntentType.DATA_QUERY:
                 return await self._run_data_query(
@@ -2280,9 +2283,7 @@ class OrchestratorAgent(BaseAgent):
                 ):
                     mcp_ctx = replace(
                         context,
-                        chat_history=(
-                            context.chat_history[-4:] if context.chat_history else []
-                        ),
+                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
                     )
                     result = await self._mcp_source.run(
                         mcp_ctx,

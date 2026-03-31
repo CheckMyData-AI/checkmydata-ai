@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from app.agents.prompts.orchestrator_prompt import build_classification_prompt
 from app.llm.base import Message
@@ -23,7 +23,7 @@ _CLASSIFICATION_MAX_TOKENS = 80
 _HISTORY_TAIL_FOR_CLASSIFICATION = 4
 
 
-class IntentType(str, Enum):
+class IntentType(StrEnum):
     DIRECT_RESPONSE = "direct_response"
     DATA_QUERY = "data_query"
     KNOWLEDGE_QUERY = "knowledge_query"

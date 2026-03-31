@@ -5,14 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents.intent_classifier import (
-    ClassifiedIntent,
     IntentType,
     _parse_classification_response,
     _valid_intents,
     classify_intent,
 )
 from app.llm.base import LLMResponse, Message
-
 
 # ------------------------------------------------------------------
 # _valid_intents
@@ -27,30 +25,22 @@ class TestValidIntents:
         assert valid == {"direct_response", "mixed"}
 
     def test_all_capabilities(self):
-        valid = _valid_intents(
-            has_connection=True, has_knowledge_base=True, has_mcp_sources=True
-        )
+        valid = _valid_intents(has_connection=True, has_knowledge_base=True, has_mcp_sources=True)
         assert valid == {"direct_response", "data_query", "knowledge_query", "mcp_query", "mixed"}
 
     def test_db_only(self):
-        valid = _valid_intents(
-            has_connection=True, has_knowledge_base=False, has_mcp_sources=False
-        )
+        valid = _valid_intents(has_connection=True, has_knowledge_base=False, has_mcp_sources=False)
         assert "data_query" in valid
         assert "knowledge_query" not in valid
         assert "mcp_query" not in valid
 
     def test_kb_only(self):
-        valid = _valid_intents(
-            has_connection=False, has_knowledge_base=True, has_mcp_sources=False
-        )
+        valid = _valid_intents(has_connection=False, has_knowledge_base=True, has_mcp_sources=False)
         assert "knowledge_query" in valid
         assert "data_query" not in valid
 
     def test_mcp_only(self):
-        valid = _valid_intents(
-            has_connection=False, has_knowledge_base=False, has_mcp_sources=True
-        )
+        valid = _valid_intents(has_connection=False, has_knowledge_base=False, has_mcp_sources=True)
         assert "mcp_query" in valid
         assert "data_query" not in valid
 

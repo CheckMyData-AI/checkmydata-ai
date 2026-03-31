@@ -288,8 +288,7 @@ def build_classification_prompt(
         )
     if has_mcp_sources:
         intents.append(
-            '- "mcp_query": questions that require data from external '
-            "MCP-connected services"
+            '- "mcp_query": questions that require data from external MCP-connected services'
         )
 
     intents.append(
