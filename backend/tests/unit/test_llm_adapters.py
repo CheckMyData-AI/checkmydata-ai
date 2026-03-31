@@ -7,6 +7,7 @@ import pytest
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     LLMAuthError,
+    LLMBillingError,
     LLMConnectionError,
     LLMError,
     LLMRateLimitError,
@@ -106,6 +107,20 @@ class TestOpenAIClassifier:
         exc = ValueError("unknown")
         assert _classify_openai_error(exc) is exc
 
+    def test_402_billing(self):
+        import openai
+
+        from app.llm.openai_adapter import _classify_openai_error
+
+        exc = openai.APIStatusError(
+            message="Payment Required",
+            response=MagicMock(headers={}, status_code=402),
+            body={},
+        )
+        result = _classify_openai_error(exc)
+        assert isinstance(result, LLMBillingError)
+        assert not result.is_retryable
+
     def test_os_error(self):
         from app.llm.openai_adapter import _classify_openai_error
 
@@ -157,6 +172,20 @@ class TestAnthropicClassifier:
 
         exc = anthropic.APITimeoutError(request=MagicMock())
         assert isinstance(_classify_anthropic_error(exc), LLMTimeoutError)
+
+    def test_402_billing(self):
+        import anthropic
+
+        from app.llm.anthropic_adapter import _classify_anthropic_error
+
+        exc = anthropic.APIStatusError(
+            message="Payment Required",
+            response=MagicMock(headers={}, status_code=402),
+            body={},
+        )
+        result = _classify_anthropic_error(exc)
+        assert isinstance(result, LLMBillingError)
+        assert not result.is_retryable
 
     def test_connection(self):
         import anthropic
@@ -237,6 +266,23 @@ class TestOpenRouterClassifier:
 
         exc = httpx.ReadTimeout("timeout")
         assert isinstance(_classify_openrouter_error(exc), LLMTimeoutError)
+
+    def test_402_billing(self):
+        import httpx
+
+        from app.llm.openrouter_adapter import (
+            _classify_openrouter_error,
+        )
+
+        resp = MagicMock(
+            status_code=402,
+            headers={},
+            text="payment required",
+        )
+        exc = httpx.HTTPStatusError("err", request=MagicMock(), response=resp)
+        result = _classify_openrouter_error(exc)
+        assert isinstance(result, LLMBillingError)
+        assert not result.is_retryable
 
     def test_connect_error(self):
         import httpx

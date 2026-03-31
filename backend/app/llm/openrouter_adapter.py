@@ -8,6 +8,7 @@ from app.config import settings
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
 from app.llm.errors import (
     LLMAuthError,
+    LLMBillingError,
     LLMConnectionError,
     LLMRateLimitError,
     LLMServerError,
@@ -43,6 +44,8 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
             return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)
         if status in (401, 403):
             return LLMAuthError(str(exc), cause=exc)
+        if status == 402:
+            return LLMBillingError(str(exc), cause=exc)
         if status == 400:
             if "context length" in body or "max_tokens" in body or "too many tokens" in body:
                 return LLMTokenLimitError(str(exc), cause=exc)

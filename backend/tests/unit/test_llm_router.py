@@ -7,6 +7,7 @@ from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     LLMAllProvidersFailedError,
     LLMAuthError,
+    LLMBillingError,
     LLMConnectionError,
     LLMContentFilterError,
     LLMRateLimitError,
@@ -404,6 +405,53 @@ class TestLLMRouterErrorClassification:
             )
         assert result.content == "recovered"
         fallback.complete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_billing_error_falls_back_to_next_provider(self):
+        """LLMBillingError (402) should skip the current provider but try the next one."""
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMBillingError("payment required"))
+        router._instances["openrouter"] = failing
+
+        working = MagicMock()
+        working.complete = AsyncMock(
+            return_value=LLMResponse(content="ok from openai", provider="openai")
+        )
+        router._instances["openai"] = working
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openrouter"
+            mock_settings.openai_api_key = "sk-openai"
+            mock_settings.anthropic_api_key = ""
+            mock_settings.openrouter_api_key = "sk-or-123"
+            result = await router.complete(
+                messages=[Message(role="user", content="hi")],
+                preferred_provider="openrouter",
+            )
+        assert result.content == "ok from openai"
+        working.complete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_billing_error_no_fallback_raises(self):
+        """LLMBillingError with no other providers should raise LLMAllProvidersFailedError."""
+        router = LLMRouter()
+
+        failing = MagicMock()
+        failing.complete = AsyncMock(side_effect=LLMBillingError("payment required"))
+        router._instances["openrouter"] = failing
+
+        with patch("app.llm.router.settings") as mock_settings:
+            mock_settings.default_llm_provider = "openrouter"
+            mock_settings.openai_api_key = ""
+            mock_settings.anthropic_api_key = ""
+            mock_settings.openrouter_api_key = "sk-or-123"
+            with pytest.raises(LLMAllProvidersFailedError):
+                await router.complete(
+                    messages=[Message(role="user", content="hi")],
+                )
+        assert failing.complete.call_count == 1
 
     @pytest.mark.asyncio
     async def test_content_filter_error_stops_fallback(self):

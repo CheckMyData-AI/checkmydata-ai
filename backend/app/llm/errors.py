@@ -76,6 +76,20 @@ class LLMTokenLimitError(LLMError):
         )
 
 
+class LLMBillingError(LLMError):
+    """402 — insufficient credits or payment required.  NOT retryable per-provider,
+    but the router should still try other providers that may have valid billing."""
+
+    is_retryable = False
+
+    @property
+    def user_message(self) -> str:
+        return (
+            "The AI provider returned a billing error (insufficient credits). "
+            "Please check your API key balance or contact the administrator."
+        )
+
+
 class LLMContentFilterError(LLMError):
     """Provider refused due to content policy.  NOT retryable."""
 

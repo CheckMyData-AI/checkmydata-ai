@@ -9,6 +9,7 @@ from app.config import settings
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
 from app.llm.errors import (
     LLMAuthError,
+    LLMBillingError,
     LLMConnectionError,
     LLMContentFilterError,
     LLMRateLimitError,
@@ -61,6 +62,8 @@ def _classify_openai_error(exc: Exception) -> Exception:
             return LLMRateLimitError(str(exc), cause=exc)
         if status in (401, 403):
             return LLMAuthError(str(exc), cause=exc)
+        if status == 402:
+            return LLMBillingError(str(exc), cause=exc)
         if 500 <= status < 600:
             return LLMServerError(str(exc), cause=exc)
         return LLMServerError(str(exc), cause=exc)

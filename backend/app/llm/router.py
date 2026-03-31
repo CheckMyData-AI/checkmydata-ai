@@ -9,6 +9,7 @@ from app.llm.errors import (
     RETRYABLE_LLM_ERRORS,
     LLMAllProvidersFailedError,
     LLMAuthError,
+    LLMBillingError,
     LLMError,
     LLMTokenLimitError,
 )
@@ -29,6 +30,7 @@ _BACKOFF_MULTIPLIER = 2.0
 
 _NON_RETRYABLE_PER_PROVIDER: tuple[type[LLMError], ...] = (
     LLMAuthError,
+    LLMBillingError,
     LLMTokenLimitError,
 )
 
@@ -264,7 +266,7 @@ class LLMRouter:
                 last_error = e
                 if isinstance(e, _STOP_FALLBACK_ERRORS):
                     break
-                if isinstance(e, LLMTokenLimitError):
+                if isinstance(e, (LLMTokenLimitError, LLMBillingError)):
                     continue
                 if not e.is_retryable:
                     break
@@ -326,7 +328,7 @@ class LLMRouter:
                 last_error = e
                 if isinstance(e, _STOP_FALLBACK_ERRORS):
                     break
-                if isinstance(e, LLMTokenLimitError):
+                if isinstance(e, (LLMTokenLimitError, LLMBillingError)):
                     continue
                 if not e.is_retryable:
                     break

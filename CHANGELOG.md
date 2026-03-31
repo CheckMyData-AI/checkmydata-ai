@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] - 2026-03-31
+
+### Fixed
+- **402 Payment Required misclassified as retryable error** — HTTP 402 from OpenRouter (insufficient credits) was falling through to `LLMServerError` (retryable), causing 12+ seconds of futile retries before surfacing the error. Added `LLMBillingError` to the error hierarchy (non-retryable, allows fallback to other providers). Fixed the same gap in all three adapters (OpenRouter, OpenAI, Anthropic). The router now skips per-provider retries for billing errors but still tries the next configured provider in the fallback chain
+
 ## [1.1.0] - 2026-03-31
 
 ### Added
