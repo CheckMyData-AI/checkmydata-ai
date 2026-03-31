@@ -108,15 +108,31 @@ class MCPSourceAgent(BaseAgent):
         **_kwargs: Any,
     ) -> MCPSourceResult:
         effective_adapter = adapter or self._adapter
-        if effective_adapter and not self._adapter:
-            self._adapter = effective_adapter
-        if not self._adapter:
+        if not effective_adapter:
             return MCPSourceResult(
                 status="error",
                 error="No MCP adapter configured",
                 answer="Cannot query MCP source: no adapter connected.",
             )
 
+        prev_adapter = self._adapter
+        self._adapter = effective_adapter
+        try:
+            return await self._run_with_adapter(
+                context,
+                question=question,
+                source_name=source_name,
+            )
+        finally:
+            self._adapter = prev_adapter
+
+    async def _run_with_adapter(
+        self,
+        context: AgentContext,
+        *,
+        question: str | None = None,
+        source_name: str = "MCP Source",
+    ) -> MCPSourceResult:
         user_question = question or context.user_question
         tools = self._build_llm_tools()
 

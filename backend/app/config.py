@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     query_max_retries: int = 3
     query_enable_explain: bool = True
     query_enable_schema_validation: bool = True
-    query_empty_result_retry: bool = False
+    query_empty_result_retry: bool = False  # Set QUERY_EMPTY_RESULT_RETRY=true to enable
     query_explain_row_warning_threshold: int = 100_000
     query_timeout_seconds: int = 30
 
@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     max_mcp_iterations: int = 5
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
-    rag_relevance_threshold: float = 1.3
+    rag_relevance_threshold: float = 0.8
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
 
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     backup_dir: str = "./data/backups"
 
     # Context window budget
-    max_context_tokens: int = 16000
+    max_context_tokens: int = 32000
 
     # Session rotation (auto-summarize and start new session near context limit)
     session_rotation_enabled: bool = True
@@ -126,13 +126,6 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10 MB
     max_concurrent_agent_calls: int = 3
     max_agent_calls_per_hour: int = 100
-
-    # Token budget limits (0 = unlimited)
-    daily_token_limit: int = 0
-    monthly_token_limit: int = 0
-
-    # Query cache persistence (empty = in-memory only)
-    query_cache_persist_dir: str = ""
 
     # Redis (enables shared cache + ARQ task queue; empty = in-process fallback)
     redis_url: str = ""

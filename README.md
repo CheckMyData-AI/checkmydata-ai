@@ -96,7 +96,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 ## Key Features
 
 - **Natural language to SQL** with self-healing validation loop (retry, repair, explain)
-- **Multi-agent orchestration** with adaptive step budgets, context-aware routing, history-aware turn isolation, tool-call deduplication, and structured clarification questions (yes/no, multiple choice, free text) when user intent is ambiguous
+- **Multi-agent orchestration** with LLM-based intent classification, adaptive step budgets, context-aware routing, history-aware turn isolation, tool-call deduplication, and structured clarification questions (yes/no, multiple choice, free text) when user intent is ambiguous. The orchestrator classifies each request into an intent type (direct response, data query, knowledge query, MCP query, or mixed) before loading context, ensuring minimal resource usage for simple questions
 - **Agent Learning Memory** -- automatically learns from query outcomes and accumulates per-connection knowledge
 - **Data validation feedback loop** -- wrong data investigation, benchmarks, proactive sanity checks
 - **Rich visualizations** -- bar, line, pie, scatter charts with on-the-fly type switching and XLSX/CSV/JSON export

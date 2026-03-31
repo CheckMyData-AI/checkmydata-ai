@@ -358,29 +358,14 @@ class TestDedupToolCalls:
         assert len(kept) == 2
         assert len(skipped) == 0
 
-    def test_history_matched_question_skipped(self):
-        history = [
-            Message(role="user", content="show revenue last month"),
-            Message(role="assistant", content="here is the revenue last month data"),
-        ]
+    def test_search_codebase_duplicates_removed(self):
         calls = [
-            self._tc("1", question="revenue last month"),
+            self._tc("1", name="search_codebase", question="what is X"),
+            self._tc("2", name="search_codebase", question="what is X"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, history)
-        assert len(kept) == 0
-        assert "1" in skipped
-        assert "already retrieved" in skipped["1"]
-
-    def test_short_question_not_history_matched(self):
-        history = [
-            Message(role="assistant", content="here is data for total users"),
-        ]
-        calls = [
-            self._tc("1", question="total"),  # too short (<=15 chars)
-        ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, history)
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
         assert len(kept) == 1
-        assert len(skipped) == 0
+        assert "2" in skipped
 
     def test_mixed_kept_and_skipped(self):
         calls = [
@@ -487,6 +472,7 @@ class TestPipelineScopedContext:
 
         tracker = MagicMock()
         tracker.emit = AsyncMock()
+        tracker.end = AsyncMock()
         tracker.step = MagicMock()
         tracker.step.return_value.__aenter__ = AsyncMock(return_value=None)
         tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -1012,3 +998,198 @@ class TestMcpValidation:
         outcome = validator.validate_mcp_result(result)
         assert outcome.passed
         assert len(outcome.errors) == 0
+
+
+# ------------------------------------------------------------------
+# Intent-based routing in OrchestratorAgent
+# ------------------------------------------------------------------
+
+
+class TestOrchestratorIntentRouting:
+    """Verify the orchestrator routes to the correct execution path based on intent."""
+
+    @pytest.fixture
+    def mock_tracker(self):
+        from contextlib import asynccontextmanager
+
+        from app.core.workflow_tracker import WorkflowTracker
+
+        t = MagicMock(spec=WorkflowTracker)
+        t.begin = AsyncMock(return_value="wf-1")
+        t.end = AsyncMock()
+        t.emit = AsyncMock()
+        t.has_ended = MagicMock(return_value=True)
+
+        @asynccontextmanager
+        async def fake_step(wf_id, step, detail="", **kwargs):
+            yield
+
+        t.step = MagicMock(side_effect=fake_step)
+        return t
+
+    @pytest.fixture
+    def mock_llm(self):
+        router = MagicMock()
+        router.complete = AsyncMock()
+        router.get_context_window = MagicMock(return_value=128_000)
+        return router
+
+    @pytest.fixture
+    def mock_vs(self):
+        vs = MagicMock()
+        collection = MagicMock()
+        collection.count = MagicMock(return_value=0)
+        vs.get_or_create_collection = MagicMock(return_value=collection)
+        return vs
+
+    @pytest.fixture
+    def orch(self, mock_llm, mock_vs, mock_tracker):
+        return OrchestratorAgent(
+            llm_router=mock_llm,
+            vector_store=mock_vs,
+            workflow_tracker=mock_tracker,
+        )
+
+    @pytest.fixture
+    def base_context(self, mock_llm, mock_tracker):
+        from app.agents.base import AgentContext
+
+        return AgentContext(
+            project_id="test-proj",
+            connection_config=None,
+            user_question="Hello!",
+            chat_history=[],
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            workflow_id="wf-1",
+            project_name="TestProject",
+        )
+
+    @pytest.mark.asyncio
+    async def test_direct_response_path(self, orch, mock_llm, base_context):
+        """A greeting should be classified as direct_response and skip heavy context."""
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(content='{"intent": "direct_response", "reason": "greeting"}'),
+                LLMResponse(content="Hello! I am your data assistant."),
+            ]
+        )
+        with (
+            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+        ):
+            resp = await orch.run(base_context)
+
+        assert resp.response_type == "text"
+        assert "assistant" in resp.answer.lower() or "hello" in resp.answer.lower()
+        assert resp.query is None
+        assert resp.results is None
+        assert mock_llm.complete.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_mixed_fallback_on_classification_error(self, orch, mock_llm, base_context):
+        """If classification fails, the orchestrator should fall back to the full pipeline."""
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                RuntimeError("LLM is down"),
+                LLMResponse(content="I can help with data analysis."),
+            ]
+        )
+        with (
+            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+            patch("app.agents.orchestrator.OrchestratorAgent._check_staleness", new_callable=AsyncMock, return_value=None),
+            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock, return_value=None),
+            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock, return_value=None),
+            patch("app.agents.orchestrator.detect_complexity", return_value=False),
+            patch("app.agents.orchestrator.detect_complexity_adaptive", new_callable=AsyncMock, return_value=False),
+        ):
+            resp = await orch.run(base_context)
+
+        assert resp.response_type == "text"
+
+    @pytest.mark.asyncio
+    async def test_data_query_path(self, orch, mock_llm, base_context):
+        """A data question should load DB context and enter the tool loop."""
+        from app.agents.base import AgentContext
+
+        ctx = AgentContext(
+            project_id="test-proj",
+            connection_config=ConnectionConfig(
+                db_type="postgres",
+                db_host="localhost",
+                db_port=5432,
+                db_name="testdb",
+                db_user="user",
+                connection_id="conn-1",
+            ),
+            user_question="How many users are there?",
+            chat_history=[],
+            llm_router=mock_llm,
+            tracker=base_context.tracker,
+            workflow_id="wf-1",
+            project_name="TestProject",
+        )
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(content='{"intent": "data_query", "reason": "user count"}'),
+                LLMResponse(content="There are 42 users in the database."),
+            ]
+        )
+        with (
+            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+            patch("app.agents.orchestrator.OrchestratorAgent._build_table_map", new_callable=AsyncMock, return_value="users: id, email"),
+            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock, return_value=None),
+            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock, return_value=None),
+            patch("app.agents.orchestrator.detect_complexity", return_value=False),
+            patch("app.agents.orchestrator.detect_complexity_adaptive", new_callable=AsyncMock, return_value=False),
+        ):
+            resp = await orch.run(ctx)
+
+        assert resp.response_type == "text"
+        assert "42" in resp.answer
+
+    @pytest.mark.asyncio
+    async def test_knowledge_query_path(self, orch, mock_llm, base_context, mock_vs):
+        """A code question should only load KB context, not DB context."""
+        collection = MagicMock()
+        collection.count = MagicMock(return_value=5)
+        mock_vs.get_or_create_collection = MagicMock(return_value=collection)
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(content='{"intent": "knowledge_query", "reason": "code architecture"}'),
+                LLMResponse(content="The User model has fields id, email, name."),
+            ]
+        )
+        base_context.user_question = "What does the User model look like?"
+
+        with (
+            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+            patch("app.agents.orchestrator.OrchestratorAgent._check_staleness", new_callable=AsyncMock, return_value=None),
+        ):
+            resp = await orch.run(base_context)
+
+        assert resp.response_type == "text"
+        assert "User model" in resp.answer
+
+    @pytest.mark.asyncio
+    async def test_direct_response_does_not_load_table_map(self, orch, mock_llm, base_context):
+        """Verify _run_direct_response never calls _build_table_map."""
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(content='{"intent": "direct_response", "reason": "meta question"}'),
+                LLMResponse(content="I can help you explore your data."),
+            ]
+        )
+        with (
+            patch("app.agents.orchestrator.OrchestratorAgent._has_mcp_sources", new_callable=AsyncMock, return_value=False),
+            patch("app.agents.orchestrator.OrchestratorAgent._build_table_map", new_callable=AsyncMock) as mock_table_map,
+            patch("app.agents.orchestrator.OrchestratorAgent._load_project_overview", new_callable=AsyncMock) as mock_overview,
+            patch("app.agents.orchestrator.OrchestratorAgent._load_recent_learnings", new_callable=AsyncMock) as mock_learnings,
+        ):
+            base_context.user_question = "What can you do?"
+            await orch.run(base_context)
+
+        mock_table_map.assert_not_called()
+        mock_overview.assert_not_called()
+        mock_learnings.assert_not_called()

@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-03-31
+
+### Fixed
+- **8 bugs**: Clarification requests no longer swallowed in parallel tool execution; double `tracker.end()` eliminated from complex pipeline fallback, pipeline resume, and `_run_data_query`/`_run_full_pipeline` paths; intent classifier no longer crashes on JSON array responses; `KnowledgeAgent._collected_sources` moved from instance state to per-run local to prevent concurrency corruption; `MCPSourceAgent` adapter now restored after each `run()` call; `loop_budget` aligned with `max_context_tokens` cap (was using raw model window); `StageContext.from_persistence` now warns when resumed data is truncated
+
+### Changed
+- **Dedup extended to all data tools** — `_dedup_tool_calls` now deduplicates `search_codebase` and `query_mcp_source` in addition to `query_database`. Removed error-prone history-based substring dedup (prompt-level guidance is more reliable)
+- **Viz fallback uses structured data** — `ValidationOutcome.fallback_viz_type` replaces fragile string-matching on warning text; viz type set in `validation.py` consolidated (viz_agent imports from validator)
+- **Context immutability** — all intent-path methods now use `replace(context, ...)` instead of mutating `context.chat_history` in-place
+- **Symmetric tool scoping** — `_run_data_query` no longer exposes MCP tools (matching `_run_mcp_query` which doesn't expose DB tools); mixed intent still exposes all
+- **MCP plan validation** — `query_mcp_source` added as valid data-retrieval tool in `_validate_plan_structure`, enabling MCP-only complex plans
+- **Pipeline responses include metadata** — `_build_pipeline_response` now populates `token_usage`, `tool_call_log`, `steps_used`, `steps_total`
+- **MCP connection hoisted out of retry loop** — `_handle_query_mcp_source` lookups DB once, then retries only the LLM/tool calls
+- **MCP source check cached** — `_has_mcp_sources` now caches results per project for 60s
+- **Config defaults tuned** — `max_context_tokens` raised from 16K to 32K; `rag_relevance_threshold` lowered from 1.3 to 0.8; `"then"` keyword tightened to `" then "` to reduce false-positive complexity detection
+
+### Added
+- **`list_rules` tool** — LLM can now list existing project rules to discover IDs before update/delete (resolves `manage_rules` update/delete being unusable)
+- **Intent classification tracker event** — orchestrator now emits the classified intent and reason to the workflow tracker
+- **MCP result thinking event** — `_emit_tool_result_thinking` now called for MCP source results (parity with SQL and Knowledge)
+- **`manage_rules` output_preview** — step data now includes output_preview for observability
+
+### Removed
+- Dead error types `AgentTimeoutError` and `AgentValidationError` (never raised/caught)
+- Dead config settings `daily_token_limit`, `monthly_token_limit`, `query_cache_persist_dir`
+- Aspirational prompt text: "Data Verification Protocol" tracking, "session note" references, "sanity checker" mention, "COMPLEX MULTI-STEP QUERIES" section (moved to code-level handling)
+- `numeric_range` question type from `ask_user` (never implemented)
+
+## [1.2.0] - 2026-03-31
+
+### Added
+- **Orchestrator intent classification** — The orchestrator now runs a lightweight LLM-based intent classification step (~500 tokens, ~0.5s) before loading any heavy context. User messages are classified into `direct_response`, `data_query`, `knowledge_query`, `mcp_query`, or `mixed`, and only the relevant context and tools are loaded for each intent type. A simple greeting like "What can you do?" now completes in ~1-2s with 2 LLM calls and 0 DB queries, down from ~15s / 34 spans / 174K tokens. New module: `backend/app/agents/intent_classifier.py`. New prompt builders: `build_classification_prompt()`, `build_direct_response_prompt()` in `orchestrator_prompt.py`. The orchestrator `run()` method now routes to `_run_direct_response`, `_run_data_query`, `_run_knowledge_query`, `_run_mcp_query`, or `_run_full_pipeline` based on the classified intent. Falls back to `mixed` (full pipeline) on any classification error
+
 ## [1.1.1] - 2026-03-31
 
 ### Fixed

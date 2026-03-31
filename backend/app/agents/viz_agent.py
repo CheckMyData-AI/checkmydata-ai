@@ -85,15 +85,9 @@ class VizAgent(BaseAgent):
                 summary=str(val),
             )
 
-        if preferred_viz and preferred_viz in (
-            "table",
-            "bar_chart",
-            "line_chart",
-            "pie_chart",
-            "scatter",
-            "text",
-            "number",
-        ):
+        from app.agents.validation import AgentResultValidator
+
+        if preferred_viz and preferred_viz in AgentResultValidator.VALID_VIZ_TYPES:
             if preferred_viz == "pie_chart" and len(rows) > settings.max_pie_categories:
                 preferred_viz = "bar_chart"
             config = self._generate_config(results, preferred_viz)

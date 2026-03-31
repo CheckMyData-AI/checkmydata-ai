@@ -151,7 +151,12 @@ class StageResult:
 
     @classmethod
     def from_summary_dict(cls, d: dict[str, Any]) -> StageResult:
-        """Restore from persisted summary.  Full QueryResult is NOT restored."""
+        """Restore from persisted summary.  Full QueryResult is NOT restored.
+
+        Note: only sample rows (up to ``_MAX_SAMPLE_ROWS``) are persisted.
+        The ``row_count`` field preserves the original total so downstream
+        stages can detect truncation (``len(rows) < row_count``).
+        """
         qr: QueryResult | None = None
         if "columns" in d:
             qr = QueryResult(
@@ -159,6 +164,16 @@ class StageResult:
                 rows=d.get("sample_rows", []),
                 row_count=d.get("row_count", 0),
             )
+            actual_rows = len(qr.rows)
+            if actual_rows < qr.row_count:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Stage %s restored with %d/%d rows (sample only)",
+                    d.get("stage_id", "?"),
+                    actual_rows,
+                    qr.row_count,
+                )
         return cls(
             stage_id=d["stage_id"],
             status=d.get("status", "success"),

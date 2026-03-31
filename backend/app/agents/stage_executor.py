@@ -446,7 +446,7 @@ class StageExecutor:
         try:
             processor = get_data_processor()
             processed = processor.process(source_qr, params.pop("operation"), params)
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             return StageResult(
                 stage_id=stage.stage_id,
                 status="error",

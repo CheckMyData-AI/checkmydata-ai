@@ -86,7 +86,7 @@ class KnowledgeAgent(BaseAgent):
 
         result = KnowledgeResult()
         tool_call_log: list[dict[str, Any]] = []
-        self._collected_sources: list[RAGSource] = []
+        collected_sources: list[RAGSource] = []
 
         tracker = context.tracker
         wf_id = context.workflow_id
@@ -158,7 +158,7 @@ class KnowledgeAgent(BaseAgent):
                     f"Knowledge tool: {tc.name}",
                     step_data=_sd_ktool,
                 ):
-                    result_text = await self._dispatch_tool(tc, context)
+                    result_text = await self._dispatch_tool(tc, context, collected_sources)
                     _sd_ktool["output_preview"] = (result_text or "")[:500]
 
                 tool_call_log.append(
@@ -191,7 +191,7 @@ class KnowledgeAgent(BaseAgent):
 
         result.token_usage = total_usage
         result.tool_call_log = tool_call_log
-        result.sources = self._collected_sources
+        result.sources = collected_sources
         result.status = "success" if result.answer else "no_result"
         return result
 
@@ -199,26 +199,36 @@ class KnowledgeAgent(BaseAgent):
     # Tool dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch_tool(self, tool_call: ToolCall, context: AgentContext) -> str:
-        handler = {
-            "search_knowledge": self._handle_search_knowledge,
-            "get_entity_info": self._handle_get_entity_info,
-        }.get(tool_call.name)
-
-        if handler is None:
+    async def _dispatch_tool(
+        self,
+        tool_call: ToolCall,
+        context: AgentContext,
+        collected_sources: list[RAGSource],
+    ) -> str:
+        if tool_call.name == "search_knowledge":
+            try:
+                return await self._handle_search_knowledge(
+                    tool_call.arguments, context, collected_sources
+                )
+            except Exception as exc:
+                logger.exception("Knowledge tool %s failed", tool_call.name)
+                return f"Error executing {tool_call.name}: {exc}"
+        elif tool_call.name == "get_entity_info":
+            try:
+                return await self._handle_get_entity_info(tool_call.arguments, context)
+            except Exception as exc:
+                logger.exception("Knowledge tool %s failed", tool_call.name)
+                return f"Error executing {tool_call.name}: {exc}"
+        else:
             return f"Error: unknown tool '{tool_call.name}'"
-
-        try:
-            return await handler(tool_call.arguments, context)
-        except Exception as exc:
-            logger.exception("Knowledge tool %s failed", tool_call.name)
-            return f"Error executing {tool_call.name}: {exc}"
 
     # ------------------------------------------------------------------
     # Tool handlers
     # ------------------------------------------------------------------
 
-    async def _handle_search_knowledge(self, args: dict, ctx: AgentContext) -> str:
+    async def _handle_search_knowledge(
+        self, args: dict, ctx: AgentContext, collected_sources: list[RAGSource]
+    ) -> str:
         query: str = args.get("query", "")
         try:
             max_results = min(max(1, int(args.get("max_results", 5))), 50)
@@ -263,7 +273,7 @@ class KnowledgeAgent(BaseAgent):
             parts.append(chunk)
             total_len += len(chunk)
 
-            self._collected_sources.append(
+            collected_sources.append(
                 RAGSource(
                     source_path=source,
                     distance=distance,

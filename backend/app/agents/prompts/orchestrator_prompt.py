@@ -241,38 +241,104 @@ def build_orchestrator_system_prompt(
 
         sections.append("")
         sections.append(
-            "DATA VERIFICATION PROTOCOL:\n"
-            "1. When data is raw/unverified (no DB index or first-time queries), "
-            "after presenting results, ask the user: 'Do these numbers align "
-            "with what you expect? This helps me calibrate my understanding.'\n"
+            "DATA VERIFICATION:\n"
+            "1. For first-time queries on an unfamiliar metric, after presenting "
+            "results ask the user: 'Do these numbers align with what you expect?'\n"
             "2. If results contain financial figures, always mention the unit "
             "(cents vs dollars) and ask for confirmation when uncertain.\n"
-            "3. If the sanity checker flags anomalies, proactively explain the "
-            "concern and ask the user to verify.\n"
-            "4. When the user says numbers 'don't match' or 'seem off':\n"
+            "3. When the user says numbers 'don't match' or 'seem off':\n"
             "   a. Ask what they expected\n"
             "   b. Investigate the discrepancy (check column formats, joins, filters)\n"
-            "   c. Record the finding as a session note and learning\n"
-            "5. Track verification status: first query on a new metric = 'unverified', "
-            "user-confirmed = 'verified', user-rejected = 'investigate'.\n"
-            "6. Use `ask_user` to ask structured verification questions "
+            "   c. Create a rule via `manage_rules` to record the finding\n"
+            "4. Use `ask_user` to ask structured verification questions "
             "when you need to confirm data accuracy or clarify ambiguous requests."
         )
 
+    return "\n".join(sections)
+
+
+# ------------------------------------------------------------------
+# Intent classification prompt (lightweight, ~200 tokens)
+# ------------------------------------------------------------------
+
+
+def build_classification_prompt(
+    *,
+    has_connection: bool = False,
+    has_knowledge_base: bool = False,
+    has_mcp_sources: bool = False,
+) -> str:
+    """Build a compact system prompt for the intent classification LLM call."""
+    intents: list[str] = [
+        '- "direct_response": greetings, thanks, meta-questions '
+        "(e.g. 'what can you do?', 'hello', 'how do you work?'), "
+        "casual conversation, follow-ups about already-displayed results "
+        "that do NOT need new data retrieval",
+    ]
+
     if has_connection:
-        sections.append("")
-        sections.append(
-            "COMPLEX MULTI-STEP QUERIES:\n"
-            "For complex requests that involve multiple data retrieval steps, "
-            "cross-referencing, or building summary tables from multiple queries, "
-            "I will automatically create an execution plan and work through it "
-            "stage by stage.\n"
-            "- After each major data retrieval, I will show you the intermediate "
-            "results for confirmation.\n"
-            "- You can ask me to modify, retry, or skip any stage.\n"
-            "- If a stage fails validation, I will retry automatically or ask "
-            "you for guidance.\n"
-            "- The final answer combines all stage results into a coherent response."
+        intents.append(
+            '- "data_query": questions that require querying the connected '
+            "database for numbers, statistics, or records"
+        )
+    if has_knowledge_base:
+        intents.append(
+            '- "knowledge_query": questions about project source code, '
+            "architecture, documentation, or ORM models"
+        )
+    if has_mcp_sources:
+        intents.append(
+            '- "mcp_query": questions that require data from external '
+            "MCP-connected services"
         )
 
-    return "\n".join(sections)
+    intents.append(
+        '- "mixed": the question spans multiple capabilities above, '
+        "or you are not confident which single intent applies"
+    )
+
+    intent_block = "\n".join(intents)
+
+    return (
+        "You are an intent classifier for an AI data assistant.\n"
+        "Given the user's message (and optionally recent conversation history), "
+        "classify the intent into exactly ONE of the following categories:\n\n"
+        f"{intent_block}\n\n"
+        'Reply ONLY with JSON: {"intent": "<category>", "reason": "<brief explanation>"}\n'
+        "Do NOT add any other text."
+    )
+
+
+# ------------------------------------------------------------------
+# Minimal direct-response prompt (no tools, no schema)
+# ------------------------------------------------------------------
+
+
+def build_direct_response_prompt(
+    *,
+    project_name: str | None = None,
+    has_connection: bool = False,
+    has_knowledge_base: bool = False,
+    has_mcp_sources: bool = False,
+) -> str:
+    """Build a minimal system prompt for direct conversational responses."""
+    project_label = f' for the project "{project_name}"' if project_name else ""
+
+    caps: list[str] = []
+    if has_connection:
+        caps.append("query connected databases")
+    if has_knowledge_base:
+        caps.append("search indexed project code and documentation")
+    if has_mcp_sources:
+        caps.append("query external MCP data sources")
+    if not caps:
+        caps.append("have general conversations")
+
+    cap_str = ", ".join(caps)
+
+    return (
+        f"You are a friendly AI data assistant{project_label}.\n"
+        f"Your capabilities include: {cap_str}.\n"
+        "Respond to the user's message naturally and concisely. "
+        "Do not call any tools."
+    )

@@ -21,6 +21,7 @@ class ValidationOutcome:
     passed: bool = True
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    fallback_viz_type: str | None = None
 
 
 class AgentResultValidator:
@@ -90,11 +91,13 @@ class AgentResultValidator:
             return outcome
 
         if viz_type == "pie_chart" and row_count > settings.max_pie_categories:
+            outcome.fallback_viz_type = "bar_chart"
             outcome.warnings.append(
                 f"Pie chart with {row_count} slices — falling back to bar_chart"
             )
 
         if viz_type in ("line_chart", "bar_chart", "scatter") and column_count < 2:
+            outcome.fallback_viz_type = "table"
             outcome.warnings.append(f"{viz_type} needs at least 2 columns — falling back to table")
 
         return outcome

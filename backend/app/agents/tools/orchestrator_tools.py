@@ -73,6 +73,16 @@ MANAGE_RULES_TOOL = Tool(
 )
 
 
+LIST_RULES_TOOL = Tool(
+    name="list_rules",
+    description=(
+        "List existing custom rules for this project. "
+        "Use to discover rule IDs before updating or deleting rules."
+    ),
+    parameters=[],
+)
+
+
 PROCESS_DATA_TOOL = Tool(
     name="process_data",
     description=(
@@ -198,7 +208,7 @@ ASK_USER_TOOL = Tool(
             name="question_type",
             type="string",
             description="Type of question",
-            enum=["yes_no", "multiple_choice", "numeric_range", "free_text"],
+            enum=["yes_no", "multiple_choice", "free_text"],
         ),
         ToolParameter(
             name="options",
@@ -230,6 +240,7 @@ def get_orchestrator_tools(
         tools.append(QUERY_DATABASE_TOOL)
         tools.append(PROCESS_DATA_TOOL)
         tools.append(MANAGE_RULES_TOOL)
+        tools.append(LIST_RULES_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_CODEBASE_TOOL)
     if has_mcp_sources:

@@ -31,7 +31,7 @@ _COMPLEXITY_KEYWORDS = [
     "for each",
     "match",
     "correlate",
-    "then",
+    " then ",
     "step 1",
     "step 2",
     "first find",
@@ -131,7 +131,8 @@ def _validate_plan_structure(stages: list[dict[str, Any]]) -> list[str]:
             if dep not in ids:
                 errors.append(f"Stage '{sid}' depends on unknown stage '{dep}'")
 
-    if not any(s.get("tool") in ("query_database", "search_codebase") for s in stages):
+    _DATA_RETRIEVAL_TOOLS = {"query_database", "search_codebase", "query_mcp_source"}
+    if not any(s.get("tool") in _DATA_RETRIEVAL_TOOLS for s in stages):
         errors.append("Plan must include at least one data-retrieval stage")
 
     # Topological cycle detection (Kahn's algorithm)

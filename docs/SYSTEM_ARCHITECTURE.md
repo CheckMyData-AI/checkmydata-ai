@@ -194,7 +194,30 @@ Every sub-agent receives the same `AgentContext` (defined in `backend/app/agents
 | `project_name` | `str \| None` | Human-readable project name |
 | `extra` | `dict` | Pipeline action, session ID, flags |
 
-### 2.4 Simple Query Flow (Tool-Calling Loop)
+### 2.4 Intent Classification
+
+Before loading any heavy context (table maps, learnings, staleness checks), the orchestrator runs a lightweight LLM-based intent classification step (~500 tokens, ~0.5s). This determines the minimal execution chain needed for the request.
+
+**Classification intents:**
+
+| Intent | Description | Context Loaded | Tools Exposed |
+|--------|-------------|----------------|---------------|
+| `direct_response` | Greetings, meta-questions, casual conversation | None | None |
+| `data_query` | Questions requiring database queries | Table map, learnings, overview | `query_database`, `process_data`, `manage_rules`, `ask_user` |
+| `knowledge_query` | Questions about code, architecture, docs | KB staleness | `search_codebase`, `ask_user` |
+| `mcp_query` | Questions requiring external MCP sources | MCP sources | `query_mcp_source`, `ask_user` |
+| `mixed` | Ambiguous or multi-capability queries | Everything | All available |
+
+**Key behaviours:**
+- The classification prompt is dynamic: only intents whose capabilities are available (e.g., DB connection exists) are presented to the LLM.
+- On any classification failure, falls back to `mixed` (full pipeline) — no request is ever dropped.
+- `direct_response` path uses a single LLM call with a minimal prompt (~100 tokens), zero DB queries, and no tools. For a greeting like "hello", this reduces the pipeline from ~174K tokens / 15s to ~2K tokens / 1-2s.
+- `data_query` path loads only DB-relevant context and runs complexity detection for the multi-stage pipeline.
+- `knowledge_query` path loads only KB staleness and exposes only `search_codebase`.
+
+Implementation: `backend/app/agents/intent_classifier.py` (`classify_intent()`), prompt builders in `backend/app/agents/prompts/orchestrator_prompt.py` (`build_classification_prompt()`, `build_direct_response_prompt()`).
+
+### 2.5 Simple Query Flow (Tool-Calling Loop)
 
 For straightforward questions, the orchestrator uses an iterative tool-calling loop:
 
@@ -278,7 +301,7 @@ If the response includes SQL results, the `VizAgent` selects the best chart type
 
 `SuggestionEngine.generate_followups()` produces 2-3 suggested follow-up questions based on the query, columns, and row count.
 
-### 2.5 Complex Query Flow (Multi-Stage Pipeline)
+### 2.6 Complex Query Flow (Multi-Stage Pipeline)
 
 For questions requiring multiple data retrieval steps, the orchestrator switches to a multi-stage pipeline.
 
@@ -324,7 +347,7 @@ flowchart LR
 
 **Fallback**: If the planner fails to produce a valid plan, the orchestrator falls back to the simple tool-calling loop with a `_skip_complexity` flag to prevent infinite recursion.
 
-### 2.6 Meta-Tools
+### 2.7 Meta-Tools
 
 The orchestrator's LLM sees these meta-tools (defined in `backend/app/agents/tools/orchestrator_tools.py`):
 
@@ -339,7 +362,7 @@ The orchestrator's LLM sees these meta-tools (defined in `backend/app/agents/too
 
 Tools are assembled dynamically by `get_orchestrator_tools()` based on what the project has configured.
 
-### 2.7 Sub-Agent Retry Logic
+### 2.8 Sub-Agent Retry Logic
 
 Each sub-agent call is wrapped in retry logic with `MAX_SUB_AGENT_RETRIES = 2`:
 
@@ -361,7 +384,7 @@ The `AgentResultValidator` (`backend/app/agents/validation.py`) checks:
 - **Viz results**: valid viz_type, appropriate chart for data shape
 - **Knowledge results**: non-empty answer, source citations present
 
-### 2.8 Error Handling
+### 2.9 Error Handling
 
 The error hierarchy (`backend/app/agents/errors.py`):
 
@@ -379,7 +402,7 @@ The orchestrator catches different error types and produces appropriate user-fac
 - LLM errors → provider-specific user messages from the error hierarchy
 - Unknown errors → generic "An unexpected error occurred"
 
-### 2.9 Clarification Requests
+### 2.10 Clarification Requests
 
 The orchestrator proactively assesses request ambiguity via the **REQUEST ANALYSIS PROTOCOL** in its system prompt, using `ask_user` before executing tools when the intent is unclear, data coverage is uncertain, or assumptions would be required.
 
