@@ -94,6 +94,13 @@ class ChatService:
     async def get_history_as_messages(
         self, session: AsyncSession, session_id: str, limit: int = 20
     ) -> list[Message]:
+        """Fetch recent chat messages and enrich assistant messages with metadata.
+
+        ``limit`` caps the DB fetch as a performance guard. After fetching,
+        ``trim_history`` further trims by token budget. The two mechanisms
+        work in layers: DB limit prevents loading thousands of rows, token
+        limit ensures the context stays within LLM budget.
+        """
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
@@ -121,6 +128,14 @@ class ChatService:
                 raw = meta.get("raw_result")
                 if raw and raw.get("columns"):
                     context_parts.append(f"columns: {', '.join(raw['columns'])}")
+                if raw and raw.get("query"):
+                    context_parts.append(f"query: {raw['query'][:200]}")
+                if meta.get("insights"):
+                    context_parts.append(f"insights: {len(meta['insights'])}")
+                if meta.get("suggested_followups"):
+                    context_parts.append(
+                        f"followups: {', '.join(meta['suggested_followups'][:3])}"
+                    )
                 if context_parts:
                     content += (
                         "\n\n[Previous result (completed): " + " | ".join(context_parts) + "]"

@@ -40,12 +40,14 @@ class StageExecutor:
         llm_router: LLMRouter,
         tracker: WorkflowTracker,
         validator: StageValidator | None = None,
+        mcp_source_agent: BaseAgent | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
         self._llm = llm_router
         self._tracker = tracker
         self._validator = validator or StageValidator()
+        self._mcp_source = mcp_source_agent
 
     # ------------------------------------------------------------------
     # Public API
@@ -119,6 +121,14 @@ class StageExecutor:
                     checkpoint_result=result,
                 )
 
+        last_stage = plan.stages[-1] if plan.stages else None
+        if last_stage and last_stage.tool == "synthesize":
+            last_result = stage_ctx.results.get(last_stage.stage_id)
+            if last_result and last_result.summary:
+                return _StageExecutorResult(
+                    status="completed", stage_ctx=stage_ctx, final_answer=last_result.summary
+                )
+
         final = await self._synthesize(stage_ctx, context)
         return _StageExecutorResult(status="completed", stage_ctx=stage_ctx, final_answer=final)
 
@@ -145,6 +155,8 @@ class StageExecutor:
                     return await self._run_analysis_stage(enriched_q, stage, stage_ctx, context)
                 case "process_data":
                     return await self._run_process_data_stage(stage, stage_ctx, context)
+                case "query_mcp_source":
+                    return await self._run_mcp_stage(enriched_q, stage, context)
                 case "synthesize":
                     return await self._synthesize_stage(stage, stage_ctx, context)
                 case _:
@@ -352,6 +364,43 @@ class StageExecutor:
             token_usage=resp.usage or {},
         )
 
+    async def _run_mcp_stage(
+        self,
+        question: str,
+        stage: PlanStage,
+        context: AgentContext,
+    ) -> StageResult:
+        """Query an external MCP data source."""
+        if self._mcp_source is None:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error="MCP source agent not configured for this pipeline",
+            )
+        try:
+            result = await self._mcp_source.run(
+                replace(
+                    context,
+                    chat_history=context.chat_history[-4:] if context.chat_history else [],
+                ),
+                question=question,
+            )
+            answer = getattr(result, "answer", "") or ""
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="success" if getattr(result, "status", "") != "error" else "error",
+                summary=answer,
+                token_usage=getattr(result, "token_usage", {}),
+                error=getattr(result, "error", None),
+            )
+        except Exception as exc:
+            logger.exception("MCP stage '%s' failed", stage.stage_id)
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=str(exc),
+            )
+
     async def _run_process_data_stage(
         self,
         stage: PlanStage,
@@ -439,7 +488,11 @@ class StageExecutor:
             elif "aggregat" in desc_lower or "group" in desc_lower:
                 params["operation"] = "aggregate_data"
             else:
-                params["operation"] = "ip_to_country"
+                logger.warning(
+                    "Could not determine process_data operation from input_context, "
+                    "defaulting to filter_data"
+                )
+                params["operation"] = "filter_data"
 
         needs_column = params["operation"] in (
             "ip_to_country",

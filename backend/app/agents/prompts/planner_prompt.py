@@ -35,6 +35,9 @@ question into a sequence of discrete stages that can be executed one at a time.
      "op": "neq", "value": "", "exclude_empty": true}.
    - "analyze_results" — perform analysis or computation on data from \
      previous stages (no new DB query)
+   - "query_mcp_source" — query an external data source connected via MCP \
+     (Model Context Protocol). Use when the question requires data from \
+     external APIs or services not in the primary database.
    - "synthesize" — produce the final user-facing answer, combining \
      results from all previous stages
 4. The last stage should normally be "synthesize" or "analyze_results" \
@@ -68,8 +71,14 @@ def build_planner_user_prompt(
     question: str,
     table_map: str = "",
     db_type: str | None = None,
+    project_overview: str | None = None,
+    current_datetime: str | None = None,
 ) -> str:
     parts = [f"User question:\n{question}"]
+    if current_datetime:
+        parts.append(f"\nCurrent date/time: {current_datetime}")
+    if project_overview:
+        parts.append(f"\nProject context:\n{project_overview[:1000]}")
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")
     if table_map:

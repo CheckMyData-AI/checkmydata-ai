@@ -176,12 +176,16 @@ class VizAgent(BaseAgent):
             ),
         ]
 
-        llm_resp = await context.llm_router.complete(
-            messages=messages,
-            tools=[RECOMMEND_VISUALIZATION_TOOL],
-            preferred_provider=context.preferred_provider,
-            model=context.model,
-        )
+        try:
+            llm_resp = await context.llm_router.complete(
+                messages=messages,
+                tools=[RECOMMEND_VISUALIZATION_TOOL],
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+            )
+        except Exception:
+            logger.exception("VizAgent LLM call failed, falling back to table")
+            return VizResult(viz_type="table", summary="Visualization selection failed")
 
         total_usage = dict(llm_resp.usage) if llm_resp.usage else {}
 
@@ -223,7 +227,7 @@ class VizAgent(BaseAgent):
         self,
         viz_type: str,
         results: QueryResult,
-        viz_config: dict | None = None,
+        viz_config: dict | None = None,  # noqa: ARG002
     ) -> str:
         if viz_type == "pie_chart" and len(results.rows) > settings.max_pie_categories:
             return "bar_chart"

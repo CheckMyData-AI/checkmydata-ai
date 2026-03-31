@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from app.core.query_builder import EXECUTE_QUERY_TOOL
+from app.agents.tools.sql_tools import EXECUTE_QUERY_TOOL
 from app.llm.base import Message
 from app.llm.router import LLMRouter
 

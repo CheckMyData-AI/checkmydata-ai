@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, NoReturn
 
 from app.agents.base import AgentContext, BaseAgent
 from app.agents.errors import (
@@ -129,26 +129,26 @@ class AgentResponse:
     query_explanation: str | None = None
     results: QueryResult | None = None
     viz_type: str = "text"
-    viz_config: dict = field(default_factory=dict)
+    viz_config: dict[str, Any] = field(default_factory=dict)
     knowledge_sources: list[RAGSource] = field(default_factory=list)
     error: str | None = None
     workflow_id: str | None = None
-    token_usage: dict = field(default_factory=dict)
+    token_usage: dict[str, int] = field(default_factory=dict)
     llm_provider: str = ""
     llm_model: str = ""
     staleness_warning: str | None = None
     response_type: str = (
-        "text"  # text | sql_result | knowledge | error | clarification_request | step_limit_reached
+        "text"  # text | sql_result | knowledge | mcp_source | error | clarification_request | step_limit_reached
     )
-    tool_call_log: list[dict] = field(default_factory=list)
+    tool_call_log: list[dict[str, Any]] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
-    insights: list[dict] = field(default_factory=list)
+    insights: list[dict[str, Any]] = field(default_factory=list)
     context_usage_pct: int = 0
     steps_used: int = 0
     steps_total: int = 0
     continuation_context: str | None = None
-    clarification_data: dict | None = None
+    clarification_data: dict[str, Any] | None = None
 
 
 class OrchestratorAgent(BaseAgent):
@@ -357,6 +357,7 @@ class OrchestratorAgent(BaseAgent):
             last_sql_result: SQLAgentResult | None = None
             last_viz_result: VizResult | None = None
             knowledge_sources: list[RAGSource] = []
+            has_mcp_result = False
             used_provider = ""
             used_model = ""
 
@@ -618,6 +619,8 @@ class OrchestratorAgent(BaseAgent):
                         self._wf_sql_results[wf_id] = sub_result
                     elif isinstance(sub_result, KnowledgeResult):
                         knowledge_sources.extend(sub_result.sources)
+                    elif isinstance(sub_result, MCPSourceResult):
+                        has_mcp_result = True
 
                     messages.append(
                         Message(
@@ -671,7 +674,9 @@ class OrchestratorAgent(BaseAgent):
             if step_limit_hit:
                 response_type = "step_limit_reached"
             else:
-                response_type = self._determine_response_type(last_sql_result, knowledge_sources)
+                response_type = self._determine_response_type(
+                    last_sql_result, knowledge_sources, has_mcp_result
+                )
 
             viz_type = "text"
             viz_config: dict = {}
@@ -878,6 +883,8 @@ class OrchestratorAgent(BaseAgent):
                 db_type=db_type,
                 preferred_provider=context.preferred_provider,
                 model=context.model,
+                project_overview=context.extra.get("project_overview"),
+                current_datetime=get_current_datetime_str(),
             )
             if plan:
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
@@ -917,24 +924,35 @@ class OrchestratorAgent(BaseAgent):
             f"Plan created: {n_stages} stages",
         )
 
-        pipeline_run = await self._create_pipeline_run(context, plan)
+        try:
+            pipeline_run = await self._create_pipeline_run(context, plan)
+        except Exception:
+            logger.exception("Failed to create pipeline run record")
+            raise AgentFatalError("Pipeline initialisation failed") from None
 
-        executor = StageExecutor(
-            sql_agent=self._sql,
-            knowledge_agent=self._knowledge,
-            llm_router=self._llm,
-            tracker=self._tracker,
-            validator=StageValidator(),
-        )
+        try:
+            executor = StageExecutor(
+                sql_agent=self._sql,
+                knowledge_agent=self._knowledge,
+                llm_router=self._llm,
+                tracker=self._tracker,
+                validator=StageValidator(),
+                mcp_source_agent=self._mcp_source,
+            )
 
-        stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
-        pipeline_ctx = replace(
-            context,
-            chat_history=context.chat_history[-4:] if context.chat_history else [],
-        )
-        exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
+            stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
+            pipeline_ctx = replace(
+                context,
+                chat_history=context.chat_history[-4:] if context.chat_history else [],
+            )
+            exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
 
-        await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
+            await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
+        except Exception:
+            logger.exception(
+                "Pipeline execution failed (run_id=%s)", pipeline_run.id
+            )
+            raise
 
         return self._build_pipeline_response(exec_result, wf_id, staleness_warning, pipeline_run.id)
 
@@ -943,19 +961,19 @@ class OrchestratorAgent(BaseAgent):
         """Augment the user question with continuation context from a previous step-limited run."""
         continuation = context.extra.get("continuation_context", "")
         if continuation:
-            context.user_question = (
+            new_question = (
                 "Please continue the analysis from where you left off. "
                 "The previous run was cut short by the step limit. "
                 f"Previous context: {continuation}\n\n"
                 f"Original request: {context.user_question}"
             )
         else:
-            context.user_question = (
+            new_question = (
                 "Please continue the analysis from where you left off. "
                 f"Original request: {context.user_question}"
             )
-        context.extra.pop("pipeline_action", None)
-        return context
+        new_extra = {k: v for k, v in context.extra.items() if k != "pipeline_action"}
+        return replace(context, user_question=new_question, extra=new_extra)
 
     async def _check_pipeline_resume(self, context: AgentContext) -> dict | None:
         """Detect if the user message is a pipeline action (continue/modify/retry)."""
@@ -1027,22 +1045,28 @@ class OrchestratorAgent(BaseAgent):
 
         resume_from = current_idx + 1 if action == "continue" else current_idx
 
-        executor = StageExecutor(
-            sql_agent=self._sql,
-            knowledge_agent=self._knowledge,
-            llm_router=self._llm,
-            tracker=self._tracker,
-            validator=StageValidator(),
-        )
-        resume_ctx = replace(
-            context,
-            chat_history=context.chat_history[-4:] if context.chat_history else [],
-        )
-        exec_result = await executor.execute(
-            plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
-        )
+        try:
+            executor = StageExecutor(
+                sql_agent=self._sql,
+                knowledge_agent=self._knowledge,
+                llm_router=self._llm,
+                tracker=self._tracker,
+                validator=StageValidator(),
+                mcp_source_agent=self._mcp_source,
+            )
+            resume_ctx = replace(
+                context,
+                chat_history=context.chat_history[-4:] if context.chat_history else [],
+            )
+            exec_result = await executor.execute(
+                plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
+            )
 
-        await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
+            await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
+        except Exception:
+            logger.exception("Pipeline resume failed (run_id=%s)", run_id)
+            await self._tracker.end(wf_id, "orchestrator", "failed", "pipeline_resume_error")
+            raise
 
         result = self._build_pipeline_response(exec_result, wf_id, None, run_id)
         await self._tracker.end(wf_id, "orchestrator", "completed", "pipeline_resume")
@@ -1064,10 +1088,14 @@ class OrchestratorAgent(BaseAgent):
             status="executing",
         )
 
-        async with async_session_factory() as session:
-            session.add(run)
-            await session.commit()
-            await session.refresh(run)
+        try:
+            async with async_session_factory() as session:
+                session.add(run)
+                await session.commit()
+                await session.refresh(run)
+        except Exception:
+            logger.exception("Failed to create PipelineRun record")
+            raise
 
         return run
 
@@ -1091,18 +1119,23 @@ class OrchestratorAgent(BaseAgent):
         ) == len(stage_ctx.plan.stages):
             status = "completed"
 
-        async with async_session_factory() as session:
-            values: dict[str, Any] = {
-                "stage_results_json": _json.dumps(stage_ctx.to_persistence_dict(), default=str),
-                "current_stage_idx": stage_ctx.current_stage_idx,
-                "status": status,
-            }
-            if user_feedback is not None:
-                values["user_feedback_json"] = _json.dumps(user_feedback, default=str)
-            await session.execute(
-                update(PipelineRun).where(PipelineRun.id == run_id).values(**values)
-            )
-            await session.commit()
+        try:
+            async with async_session_factory() as session:
+                values: dict[str, Any] = {
+                    "stage_results_json": _json.dumps(
+                        stage_ctx.to_persistence_dict(), default=str
+                    ),
+                    "current_stage_idx": stage_ctx.current_stage_idx,
+                    "status": status,
+                }
+                if user_feedback is not None:
+                    values["user_feedback_json"] = _json.dumps(user_feedback, default=str)
+                await session.execute(
+                    update(PipelineRun).where(PipelineRun.id == run_id).values(**values)
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to persist stage results (run_id=%s)", run_id)
 
     def _build_pipeline_response(
         self,
@@ -1120,8 +1153,12 @@ class OrchestratorAgent(BaseAgent):
                 break
 
         if exec_result.status == "completed":
+            answer = exec_result.final_answer or (
+                "The analysis pipeline completed, but no summary was generated. "
+                "Please review the data or try rephrasing your question."
+            )
             return AgentResponse(
-                answer=exec_result.final_answer,
+                answer=answer,
                 query=last_sql_result.query if last_sql_result else None,
                 results=last_sql_result.query_result if last_sql_result else None,
                 workflow_id=wf_id,
@@ -1285,7 +1322,12 @@ class OrchestratorAgent(BaseAgent):
             n = len(sub_result.sources)
             detail = f"{label}: {n} source(s) found"
         task = asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+        def _done(t: asyncio.Task) -> None:
+            if not t.cancelled() and t.exception():
+                logger.debug("Fire-and-forget thinking emit failed: %s", t.exception())
+
+        task.add_done_callback(_done)
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
@@ -1418,8 +1460,7 @@ class OrchestratorAgent(BaseAgent):
             return mcp_text, mcp_sub
         if tc.name == "process_data":
             pd_text = await self._handle_process_data(tc, wf_id)
-            operation = (tc.arguments or {}).get("operation", "")
-            pd_sub = self._wf_sql_results.get(wf_id) if operation == "aggregate_data" else None
+            pd_sub = self._wf_sql_results.get(wf_id)
             return pd_text, pd_sub
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
@@ -1492,6 +1533,14 @@ class OrchestratorAgent(BaseAgent):
                 return f"SQL query failed: {e}", None
             except AgentError as e:
                 return f"SQL agent error: {e}", None
+            except RETRYABLE_LLM_ERRORS as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info(
+                        "SQL agent LLM error (attempt %d): %s", attempt + 1, e
+                    )
+                    await asyncio.sleep(getattr(e, "retry_after_seconds", None) or 2.0)
+                    continue
+                return f"SQL query failed after retries: {e}", None
 
         return (
             "SQL query failed after maximum retries. "
@@ -1531,9 +1580,9 @@ class OrchestratorAgent(BaseAgent):
 
         import time as _time
 
-        wf_sql.results = processed.query_result
-        self._wf_sql_results[wf_id] = wf_sql
-        self._wf_enriched[wf_id] = (wf_sql, _time.time())
+        updated_sql = replace(wf_sql, results=processed.query_result)
+        self._wf_sql_results[wf_id] = updated_sql
+        self._wf_enriched[wf_id] = (updated_sql, _time.time())
 
         result_qr = processed.query_result
         parts: list[str] = [f"**Data Processing:** {processed.summary}", ""]
@@ -1590,7 +1639,7 @@ class OrchestratorAgent(BaseAgent):
             params["op"] = str(args["op"]).strip()
         if "value" in args and args["value"] is not None:
             params["value"] = args["value"]
-        if args.get("exclude_empty"):
+        if str(args.get("exclude_empty", "")).lower() in ("true", "1", "yes"):
             params["exclude_empty"] = True
         return params
 
@@ -1760,7 +1809,7 @@ class OrchestratorAgent(BaseAgent):
         tc: ToolCall,
         context: AgentContext,
         wf_id: str,
-    ) -> tuple[str, None]:
+    ) -> NoReturn:
         """Return a clarification request to the user via AgentResponse.
 
         The orchestrator loop is interrupted; the caller (chat route) converts
@@ -1870,7 +1919,24 @@ class OrchestratorAgent(BaseAgent):
                     if result.status == "error":
                         return f"MCP source error: {result.error}", result
 
-                    return result.answer, result
+                    vr = self._validator.validate_mcp_result(result)
+                    if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
+                        logger.info(
+                            "MCP agent validation failed (attempt %d): %s",
+                            attempt + 1,
+                            vr.errors,
+                        )
+                        continue
+                    if not vr.passed:
+                        return (
+                            f"MCP source issue: {'; '.join(vr.errors)}",
+                            result,
+                        )
+
+                    text = result.answer
+                    if vr.warnings:
+                        text += "\n\nNote: " + "; ".join(vr.warnings)
+                    return text, result
                 finally:
                     try:
                         await adapter.disconnect()
@@ -2027,11 +2093,14 @@ class OrchestratorAgent(BaseAgent):
     def _determine_response_type(
         sql_result: SQLAgentResult | None,
         knowledge_sources: list[RAGSource],
+        has_mcp_result: bool = False,
     ) -> str:
         if sql_result and sql_result.results is not None:
             return "sql_result"
         if knowledge_sources:
             return "knowledge"
+        if has_mcp_result:
+            return "mcp_source"
         return "text"
 
     # ------------------------------------------------------------------

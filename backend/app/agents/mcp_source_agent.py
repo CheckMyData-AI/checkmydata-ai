@@ -150,12 +150,23 @@ class MCPSourceAgent(BaseAgent):
 
         for _iteration in range(settings.max_mcp_iterations):
             messages, _ = trim_loop_messages(messages, mcp_loop_budget)
-            llm_resp: LLMResponse = await self._llm.complete(
-                messages=messages,
-                tools=tools,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-            )
+            try:
+                llm_resp: LLMResponse = await self._llm.complete(
+                    messages=messages,
+                    tools=tools,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                )
+            except Exception:
+                logger.exception("MCPSourceAgent LLM call failed (iter %d)", _iteration)
+                return MCPSourceResult(
+                    status="error",
+                    answer="",
+                    error="LLM call failed during MCP tool loop",
+                    token_usage=total_usage,
+                    tool_calls_made=tool_calls_made,
+                    raw_results=raw_results,
+                )
             self.accum_usage(total_usage, llm_resp.usage)
 
             if not llm_resp.tool_calls:
@@ -176,7 +187,11 @@ class MCPSourceAgent(BaseAgent):
             )
 
             for tc in llm_resp.tool_calls:
-                result_text = await self._adapter.call_tool(tc.name, tc.arguments)
+                try:
+                    result_text = await self._adapter.call_tool(tc.name, tc.arguments)
+                except Exception as exc:
+                    logger.warning("MCP adapter call_tool(%s) failed: %s", tc.name, exc)
+                    result_text = f"Error calling tool {tc.name}: {exc}"
 
                 if len(result_text) > mcp_tool_cap:
                     result_text = (

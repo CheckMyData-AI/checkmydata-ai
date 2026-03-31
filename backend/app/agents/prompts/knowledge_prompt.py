@@ -33,6 +33,3 @@ do NOT make up information.
     )
 
     return "\n".join(sections)
-
-
-KNOWLEDGE_SYSTEM_PROMPT = build_knowledge_system_prompt()

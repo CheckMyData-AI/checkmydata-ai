@@ -110,6 +110,7 @@ _VALID_TOOLS = {
     "analyze_results",
     "process_data",
     "synthesize",
+    "query_mcp_source",
 }
 
 
@@ -237,6 +238,8 @@ class QueryPlanner:
         db_type: str | None = None,
         preferred_provider: str | None = None,
         model: str | None = None,
+        project_overview: str | None = None,
+        current_datetime: str | None = None,
     ) -> ExecutionPlan | None:
         """Return an ``ExecutionPlan`` or ``None`` on unrecoverable failure."""
         for attempt in range(2):
@@ -246,6 +249,8 @@ class QueryPlanner:
                 db_type=db_type,
                 preferred_provider=preferred_provider,
                 model=model,
+                project_overview=project_overview,
+                current_datetime=current_datetime,
             )
             if raw is None:
                 continue
@@ -287,12 +292,20 @@ class QueryPlanner:
         db_type: str | None,
         preferred_provider: str | None,
         model: str | None,
+        project_overview: str | None = None,
+        current_datetime: str | None = None,
     ) -> dict[str, Any] | None:
         messages = [
             Message(role="system", content=PLANNER_SYSTEM_PROMPT),
             Message(
                 role="user",
-                content=build_planner_user_prompt(question, table_map, db_type),
+                content=build_planner_user_prompt(
+                    question,
+                    table_map,
+                    db_type,
+                    project_overview=project_overview,
+                    current_datetime=current_datetime,
+                ),
             ),
         ]
         try:

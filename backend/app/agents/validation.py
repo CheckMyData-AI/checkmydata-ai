@@ -100,6 +100,24 @@ class AgentResultValidator:
         return outcome
 
     # ------------------------------------------------------------------
+    # MCP source result
+    # ------------------------------------------------------------------
+
+    def validate_mcp_result(self, result: Any) -> ValidationOutcome:
+        outcome = ValidationOutcome()
+
+        if getattr(result, "status", "") == "error":
+            outcome.passed = False
+            outcome.errors.append(result.error or "MCP source agent returned an error")
+            return outcome
+
+        answer = getattr(result, "answer", "")
+        if not answer:
+            outcome.warnings.append("MCP source returned an empty answer")
+
+        return outcome
+
+    # ------------------------------------------------------------------
     # Knowledge result
     # ------------------------------------------------------------------
 

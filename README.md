@@ -106,9 +106,10 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 - **Scheduled queries & alerts** -- cron-based recurring queries with threshold-based notifications
 - **Team dashboards** -- compose saved queries into grid layouts for monitoring
 - **Batch query execution** -- run multiple queries, export results as multi-sheet XLSX
-- **MCP server & client** -- expose the agent as MCP tools and consume external MCP servers
+- **MCP server & client** -- expose the agent as MCP tools and consume external MCP servers; MCP sources are fully integrated into the multi-stage pipeline planner
 - **Session rotation** -- automatic context-preserving session continuation near token limits
-- **Data enrichment pipeline** -- IP-to-country, phone-to-country, aggregation, filtering between query steps
+- **Data enrichment pipeline** -- IP-to-country, phone-to-country, aggregation, filtering between query steps with immutable result handling
+- **Robust error handling** -- try/except wrapping for pipeline execution, DB persistence, sub-agent LLM calls, and MCP adapter calls with graceful fallbacks
 - **Progressive Web App** -- installable, responsive design with mobile sidebar drawer
 
 ## Website Structure

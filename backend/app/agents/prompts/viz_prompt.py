@@ -78,6 +78,3 @@ Call the `recommend_visualization` tool exactly once with your recommendation.""
     )
 
     return "\n".join(sections)
-
-
-VIZ_SYSTEM_PROMPT = build_viz_system_prompt()

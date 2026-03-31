@@ -627,3 +627,376 @@ class TestLegacyQueryBuilderBoundary:
         )
         texts = [m.content for m in call_messages]
         assert not any("END OF CONVERSATION HISTORY" in t for t in texts)
+
+
+# ------------------------------------------------------------------
+# H-5: _handle_process_data tests
+# ------------------------------------------------------------------
+
+
+class TestHandleProcessData:
+    """Tests for OrchestratorAgent._handle_process_data and _build_process_data_params."""
+
+    def test_exclude_empty_false_string_is_not_truthy(self):
+        params = OrchestratorAgent._build_process_data_params({"exclude_empty": "false"})
+        assert "exclude_empty" not in params
+
+    def test_exclude_empty_true_string_is_truthy(self):
+        params = OrchestratorAgent._build_process_data_params({"exclude_empty": "true"})
+        assert params["exclude_empty"] is True
+
+    def test_exclude_empty_yes_string_is_truthy(self):
+        params = OrchestratorAgent._build_process_data_params({"exclude_empty": "yes"})
+        assert params["exclude_empty"] is True
+
+    def test_exclude_empty_1_string_is_truthy(self):
+        params = OrchestratorAgent._build_process_data_params({"exclude_empty": "1"})
+        assert params["exclude_empty"] is True
+
+    def test_exclude_empty_empty_string_not_truthy(self):
+        params = OrchestratorAgent._build_process_data_params({"exclude_empty": ""})
+        assert "exclude_empty" not in params
+
+    def test_aggregations_parsed(self):
+        params = OrchestratorAgent._build_process_data_params(
+            {"aggregations": "amount:sum,user_id:count_distinct"}
+        )
+        assert params["aggregations"] == [("amount", "sum"), ("user_id", "count_distinct")]
+
+    def test_group_by_parsed(self):
+        params = OrchestratorAgent._build_process_data_params(
+            {"group_by": "country, city"}
+        )
+        assert params["group_by"] == ["country", "city"]
+
+    def test_column_passed_through(self):
+        params = OrchestratorAgent._build_process_data_params({"column": "user_ip"})
+        assert params["column"] == "user_ip"
+
+    @pytest.mark.asyncio
+    async def test_no_sql_result_returns_error(self):
+        from app.core.workflow_tracker import WorkflowTracker
+
+        agent = OrchestratorAgent(
+            llm_router=MagicMock(),
+            workflow_tracker=MagicMock(spec=WorkflowTracker),
+        )
+        tc = ToolCall(id="tc1", name="process_data", arguments={"operation": "aggregate_data"})
+        result = await agent._handle_process_data(tc, "wf-1")
+        assert "no query results" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_process_data_does_not_mutate_original(self):
+        from app.agents.sql_agent import SQLAgentResult
+        from app.core.workflow_tracker import WorkflowTracker
+        from app.services.data_processor import ProcessedData
+
+        qr_original = QueryResult(
+            columns=["ip", "amount"],
+            rows=[["1.2.3.4", 100]],
+            row_count=1,
+        )
+        sql_res = SQLAgentResult(status="success", query="SELECT 1", results=qr_original)
+
+        tracker = MagicMock(spec=WorkflowTracker)
+        tracker.emit = AsyncMock()
+        agent = OrchestratorAgent(llm_router=MagicMock(), workflow_tracker=tracker)
+        agent._wf_sql_results["wf-1"] = sql_res
+
+        enriched_qr = QueryResult(
+            columns=["ip", "amount", "country"],
+            rows=[["1.2.3.4", 100, "US"]],
+            row_count=1,
+        )
+        mock_processed = ProcessedData(
+            query_result=enriched_qr, summary="Added country"
+        )
+
+        with patch("app.agents.orchestrator.get_data_processor") as mock_gdp:
+            mock_gdp.return_value.process.return_value = mock_processed
+            tc = ToolCall(
+                id="tc1",
+                name="process_data",
+                arguments={"operation": "ip_to_country", "column": "ip"},
+            )
+            result_text = await agent._handle_process_data(tc, "wf-1")
+
+        assert sql_res.results is qr_original
+        assert agent._wf_sql_results["wf-1"].results is enriched_qr
+        assert "Added country" in result_text
+
+
+# ------------------------------------------------------------------
+# H-6: wall-clock timeout test
+# ------------------------------------------------------------------
+
+
+class TestWallClockTimeout:
+    """Test that the orchestrator respects wall-clock timeout."""
+
+    @pytest.mark.asyncio
+    async def test_soft_timeout_injects_wrap_up_message(self):
+        """When elapsed > wall_clock_limit, a wrap-up message is injected."""
+        from app.agents.base import AgentContext
+        from app.core.workflow_tracker import WorkflowTracker
+
+        mock_router = MagicMock()
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        mock_tracker.start = AsyncMock(return_value="wf-test")
+        mock_tracker.end = AsyncMock()
+
+        tool_calls_response = LLMResponse(
+            content="thinking...",
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="query_database",
+                    arguments={"question": "test query"},
+                ),
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+
+        final_response = LLMResponse(
+            content="Here is the answer.",
+            tool_calls=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+
+        call_count = 0
+
+        async def mock_complete(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return tool_calls_response
+            return final_response
+
+        mock_router.complete = AsyncMock(side_effect=mock_complete)
+        mock_router.get_context_window = MagicMock(return_value=8000)
+
+        agent = OrchestratorAgent(
+            llm_router=mock_router,
+            workflow_tracker=mock_tracker,
+        )
+
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="test question",
+            chat_history=[],
+            llm_router=mock_router,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+            extra={"_skip_complexity": True},
+        )
+
+        with patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)), \
+             patch.object(agent, "_handle_meta_tool", new=AsyncMock(return_value=("result text", None))), \
+             patch("app.agents.orchestrator.settings") as mock_settings, \
+             patch("app.agents.orchestrator.time") as mock_time:
+
+            mock_settings.max_orchestrator_iterations = 10
+            mock_settings.max_parallel_tool_calls = 1
+            mock_settings.orchestrator_wrap_up_steps = 2
+            mock_settings.agent_wall_clock_timeout_seconds = 30
+            mock_settings.max_context_tokens = 8000
+            mock_settings.max_history_tokens = 2500
+
+            monotonic_values = [0.0, 35.0, 35.0, 35.0, 35.0]
+            mock_time.monotonic = MagicMock(side_effect=monotonic_values)
+
+            await agent.run(ctx)
+
+            assert call_count == 2
+            second_call_messages = mock_router.complete.call_args_list[1].kwargs.get(
+                "messages",
+                mock_router.complete.call_args_list[1][0][0]
+                if mock_router.complete.call_args_list[1][0]
+                else [],
+            )
+            wall_clock_msgs = [
+                m for m in second_call_messages
+                if m.role == "system" and "TIME LIMIT REACHED" in m.content
+            ]
+            assert len(wall_clock_msgs) >= 1
+
+
+# ------------------------------------------------------------------
+# H-7: trim_loop_messages and should_wrap_up tests
+# ------------------------------------------------------------------
+
+
+class TestTrimLoopMessages:
+    """Tests for in-loop message trimming."""
+
+    def test_short_messages_unchanged(self):
+        from app.core.history_trimmer import trim_loop_messages
+
+        msgs = [
+            Message(role="system", content="You are a bot."),
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content="Hi there"),
+        ]
+        result, did_trim = trim_loop_messages(msgs, 100000)
+        assert not did_trim
+        assert len(result) == 3
+
+    def test_trims_over_budget(self):
+        from app.core.history_trimmer import trim_loop_messages
+
+        system = Message(role="system", content="S" * 100)
+        user = Message(role="user", content="U" * 100)
+        assistant = Message(role="assistant", content="A" * 400)
+        tool_msg = Message(role="tool", content="T" * 2000, tool_call_id="tc1", name="f")
+        final_user = Message(role="user", content="Q" * 100)
+        msgs = [system, user, assistant, tool_msg, final_user]
+
+        budget = 300
+        result, did_trim = trim_loop_messages(msgs, budget)
+        assert did_trim
+        assert result[0].role == "system"
+        assert result[-1].content == final_user.content
+
+    def test_preserves_system_and_last_user(self):
+        from app.core.history_trimmer import trim_loop_messages
+
+        system = Message(role="system", content="System prompt " * 10)
+        msgs = [
+            system,
+            Message(role="assistant", content="A " * 200),
+            Message(role="tool", content="T " * 200, tool_call_id="tc1", name="f"),
+            Message(role="assistant", content="B " * 200),
+            Message(role="tool", content="T2 " * 200, tool_call_id="tc2", name="g"),
+            Message(role="user", content="final question"),
+        ]
+
+        result, did_trim = trim_loop_messages(msgs, 150)
+        assert did_trim
+        assert result[0].role == "system"
+        assert result[-1].content == "final question"
+
+    def test_empty_messages_returns_unchanged(self):
+        from app.core.history_trimmer import trim_loop_messages
+
+        result, did_trim = trim_loop_messages([], 1000)
+        assert not did_trim
+        assert result == []
+
+    def test_summary_created_for_collapsed_pairs(self):
+        from app.core.history_trimmer import trim_loop_messages
+
+        system = Message(role="system", content="S")
+        msgs = [
+            system,
+            Message(role="assistant", content="Calling query"),
+            Message(role="tool", content="result data " * 100, tool_call_id="tc1", name="query_db"),
+            Message(role="assistant", content="Calling process"),
+            Message(role="tool", content="processed data " * 100, tool_call_id="tc2", name="process"),
+            Message(role="user", content="final q"),
+        ]
+
+        result, did_trim = trim_loop_messages(msgs, 60)
+        assert did_trim
+        summary_msgs = [m for m in result if "Earlier analysis summary" in m.content]
+        assert len(summary_msgs) >= 1
+
+
+class TestShouldWrapUp:
+    """Tests for should_wrap_up context threshold check."""
+
+    def test_under_threshold_returns_false(self):
+        from app.core.history_trimmer import should_wrap_up
+
+        msgs = [Message(role="user", content="short")]
+        assert should_wrap_up(msgs, 100000) is False
+
+    def test_over_threshold_returns_true(self):
+        from app.core.history_trimmer import CHARS_PER_TOKEN_ESTIMATE, should_wrap_up
+
+        content = "x" * (CHARS_PER_TOKEN_ESTIMATE * 800)
+        msgs = [Message(role="user", content=content)]
+        assert should_wrap_up(msgs, 1000) is True
+
+    def test_exactly_at_threshold(self):
+        from app.core.history_trimmer import (
+            CHARS_PER_TOKEN_ESTIMATE,
+            _WRAP_UP_THRESHOLD,
+            should_wrap_up,
+        )
+
+        max_tokens = 1000
+        threshold_tokens = int(max_tokens * _WRAP_UP_THRESHOLD)
+        content = "x" * (CHARS_PER_TOKEN_ESTIMATE * (threshold_tokens + 1))
+        msgs = [Message(role="user", content=content)]
+        assert should_wrap_up(msgs, max_tokens) is True
+
+
+# ------------------------------------------------------------------
+# M-3 / M-13: response type and validation tests
+# ------------------------------------------------------------------
+
+
+class TestDetermineResponseType:
+    """Tests for _determine_response_type including mcp_source."""
+
+    def test_sql_result_wins(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        sql_res = SQLAgentResult(
+            status="success",
+            query="SELECT 1",
+            results=QueryResult(columns=["a"], rows=[[1]], row_count=1),
+        )
+        result = OrchestratorAgent._determine_response_type(sql_res, [], has_mcp_result=True)
+        assert result == "sql_result"
+
+    def test_knowledge_wins_over_mcp(self):
+        from app.agents.knowledge_agent import RAGSource
+
+        sources = [MagicMock(spec=RAGSource)]
+        result = OrchestratorAgent._determine_response_type(None, sources, has_mcp_result=True)
+        assert result == "knowledge"
+
+    def test_mcp_source_when_only_mcp(self):
+        result = OrchestratorAgent._determine_response_type(None, [], has_mcp_result=True)
+        assert result == "mcp_source"
+
+    def test_text_fallback(self):
+        result = OrchestratorAgent._determine_response_type(None, [], has_mcp_result=False)
+        assert result == "text"
+
+
+class TestMcpValidation:
+    """Tests for AgentResultValidator.validate_mcp_result."""
+
+    def test_error_status_fails(self):
+        from app.agents.validation import AgentResultValidator
+
+        validator = AgentResultValidator()
+        result = MagicMock(status="error", error="Connection refused")
+        outcome = validator.validate_mcp_result(result)
+        assert not outcome.passed
+        assert "Connection refused" in outcome.errors[0]
+
+    def test_empty_answer_warns(self):
+        from app.agents.validation import AgentResultValidator
+
+        validator = AgentResultValidator()
+        result = MagicMock(status="success", answer="")
+        outcome = validator.validate_mcp_result(result)
+        assert outcome.passed
+        assert len(outcome.warnings) == 1
+
+    def test_valid_result_passes(self):
+        from app.agents.validation import AgentResultValidator
+
+        validator = AgentResultValidator()
+        result = MagicMock(status="success", answer="Some data")
+        outcome = validator.validate_mcp_result(result)
+        assert outcome.passed
+        assert len(outcome.errors) == 0

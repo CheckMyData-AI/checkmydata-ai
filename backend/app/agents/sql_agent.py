@@ -792,7 +792,7 @@ class SQLAgent(BaseAgent):
                     subject=subject,
                     note=note_text,
                     confidence=0.7,
-                    source_session_id=ctx.session_id if hasattr(ctx, "session_id") else None,
+                    source_session_id=ctx.extra.get("session_id"),
                 )
                 await session.commit()
 

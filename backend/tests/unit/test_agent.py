@@ -265,6 +265,8 @@ class TestMaxIterations:
             mock_settings.max_context_tokens = 16000
             mock_settings.max_history_tokens = 4000
             mock_settings.schema_cache_ttl_seconds = 300
+            mock_settings.agent_wall_clock_timeout_seconds = 600
+            mock_settings.max_parallel_tool_calls = 3
 
             resp = await agent.run(
                 question="loop forever",
@@ -333,6 +335,8 @@ class TestMaxIterations:
             mock_settings.max_context_tokens = 16000
             mock_settings.max_history_tokens = 4000
             mock_settings.schema_cache_ttl_seconds = 300
+            mock_settings.agent_wall_clock_timeout_seconds = 600
+            mock_settings.max_parallel_tool_calls = 3
 
             resp = await agent.run(
                 question="complex analysis",
@@ -376,6 +380,8 @@ class TestMaxIterations:
             mock_settings.max_context_tokens = 16000
             mock_settings.max_history_tokens = 4000
             mock_settings.schema_cache_ttl_seconds = 300
+            mock_settings.agent_wall_clock_timeout_seconds = 600
+            mock_settings.max_parallel_tool_calls = 3
 
             resp = await agent.run(
                 question="loop forever",
@@ -419,6 +425,8 @@ class TestMaxIterations:
             mock_settings.max_context_tokens = 16000
             mock_settings.max_history_tokens = 4000
             mock_settings.schema_cache_ttl_seconds = 300
+            mock_settings.agent_wall_clock_timeout_seconds = 600
+            mock_settings.max_parallel_tool_calls = 3
 
             resp = await agent.run(
                 question="loop forever",
