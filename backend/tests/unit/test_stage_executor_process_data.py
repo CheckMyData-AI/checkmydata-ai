@@ -83,8 +83,7 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "ip_to_country"
-        assert params["column"] == "user_ip"
+        assert params["operation"] == "filter_data"
 
     def test_heuristic_phone_from_description(self):
         stage = _make_stage(
@@ -109,14 +108,13 @@ class TestParseProcessDataParams:
 
         assert params["operation"] == "aggregate_data"
 
-    def test_fallback_to_ip_to_country(self):
+    def test_fallback_to_filter_data(self):
         stage = _make_stage(description="Process the data", input_context="")
         qr = _make_qr(["some_ip", "amount"])
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "ip_to_country"
-        assert params["column"] == "some_ip"
+        assert params["operation"] == "filter_data"
 
     def test_invalid_json_falls_back_to_heuristic(self):
         stage = _make_stage(
@@ -127,8 +125,7 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "ip_to_country"
-        assert params["column"] == "client_ip"
+        assert params["operation"] == "filter_data"
 
     def test_column_fallback_to_first(self):
         stage = _make_stage(

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 
 def _mock_user(user_id: str = "test-user-id") -> dict:
@@ -12,6 +13,19 @@ def _mock_user(user_id: str = "test-user-id") -> dict:
 
 def _mock_db():
     return AsyncMock()
+
+
+def _fake_request() -> Request:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [],
+        "query_string": b"",
+        "root_path": "",
+        "app": MagicMock(),
+    }
+    return Request(scope)
 
 
 class TestLogsRoutesAuth:
@@ -25,15 +39,15 @@ class TestLogsRoutesAuth:
         mock_user = _mock_user()
 
         _membership_svc.require_role = AsyncMock(
-            side_effect=HTTPException(status_code=403, detail="Requires at least 'owner' role")
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Requires at least 'owner' role",
+            )
         )
-
-        mock_request = MagicMock()
-        mock_request.app.state.limiter = MagicMock()
 
         with pytest.raises(HTTPException) as exc_info:
             await get_log_users(
-                request=mock_request,
+                request=_fake_request(),
                 project_id="proj-1",
                 days=30,
                 db=mock_db,
@@ -55,11 +69,9 @@ class TestLogsRoutesAuth:
             side_effect=HTTPException(status_code=403, detail="Not owner")
         )
 
-        mock_request = MagicMock()
-
         with pytest.raises(HTTPException) as exc_info:
             await list_log_requests(
-                request=mock_request,
+                request=_fake_request(),
                 project_id="proj-1",
                 user_id=None,
                 status=None,
@@ -83,11 +95,9 @@ class TestLogsRoutesAuth:
             side_effect=HTTPException(status_code=403, detail="Not owner")
         )
 
-        mock_request = MagicMock()
-
         with pytest.raises(HTTPException) as exc_info:
             await get_trace_detail(
-                request=mock_request,
+                request=_fake_request(),
                 project_id="proj-1",
                 trace_id="trace-1",
                 db=mock_db,
@@ -106,11 +116,9 @@ class TestLogsRoutesAuth:
             side_effect=HTTPException(status_code=403, detail="Not owner")
         )
 
-        mock_request = MagicMock()
-
         with pytest.raises(HTTPException) as exc_info:
             await get_logs_summary(
-                request=mock_request,
+                request=_fake_request(),
                 project_id="proj-1",
                 days=7,
                 db=mock_db,
@@ -130,11 +138,9 @@ class TestTraceDetailNotFound:
         _membership_svc.require_role = AsyncMock(return_value="owner")
         _logs_svc.get_trace_detail = AsyncMock(return_value=None)
 
-        mock_request = MagicMock()
-
         with pytest.raises(HTTPException) as exc_info:
             await get_trace_detail(
-                request=mock_request,
+                request=_fake_request(),
                 project_id="proj-1",
                 trace_id="nonexistent",
                 db=mock_db,

@@ -271,8 +271,9 @@ class TestMCPSourceAgent:
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
         mock_adapter.call_tool.side_effect = RuntimeError("connection reset")
 
-        with pytest.raises(RuntimeError, match="connection reset"):
-            await agent.run(context)
+        result = await agent.run(context)
+        assert result.status == "success"
+        assert "Sorry, the tool encountered an error." in result.answer
 
     # 8. max iterations --------------------------------------------------
 
