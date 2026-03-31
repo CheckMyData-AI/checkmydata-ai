@@ -664,9 +664,7 @@ class TestHandleProcessData:
         assert params["aggregations"] == [("amount", "sum"), ("user_id", "count_distinct")]
 
     def test_group_by_parsed(self):
-        params = OrchestratorAgent._build_process_data_params(
-            {"group_by": "country, city"}
-        )
+        params = OrchestratorAgent._build_process_data_params({"group_by": "country, city"})
         assert params["group_by"] == ["country", "city"]
 
     def test_column_passed_through(self):
@@ -708,9 +706,7 @@ class TestHandleProcessData:
             rows=[["1.2.3.4", 100, "US"]],
             row_count=1,
         )
-        mock_processed = ProcessedData(
-            query_result=enriched_qr, summary="Added country"
-        )
+        mock_processed = ProcessedData(query_result=enriched_qr, summary="Added country")
 
         with patch("app.agents.orchestrator.get_data_processor") as mock_gdp:
             mock_gdp.return_value.process.return_value = mock_processed
@@ -795,11 +791,16 @@ class TestWallClockTimeout:
             extra={"_skip_complexity": True},
         )
 
-        with patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)), \
-             patch.object(agent, "_handle_meta_tool", new=AsyncMock(return_value=("result text", None))), \
-             patch("app.agents.orchestrator.settings") as mock_settings, \
-             patch("app.agents.orchestrator.time") as mock_time:
-
+        with (
+            patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch.object(
+                agent,
+                "_handle_meta_tool",
+                new=AsyncMock(return_value=("result text", None)),
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+            patch("app.agents.orchestrator.time") as mock_time,
+        ):
             mock_settings.max_orchestrator_iterations = 10
             mock_settings.max_parallel_tool_calls = 1
             mock_settings.orchestrator_wrap_up_steps = 2
@@ -820,7 +821,8 @@ class TestWallClockTimeout:
                 else [],
             )
             wall_clock_msgs = [
-                m for m in second_call_messages
+                m
+                for m in second_call_messages
                 if m.role == "system" and "TIME LIMIT REACHED" in m.content
             ]
             assert len(wall_clock_msgs) >= 1
@@ -894,9 +896,19 @@ class TestTrimLoopMessages:
         msgs = [
             system,
             Message(role="assistant", content="Calling query"),
-            Message(role="tool", content="result data " * 100, tool_call_id="tc1", name="query_db"),
+            Message(
+                role="tool",
+                content="result data " * 100,
+                tool_call_id="tc1",
+                name="query_db",
+            ),
             Message(role="assistant", content="Calling process"),
-            Message(role="tool", content="processed data " * 100, tool_call_id="tc2", name="process"),
+            Message(
+                role="tool",
+                content="processed data " * 100,
+                tool_call_id="tc2",
+                name="process",
+            ),
             Message(role="user", content="final q"),
         ]
 
@@ -924,8 +936,8 @@ class TestShouldWrapUp:
 
     def test_exactly_at_threshold(self):
         from app.core.history_trimmer import (
-            CHARS_PER_TOKEN_ESTIMATE,
             _WRAP_UP_THRESHOLD,
+            CHARS_PER_TOKEN_ESTIMATE,
             should_wrap_up,
         )
 

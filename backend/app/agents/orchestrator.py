@@ -137,9 +137,7 @@ class AgentResponse:
     llm_provider: str = ""
     llm_model: str = ""
     staleness_warning: str | None = None
-    response_type: str = (
-        "text"  # text | sql_result | knowledge | mcp_source | error | clarification_request | step_limit_reached
-    )
+    response_type: str = "text"
     tool_call_log: list[dict[str, Any]] = field(default_factory=list)
     prompt_version: str = PROMPT_VERSION
     suggested_followups: list[str] = field(default_factory=list)
@@ -949,9 +947,7 @@ class OrchestratorAgent(BaseAgent):
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
         except Exception:
-            logger.exception(
-                "Pipeline execution failed (run_id=%s)", pipeline_run.id
-            )
+            logger.exception("Pipeline execution failed (run_id=%s)", pipeline_run.id)
             raise
 
         return self._build_pipeline_response(exec_result, wf_id, staleness_warning, pipeline_run.id)
@@ -1122,9 +1118,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             async with async_session_factory() as session:
                 values: dict[str, Any] = {
-                    "stage_results_json": _json.dumps(
-                        stage_ctx.to_persistence_dict(), default=str
-                    ),
+                    "stage_results_json": _json.dumps(stage_ctx.to_persistence_dict(), default=str),
                     "current_stage_idx": stage_ctx.current_stage_idx,
                     "status": status,
                 }
@@ -1535,9 +1529,7 @@ class OrchestratorAgent(BaseAgent):
                 return f"SQL agent error: {e}", None
             except RETRYABLE_LLM_ERRORS as e:
                 if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info(
-                        "SQL agent LLM error (attempt %d): %s", attempt + 1, e
-                    )
+                    logger.info("SQL agent LLM error (attempt %d): %s", attempt + 1, e)
                     await asyncio.sleep(getattr(e, "retry_after_seconds", None) or 2.0)
                     continue
                 return f"SQL query failed after retries: {e}", None

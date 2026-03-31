@@ -133,9 +133,7 @@ class ChatService:
                 if meta.get("insights"):
                     context_parts.append(f"insights: {len(meta['insights'])}")
                 if meta.get("suggested_followups"):
-                    context_parts.append(
-                        f"followups: {', '.join(meta['suggested_followups'][:3])}"
-                    )
+                    context_parts.append(f"followups: {', '.join(meta['suggested_followups'][:3])}")
                 if context_parts:
                     content += (
                         "\n\n[Previous result (completed): " + " | ".join(context_parts) + "]"
