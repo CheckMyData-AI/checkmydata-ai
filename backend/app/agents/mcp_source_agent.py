@@ -133,6 +133,7 @@ class MCPSourceAgent(BaseAgent):
         question: str | None = None,
         source_name: str = "MCP Source",
     ) -> MCPSourceResult:
+        assert self._adapter is not None
         user_question = question or context.user_question
         tools = self._build_llm_tools()
 
