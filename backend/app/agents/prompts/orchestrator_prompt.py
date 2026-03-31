@@ -13,6 +13,7 @@ def build_orchestrator_system_prompt(
     db_type: str | None = None,
     has_connection: bool = False,
     has_knowledge_base: bool = False,
+    has_mcp_sources: bool = False,
     table_map: str = "",
     current_datetime: str | None = None,
     project_overview: str | None = None,
@@ -67,6 +68,13 @@ def build_orchestrator_system_prompt(
         sections.append(
             "- **search_codebase**: Project documentation and source code are indexed. "
             "Delegate code/architecture questions here."
+        )
+
+    if has_mcp_sources:
+        sections.append(
+            "- **query_mcp_source**: External data sources are connected via MCP. "
+            "Use this for questions that require data from external APIs or "
+            "services not available in the primary database."
         )
 
     sections.append(
@@ -141,6 +149,12 @@ def build_orchestrator_system_prompt(
             f"{n}. For project/code questions: call `search_codebase` with the question."
         )
         n += 1
+    if has_mcp_sources:
+        sections.append(
+            f"{n}. For data from external MCP sources: call `query_mcp_source` "
+            "with the question and optionally a connection_id."
+        )
+        n += 1
     sections.append(
         f"{n}. For casual conversation or follow-ups about existing results: "
         "respond directly without calling any tools."
@@ -154,7 +168,8 @@ def build_orchestrator_system_prompt(
     sections.append(
         f"{n}. Plan your tool usage efficiently. Each tool call consumes one "
         "analysis step. Combine related questions into single queries where "
-        "possible and prefer calling multiple independent tools in parallel."
+        "possible. Call independent data-retrieval tools in parallel, but "
+        "chain `process_data` calls sequentially."
     )
     n += 1
     sections.append(f"{n}. Always explain your reasoning and summarize results clearly.")

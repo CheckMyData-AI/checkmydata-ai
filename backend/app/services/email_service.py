@@ -1,5 +1,7 @@
 """Transactional email service powered by Resend."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from html import escape
@@ -88,7 +90,7 @@ class EmailService:
         subject: str,
         html: str,
         idempotency_key: str | None = None,
-        tags: list[resend.Emails.SendParams] | None = None,
+        tags: list[dict[str, str]] | None = None,
     ) -> None:
         if not self._is_configured():
             return
@@ -99,7 +101,7 @@ class EmailService:
             "html": html,
         }
         if tags:
-            params["tags"] = tags  # type: ignore[assignment]
+            params["tags"] = tags  # type: ignore[typeddict-item]
         options: resend.Emails.SendOptions | None = None
         if idempotency_key:
             options = {"idempotency_key": idempotency_key}

@@ -435,6 +435,132 @@ class TestHistoryBoundaryInPrompt:
         assert "process_data" in prompt
         assert "do not count toward this limit" in prompt
 
+    def test_mcp_source_capability_shown_when_enabled(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            has_mcp_sources=True,
+        )
+        assert "query_mcp_source" in prompt
+        assert "External data sources" in prompt
+
+    def test_mcp_source_hidden_when_disabled(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            has_mcp_sources=False,
+        )
+        assert "query_mcp_source" not in prompt
+
+    def test_parallel_guideline_excludes_process_data(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "chain `process_data` calls sequentially" in prompt
+
+
+class TestPipelineScopedContext:
+    """Verify _run_complex_pipeline passes scoped context to StageExecutor."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_scopes_history_before_executor(self):
+        from dataclasses import dataclass, field
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.agents.base import AgentContext
+        from app.agents.stage_context import (
+            ExecutionPlan,
+            PlanStage,
+            StageContext,
+        )
+
+        mock_router = MagicMock()
+        mock_router.complete = AsyncMock()
+        mock_router.get_context_window = MagicMock(return_value=128_000)
+
+        tracker = MagicMock()
+        tracker.emit = AsyncMock()
+        tracker.step = MagicMock()
+        tracker.step.return_value.__aenter__ = AsyncMock(return_value=None)
+        tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        agent = OrchestratorAgent(
+            llm_router=mock_router,
+            workflow_tracker=tracker,
+        )
+
+        history = [
+            Message(role="user", content=f"msg-{i}")
+            for i in range(12)
+        ]
+        ctx = AgentContext(
+            project_id="test-proj",
+            connection_config=None,
+            user_question="complex question",
+            chat_history=history,
+            llm_router=mock_router,
+            tracker=tracker,
+            workflow_id="wf-1",
+        )
+
+        plan = ExecutionPlan(
+            plan_id="p1",
+            question="complex question",
+            stages=[
+                PlanStage(
+                    stage_id="s1",
+                    description="fetch data",
+                    tool="query_database",
+                ),
+            ],
+        )
+
+        @dataclass
+        class _FakeExecResult:
+            stage_ctx: StageContext
+            final_answer: str = "answer"
+
+        captured_ctx = {}
+
+        async def _capture_execute(_plan, context, *, resume_from=0, stage_ctx=None):
+            captured_ctx["ctx"] = context
+            return _FakeExecResult(
+                stage_ctx=stage_ctx or StageContext(plan=plan),
+            )
+
+        mock_pipeline_run = MagicMock()
+        mock_pipeline_run.id = "run-1"
+
+        with (
+            patch.object(agent, "_create_pipeline_run", new=AsyncMock(return_value=mock_pipeline_run)),
+            patch.object(agent, "_persist_stage_results", new=AsyncMock()),
+            patch.object(agent, "_build_pipeline_response", return_value=MagicMock()),
+            patch("app.agents.orchestrator.StageExecutor") as MockExecutorCls,
+            patch("app.agents.orchestrator.QueryPlanner") as MockPlannerCls,
+        ):
+            mock_planner = MockPlannerCls.return_value
+            mock_planner.plan = AsyncMock(return_value=plan)
+
+            mock_executor = MockExecutorCls.return_value
+            mock_executor.execute = AsyncMock(side_effect=_capture_execute)
+
+            await agent._run_complex_pipeline(
+                ctx, wf_id="wf-1", table_map="", db_type="postgres", staleness_warning=None
+            )
+
+        assert "ctx" in captured_ctx, "StageExecutor.execute was not called"
+        scoped = captured_ctx["ctx"]
+        assert len(scoped.chat_history) <= 4, (
+            f"Expected scoped history (<=4), got {len(scoped.chat_history)}"
+        )
+
 
 class TestLegacyQueryBuilderBoundary:
     """Verify the legacy QueryBuilder injects a history boundary."""

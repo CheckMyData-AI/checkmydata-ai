@@ -269,7 +269,7 @@ class SSHTunnelManager:
             if tunnel.idle_seconds > max_idle:
                 to_remove.append(key)
         for key in to_remove:
-            tunnel = self._tunnels.pop(key, None)
+            tunnel = self._tunnels.pop(key)
             if tunnel:
                 await tunnel.stop()
                 logger.info("Closed idle SSH tunnel: %s (idle %.0fs)", key, tunnel.idle_seconds)

@@ -63,7 +63,7 @@ service-account*.json
 
 # Dev tooling
 .pids/
-logs/
+/logs/
 
 # Docker
 *.log

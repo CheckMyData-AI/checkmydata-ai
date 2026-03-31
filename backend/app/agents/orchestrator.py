@@ -299,6 +299,7 @@ class OrchestratorAgent(BaseAgent):
                 db_type=db_type,
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
+                has_mcp_sources=has_mcp,
                 table_map="",
                 current_datetime=get_current_datetime_str(),
                 project_overview="",
@@ -316,6 +317,7 @@ class OrchestratorAgent(BaseAgent):
                 db_type=db_type,
                 has_connection=has_connection,
                 has_knowledge_base=has_kb,
+                has_mcp_sources=has_mcp,
                 table_map=allocation.schema_text,
                 current_datetime=get_current_datetime_str(),
                 project_overview=allocation.overview_text,
@@ -365,6 +367,7 @@ class OrchestratorAgent(BaseAgent):
             wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
             max_iter = context.max_orchestrator_steps or settings.max_orchestrator_iterations
+            iteration = 0
             for iteration in range(max_iter):
                 messages, did_trim = trim_loop_messages(messages, loop_budget)
                 if did_trim:
@@ -691,8 +694,12 @@ class OrchestratorAgent(BaseAgent):
                         "Choosing visualization",
                         step_data=_sd_viz,
                     ):
-                        last_viz_result = await self._viz.run(
+                        viz_ctx = replace(
                             context,
+                            chat_history=context.chat_history[-4:] if context.chat_history else [],
+                        )
+                        last_viz_result = await self._viz.run(
+                            viz_ctx,
                             results=last_sql_result.results,
                             question=question,
                             query=last_sql_result.query or "",
@@ -766,7 +773,7 @@ class OrchestratorAgent(BaseAgent):
             return AgentResponse(
                 answer=final_text,
                 query=last_sql_result.query if last_sql_result else None,
-                query_explanation=last_sql_result.query_explanation if last_sql_result else None,
+                query_explanation=(last_sql_result.query_explanation if last_sql_result else None),
                 results=last_sql_result.results if last_sql_result else None,
                 viz_type=viz_type,
                 viz_config=viz_config,
@@ -781,7 +788,7 @@ class OrchestratorAgent(BaseAgent):
                 insights=last_sql_result.insights if last_sql_result else [],
                 suggested_followups=followups,
                 context_usage_pct=final_pct,
-                steps_used=iteration + 1 if step_limit_hit else iteration,
+                steps_used=iteration + 1,
                 steps_total=max_iter,
                 continuation_context=continuation_ctx,
             )
@@ -977,8 +984,8 @@ class OrchestratorAgent(BaseAgent):
         wf_id = context.workflow_id
 
         async with async_session_factory() as session:
-            result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
-            pipeline_run = result.scalar_one_or_none()
+            db_result = await session.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+            pipeline_run = db_result.scalar_one_or_none()
             if not pipeline_run:
                 await self._tracker.end(wf_id, "orchestrator", "failed", "Pipeline not found")
                 return AgentResponse(
@@ -1166,7 +1173,7 @@ class OrchestratorAgent(BaseAgent):
             response_type="stage_failed",
             viz_config={
                 "pipeline_run_id": pipeline_run_id,
-                "stage_id": exec_result.failed_stage.stage_id if exec_result.failed_stage else "",
+                "stage_id": (exec_result.failed_stage.stage_id if exec_result.failed_stage else ""),
             },
         )
 
@@ -1468,7 +1475,10 @@ class OrchestratorAgent(BaseAgent):
                     )
                     continue
 
-                return self._format_sql_result_for_llm(sql_result, vr.warnings), sql_result
+                return (
+                    self._format_sql_result_for_llm(sql_result, vr.warnings),
+                    sql_result,
+                )
 
             except AgentRetryableError as e:
                 if attempt < MAX_SUB_AGENT_RETRIES:
@@ -1605,7 +1615,7 @@ class OrchestratorAgent(BaseAgent):
                 ):
                     kb_ctx = replace(
                         context,
-                        chat_history=context.chat_history[-4:] if context.chat_history else [],
+                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
                     )
                     knowledge_result = await self._knowledge.run(kb_ctx, question=sub_question)
                     src_count = len(knowledge_result.sources) if knowledge_result.sources else 0
@@ -1616,8 +1626,18 @@ class OrchestratorAgent(BaseAgent):
                 self.accum_usage(total_usage, knowledge_result.token_usage)
 
                 vr = self._validator.validate_knowledge_result(knowledge_result)
+                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info(
+                        "Knowledge agent validation failed (attempt %d): %s",
+                        attempt + 1,
+                        vr.errors,
+                    )
+                    continue
                 if not vr.passed:
-                    return f"Knowledge search issue: {'; '.join(vr.errors)}", knowledge_result
+                    return (
+                        f"Knowledge search issue: {'; '.join(vr.errors)}",
+                        knowledge_result,
+                    )
 
                 text = knowledge_result.answer
                 if vr.warnings:
@@ -1626,7 +1646,11 @@ class OrchestratorAgent(BaseAgent):
 
             except AgentRetryableError as e:
                 if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("Knowledge agent retryable error (attempt %d): %s", attempt + 1, e)
+                    logger.info(
+                        "Knowledge agent retryable error (attempt %d): %s",
+                        attempt + 1,
+                        e,
+                    )
                     continue
                 return f"Knowledge search failed after retries: {e}", None
             except (AgentFatalError, AgentError) as e:
@@ -1788,9 +1812,15 @@ class OrchestratorAgent(BaseAgent):
                     if connection_id:
                         conn = await conn_svc.get(session, connection_id)
                         if not conn or conn.source_type != "mcp":
-                            return f"Error: MCP connection '{connection_id}' not found", None
+                            return (
+                                f"Error: MCP connection '{connection_id}' not found",
+                                None,
+                            )
                         if conn.project_id != context.project_id:
-                            return "Error: MCP connection does not belong to this project", None
+                            return (
+                                "Error: MCP connection does not belong to this project",
+                                None,
+                            )
                         config = await conn_svc.to_config(session, conn)
                     else:
                         connections = await conn_svc.list_by_project(
@@ -1821,7 +1851,9 @@ class OrchestratorAgent(BaseAgent):
                     ):
                         mcp_ctx = replace(
                             context,
-                            chat_history=context.chat_history[-4:] if context.chat_history else [],
+                            chat_history=(
+                                context.chat_history[-4:] if context.chat_history else []
+                            ),
                         )
                         result = await self._mcp_source.run(
                             mcp_ctx,

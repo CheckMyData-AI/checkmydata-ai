@@ -512,7 +512,7 @@ class TracePersistenceService:
                 stmt = delete(RequestTrace).where(RequestTrace.created_at < cutoff)
                 result = await session.execute(stmt)
                 await session.commit()
-                count = result.rowcount
+                count = result.rowcount  # type: ignore[attr-defined]
                 if count:
                     logger.info("TracePersistence: deleted %d old trace(s)", count)
                 return count
