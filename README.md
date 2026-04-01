@@ -68,6 +68,8 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 │  │    SQLAgent:       schema + SQL gen + validation + execution   │   │
 │  │    VizAgent:       chart type + config (rule-based / LLM)     │   │
 │  │    KnowledgeAgent: RAG search + entity info + codebase Q&A    │   │
+│  │  AdaptivePlanner:  quick/full plan generation + replan        │   │
+│  │  DataGate:         intermediate data-quality validation       │   │
 │  │  AgentResultValidator: validates before returning to user     │   │
 │  └──┬────────┬───────────┬────────────┬───────────────────────────┘   │
 │     │        │           │            │                               │
@@ -89,17 +91,17 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 
 1. **Onboarding** -- Guided 5-step wizard: connect database, test, index schema, connect code repo, ask first question. A welcome chat with an agent greeting is created automatically for new users. Or try a demo project with sample data.
 2. **Setup** -- Register/login, add SSH keys, create project (with Git repo), create database connections (with optional SSH tunnels).
-3. **Chat** -- Ask questions in natural language. The OrchestratorAgent routes to SQLAgent (DB queries), KnowledgeAgent (codebase Q&A), or responds directly. Results include rich visualizations, follow-up suggestions, and data insights.
+3. **Chat** -- Ask questions in natural language across independent chat sessions. Each project supports multiple parallel chats per user — each session maintains its own message history, database connection binding, and isolated state. Sessions are created eagerly on "New Chat", messages are cached per-session for instant switching, and in-flight streams are aborted cleanly on session change. The OrchestratorAgent routes to SQLAgent (DB queries), KnowledgeAgent (codebase Q&A), or responds directly. Results include rich visualizations, follow-up suggestions, and data insights.
 4. **Knowledge** -- Git repos are analyzed via multi-pass pipeline (profiling, entity extraction, cross-file analysis, LLM doc generation) and stored in ChromaDB for RAG retrieval.
 5. **Sharing** -- Invite collaborators by email with role-based access (owner/editor/viewer). Owners can change member roles on the fly and remove members. Each user gets isolated chat sessions while sharing project data.
 
 ## Key Features
 
 - **Natural language to SQL** with self-healing validation loop (retry, repair, explain)
-- **Multi-agent orchestration** with LLM-based intent classification, adaptive step budgets, context-aware routing, history-aware turn isolation, tool-call deduplication, and structured clarification questions (yes/no, multiple choice, free text) when user intent is ambiguous. The orchestrator classifies each request into an intent type (direct response, data query, knowledge query, MCP query, or mixed) before loading context, ensuring minimal resource usage for simple questions
-- **Agent Learning Memory** -- automatically learns from query outcomes and accumulates per-connection knowledge
+- **Multi-agent orchestration** with LLM-based intent classification, adaptive planning (quick heuristic plans for simple queries, LLM-driven plans for complex ones), per-stage validation + DataGate quality checks, automatic replanning on failure (up to 2 replans), context-aware routing, history-aware turn isolation, tool-call deduplication, continuation-aware analysis resumption, and structured clarification questions (yes/no, multiple choice, free text) when user intent is ambiguous. The orchestrator classifies each request into an intent type (direct response, data query, knowledge query, MCP query, or mixed) before loading context, ensuring minimal resource usage for simple questions. When analysis hits the step or time limit, the "Continue analysis" button resumes from where it stopped — preserving executed SQL queries, intermediate results, and partial findings — instead of restarting from scratch
+- **Agent Learning Memory** -- automatically learns from query outcomes, pipeline replans, and DataGate failures; accumulated learnings are injected into planning prompts for future queries
 - **Data validation feedback loop** -- wrong data investigation, benchmarks, proactive sanity checks
-- **Rich visualizations** -- bar, line, pie, scatter charts with on-the-fly type switching and XLSX/CSV/JSON export
+- **Rich visualizations** -- bar, line, pie, scatter charts with on-the-fly type switching and XLSX/CSV/JSON export; compound queries produce multiple independent charts per answer
 - **Database indexing** -- AI-powered schema analysis with business descriptions, data patterns, and query hints
 - **Code-DB sync** -- cross-references codebase with database to discover data formats, enums, conversion rules
 - **SSH tunnel & exec mode** -- connect through jump servers via port forwarding or CLI execution
@@ -107,6 +109,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 - **Team dashboards** -- compose saved queries into grid layouts for monitoring
 - **Batch query execution** -- run multiple queries, export results as multi-sheet XLSX
 - **MCP server & client** -- expose the agent as MCP tools and consume external MCP servers; MCP sources are fully integrated into the multi-stage pipeline planner
+- **Multi-chat sessions** -- independent parallel chats per project with per-session message caching, connection binding, and abort-on-switch safety
 - **Session rotation** -- automatic context-preserving session continuation near token limits
 - **Data enrichment pipeline** -- IP-to-country, phone-to-country, aggregation, filtering between query steps with immutable result handling
 - **Robust error handling** -- try/except wrapping for pipeline execution, DB persistence, sub-agent LLM calls, and MCP adapter calls with graceful fallbacks
@@ -163,7 +166,7 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **3,252 total tests** (2,487 backend unit + 410 integration + 346 frontend + 9 performance smoke)
+- **3,284 total tests** (2,501 backend unit + 410 integration + 364 frontend + 9 performance smoke)
 - **72%+ backend coverage** (CI-enforced minimum)
 - Zero flaky tests, zero skipped tests
 

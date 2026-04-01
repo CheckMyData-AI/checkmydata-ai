@@ -73,12 +73,57 @@ def build_planner_user_prompt(
     db_type: str | None = None,
     project_overview: str | None = None,
     current_datetime: str | None = None,
+    recent_learnings: str | None = None,
 ) -> str:
     parts = [f"User question:\n{question}"]
     if current_datetime:
         parts.append(f"\nCurrent date/time: {current_datetime}")
     if project_overview:
         parts.append(f"\nProject context:\n{project_overview[:1000]}")
+    if db_type:
+        parts.append(f"\nDatabase type: {db_type}")
+    if table_map:
+        parts.append(f"\nAvailable tables:\n{table_map}")
+    if recent_learnings:
+        parts.append(f"\nAgent learnings (past experience with this database):\n{recent_learnings}")
+    return "\n".join(parts)
+
+
+def build_replan_prompt(
+    question: str,
+    completed_summaries: list[str],
+    failed_stage_id: str,
+    failed_stage_desc: str,
+    failed_stage_tool: str,
+    error: str,
+    table_map: str = "",
+    db_type: str | None = None,
+) -> str:
+    """Build the user prompt for a replan after stage failure."""
+    parts = [
+        f"Original question:\n{question}",
+        "\n## Completed stages (keep these results):",
+    ]
+    if completed_summaries:
+        for s in completed_summaries:
+            parts.append(s)
+    else:
+        parts.append("(none)")
+
+    parts.append(
+        f"\n## Failed stage:\n"
+        f"- Stage ID: {failed_stage_id}\n"
+        f"- Description: {failed_stage_desc}\n"
+        f"- Tool: {failed_stage_tool}\n"
+        f"- Error: {error}"
+    )
+    parts.append(
+        "\n## Task:\n"
+        "Create a NEW execution plan that achieves the same goal but avoids "
+        "the approach that failed. You may reuse completed stage results "
+        "by referencing their stage_ids in depends_on. Include new stages "
+        "that take a different approach to get the data."
+    )
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")
     if table_map:

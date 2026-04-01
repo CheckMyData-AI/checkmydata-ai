@@ -9,6 +9,14 @@ export interface RawResult {
   total_rows: number;
 }
 
+export interface SQLResultBlock {
+  query?: string;
+  queryExplanation?: string;
+  visualization?: Record<string, unknown> | null;
+  rawResult?: RawResult | null;
+  insights?: Array<{ type: string; title: string; description: string; confidence: number }>;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -35,6 +43,7 @@ interface ChatMessage {
   stepsUsed?: number;
   stepsTotal?: number;
   continuationContext?: string | null;
+  sqlResults?: SQLResultBlock[] | null;
 }
 
 interface ToolCallEvent {
@@ -76,6 +85,7 @@ interface AppState {
   chatSessions: ChatSession[];
   activeSession: ChatSession | null;
   messages: ChatMessage[];
+  messagesBySession: Record<string, ChatMessage[]>;
   isLoading: boolean;
   isThinking: boolean;
   userRole: string | null;
@@ -101,6 +111,11 @@ interface AppState {
   setMessages: (messages: ChatMessage[]) => void;
   updateMessageId: (oldId: string, newId: string) => void;
   clearMessages: () => void;
+  setSessionMessages: (sessionId: string, msgs: ChatMessage[]) => void;
+  addSessionMessage: (sessionId: string, message: ChatMessage) => void;
+  updateSessionMessageId: (sessionId: string, oldId: string, newId: string) => void;
+  clearAllSessionMessages: () => void;
+  hasSessionCache: (sessionId: string) => boolean;
   setLoading: (loading: boolean) => void;
   setThinking: (thinking: boolean) => void;
   setUserRole: (role: string | null) => void;
@@ -118,7 +133,7 @@ interface AppState {
   setLogsOpen: (open: boolean) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   sshKeys: [],
   projects: [],
   activeProject: null,
@@ -127,6 +142,7 @@ export const useAppStore = create<AppState>((set) => ({
   chatSessions: [],
   activeSession: null,
   messages: [],
+  messagesBySession: {},
   isLoading: false,
   isThinking: false,
   userRole: null,
@@ -159,18 +175,85 @@ export const useAppStore = create<AppState>((set) => ({
   setChatSessions: (sessions) => set({ chatSessions: sessions }),
   setActiveSession: (session) => {
     persistId("active_session_id", session?.id ?? null);
-    set({ activeSession: session });
+    set((state) => {
+      const cache = { ...state.messagesBySession };
+      if (state.activeSession?.id && state.messages.length > 0) {
+        cache[state.activeSession.id] = state.messages;
+      }
+      const newMessages = session?.id ? (cache[session.id] ?? []) : [];
+      return { activeSession: session, messages: newMessages, messagesBySession: cache };
+    });
   },
   addMessage: (message) =>
-    set((state) => ({ messages: [...state.messages, message] })),
-  setMessages: (messages) => set({ messages }),
+    set((state) => {
+      const updated = [...state.messages, message];
+      const sid = state.activeSession?.id;
+      if (sid) {
+        return { messages: updated, messagesBySession: { ...state.messagesBySession, [sid]: updated } };
+      }
+      return { messages: updated };
+    }),
+  setMessages: (messages) =>
+    set((state) => {
+      const sid = state.activeSession?.id;
+      if (sid) {
+        return { messages, messagesBySession: { ...state.messagesBySession, [sid]: messages } };
+      }
+      return { messages };
+    }),
   updateMessageId: (oldId, newId) =>
-    set((state) => ({
-      messages: state.messages.map((m) =>
+    set((state) => {
+      const updated = state.messages.map((m) =>
         m.id === oldId ? { ...m, id: newId } : m,
-      ),
-    })),
-  clearMessages: () => set({ messages: [] }),
+      );
+      const sid = state.activeSession?.id;
+      if (sid) {
+        return { messages: updated, messagesBySession: { ...state.messagesBySession, [sid]: updated } };
+      }
+      return { messages: updated };
+    }),
+  clearMessages: () =>
+    set((state) => {
+      const sid = state.activeSession?.id;
+      if (sid) {
+        const { [sid]: _, ...rest } = state.messagesBySession;
+        return { messages: [], messagesBySession: rest };
+      }
+      return { messages: [] };
+    }),
+  setSessionMessages: (sessionId, msgs) =>
+    set((state) => {
+      const cache = { ...state.messagesBySession, [sessionId]: msgs };
+      if (state.activeSession?.id === sessionId) {
+        return { messages: msgs, messagesBySession: cache };
+      }
+      return { messagesBySession: cache };
+    }),
+  addSessionMessage: (sessionId, message) =>
+    set((state) => {
+      const existing = state.messagesBySession[sessionId] ?? [];
+      const updated = [...existing, message];
+      const cache = { ...state.messagesBySession, [sessionId]: updated };
+      if (state.activeSession?.id === sessionId) {
+        return { messages: updated, messagesBySession: cache };
+      }
+      return { messagesBySession: cache };
+    }),
+  updateSessionMessageId: (sessionId, oldId, newId) =>
+    set((state) => {
+      const existing = state.messagesBySession[sessionId];
+      if (!existing) return {};
+      const updated = existing.map((m) =>
+        m.id === oldId ? { ...m, id: newId } : m,
+      );
+      const cache = { ...state.messagesBySession, [sessionId]: updated };
+      if (state.activeSession?.id === sessionId) {
+        return { messages: updated, messagesBySession: cache };
+      }
+      return { messagesBySession: cache };
+    }),
+  clearAllSessionMessages: () => set({ messages: [], messagesBySession: {} }),
+  hasSessionCache: (sessionId) => sessionId in get().messagesBySession,
   setLoading: (loading) => set({ isLoading: loading }),
   setThinking: (thinking) => set({ isThinking: thinking }),
   setUserRole: (role) => set({ userRole: role }),

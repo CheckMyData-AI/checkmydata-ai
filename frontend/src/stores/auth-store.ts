@@ -133,7 +133,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     storage.removeItem("active_session_id");
 
     const appStore = useAppStore.getState();
-    appStore.clearMessages();
+    appStore.clearAllSessionMessages();
     appStore.clearToolCalls();
     appStore.setActiveProject(null);
     appStore.setActiveConnection(null);

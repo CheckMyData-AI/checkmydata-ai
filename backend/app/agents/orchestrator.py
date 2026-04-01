@@ -13,13 +13,14 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, NoReturn
+from typing import Any
 
+from app.agents.adaptive_planner import AdaptivePlanner
 from app.agents.base import AgentContext, BaseAgent
+from app.agents.context_loader import ContextLoader
+from app.agents.data_gate import DataGate
 from app.agents.errors import (
-    AgentError,
     AgentFatalError,
-    AgentRetryableError,
 )
 from app.agents.intent_classifier import (
     IntentType,
@@ -27,25 +28,29 @@ from app.agents.intent_classifier import (
 )
 from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
+from app.agents.pipeline_learning import PipelineLearningExtractor
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import (
     build_direct_response_prompt,
     build_orchestrator_system_prompt,
 )
-from app.agents.query_planner import (
-    QueryPlanner,
-    detect_complexity,
-    detect_complexity_adaptive,
+from app.agents.response_builder import (
+    ResponseBuilder,
+    SQLResultBlock,
 )
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.stage_context import ExecutionPlan, StageContext
 from app.agents.stage_executor import StageExecutor, _StageExecutorResult
 from app.agents.stage_validator import StageValidator
+from app.agents.tool_dispatcher import (
+    ToolDispatcher,
+    _ClarificationRequestError,
+)
 from app.agents.tools.orchestrator_tools import get_orchestrator_tools
 from app.agents.validation import AgentResultValidator
 from app.agents.viz_agent import VizAgent, VizResult
 from app.config import settings
-from app.connectors.base import ConnectionConfig, QueryResult, connector_key
+from app.connectors.base import QueryResult
 from app.core.context_budget import ContextBudgetManager
 from app.core.history_trimmer import (
     estimate_messages_tokens,
@@ -66,7 +71,6 @@ from app.llm.errors import (
     LLMTokenLimitError,
 )
 from app.llm.router import LLMRouter
-from app.services.data_processor import get_data_processor
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +78,6 @@ _LLM_CALL_MAX_RETRIES = 2
 _LLM_CALL_BASE_BACKOFF = 3.0
 
 MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
-
-
-class _ClarificationRequestError(Exception):
-    """Internal signal: the orchestrator wants to ask the user a question."""
-
-    def __init__(self, payload_json: str) -> None:
-        self.payload_json = payload_json
-        super().__init__(payload_json)
 
 
 PROMPT_VERSION = "v2.1"
@@ -154,6 +150,7 @@ class AgentResponse:
     steps_total: int = 0
     continuation_context: str | None = None
     clarification_data: dict[str, Any] | None = None
+    sql_results: list[SQLResultBlock] = field(default_factory=list)
 
 
 class OrchestratorAgent(BaseAgent):
@@ -191,6 +188,21 @@ class OrchestratorAgent(BaseAgent):
         self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
         self._mcp_cache: dict[str, tuple[bool, float]] = {}
         self._MCP_CACHE_TTL = 60.0
+        self._dispatcher = ToolDispatcher(
+            sql_agent=self._sql,
+            knowledge_agent=self._knowledge,
+            mcp_source_agent=self._mcp_source,
+            validator=self._validator,
+            tracker=self._tracker,
+            wf_sql_results=self._wf_sql_results,
+            wf_enriched=self._wf_enriched,
+        )
+        self._ctx_loader = ContextLoader(
+            vector_store=self._vector_store,
+            tracker=self._tracker,
+            mcp_cache=self._mcp_cache,
+            mcp_cache_ttl=self._MCP_CACHE_TTL,
+        )
 
     @property
     def name(self) -> str:
@@ -232,7 +244,8 @@ class OrchestratorAgent(BaseAgent):
         self._cleanup_stale_results(stale_seconds)
 
         try:
-            if context.extra.get("pipeline_action") == "continue_analysis":
+            is_continuation = context.extra.get("pipeline_action") == "continue_analysis"
+            if is_continuation:
                 context = self._apply_continuation_context(context)
 
             resume_info = await self._check_pipeline_resume(context)
@@ -243,11 +256,16 @@ class OrchestratorAgent(BaseAgent):
             db_type = context.connection_config.db_type if context.connection_config else None
 
             # Lightweight capability checks (KB is local, MCP needs DB)
-            has_kb = self._has_knowledge_base(context.project_id)
-            has_mcp = await self._has_mcp_sources(context.project_id, wf_id)
+            has_kb = self._ctx_loader.has_knowledge_base(context.project_id)
+            has_mcp = await self._ctx_loader.has_mcp_sources(context.project_id, wf_id)
 
-            # Skip classification for pipeline/complexity overrides
-            if context.extra.get("_skip_complexity"):
+            # Skip classification for continuation or pipeline/complexity overrides
+            if is_continuation or context.extra.get("_skip_complexity"):
+                logger.info(
+                    "Skipping intent classification (%s, wf=%s)",
+                    "continuation" if is_continuation else "complexity_override",
+                    wf_id,
+                )
                 return await self._run_full_pipeline(
                     context, wf_id, has_connection, db_type, has_kb, has_mcp
                 )
@@ -449,31 +467,23 @@ class OrchestratorAgent(BaseAgent):
         if has_connection and context.connection_config:
             cid = context.connection_config.connection_id
             if not cid:
-                cid = await self._resolve_connection_id(
+                cid = await self._ctx_loader.resolve_connection_id(
                     context.project_id,
                     context.connection_config,
                 )
                 if cid and context.connection_config:
                     context.connection_config.connection_id = cid
             if cid:
-                table_map = await self._build_table_map(cid, wf_id)
+                table_map = await self._ctx_loader.build_table_map(cid, wf_id)
 
-        is_complex = detect_complexity(question)
-        if not is_complex:
-            is_complex = await detect_complexity_adaptive(
-                question,
-                self._llm,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-            )
-        if has_connection and is_complex:
+        if has_connection and AdaptivePlanner._is_complex(question):
             logger.info("Complex data query detected — using multi-stage pipeline")
             return await self._run_complex_pipeline(
                 context, wf_id, table_map, db_type, staleness_warning=None
             )
 
-        project_overview = await self._load_project_overview(context.project_id)
-        recent_learnings = await self._load_recent_learnings(context)
+        project_overview = await self._ctx_loader.load_project_overview(context.project_id)
+        recent_learnings = await self._ctx_loader.load_recent_learnings(context)
 
         tools = get_orchestrator_tools(
             has_connection=has_connection,
@@ -514,8 +524,8 @@ class OrchestratorAgent(BaseAgent):
             )
             context = replace(context, chat_history=trimmed)
 
-        staleness_warning = await self._check_staleness(context.project_id, wf_id)
-        project_overview = await self._load_project_overview(context.project_id)
+        staleness_warning = await self._ctx_loader.check_staleness(context.project_id, wf_id)
+        project_overview = await self._ctx_loader.load_project_overview(context.project_id)
 
         tools = get_orchestrator_tools(
             has_connection=False,
@@ -588,7 +598,7 @@ class OrchestratorAgent(BaseAgent):
         """Full pipeline for mixed/ambiguous intents — loads ALL context, ALL tools."""
         question = context.user_question
 
-        staleness_warning = await self._check_staleness(context.project_id, wf_id)
+        staleness_warning = await self._ctx_loader.check_staleness(context.project_id, wf_id)
 
         if context.chat_history:
             from app.config import settings as app_settings
@@ -607,31 +617,26 @@ class OrchestratorAgent(BaseAgent):
         if has_connection and context.connection_config:
             cid = context.connection_config.connection_id
             if not cid:
-                cid = await self._resolve_connection_id(
+                cid = await self._ctx_loader.resolve_connection_id(
                     context.project_id,
                     context.connection_config,
                 )
                 if cid and context.connection_config:
                     context.connection_config.connection_id = cid
             if cid:
-                table_map = await self._build_table_map(cid, wf_id)
+                table_map = await self._ctx_loader.build_table_map(cid, wf_id)
 
-        is_complex = detect_complexity(question)
-        if not is_complex and not context.extra.get("_skip_complexity"):
-            is_complex = await detect_complexity_adaptive(
-                question,
-                self._llm,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-            )
-        if has_connection and not context.extra.get("_skip_complexity") and is_complex:
+        is_complex = not context.extra.get("_skip_complexity") and AdaptivePlanner._is_complex(
+            question
+        )
+        if has_connection and is_complex:
             logger.info("Complex query detected — using multi-stage pipeline")
             return await self._run_complex_pipeline(
                 context, wf_id, table_map, db_type, staleness_warning
             )
 
-        project_overview = await self._load_project_overview(context.project_id)
-        recent_learnings = await self._load_recent_learnings(context)
+        project_overview = await self._ctx_loader.load_project_overview(context.project_id)
+        recent_learnings = await self._ctx_loader.load_recent_learnings(context)
 
         tools = get_orchestrator_tools(
             has_connection=has_connection,
@@ -711,19 +716,35 @@ class OrchestratorAgent(BaseAgent):
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
+        continuation_summary = context.extra.get("_continuation_summary")
         if context.chat_history:
             messages.extend(context.chat_history)
-            messages.append(
-                Message(
-                    role="system",
-                    content=(
-                        "--- END OF CONVERSATION HISTORY ---\n"
-                        "The messages above are COMPLETED past exchanges for reference only. "
-                        "Do NOT re-execute any queries or tools from the history. "
-                        "Focus EXCLUSIVELY on the new user message below."
-                    ),
+            if continuation_summary:
+                messages.append(
+                    Message(
+                        role="system",
+                        content=(
+                            "--- END OF CONVERSATION HISTORY ---\n"
+                            "The messages above are past exchanges. The LAST assistant message "
+                            "was a partial result cut short by the step limit. The next system "
+                            "message contains the full context of work already done."
+                        ),
+                    )
                 )
-            )
+            else:
+                messages.append(
+                    Message(
+                        role="system",
+                        content=(
+                            "--- END OF CONVERSATION HISTORY ---\n"
+                            "The messages above are COMPLETED past exchanges for reference only. "
+                            "Do NOT re-execute any queries or tools from the history. "
+                            "Focus EXCLUSIVELY on the new user message below."
+                        ),
+                    )
+                )
+        if continuation_summary:
+            messages.append(Message(role="system", content=continuation_summary))
         messages.append(Message(role="user", content=question))
 
         total_usage: dict[str, int] = {
@@ -735,6 +756,7 @@ class OrchestratorAgent(BaseAgent):
         final_text = ""
         tool_call_log: list[dict] = []
         last_sql_result: SQLAgentResult | None = None
+        all_sql_results: list[SQLAgentResult] = []
         last_viz_result: VizResult | None = None
         knowledge_sources: list[RAGSource] = []
         has_mcp_result = False
@@ -916,7 +938,7 @@ class OrchestratorAgent(BaseAgent):
                     wall_clock_limit * 1.5,
                     wf_id,
                 )
-                final_text = llm_resp.content or self._build_timeout_text(
+                final_text = llm_resp.content or ResponseBuilder.build_timeout_text(
                     last_sql_result, knowledge_sources
                 )
                 wall_clock_timeout_hit = True
@@ -943,7 +965,7 @@ class OrchestratorAgent(BaseAgent):
                 )
             )
 
-            active_calls, skipped_map = self._dedup_tool_calls(
+            active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(
                 llm_resp.tool_calls, context.chat_history
             )
 
@@ -955,7 +977,7 @@ class OrchestratorAgent(BaseAgent):
                     _tc: ToolCall,
                 ) -> tuple[str, Any]:
                     async with self._parallel_tool_sem:
-                        return await self._handle_meta_tool(_tc, context, wf_id, total_usage)
+                        return await self._dispatcher.dispatch(_tc, context, wf_id, total_usage)
 
                 gather_results = await asyncio.gather(
                     *(_throttled_meta_tool(tc) for tc in active_calls),
@@ -978,7 +1000,7 @@ class OrchestratorAgent(BaseAgent):
             else:
                 executed_pairs = {}
                 for single_tc in active_calls:
-                    executed_pairs[single_tc.id] = await self._handle_meta_tool(
+                    executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
                         single_tc, context, wf_id, total_usage
                     )
 
@@ -1001,6 +1023,10 @@ class OrchestratorAgent(BaseAgent):
                 if isinstance(sub_result, SQLAgentResult):
                     last_sql_result = sub_result
                     self._wf_sql_results[wf_id] = sub_result
+                    if tc.name == "process_data" and all_sql_results:
+                        all_sql_results[-1] = sub_result
+                    else:
+                        all_sql_results.append(sub_result)
                 elif isinstance(sub_result, KnowledgeResult):
                     knowledge_sources.extend(sub_result.sources)
                 elif isinstance(sub_result, MCPSourceResult):
@@ -1022,7 +1048,7 @@ class OrchestratorAgent(BaseAgent):
                 "Reached step limit, synthesizing collected data…",
             )
             if settings.orchestrator_final_synthesis:
-                synthesis_messages = self._build_synthesis_messages(
+                synthesis_messages = ResponseBuilder.build_synthesis_messages(
                     messages, last_sql_result, knowledge_sources, loop_budget
                 )
                 try:
@@ -1050,70 +1076,95 @@ class OrchestratorAgent(BaseAgent):
                         wf_id,
                         exc_info=True,
                     )
-                    final_text = self._build_partial_text(last_sql_result, knowledge_sources)
+                    final_text = ResponseBuilder.build_partial_text(
+                        last_sql_result, knowledge_sources
+                    )
             else:
-                final_text = self._build_partial_text(last_sql_result, knowledge_sources)
+                final_text = ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources)
             step_limit_hit = True
 
         if step_limit_hit or wall_clock_timeout_hit:
             response_type = "step_limit_reached"
         else:
-            response_type = self._determine_response_type(
+            response_type = ResponseBuilder.determine_response_type(
                 last_sql_result, knowledge_sources, has_mcp_result
             )
 
         viz_type = "text"
         viz_config: dict = {}
-        if (
-            last_sql_result
-            and last_sql_result.results
-            and response_type in ("sql_result", "step_limit_reached")
-        ):
-            try:
-                await self._tracker.emit(
-                    wf_id,
-                    "thinking",
-                    "in_progress",
-                    "Choosing the best visualization…",
+        sql_result_blocks: list[SQLResultBlock] = []
+        viable_sql = [sr for sr in all_sql_results if sr.results and sr.results.rows]
+        if viable_sql and response_type in ("sql_result", "step_limit_reached"):
+            viz_ctx = replace(
+                context,
+                chat_history=context.chat_history[-4:] if context.chat_history else [],
+            )
+            n_viz = len(viable_sql)
+            label = f"Choosing visualization{'s' if n_viz > 1 else ''}…"
+            await self._tracker.emit(wf_id, "thinking", "in_progress", label)
+            for sr_idx, sr in enumerate(viable_sql):
+                sr_viz_type = "table"
+                sr_viz_config: dict[str, Any] = {}
+                try:
+                    _sd_viz: dict[str, Any] = {"input_preview": question[:_PREVIEW_MAX]}
+                    step_label = (
+                        f"Choosing visualization ({sr_idx + 1}/{n_viz})"
+                        if n_viz > 1
+                        else "Choosing visualization"
+                    )
+                    assert sr.results is not None  # guaranteed by viable_sql filter
+                    async with self._tracker.step(
+                        wf_id,
+                        "orchestrator:viz",
+                        step_label,
+                        step_data=_sd_viz,
+                    ):
+                        last_viz_result = await self._viz.run(
+                            viz_ctx,
+                            results=sr.results,
+                            question=question,
+                            query=sr.query or "",
+                        )
+                        _sd_viz["output_preview"] = f"type={last_viz_result.viz_type}"
+                    self.accum_usage(total_usage, last_viz_result.token_usage)
+                    sr_viz_type = last_viz_result.viz_type
+                    sr_viz_config = last_viz_result.viz_config
+
+                    vv = self._validator.validate_viz_result(
+                        last_viz_result,
+                        row_count=sr.results.row_count,
+                        column_count=len(sr.results.columns),
+                    )
+                    if vv.fallback_viz_type:
+                        sr_viz_type = vv.fallback_viz_type
+                except Exception:
+                    logger.debug(
+                        "Visualization %d/%d failed, falling back to table",
+                        sr_idx + 1,
+                        n_viz,
+                        exc_info=True,
+                    )
+                    sr_viz_type = "table"
+
+                sql_result_blocks.append(
+                    SQLResultBlock(
+                        query=sr.query,
+                        query_explanation=sr.query_explanation,
+                        results=sr.results,
+                        viz_type=sr_viz_type,
+                        viz_config=sr_viz_config,
+                        insights=sr.insights,
+                    )
                 )
-                _sd_viz: dict[str, Any] = {"input_preview": question[:_PREVIEW_MAX]}
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:viz",
-                    "Choosing visualization",
-                    step_data=_sd_viz,
-                ):
-                    viz_ctx = replace(
-                        context,
-                        chat_history=context.chat_history[-4:] if context.chat_history else [],
-                    )
-                    last_viz_result = await self._viz.run(
-                        viz_ctx,
-                        results=last_sql_result.results,
-                        question=question,
-                        query=last_sql_result.query or "",
-                    )
-                    _sd_viz["output_preview"] = f"type={last_viz_result.viz_type}"
-                self.accum_usage(total_usage, last_viz_result.token_usage)
-                viz_type = last_viz_result.viz_type
-                viz_config = last_viz_result.viz_config
+            if sql_result_blocks:
+                viz_type = sql_result_blocks[-1].viz_type
+                viz_config = sql_result_blocks[-1].viz_config
                 await self._tracker.emit(
                     wf_id,
                     "thinking",
                     "in_progress",
                     f"Selected {viz_type} visualization",
                 )
-
-                vv = self._validator.validate_viz_result(
-                    last_viz_result,
-                    row_count=last_sql_result.results.row_count,
-                    column_count=len(last_sql_result.results.columns),
-                )
-                if vv.fallback_viz_type:
-                    viz_type = vv.fallback_viz_type
-            except Exception:
-                logger.debug("Visualization failed, falling back to table", exc_info=True)
-                viz_type = "table"
 
         await self._tracker.end(wf_id, "orchestrator", "completed", f"type={response_type}")
 
@@ -1141,16 +1192,38 @@ class OrchestratorAgent(BaseAgent):
         if step_limit_hit or wall_clock_timeout_hit:
             import json as _cont_json
 
+            sql_summaries = []
+            for sr in all_sql_results:
+                if not sr.query:
+                    continue
+                summary: dict[str, Any] = {
+                    "query": sr.query,
+                    "row_count": sr.results.row_count if sr.results else 0,
+                    "columns": sr.results.columns if sr.results else [],
+                }
+                if sr.results and sr.results.rows:
+                    summary["sample_rows"] = sr.results.rows[:3]
+                if sr.query_explanation:
+                    summary["explanation"] = sr.query_explanation
+                if sr.insights:
+                    summary["insights"] = sr.insights[:3]
+                sql_summaries.append(summary)
+
             continuation_ctx = _cont_json.dumps(
                 {
-                    "tool_call_log": tool_call_log,
-                    "has_sql_result": last_sql_result is not None,
-                    "row_count": (
-                        last_sql_result.results.row_count
-                        if last_sql_result and last_sql_result.results
-                        else 0
-                    ),
+                    "tool_call_log": [
+                        {
+                            "tool": tc["tool"],
+                            "arguments": tc.get("arguments", ""),
+                            "result_preview": tc.get("result_preview", "")[:500],
+                        }
+                        for tc in tool_call_log
+                    ],
+                    "sql_queries": sql_summaries,
+                    "partial_answer": final_text[:2000],
                     "knowledge_source_count": len(knowledge_sources),
+                    "steps_used": iteration + 1,
+                    "steps_total": max_iter,
                 },
                 default=str,
             )
@@ -1176,11 +1249,14 @@ class OrchestratorAgent(BaseAgent):
             steps_used=iteration + 1,
             steps_total=max_iter,
             continuation_context=continuation_ctx,
+            sql_results=sql_result_blocks,
         )
 
     # ------------------------------------------------------------------
     # Multi-stage pipeline
     # ------------------------------------------------------------------
+
+    _MAX_REPLANS = 2
 
     async def _run_complex_pipeline(
         self,
@@ -1190,14 +1266,21 @@ class OrchestratorAgent(BaseAgent):
         db_type: str | None,
         staleness_warning: str | None,
     ) -> AgentResponse:
-        """Plan and execute a multi-stage pipeline for complex queries."""
+        """Plan and execute a multi-stage pipeline for complex queries.
+
+        Includes a replan loop: when a stage fails and is replan-eligible,
+        the ``AdaptivePlanner`` generates a new plan that avoids the failed
+        approach and reuses completed results.
+        """
         await self._tracker.emit(
             wf_id,
             "thinking",
             "in_progress",
             "Complex query detected, creating execution plan…",
         )
-        planner = QueryPlanner(self._llm)
+        adaptive = AdaptivePlanner(self._llm)
+
+        recent_learnings = await self._ctx_loader.load_recent_learnings(context)
 
         _sd_plan: dict[str, Any] = {"input_preview": context.user_question[:_PREVIEW_MAX]}
         async with self._tracker.step(
@@ -1206,7 +1289,7 @@ class OrchestratorAgent(BaseAgent):
             "Creating execution plan",
             step_data=_sd_plan,
         ):
-            plan = await planner.plan(
+            plan = await adaptive._llm_plan(
                 context.user_question,
                 table_map=table_map,
                 db_type=db_type,
@@ -1214,6 +1297,7 @@ class OrchestratorAgent(BaseAgent):
                 model=context.model,
                 project_overview=context.extra.get("project_overview"),
                 current_datetime=get_current_datetime_str(),
+                recent_learnings=recent_learnings,
             )
             if plan:
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
@@ -1259,49 +1343,215 @@ class OrchestratorAgent(BaseAgent):
             logger.exception("Failed to create pipeline run record")
             raise AgentFatalError("Pipeline initialisation failed") from None
 
-        try:
-            executor = StageExecutor(
-                sql_agent=self._sql,
-                knowledge_agent=self._knowledge,
-                llm_router=self._llm,
-                tracker=self._tracker,
-                validator=StageValidator(),
-                mcp_source_agent=self._mcp_source,
-            )
+        data_gate = DataGate()
+        executor = StageExecutor(
+            sql_agent=self._sql,
+            knowledge_agent=self._knowledge,
+            llm_router=self._llm,
+            tracker=self._tracker,
+            validator=StageValidator(),
+            data_gate=data_gate,
+            mcp_source_agent=self._mcp_source,
+        )
 
+        pipeline_ctx = replace(
+            context,
+            chat_history=context.chat_history[-4:] if context.chat_history else [],
+        )
+        replan_history: list[dict[str, Any]] = []
+
+        try:
             stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
-            pipeline_ctx = replace(
-                context,
-                chat_history=context.chat_history[-4:] if context.chat_history else [],
-            )
             exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
+
+            replan_count = 0
+            while (
+                exec_result.status == "stage_failed"
+                and exec_result.replan_eligible
+                and replan_count < self._MAX_REPLANS
+            ):
+                failed = exec_result.failed_stage
+                if not failed:
+                    break
+
+                error_msg = (
+                    exec_result.failed_validation.error_summary
+                    if exec_result.failed_validation
+                    else "unknown error"
+                )
+                if exec_result.data_gate_outcome and exec_result.data_gate_outcome.errors:
+                    error_msg += " | DataGate: " + "; ".join(exec_result.data_gate_outcome.errors)
+                    if exec_result.data_gate_outcome.suggestions:
+                        error_msg += " Suggestions: " + "; ".join(
+                            exec_result.data_gate_outcome.suggestions
+                        )
+
+                replan_count += 1
+                replan_history.append(
+                    {
+                        "attempt": replan_count,
+                        "failed_stage": failed.stage_id,
+                        "error": error_msg,
+                    }
+                )
+
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"Stage '{failed.stage_id}' failed after retries — replanning "
+                    f"(attempt {replan_count}/{self._MAX_REPLANS})…",
+                )
+
+                completed = exec_result.stage_ctx.results
+                new_plan = await adaptive.replan(
+                    context.user_question,
+                    completed_stages=completed,
+                    failed_stage=failed,
+                    error=error_msg,
+                    table_map=table_map,
+                    db_type=db_type,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                )
+                if not new_plan:
+                    logger.warning("Replanning returned no plan — giving up")
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Replanning failed — returning partial results.",
+                    )
+                    break
+
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    f"New plan: {len(new_plan.stages)} stages",
+                )
+
+                new_stage_ctx = StageContext(
+                    plan=new_plan,
+                    pipeline_run_id=pipeline_run.id,
+                )
+                for sid, sr in completed.items():
+                    if sr.status == "success":
+                        new_stage_ctx.set_result(sid, sr)
+
+                exec_result = await executor.execute(
+                    new_plan,
+                    pipeline_ctx,
+                    stage_ctx=new_stage_ctx,
+                )
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
         except Exception:
             logger.exception("Pipeline execution failed (run_id=%s)", pipeline_run.id)
             raise
 
+        if replan_history:
+            logger.info(
+                "Pipeline completed after %d replan(s): %s (run_id=%s)",
+                len(replan_history),
+                [h["failed_stage"] for h in replan_history],
+                pipeline_run.id,
+            )
+
+        conn_id = context.connection_config.connection_id if context.connection_config else None
+        if conn_id:
+            await self._extract_pipeline_learnings(
+                conn_id,
+                exec_result=exec_result,
+                replan_history=replan_history,
+            )
+
         await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
-        return self._build_pipeline_response(exec_result, wf_id, staleness_warning, pipeline_run.id)
+        return ResponseBuilder.build_pipeline_response(
+            exec_result,
+            wf_id,
+            staleness_warning,
+            pipeline_run.id,
+        )
 
     @staticmethod
     def _apply_continuation_context(context: AgentContext) -> AgentContext:
-        """Augment the user question with continuation context from a previous step-limited run."""
-        continuation = context.extra.get("continuation_context", "")
-        if continuation:
-            new_question = (
-                "Please continue the analysis from where you left off. "
-                "The previous run was cut short by the step limit. "
-                f"Previous context: {continuation}\n\n"
-                f"Original request: {context.user_question}"
+        """Augment the user question with continuation context from a previous step-limited run.
+
+        Parses the rich ``continuation_context`` JSON and stores a structured
+        ``_continuation_summary`` in ``extra`` so the tool loop can inject it
+        as a system message.  The user question is kept clean — only the
+        original request text.
+        """
+        import json as _cj
+
+        raw = context.extra.get("continuation_context", "")
+        parsed: dict = {}
+        if raw:
+            try:
+                parsed = _cj.loads(raw) if isinstance(raw, str) else raw
+            except (ValueError, TypeError):
+                parsed = {}
+
+        summary_parts: list[str] = []
+        summary_parts.append(
+            "CONTINUATION: The previous analysis run was cut short by the step/time limit. "
+            "Below is a summary of work already completed. Do NOT re-execute these queries — "
+            "use the results below and continue the analysis from where it stopped."
+        )
+
+        sql_queries = parsed.get("sql_queries", [])
+        if sql_queries:
+            summary_parts.append("\n## Previously executed SQL queries and results:")
+            for i, sq in enumerate(sql_queries, 1):
+                q = sq.get("query", "")
+                cols = sq.get("columns", [])
+                rc = sq.get("row_count", 0)
+                explanation = sq.get("explanation", "")
+                sample = sq.get("sample_rows", [])
+                insights = sq.get("insights", [])
+                summary_parts.append(f"\n### Query {i}:")
+                if explanation:
+                    summary_parts.append(f"Purpose: {explanation}")
+                summary_parts.append(f"```sql\n{q}\n```")
+                summary_parts.append(f"Result: {rc} rows, columns: {', '.join(cols)}")
+                if sample:
+                    preview_lines = []
+                    for row in sample[:3]:
+                        preview_lines.append(str(row))
+                    summary_parts.append("Sample data:\n" + "\n".join(preview_lines))
+                if insights:
+                    for ins in insights[:2]:
+                        label = ins.get("label", "")
+                        val = ins.get("value", "")
+                        if label:
+                            summary_parts.append(f"Insight: {label}: {val}")
+
+        tool_log = parsed.get("tool_call_log", [])
+        non_sql_tools = [t for t in tool_log if t.get("tool") != "query_database"]
+        if non_sql_tools:
+            summary_parts.append("\n## Other tools already called:")
+            for t in non_sql_tools:
+                preview = t.get("result_preview", "")[:300]
+                summary_parts.append(f"- {t.get('tool', '?')}: {preview}")
+
+        partial = parsed.get("partial_answer", "")
+        if partial:
+            summary_parts.append(f"\n## Partial answer composed so far:\n{partial}")
+
+        steps_used = parsed.get("steps_used", 0)
+        steps_total = parsed.get("steps_total", 0)
+        if steps_used:
+            summary_parts.append(
+                f"\nPrevious run used {steps_used}/{steps_total} steps before stopping."
             )
-        else:
-            new_question = (
-                "Please continue the analysis from where you left off. "
-                f"Original request: {context.user_question}"
-            )
+
+        continuation_summary = "\n".join(summary_parts)
+
         new_extra = {k: v for k, v in context.extra.items() if k != "pipeline_action"}
-        return replace(context, user_question=new_question, extra=new_extra)
+        new_extra["_continuation_summary"] = continuation_summary
+
+        return replace(context, extra=new_extra)
 
     async def _check_pipeline_resume(self, context: AgentContext) -> dict | None:
         """Detect if the user message is a pipeline action (continue/modify/retry)."""
@@ -1380,6 +1630,7 @@ class OrchestratorAgent(BaseAgent):
                 llm_router=self._llm,
                 tracker=self._tracker,
                 validator=StageValidator(),
+                data_gate=DataGate(),
                 mcp_source_agent=self._mcp_source,
             )
             resume_ctx = replace(
@@ -1395,7 +1646,7 @@ class OrchestratorAgent(BaseAgent):
             logger.exception("Pipeline resume failed (run_id=%s)", run_id)
             raise
 
-        return self._build_pipeline_response(exec_result, wf_id, None, run_id)
+        return ResponseBuilder.build_pipeline_response(exec_result, wf_id, None, run_id)
 
     async def _create_pipeline_run(
         self,
@@ -1460,114 +1711,48 @@ class OrchestratorAgent(BaseAgent):
         except Exception:
             logger.exception("Failed to persist stage results (run_id=%s)", run_id)
 
-    def _build_pipeline_response(
+    async def _extract_pipeline_learnings(
         self,
+        connection_id: str,
+        *,
         exec_result: _StageExecutorResult,
-        wf_id: str,
-        staleness_warning: str | None,
-        pipeline_run_id: str,
-    ) -> AgentResponse:
-        """Convert a ``_StageExecutorResult`` into an ``AgentResponse``."""
-        last_sql_result = None
-        total_usage: dict[str, int] = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        }
-        tool_call_log: list[dict] = []
-        for stage in exec_result.stage_ctx.plan.stages:
-            sr = exec_result.stage_ctx.get_result(stage.stage_id)
-            if not sr:
-                continue
-            for k in total_usage:
-                total_usage[k] += sr.token_usage.get(k, 0)
-            if sr.query:
-                tool_call_log.append(
-                    {"tool": "query_database", "stage": stage.stage_id, "query": sr.query}
+        replan_history: list[dict[str, Any]],
+    ) -> None:
+        """Best-effort extraction of pipeline-level learnings after execution."""
+        try:
+            from app.models.base import async_session_factory
+
+            extractor = PipelineLearningExtractor()
+
+            async with async_session_factory() as session:
+                for rh in replan_history:
+                    await extractor.extract_from_replan(
+                        session,
+                        connection_id,
+                        question="",
+                        failed_stage_id=rh.get("failed_stage", ""),
+                        failed_stage_tool=rh.get("failed_stage", ""),
+                        error=rh.get("error", ""),
+                        replan_succeeded=(exec_result.status == "completed"),
+                    )
+
+                if exec_result.data_gate_outcome and exec_result.failed_stage:
+                    await extractor.extract_from_data_gate(
+                        session,
+                        connection_id,
+                        stage_id=exec_result.failed_stage.stage_id,
+                        stage_tool=exec_result.failed_stage.tool,
+                        outcome=exec_result.data_gate_outcome,
+                    )
+
+                await extractor.extract_from_pipeline_completion(
+                    session,
+                    connection_id,
+                    stage_ctx=exec_result.stage_ctx,
+                    replan_history=replan_history,
                 )
-            if sr.query_result:
-                last_sql_result = sr
-
-        n_stages = len(exec_result.stage_ctx.plan.stages)
-        completed = sum(
-            1
-            for s in exec_result.stage_ctx.plan.stages
-            if exec_result.stage_ctx.get_result(s.stage_id)
-        )
-
-        if exec_result.status == "completed":
-            answer = exec_result.final_answer or (
-                "The analysis pipeline completed, but no summary was generated. "
-                "Please review the data or try rephrasing your question."
-            )
-            return AgentResponse(
-                answer=answer,
-                query=last_sql_result.query if last_sql_result else None,
-                results=last_sql_result.query_result if last_sql_result else None,
-                workflow_id=wf_id,
-                staleness_warning=staleness_warning,
-                response_type="pipeline_complete",
-                viz_type="table" if last_sql_result else "text",
-                viz_config={"pipeline_run_id": pipeline_run_id},
-                token_usage=total_usage,
-                tool_call_log=tool_call_log,
-                steps_used=completed,
-                steps_total=n_stages,
-            )
-
-        if exec_result.status == "checkpoint":
-            cp = exec_result.checkpoint_result
-            preview = ""
-            if cp and cp.query_result:
-                preview = (
-                    f"Found {cp.query_result.row_count} rows "
-                    f"(columns: {', '.join(cp.query_result.columns)}). "
-                )
-            cp_stage = exec_result.checkpoint_stage
-            stage_desc = cp_stage.description if cp_stage else ""
-            return AgentResponse(
-                answer=(
-                    f"{preview}{stage_desc}\n\nDoes this look correct? "
-                    "You can **continue**, **modify** the request, "
-                    "or **retry** this stage."
-                ),
-                query=cp.query if cp else None,
-                results=cp.query_result if cp else None,
-                workflow_id=wf_id,
-                staleness_warning=staleness_warning,
-                response_type="stage_checkpoint",
-                viz_type="table" if cp and cp.query_result else "text",
-                viz_config={
-                    "pipeline_run_id": pipeline_run_id,
-                    "stage_id": cp_stage.stage_id if cp_stage else "",
-                },
-                token_usage=total_usage,
-                tool_call_log=tool_call_log,
-                steps_used=completed,
-                steps_total=n_stages,
-            )
-
-        # stage_failed
-        fail_msg = ""
-        if exec_result.failed_validation:
-            fail_msg = exec_result.failed_validation.error_summary
-        stage_desc = exec_result.failed_stage.description if exec_result.failed_stage else ""
-        return AgentResponse(
-            answer=f"Stage '{stage_desc}' failed: {fail_msg}\n\n"
-            "Would you like me to **retry** with a different approach, "
-            "or **modify** the request?",
-            workflow_id=wf_id,
-            staleness_warning=staleness_warning,
-            response_type="stage_failed",
-            viz_config={
-                "pipeline_run_id": pipeline_run_id,
-                "stage_id": (exec_result.failed_stage.stage_id if exec_result.failed_stage else ""),
-            },
-            token_usage=total_usage,
-            tool_call_log=tool_call_log,
-            steps_used=completed,
-            steps_total=n_stages,
-        )
+        except Exception:
+            logger.debug("Pipeline learning extraction failed", exc_info=True)
 
     async def _llm_call_with_retry(
         self,
@@ -1658,32 +1843,6 @@ class OrchestratorAgent(BaseAgent):
             chunk = text[i : i + chunk_size]
             await self._tracker.emit(wf_id, "token", "streaming", chunk)
 
-    def _emit_tool_result_thinking(
-        self,
-        wf_id: str,
-        label: str,
-        sub_result: Any,
-    ) -> None:
-        """Fire-and-forget a thinking event summarising a sub-agent result."""
-        detail = f"{label} finished"
-        if isinstance(sub_result, SQLAgentResult):
-            if sub_result.results:
-                rc = sub_result.results.row_count
-                cc = len(sub_result.results.columns)
-                detail = f"{label}: {rc} rows, {cc} columns returned"
-            elif sub_result.error:
-                detail = f"{label}: error — {sub_result.error[:80]}"
-        elif isinstance(sub_result, KnowledgeResult):
-            n = len(sub_result.sources)
-            detail = f"{label}: {n} source(s) found"
-        task = asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
-
-        def _done(t: asyncio.Task) -> None:
-            if not t.cancelled() and t.exception():
-                logger.debug("Fire-and-forget thinking emit failed: %s", t.exception())
-
-        task.add_done_callback(_done)
-
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
         """Convert arbitrary exceptions to user-friendly messages."""
@@ -1694,998 +1853,14 @@ class OrchestratorAgent(BaseAgent):
             return "Permission error. Please check your database credentials and permissions."
         return "An unexpected error occurred. Please try again shortly."
 
-    # ------------------------------------------------------------------
-    # Tool-call deduplication
-    # ------------------------------------------------------------------
-
-    _DEDUP_TOOL_NAMES = frozenset({"query_database", "search_codebase", "query_mcp_source"})
-
-    @staticmethod
-    def _dedup_tool_calls(
-        tool_calls: list[ToolCall],
-        chat_history: list[Message],
-    ) -> tuple[list[ToolCall], dict[str, str]]:
-        """Remove duplicate data-retrieval tool calls and those already answered in history.
-
-        Returns ``(deduped_calls, skipped_map)`` where *skipped_map* maps
-        ``tool_call.id`` to a synthetic result string for skipped calls.
-        """
-        skipped: dict[str, str] = {}
-        seen_questions: dict[str, str] = {}  # (tool_name, normalised_question) -> first tc.id
-
-        kept: list[ToolCall] = []
-        for tc in tool_calls:
-            if tc.name not in OrchestratorAgent._DEDUP_TOOL_NAMES:
-                kept.append(tc)
-                continue
-
-            args = tc.arguments or {}
-            q = (args.get("question") or "").strip()
-            q_norm = q.lower()
-            dedup_key = f"{tc.name}::{q_norm}"
-
-            if dedup_key in seen_questions:
-                skipped[tc.id] = (
-                    "Duplicate request — this question is identical to another "
-                    "tool call in this batch. Results will come from the first call."
-                )
-                logger.info("Dedup: skipped duplicate %s call: %s", tc.name, q[:80])
-                continue
-
-            seen_questions[dedup_key] = tc.id
-            kept.append(tc)
-
-        if skipped:
-            logger.info("Tool-call dedup: kept %d, skipped %d", len(kept), len(skipped))
-        return kept, skipped
-
-    # ------------------------------------------------------------------
-    # Meta-tool dispatch
-    # ------------------------------------------------------------------
-
-    async def _handle_meta_tool(
-        self,
-        tc: ToolCall,
-        context: AgentContext,
-        wf_id: str,
-        total_usage: dict[str, int],
-    ) -> tuple[str, Any]:
-        """Dispatch a meta-tool call to the appropriate sub-agent.
-
-        Returns ``(result_text_for_llm, typed_sub_result_or_None)``.
-        """
-        tool_labels = {
-            "query_database": "SQL Agent",
-            "search_codebase": "Knowledge Agent",
-            "manage_rules": "Rules Manager",
-            "query_mcp_source": "MCP Source Agent",
-            "ask_user": "Asking user for clarification",
-            "process_data": "Data Processing",
-        }
-        brief = (tc.arguments or {}).get("question", "")[:80]
-        label = tool_labels.get(tc.name, tc.name)
-        desc = f"Calling {label}"
-        if brief:
-            desc += f": {brief}"
-        await self._tracker.emit(wf_id, "thinking", "in_progress", desc)
-
-        if tc.name == "query_database":
-            sql_text, sql_sub = await self._handle_query_database(
-                tc,
-                context,
-                wf_id,
-                total_usage,
-            )
-            self._emit_tool_result_thinking(wf_id, "SQL Agent", sql_sub)
-            return sql_text, sql_sub
-        if tc.name == "search_codebase":
-            kb_text, kb_sub = await self._handle_search_codebase(
-                tc,
-                context,
-                wf_id,
-                total_usage,
-            )
-            self._emit_tool_result_thinking(wf_id, "Knowledge Agent", kb_sub)
-            return kb_text, kb_sub
-        if tc.name == "manage_rules":
-            rules_text = await self._handle_manage_rules(
-                tc.arguments or {},
-                context,
-                wf_id,
-            )
-            return rules_text, None
-        if tc.name == "list_rules":
-            rules_text = await self._handle_list_rules(context, wf_id)
-            return rules_text, None
-        if tc.name == "query_mcp_source":
-            mcp_text, mcp_sub = await self._handle_query_mcp_source(
-                tc,
-                context,
-                wf_id,
-                total_usage,
-            )
-            self._emit_tool_result_thinking(wf_id, "MCP Source Agent", mcp_sub)
-            return mcp_text, mcp_sub
-        if tc.name == "process_data":
-            pd_text = await self._handle_process_data(tc, wf_id)
-            pd_sub = self._wf_sql_results.get(wf_id)
-            return pd_text, pd_sub
-        if tc.name == "ask_user":
-            return await self._handle_ask_user(tc, context, wf_id)
-        logger.warning("Unknown meta-tool called: %s", tc.name)
-        return (
-            f"Error: unknown tool '{tc.name}'. Available tools: "
-            "query_database, search_codebase, manage_rules, list_rules, "
-            "query_mcp_source, process_data, ask_user."
-        ), None
-
-    async def _handle_query_database(
-        self,
-        tc: ToolCall,
-        context: AgentContext,
-        wf_id: str,
-        total_usage: dict[str, int],
-    ) -> tuple[str, SQLAgentResult | None]:
-        args = tc.arguments or {}
-        sub_question: str = args.get("question", context.user_question)
-
-        _sql_history_tail = 4  # last 2 user-assistant exchanges
-        scoped_history = context.chat_history[-_sql_history_tail:] if context.chat_history else []
-        sql_context = replace(context, chat_history=scoped_history)
-
-        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
-            try:
-                _sd_sql: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:sql_agent",
-                    f"SQL Agent (attempt {attempt + 1})",
-                    step_data=_sd_sql,
-                ):
-                    sql_result = await self._sql.run(sql_context, question=sub_question)
-                    preview_parts = []
-                    if sql_result.query:
-                        preview_parts.append(f"SQL: {sql_result.query[:300]}")
-                    if sql_result.results:
-                        preview_parts.append(
-                            f"{sql_result.results.row_count} rows, "
-                            f"{len(sql_result.results.columns)} cols"
-                        )
-                    _sd_sql["output_preview"] = "\n".join(preview_parts)[:_PREVIEW_MAX]
-
-                self.accum_usage(total_usage, sql_result.token_usage)
-
-                vr = self._validator.validate_sql_result(sql_result)
-                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info(
-                        "SQL agent validation failed (attempt %d): %s",
-                        attempt + 1,
-                        vr.errors,
-                    )
-                    continue
-
-                return (
-                    self._format_sql_result_for_llm(sql_result, vr.warnings),
-                    sql_result,
-                )
-
-            except AgentRetryableError as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("SQL agent retryable error (attempt %d): %s", attempt + 1, e)
-                    continue
-                return (
-                    f"SQL query failed after retries: {e}. "
-                    "Partial information may be available from other tools."
-                ), None
-            except AgentFatalError as e:
-                return f"SQL query failed: {e}", None
-            except AgentError as e:
-                return f"SQL agent error: {e}", None
-            except RETRYABLE_LLM_ERRORS as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("SQL agent LLM error (attempt %d): %s", attempt + 1, e)
-                    await asyncio.sleep(getattr(e, "retry_after_seconds", None) or 2.0)
-                    continue
-                return f"SQL query failed after retries: {e}", None
-
-        return (
-            "SQL query failed after maximum retries. "
-            "Partial information may be available from other tools."
-        ), None
-
-    async def _handle_process_data(
-        self,
-        tc: ToolCall,
-        wf_id: str,
-    ) -> str:
-        """Apply a data-processing operation to the last query result."""
-        args = tc.arguments or {}
-        operation: str = args.get("operation", "")
-
-        wf_sql = self._wf_sql_results.get(wf_id)
-        if wf_sql is None or wf_sql.results is None:
-            return (
-                "Error: no query results available to process. "
-                "Call query_database first to retrieve data, then use process_data."
-            )
-
-        qr = wf_sql.results
-        if qr.error or not qr.rows:
-            return "Error: last query result has no data rows to process."
-
-        params = self._build_process_data_params(args)
-
-        try:
-            processor = get_data_processor()
-            processed = processor.process(qr, operation, params)
-        except ValueError as e:
-            return f"Processing error: {e}"
-        except Exception:
-            logger.exception("Unexpected error in process_data")
-            return "Error: data processing failed unexpectedly."
-
-        import time as _time
-
-        updated_sql = replace(wf_sql, results=processed.query_result)
-        self._wf_sql_results[wf_id] = updated_sql
-        self._wf_enriched[wf_id] = (updated_sql, _time.time())
-
-        result_qr = processed.query_result
-        parts: list[str] = [f"**Data Processing:** {processed.summary}", ""]
-        parts.append(f"**Columns:** {', '.join(result_qr.columns)}")
-        parts.append(f"**Total rows:** {result_qr.row_count}")
-
-        if operation == "aggregate_data":
-            parts.append("")
-            parts.append("**Full aggregation results:**")
-            header = " | ".join(result_qr.columns)
-            parts.append(header)
-            parts.append("-" * len(header))
-            for row in result_qr.rows[:200]:
-                parts.append(" | ".join(str(v) for v in row))
-            if result_qr.row_count > 200:
-                parts.append(f"... and {result_qr.row_count - 200} more groups")
-        else:
-            parts.append("")
-            parts.append("**Sample rows (first 5):**")
-            for row in result_qr.rows[:5]:
-                parts.append(" | ".join(str(v) for v in row))
-            if result_qr.row_count > 5:
-                parts.append(
-                    f"\nFull enriched data contains {result_qr.row_count} rows. "
-                    "Use process_data with operation='aggregate_data' to compute "
-                    "groupings and statistics over the complete dataset."
-                )
-
-        await self._tracker.emit(wf_id, "thinking", "completed", processed.summary[:120])
-        return "\n".join(parts)
-
-    @staticmethod
-    def _build_process_data_params(args: dict[str, Any]) -> dict[str, Any]:
-        """Convert flat LLM tool-call arguments into ``DataProcessor`` params."""
-        params: dict[str, Any] = {}
-        if args.get("column"):
-            params["column"] = args["column"]
-        if args.get("group_by"):
-            params["group_by"] = [c.strip() for c in str(args["group_by"]).split(",") if c.strip()]
-        if args.get("aggregations"):
-            agg_list: list[tuple[str, str]] = []
-            for pair in str(args["aggregations"]).split(","):
-                pair = pair.strip()
-                if ":" in pair:
-                    col, fn = pair.rsplit(":", 1)
-                    agg_list.append((col.strip(), fn.strip()))
-            if agg_list:
-                params["aggregations"] = agg_list
-        if args.get("sort_by"):
-            params["sort_by"] = str(args["sort_by"]).strip()
-        if args.get("order"):
-            params["order"] = str(args["order"]).strip().lower()
-        if args.get("op"):
-            params["op"] = str(args["op"]).strip()
-        if "value" in args and args["value"] is not None:
-            params["value"] = args["value"]
-        if str(args.get("exclude_empty", "")).lower() in ("true", "1", "yes"):
-            params["exclude_empty"] = True
-        return params
-
-    async def _handle_search_codebase(
-        self,
-        tc: ToolCall,
-        context: AgentContext,
-        wf_id: str,
-        total_usage: dict[str, int],
-    ) -> tuple[str, KnowledgeResult | None]:
-        args = tc.arguments or {}
-        sub_question: str = args.get("question", context.user_question)
-
-        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
-            try:
-                _sd_ka: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:knowledge_agent",
-                    f"Knowledge Agent (attempt {attempt + 1})",
-                    step_data=_sd_ka,
-                ):
-                    kb_ctx = replace(
-                        context,
-                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
-                    )
-                    knowledge_result = await self._knowledge.run(kb_ctx, question=sub_question)
-                    src_count = len(knowledge_result.sources) if knowledge_result.sources else 0
-                    _sd_ka["output_preview"] = (
-                        f"{src_count} source(s)\n{(knowledge_result.answer or '')[:400]}"
-                    )[:_PREVIEW_MAX]
-
-                self.accum_usage(total_usage, knowledge_result.token_usage)
-
-                vr = self._validator.validate_knowledge_result(knowledge_result)
-                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info(
-                        "Knowledge agent validation failed (attempt %d): %s",
-                        attempt + 1,
-                        vr.errors,
-                    )
-                    continue
-                if not vr.passed:
-                    return (
-                        f"Knowledge search issue: {'; '.join(vr.errors)}",
-                        knowledge_result,
-                    )
-
-                text = knowledge_result.answer
-                if vr.warnings:
-                    text += "\n\nNote: " + "; ".join(vr.warnings)
-                return text, knowledge_result
-
-            except AgentRetryableError as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info(
-                        "Knowledge agent retryable error (attempt %d): %s",
-                        attempt + 1,
-                        e,
-                    )
-                    continue
-                return f"Knowledge search failed after retries: {e}", None
-            except (AgentFatalError, AgentError) as e:
-                return f"Knowledge search failed: {e}", None
-            except RETRYABLE_LLM_ERRORS as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("Knowledge agent LLM error (attempt %d): %s", attempt + 1, e)
-                    await asyncio.sleep(e.retry_after_seconds or 2.0)
-                    continue
-                return f"Knowledge search failed: {e.user_message}", None
-
-        return "Knowledge search failed after maximum retries.", None
-
-    async def _handle_manage_rules(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
-        action: str = args.get("action", "")
-        name: str = args.get("name", "").strip()
-        content: str = args.get("content", "").strip()
-        rule_id: str = args.get("rule_id", "").strip()
-
-        if action not in ("create", "update", "delete"):
-            return f"Error: invalid action '{action}'. Use 'create', 'update', or 'delete'."
-
-        if action == "create" and not name:
-            return "Error: 'name' is required when action is 'create'."
-        if action == "create" and not content:
-            return "Error: 'content' is required when action is 'create'."
-        if action == "update" and not rule_id:
-            return "Error: 'rule_id' is required when action is 'update'."
-        if action == "update" and not content and not name:
-            return "Error: at least 'name' or 'content' must be provided for update."
-        if action == "delete" and not rule_id:
-            return "Error: 'rule_id' is required when action is 'delete'."
-
-        from app.models.base import async_session_factory
-        from app.services.membership_service import MembershipService
-        from app.services.rule_service import RuleService
-
-        membership_svc = MembershipService()
-        rule_svc = RuleService()
-
-        try:
-            _sd_rules: dict[str, Any] = {
-                "input_preview": f"action={action} name={name} rule_id={rule_id}"[:_PREVIEW_MAX],
-            }
-            async with self._tracker.step(
-                wf_id,
-                "orchestrator:manage_rules",
-                f"Managing rule ({action})",
-                step_data=_sd_rules,
-            ):
-                async with async_session_factory() as session:
-                    if ctx.user_id:
-                        from app.services.membership_service import ROLE_HIERARCHY
-
-                        role = await membership_svc.get_role(session, ctx.project_id, ctx.user_id)
-                        if role is None:
-                            result_text = "Permission denied: not a member of this project."
-                            _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                            return result_text
-                        if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get("editor", 0):
-                            result_text = (
-                                "Permission denied: requires at least"
-                                " 'editor' role to manage rules."
-                            )
-                            _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                            return result_text
-                    else:
-                        result_text = "Error: user identity not available for permission check."
-                        _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                        return result_text
-
-                    if action == "create":
-                        rule = await rule_svc.create(
-                            session,
-                            project_id=ctx.project_id,
-                            name=name,
-                            content=content,
-                            format="markdown",
-                        )
-                        result_text = (
-                            f"Rule created successfully.\n"
-                            f"- **Name:** {rule.name}\n"
-                            f"- **ID:** {rule.id}\n"
-                            f"- **Content:** {rule.content[:200]}"
-                        )
-                        _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                        return result_text
-
-                    if action == "update":
-                        update_kwargs: dict = {}
-                        if name:
-                            update_kwargs["name"] = name
-                        if content:
-                            update_kwargs["content"] = content
-                        updated_rule = await rule_svc.update(session, rule_id, **update_kwargs)
-                        if not updated_rule:
-                            result_text = f"Error: rule with id '{rule_id}' not found."
-                            _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                            return result_text
-                        result_text = (
-                            f"Rule updated successfully.\n"
-                            f"- **Name:** {updated_rule.name}\n"
-                            f"- **ID:** {updated_rule.id}\n"
-                            f"- **Content:** {updated_rule.content[:200]}"
-                        )
-                        _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                        return result_text
-
-                    deleted = await rule_svc.delete(session, rule_id)
-                    if not deleted:
-                        result_text = f"Error: rule with id '{rule_id}' not found."
-                        _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                        return result_text
-                    result_text = f"Rule deleted successfully (id: {rule_id})."
-                    _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
-                    return result_text
-        except Exception as e:
-            logger.exception("Rule management failed (%s)", action)
-            return f"Error managing rule: {e}"
-
-    async def _handle_list_rules(
-        self,
-        ctx: AgentContext,
-        wf_id: str,
-    ) -> str:
-        """List all custom rules for the project."""
-        from app.models.base import async_session_factory
-        from app.services.rule_service import RuleService
-
-        rule_svc = RuleService()
-        try:
-            async with async_session_factory() as session:
-                rules = await rule_svc.list_all(session, project_id=ctx.project_id)
-            if not rules:
-                return "No custom rules found for this project."
-            lines = [f"Found {len(rules)} rule(s):\n"]
-            for r in rules:
-                preview = (r.content or "")[:100].replace("\n", " ")
-                lines.append(f"- **{r.name}** (id: `{r.id}`): {preview}")
-            return "\n".join(lines)
-        except Exception as e:
-            logger.exception("list_rules failed")
-            return f"Error listing rules: {e}"
-
-    async def _handle_ask_user(
-        self,
-        tc: ToolCall,
-        context: AgentContext,
-        wf_id: str,
-    ) -> NoReturn:
-        """Return a clarification request to the user via AgentResponse.
-
-        The orchestrator loop is interrupted; the caller (chat route) converts
-        the special return into a ``clarification_request`` message.
-        """
-        args = tc.arguments or {}
-        question = args.get("question", "")
-        question_type = args.get("question_type", "free_text")
-        options_raw = args.get("options", "")
-        ask_context = args.get("context", "")
-
-        options: list[str] = []
-        if options_raw:
-            options = [o.strip() for o in options_raw.split(",") if o.strip()]
-
-        import json as _json
-
-        clarification_payload = _json.dumps(
-            {
-                "question": question,
-                "question_type": question_type,
-                "options": options,
-                "context": ask_context,
-            }
-        )
-
-        raise _ClarificationRequestError(clarification_payload)
-
-    async def _handle_query_mcp_source(
-        self,
-        tc: ToolCall,
-        context: AgentContext,
-        wf_id: str,
-        total_usage: dict[str, int],
-    ) -> tuple[str, MCPSourceResult | None]:
-        args = tc.arguments or {}
-        sub_question: str = args.get("question", context.user_question)
-        connection_id: str = args.get("connection_id", "")
-
-        from app.connectors.mcp_client import MCPClientAdapter
-        from app.models.base import async_session_factory
-        from app.services.connection_service import ConnectionService
-
-        conn_svc = ConnectionService()
-
-        async with async_session_factory() as session:
-            if connection_id:
-                conn = await conn_svc.get(session, connection_id)
-                if not conn or conn.source_type != "mcp":
-                    return (
-                        f"Error: MCP connection '{connection_id}' not found",
-                        None,
-                    )
-                if conn.project_id != context.project_id:
-                    return (
-                        "Error: MCP connection does not belong to this project",
-                        None,
-                    )
-                config = await conn_svc.to_config(session, conn)
-            else:
-                connections = await conn_svc.list_by_project(
-                    session,
-                    context.project_id,
-                )
-                mcp_conns = [c for c in connections if c.source_type == "mcp"]
-                if not mcp_conns:
-                    return (
-                        "Error: no MCP connections configured for this project",
-                        None,
-                    )
-                conn = mcp_conns[0]
-                config = await conn_svc.to_config(session, conn)
-
-        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
-            adapter = MCPClientAdapter()
-            try:
-                await adapter.connect(config)
-
-                _sd_mcp: dict[str, Any] = {
-                    "input_preview": f"source={conn.name}\n{sub_question[:400]}"[:_PREVIEW_MAX],
-                }
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:mcp_source_agent",
-                    f"MCP Source Agent (attempt {attempt + 1})",
-                    step_data=_sd_mcp,
-                ):
-                    mcp_ctx = replace(
-                        context,
-                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
-                    )
-                    result = await self._mcp_source.run(
-                        mcp_ctx,
-                        question=sub_question,
-                        source_name=conn.name,
-                        adapter=adapter,
-                    )
-                    _sd_mcp["output_preview"] = (
-                        f"status={result.status}\n{(result.answer or '')[:400]}"
-                    )[:_PREVIEW_MAX]
-
-                self.accum_usage(total_usage, result.token_usage)
-
-                if result.status == "error":
-                    return f"MCP source error: {result.error}", result
-
-                vr = self._validator.validate_mcp_result(result)
-                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info(
-                        "MCP agent validation failed (attempt %d): %s",
-                        attempt + 1,
-                        vr.errors,
-                    )
-                    continue
-                if not vr.passed:
-                    return (
-                        f"MCP source issue: {'; '.join(vr.errors)}",
-                        result,
-                    )
-
-                text = result.answer
-                if vr.warnings:
-                    text += "\n\nNote: " + "; ".join(vr.warnings)
-                return text, result
-            except RETRYABLE_LLM_ERRORS as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("MCP agent LLM error (attempt %d): %s", attempt + 1, e)
-                    await asyncio.sleep(e.retry_after_seconds or 2.0)
-                    continue
-                return f"MCP source query failed: {e.user_message}", None
-            except Exception as e:
-                if attempt < MAX_SUB_AGENT_RETRIES:
-                    logger.info("MCP source query error (attempt %d): %s", attempt + 1, e)
-                    continue
-                logger.exception("MCP source query failed")
-                return f"MCP source query failed: {e}", None
-            finally:
-                try:
-                    await adapter.disconnect()
-                except Exception:
-                    logger.warning("Failed to disconnect MCP adapter", exc_info=True)
-
-        return "MCP source query failed after maximum retries.", None
-
-    # ------------------------------------------------------------------
-    # Formatting for LLM
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _format_sql_result_for_llm(
-        result: SQLAgentResult,
-        warnings: list[str] | None = None,
-    ) -> str:
-        parts: list[str] = []
-
-        if result.query:
-            parts.append(f"**Query:** `{result.query}`")
-        if result.query_explanation:
-            parts.append(f"**Explanation:** {result.query_explanation}")
-
-        if result.results:
-            qr = result.results
-            if qr.error:
-                parts.append(f"**Error:** {qr.error}")
-            elif not qr.rows:
-                parts.append("Query executed successfully but returned no rows.")
-            else:
-                parts.append(f"**Columns:** {', '.join(qr.columns)}")
-                parts.append(f"**Rows:** {qr.row_count}")
-                parts.append(f"**Execution time:** {qr.execution_time_ms:.1f}ms")
-                parts.append("")
-                for row in qr.rows[:20]:
-                    parts.append(" | ".join(str(v) for v in row))
-                if qr.row_count > 20:
-                    parts.append(f"... and {qr.row_count - 20} more rows")
-
-        if warnings:
-            parts.append("")
-            parts.append("Warnings: " + "; ".join(warnings))
-
-        return "\n".join(parts) if parts else "No results."
-
-    # ------------------------------------------------------------------
-    # Synthesis helpers (step-limit exhaustion)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_partial_text(
-        sql_result: SQLAgentResult | None,
-        knowledge_sources: list[RAGSource],
-    ) -> str:
-        """Build a static fallback message when the step limit is reached."""
-        parts: list[str] = ["I reached the maximum number of analysis steps."]
-        if sql_result and sql_result.results:
-            rc = sql_result.results.row_count
-            parts.append(f"I found {rc} rows of data from the database.")
-        if knowledge_sources:
-            parts.append(
-                f"I found {len(knowledge_sources)} relevant document(s) from the knowledge base."
-            )
-        parts.append("Here is what I found so far based on the tools I used.")
-        return " ".join(parts)
-
-    @staticmethod
-    def _build_timeout_text(
-        sql_result: SQLAgentResult | None,
-        knowledge_sources: list[RAGSource],
-    ) -> str:
-        """Build a static fallback message when the wall-clock time limit is reached."""
-        parts: list[str] = ["I reached the processing time limit."]
-        if sql_result and sql_result.results:
-            rc = sql_result.results.row_count
-            parts.append(f"I found {rc} rows of data from the database.")
-        if knowledge_sources:
-            parts.append(
-                f"I found {len(knowledge_sources)} relevant document(s) from the knowledge base."
-            )
-        parts.append("Here is what I found so far based on the tools I used.")
-        return " ".join(parts)
-
-    @staticmethod
-    def _build_synthesis_messages(
-        loop_messages: list[Message],
-        sql_result: SQLAgentResult | None,
-        knowledge_sources: list[RAGSource],
-        context_window: int,
-    ) -> list[Message]:
-        """Build a compact message list for a final synthesis LLM call.
-
-        Keeps the system prompt and constructs a user message that summarises
-        all collected data, staying within ~40% of the context window.
-        """
-        system_msg = (
-            loop_messages[0]
-            if loop_messages
-            else Message(role="system", content="You are a helpful data assistant.")
-        )
-
-        data_parts: list[str] = []
-        if sql_result and sql_result.query:
-            data_parts.append(f"SQL query executed: {sql_result.query}")
-        if sql_result and sql_result.results:
-            r = sql_result.results
-            data_parts.append(
-                f"Query returned {r.row_count} rows, {len(r.columns)} columns: "
-                f"{', '.join(r.columns[:20])}"
-            )
-            if r.rows:
-                sample = r.rows[:5]
-                for row in sample:
-                    data_parts.append(f"  {row}")
-        if knowledge_sources:
-            for src in knowledge_sources[:5]:
-                raw = getattr(src, "content", "") if hasattr(src, "content") else str(src)
-                snippet = raw[:200]
-                data_parts.append(f"Knowledge source: {snippet}")
-
-        tool_summaries: list[str] = []
-        for m in loop_messages:
-            if m.role == "tool" and m.content:
-                name = m.name or "tool"
-                preview = m.content[:300].replace("\n", " ").strip()
-                tool_summaries.append(f"[{name}] {preview}")
-
-        budget = int(context_window * 0.4)
-        chars_budget = budget * 4
-
-        collected = "DATA COLLECTED SO FAR:\n" + "\n".join(data_parts)
-        if tool_summaries:
-            tool_section = "\n\nTOOL RESULTS SUMMARY:\n" + "\n".join(tool_summaries)
-            if len(collected) + len(tool_section) < chars_budget:
-                collected += tool_section
-
-        if len(collected) > chars_budget:
-            collected = collected[:chars_budget] + "\n... (truncated)"
-
-        user_msg = Message(
-            role="user",
-            content=(
-                "The analysis reached its step limit before completing. "
-                "Based on all the data collected above, please provide a "
-                "comprehensive answer to the original question. Summarize "
-                "the findings clearly and note if the analysis is incomplete.\n\n" + collected
-            ),
-        )
-
-        return [system_msg, user_msg]
-
-    # ------------------------------------------------------------------
-    # Response type detection
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _determine_response_type(
-        sql_result: SQLAgentResult | None,
-        knowledge_sources: list[RAGSource],
-        has_mcp_result: bool = False,
-    ) -> str:
-        if sql_result and sql_result.results is not None:
-            return "sql_result"
-        if knowledge_sources:
-            return "knowledge"
-        if has_mcp_result:
-            return "mcp_source"
-        return "text"
-
-    # ------------------------------------------------------------------
-    # Context helpers (migrated from ConversationalAgent)
-    # ------------------------------------------------------------------
-
-    async def _has_mcp_sources(self, project_id: str, wf_id: str = "") -> bool:
-        """Check if the project has any MCP-type connections (cached for 60s)."""
-        cached = self._mcp_cache.get(project_id)
-        if cached:
-            has, ts = cached
-            if (time.monotonic() - ts) < self._MCP_CACHE_TTL:
-                return has
-
-        try:
-            from app.models.base import async_session_factory
-            from app.services.connection_service import ConnectionService
-
-            conn_svc = ConnectionService()
-            async with async_session_factory() as session:
-                connections = await conn_svc.list_by_project(session, project_id)
-                result = any(c.source_type == "mcp" for c in connections)
-            self._mcp_cache[project_id] = (result, time.monotonic())
-            return result
-        except Exception:
-            logger.debug("Failed to check MCP sources", exc_info=True)
-            if wf_id:
-                try:
-                    await self._tracker.emit(
-                        wf_id,
-                        "orchestrator:warning",
-                        "degraded",
-                        "MCP source check failed; MCP tools unavailable this request",
-                    )
-                except Exception:
-                    logger.debug("Failed to emit MCP degradation warning", exc_info=True)
-            return False
-
-    def _has_knowledge_base(self, project_id: str) -> bool:
-        try:
-            collection = self._vector_store.get_or_create_collection(project_id)
-            return collection.count() > 0
-        except Exception:
-            return False
-
-    async def _build_table_map(self, connection_id: str, wf_id: str = "") -> str:
-        try:
-            from app.models.base import async_session_factory
-            from app.services.db_index_service import DbIndexService
-
-            svc = DbIndexService()
-            async with async_session_factory() as session:
-                entries = await svc.get_index(session, connection_id)
-            return svc.build_table_map(entries)
-        except Exception:
-            logger.debug("Failed to build table map", exc_info=True)
-            if wf_id:
-                try:
-                    await self._tracker.emit(
-                        wf_id,
-                        "orchestrator:warning",
-                        "degraded",
-                        "Schema map unavailable; SQL quality may be reduced",
-                    )
-                except Exception:
-                    logger.debug("Failed to emit schema-map degradation warning", exc_info=True)
-            return ""
-
-    async def _resolve_connection_id(
-        self,
-        project_id: str,
-        cfg: ConnectionConfig,
-    ) -> str | None:
-        from app.models.base import async_session_factory
-        from app.services.connection_service import ConnectionService
-
-        target_key = connector_key(cfg)
-        conn_svc = ConnectionService()
-        async with async_session_factory() as session:
-            connections = await conn_svc.list_by_project(session, project_id)
-            for c in connections:
-                c_cfg = await conn_svc.to_config(session, c)
-                if connector_key(c_cfg) == target_key:
-                    return c.id
-        return None
-
-    async def _load_project_overview(self, project_id: str) -> str | None:
-        """Load the pre-generated project knowledge overview."""
-        try:
-            from sqlalchemy import select
-
-            from app.models.base import async_session_factory
-            from app.models.project_cache import ProjectCache
-
-            async with async_session_factory() as session:
-                result = await session.execute(
-                    select(ProjectCache.overview_text).where(ProjectCache.project_id == project_id)
-                )
-                text = result.scalar_one_or_none()
-                if isinstance(text, str) and text:
-                    return text
-                return None
-        except Exception:
-            logger.debug("Failed to load project overview", exc_info=True)
-            return None
-
-    async def _load_recent_learnings(
-        self,
-        context: AgentContext,
-    ) -> str | None:
-        """Load high-confidence / recent learnings for orchestrator context."""
-        cfg = context.connection_config
-        if not cfg or not cfg.connection_id:
-            return None
-        try:
-            from app.models.base import async_session_factory
-            from app.services.agent_learning_service import AgentLearningService
-
-            svc = AgentLearningService()
-            async with async_session_factory() as session:
-                learnings = await svc.get_learnings(
-                    session,
-                    cfg.connection_id,
-                    min_confidence=0.6,
-                    active_only=True,
-                )
-            if not learnings:
-                return None
-
-            top = sorted(
-                learnings,
-                key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
-                reverse=True,
-            )[:15]
-
-            lines = ["RECENT AGENT LEARNINGS (verified insights):"]
-            for lrn in top:
-                conf = int(lrn.confidence * 100)
-                lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson} ({conf}%)")
-            return "\n".join(lines)
-        except Exception:
-            logger.debug(
-                "Failed to load recent learnings for orchestrator",
-                exc_info=True,
-            )
-            return None
-
-    async def _check_staleness(self, project_id: str, wf_id: str = "") -> str | None:
-        try:
-            from pathlib import Path
-
-            from app.config import settings as app_settings
-            from app.knowledge.git_tracker import GitTracker
-            from app.models.base import async_session_factory
-
-            repo_dir = Path(app_settings.repo_clone_base_dir) / project_id
-            if not repo_dir.exists():
-                return None
-
-            git_tracker = GitTracker()
-            async with async_session_factory() as session:
-                last_sha = await git_tracker.get_last_indexed_sha(session, project_id)
-            if not last_sha:
-                return "Knowledge base has not been indexed yet."
-
-            head_sha = git_tracker.get_head_sha(repo_dir)
-            if head_sha == last_sha:
-                return None
-
-            behind = await git_tracker.count_commits_ahead(repo_dir, last_sha)
-            if behind > 0:
-                return (
-                    f"Knowledge base is {behind} commit(s) behind the current HEAD. "
-                    "Answers may be based on outdated code. Consider re-indexing."
-                )
-            return "Knowledge base may be out of date."
-        except Exception:
-            logger.debug("Staleness check failed", exc_info=True)
-            if wf_id:
-                try:
-                    await self._tracker.emit(
-                        wf_id,
-                        "orchestrator:warning",
-                        "degraded",
-                        "Staleness check failed; unable to verify knowledge base freshness",
-                    )
-                except Exception:
-                    logger.debug("Failed to emit staleness degradation warning", exc_info=True)
-            return None
+    # Backward-compatible aliases — delegate to ToolDispatcher
+    _DEDUP_TOOL_NAMES = ToolDispatcher._DEDUP_TOOL_NAMES
+    _dedup_tool_calls = staticmethod(ToolDispatcher.dedup_tool_calls)
+    _build_process_data_params = staticmethod(ToolDispatcher.build_process_data_params)
+    _format_sql_result_for_llm = staticmethod(ToolDispatcher.format_sql_result_for_llm)
+
+    # Backward-compatible aliases — delegate to ResponseBuilder
+    _build_partial_text = staticmethod(ResponseBuilder.build_partial_text)
+    _build_timeout_text = staticmethod(ResponseBuilder.build_timeout_text)
+    _build_synthesis_messages = staticmethod(ResponseBuilder.build_synthesis_messages)
+    _determine_response_type = staticmethod(ResponseBuilder.determine_response_type)

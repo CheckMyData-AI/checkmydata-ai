@@ -26,15 +26,19 @@ class StageValidation:
     max_rows: int | None = None
     business_rules: list[str] | None = None
     cross_stage_checks: list[str] | None = None
+    auto_injected: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "expected_columns": self.expected_columns,
             "min_rows": self.min_rows,
             "max_rows": self.max_rows,
             "business_rules": self.business_rules,
             "cross_stage_checks": self.cross_stage_checks,
         }
+        if self.auto_injected:
+            d["auto_injected"] = True
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> StageValidation:
@@ -44,6 +48,7 @@ class StageValidation:
             max_rows=d.get("max_rows"),
             business_rules=d.get("business_rules"),
             cross_stage_checks=d.get("cross_stage_checks"),
+            auto_injected=d.get("auto_injected", False),
         )
 
 
@@ -56,9 +61,11 @@ class PlanStage:
     input_context: str = ""
     validation: StageValidation = field(default_factory=StageValidation)
     checkpoint: bool = False
+    max_retries: int = 2
+    replan_on_failure: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "stage_id": self.stage_id,
             "description": self.description,
             "tool": self.tool,
@@ -67,6 +74,11 @@ class PlanStage:
             "validation": self.validation.to_dict(),
             "checkpoint": self.checkpoint,
         }
+        if self.max_retries != 2:
+            d["max_retries"] = self.max_retries
+        if not self.replan_on_failure:
+            d["replan_on_failure"] = False
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PlanStage:
@@ -78,6 +90,8 @@ class PlanStage:
             input_context=d.get("input_context", ""),
             validation=StageValidation.from_dict(d.get("validation", {})),
             checkpoint=d.get("checkpoint", False),
+            max_retries=d.get("max_retries", 2),
+            replan_on_failure=d.get("replan_on_failure", True),
         )
 
 
@@ -87,14 +101,25 @@ class ExecutionPlan:
     question: str
     stages: list[PlanStage]
     complexity_reason: str = ""
+    plan_type: str = "full"  # "quick" or "full"
+
+    def get_stage(self, stage_id: str) -> PlanStage | None:
+        """Look up a stage by ID."""
+        for s in self.stages:
+            if s.stage_id == stage_id:
+                return s
+        return None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "plan_id": self.plan_id,
             "question": self.question,
             "stages": [s.to_dict() for s in self.stages],
             "complexity_reason": self.complexity_reason,
         }
+        if self.plan_type != "full":
+            d["plan_type"] = self.plan_type
+        return d
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False)
@@ -106,6 +131,7 @@ class ExecutionPlan:
             question=d["question"],
             stages=[PlanStage.from_dict(s) for s in d.get("stages", [])],
             complexity_reason=d.get("complexity_reason", ""),
+            plan_type=d.get("plan_type", "full"),
         )
 
     @classmethod

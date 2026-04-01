@@ -4,31 +4,8 @@ import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import * as storage from "@/lib/safe-storage";
 import { useAppStore, getPersistedId } from "@/stores/app-store";
-import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
-
-function mapMessages(msgs: { id: string; role: string; content: string; metadata_json?: string | null; tool_calls_json?: string | null; user_rating?: number | null; created_at: string }[]): ChatMessage[] {
-  return msgs.map((m) => {
-    let meta: Record<string, unknown> = {};
-    try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* malformed metadata */ }
-    return {
-      id: m.id,
-      role: m.role as "user" | "assistant" | "system",
-      content: m.content,
-      query: (meta.query as string) || undefined,
-      queryExplanation: (meta.query_explanation as string) || undefined,
-      visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
-      error: (meta.error as string) || undefined,
-      metadataJson: m.metadata_json || undefined,
-      stalenessWarning: (meta.staleness_warning as string) || undefined,
-      responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
-      userRating: m.user_rating ?? undefined,
-      toolCallsJson: m.tool_calls_json || undefined,
-      rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
-      timestamp: new Date(m.created_at).getTime(),
-    };
-  });
-}
+import { mapDtoToMessages } from "@/components/chat/ChatSessionList";
 
 function isAccessError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -117,7 +94,7 @@ export function useRestoreState(isAuthenticated: boolean) {
             store.setActiveSession(welcomeSession);
             const msgs = await api.chat.getMessages(welcome.id);
             if (isStale()) return;
-            store.setMessages(mapMessages(msgs));
+            store.setSessionMessages(welcome.id, mapDtoToMessages(msgs));
           } catch { /* welcome session is best-effort */ }
         } else if (sessionId) {
           const session = sessions.find((s) => s.id === sessionId);
@@ -126,7 +103,7 @@ export function useRestoreState(isAuthenticated: boolean) {
             try {
               const msgs = await api.chat.getMessages(sessionId);
               if (isStale()) return;
-              store.setMessages(mapMessages(msgs));
+              store.setSessionMessages(sessionId, mapDtoToMessages(msgs));
             } catch {
               storage.removeItem("active_session_id");
             }

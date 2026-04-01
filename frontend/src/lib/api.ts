@@ -237,6 +237,13 @@ export interface ChatResponse {
     options?: string[];
     context?: string;
   } | null;
+  sql_results?: Array<{
+    query?: string;
+    query_explanation?: string;
+    visualization?: Record<string, unknown> | null;
+    raw_result?: { columns: string[]; rows: unknown[][]; total_rows: number } | null;
+    insights?: Array<{ type: string; title: string; description: string; confidence: number }>;
+  }> | null;
 }
 
 export interface StreamError {

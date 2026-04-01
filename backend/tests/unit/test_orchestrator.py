@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agents.orchestrator import OrchestratorAgent
+from app.agents.orchestrator import AgentResponse, OrchestratorAgent, SQLResultBlock
 from app.connectors.base import ConnectionConfig, QueryResult, SchemaInfo
 from app.core.orchestrator import Orchestrator, OrchestratorResponse
 from app.llm.base import LLMResponse, Message, ToolCall
@@ -508,7 +508,12 @@ class TestPipelineScopedContext:
         @dataclass
         class _FakeExecResult:
             stage_ctx: StageContext
+            status: str = "completed"
             final_answer: str = "answer"
+            replan_eligible: bool = False
+            failed_stage: object = None
+            failed_validation: object = None
+            data_gate_outcome: object = None
 
         captured_ctx = {}
 
@@ -526,12 +531,20 @@ class TestPipelineScopedContext:
                 agent, "_create_pipeline_run", new=AsyncMock(return_value=mock_pipeline_run)
             ),
             patch.object(agent, "_persist_stage_results", new=AsyncMock()),
-            patch.object(agent, "_build_pipeline_response", return_value=MagicMock()),
+            patch(
+                "app.agents.orchestrator.ResponseBuilder.build_pipeline_response",
+                return_value=MagicMock(),
+            ),
             patch("app.agents.orchestrator.StageExecutor") as mock_executor_cls,
-            patch("app.agents.orchestrator.QueryPlanner") as mock_planner_cls,
+            patch("app.agents.orchestrator.AdaptivePlanner") as mock_planner_cls,
+            patch.object(
+                agent._ctx_loader,
+                "load_recent_learnings",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             mock_planner = mock_planner_cls.return_value
-            mock_planner.plan = AsyncMock(return_value=plan)
+            mock_planner._llm_plan = AsyncMock(return_value=plan)
 
             mock_executor = mock_executor_cls.return_value
             mock_executor.execute = AsyncMock(side_effect=_capture_execute)
@@ -666,7 +679,7 @@ class TestHandleProcessData:
             workflow_tracker=MagicMock(spec=WorkflowTracker),
         )
         tc = ToolCall(id="tc1", name="process_data", arguments={"operation": "aggregate_data"})
-        result = await agent._handle_process_data(tc, "wf-1")
+        result = await agent._dispatcher._handle_process_data(tc, "wf-1")
         assert "no query results" in result.lower()
 
     @pytest.mark.asyncio
@@ -694,14 +707,14 @@ class TestHandleProcessData:
         )
         mock_processed = ProcessedData(query_result=enriched_qr, summary="Added country")
 
-        with patch("app.agents.orchestrator.get_data_processor") as mock_gdp:
+        with patch("app.agents.tool_dispatcher.get_data_processor") as mock_gdp:
             mock_gdp.return_value.process.return_value = mock_processed
             tc = ToolCall(
                 id="tc1",
                 name="process_data",
                 arguments={"operation": "ip_to_country", "column": "ip"},
             )
-            result_text = await agent._handle_process_data(tc, "wf-1")
+            result_text = await agent._dispatcher._handle_process_data(tc, "wf-1")
 
         assert sql_res.results is qr_original
         assert agent._wf_sql_results["wf-1"].results is enriched_qr
@@ -778,10 +791,10 @@ class TestWallClockTimeout:
         )
 
         with (
-            patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch.object(agent._ctx_loader, "has_mcp_sources", new=AsyncMock(return_value=False)),
             patch.object(
-                agent,
-                "_handle_meta_tool",
+                agent._dispatcher,
+                "dispatch",
                 new=AsyncMock(return_value=("result text", None)),
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
@@ -860,10 +873,10 @@ class TestWallClockTimeout:
         )
 
         with (
-            patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch.object(agent._ctx_loader, "has_mcp_sources", new=AsyncMock(return_value=False)),
             patch.object(
-                agent,
-                "_handle_meta_tool",
+                agent._dispatcher,
+                "dispatch",
                 new=AsyncMock(return_value=("result text", None)),
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
@@ -933,6 +946,43 @@ class TestBuildPartialText:
         sources = [RAGSource(source_path="a.md")]
         text = OrchestratorAgent._build_partial_text(None, sources)
         assert "1 relevant document" in text
+
+
+class TestSQLResultBlock:
+    """Tests for the SQLResultBlock dataclass and compound sql_results."""
+
+    def test_defaults(self):
+        block = SQLResultBlock()
+        assert block.query is None
+        assert block.results is None
+        assert block.viz_type == "table"
+        assert block.viz_config == {}
+        assert block.insights == []
+
+    def test_agent_response_sql_results_default_empty(self):
+        resp = AgentResponse(answer="hello")
+        assert resp.sql_results == []
+
+    def test_agent_response_with_multiple_blocks(self):
+        qr1 = QueryResult(columns=["a"], rows=[[1]], row_count=1)
+        qr2 = QueryResult(columns=["b"], rows=[[2]], row_count=1)
+        blocks = [
+            SQLResultBlock(query="SELECT a", results=qr1, viz_type="bar_chart"),
+            SQLResultBlock(query="SELECT b", results=qr2, viz_type="pie_chart"),
+        ]
+        resp = AgentResponse(
+            answer="Two queries",
+            query="SELECT b",
+            results=qr2,
+            sql_results=blocks,
+        )
+        assert len(resp.sql_results) == 2
+        assert resp.sql_results[0].query == "SELECT a"
+        assert resp.sql_results[0].viz_type == "bar_chart"
+        assert resp.sql_results[1].query == "SELECT b"
+        assert resp.sql_results[1].viz_type == "pie_chart"
+        assert resp.query == "SELECT b"
+        assert resp.results is qr2
 
 
 # ------------------------------------------------------------------
@@ -1197,7 +1247,7 @@ class TestOrchestratorIntentRouting:
         )
         with (
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
@@ -1221,32 +1271,27 @@ class TestOrchestratorIntentRouting:
         )
         with (
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._check_staleness",
+                "app.agents.context_loader.ContextLoader.check_staleness",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                "app.agents.context_loader.ContextLoader.load_project_overview",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "app.agents.orchestrator.detect_complexity",
-                return_value=False,
-            ),
-            patch(
-                "app.agents.orchestrator.detect_complexity_adaptive",
-                new_callable=AsyncMock,
+                "app.agents.orchestrator.AdaptivePlanner._is_complex",
                 return_value=False,
             ),
         ):
@@ -1285,32 +1330,27 @@ class TestOrchestratorIntentRouting:
         )
         with (
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._build_table_map",
+                "app.agents.context_loader.ContextLoader.build_table_map",
                 new_callable=AsyncMock,
                 return_value="users: id, email",
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                "app.agents.context_loader.ContextLoader.load_project_overview",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "app.agents.orchestrator.detect_complexity",
-                return_value=False,
-            ),
-            patch(
-                "app.agents.orchestrator.detect_complexity_adaptive",
-                new_callable=AsyncMock,
+                "app.agents.orchestrator.AdaptivePlanner._is_complex",
                 return_value=False,
             ),
         ):
@@ -1336,12 +1376,12 @@ class TestOrchestratorIntentRouting:
 
         with (
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._check_staleness",
+                "app.agents.context_loader.ContextLoader.check_staleness",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -1362,20 +1402,20 @@ class TestOrchestratorIntentRouting:
         )
         with (
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._has_mcp_sources",
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._build_table_map",
+                "app.agents.context_loader.ContextLoader.build_table_map",
                 new_callable=AsyncMock,
             ) as mock_table_map,
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_project_overview",
+                "app.agents.context_loader.ContextLoader.load_project_overview",
                 new_callable=AsyncMock,
             ) as mock_overview,
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._load_recent_learnings",
+                "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
             ) as mock_learnings,
         ):
@@ -1385,3 +1425,240 @@ class TestOrchestratorIntentRouting:
         mock_table_map.assert_not_called()
         mock_overview.assert_not_called()
         mock_learnings.assert_not_called()
+
+
+class TestBuildSqlResultsPayload:
+    """Tests for the _build_sql_results_payload helper in chat.py."""
+
+    def test_returns_none_for_single_block(self):
+        from app.api.routes.chat import _build_sql_results_payload
+
+        qr = QueryResult(columns=["a"], rows=[[1]], row_count=1)
+        block = SQLResultBlock(query="SELECT 1", results=qr)
+        assert _build_sql_results_payload([block]) is None
+
+    def test_returns_none_for_empty(self):
+        from app.api.routes.chat import _build_sql_results_payload
+
+        assert _build_sql_results_payload([]) is None
+
+    def test_returns_list_for_two_blocks(self):
+        from app.api.routes.chat import _build_sql_results_payload
+
+        qr1 = QueryResult(columns=["x"], rows=[[1], [2]], row_count=2)
+        qr2 = QueryResult(columns=["y"], rows=[[3]], row_count=1)
+        blocks = [
+            SQLResultBlock(
+                query="SELECT x",
+                query_explanation="first",
+                results=qr1,
+                viz_type="bar_chart",
+            ),
+            SQLResultBlock(
+                query="SELECT y",
+                query_explanation="second",
+                results=qr2,
+                viz_type="pie_chart",
+            ),
+        ]
+        result = _build_sql_results_payload(blocks, "test answer")
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["query"] == "SELECT x"
+        assert result[0]["query_explanation"] == "first"
+        assert result[0]["raw_result"]["columns"] == ["x"]
+        assert result[0]["raw_result"]["total_rows"] == 2
+        assert result[1]["query"] == "SELECT y"
+        assert result[1]["raw_result"]["total_rows"] == 1
+        for blk_dict in result:
+            assert "visualization" in blk_dict
+            assert "insights" in blk_dict
+
+
+class TestApplyContinuationContext:
+    """Tests for _apply_continuation_context producing structured continuation summaries."""
+
+    def _make_context(self, question="Show me sales", extra=None):
+        from app.agents.base import AgentContext
+
+        mock_llm = MagicMock()
+        mock_tracker = MagicMock()
+        return AgentContext(
+            project_id="test-proj",
+            connection_config=None,
+            user_question=question,
+            chat_history=[],
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+            extra=extra or {},
+        )
+
+    def test_with_rich_continuation_context(self):
+        import json
+
+        continuation = json.dumps(
+            {
+                "sql_queries": [
+                    {
+                        "query": "SELECT product, SUM(amount) FROM sales GROUP BY product",
+                        "row_count": 5,
+                        "columns": ["product", "total"],
+                        "sample_rows": [["Widget", 1000], ["Gadget", 2000]],
+                        "explanation": "Aggregate sales by product",
+                    }
+                ],
+                "tool_call_log": [
+                    {
+                        "tool": "query_database",
+                        "arguments": "{}",
+                        "result_preview": "5 rows returned",
+                    },
+                ],
+                "partial_answer": "Based on the data, Widget has 1000 in sales...",
+                "knowledge_source_count": 0,
+                "steps_used": 15,
+                "steps_total": 15,
+            }
+        )
+        ctx = self._make_context(
+            extra={
+                "pipeline_action": "continue_analysis",
+                "continuation_context": continuation,
+            }
+        )
+
+        result = OrchestratorAgent._apply_continuation_context(ctx)
+
+        summary = result.extra.get("_continuation_summary", "")
+        assert "CONTINUATION" in summary
+        assert "Do NOT re-execute" in summary
+        assert "SELECT product, SUM(amount)" in summary
+        assert "5 rows" in summary
+        assert "product, total" in summary
+        assert "Widget" in summary
+        assert "15/15 steps" in summary
+        assert "partial_answer" not in summary or "Based on the data" in summary
+        assert "pipeline_action" not in result.extra
+
+    def test_without_continuation_context(self):
+        ctx = self._make_context(extra={"pipeline_action": "continue_analysis"})
+
+        result = OrchestratorAgent._apply_continuation_context(ctx)
+
+        summary = result.extra.get("_continuation_summary", "")
+        assert "CONTINUATION" in summary
+        assert "pipeline_action" not in result.extra
+
+    def test_user_question_unchanged(self):
+        ctx = self._make_context(
+            question="Show me sales",
+            extra={"pipeline_action": "continue_analysis"},
+        )
+
+        result = OrchestratorAgent._apply_continuation_context(ctx)
+
+        assert result.user_question == "Show me sales"
+
+    def test_malformed_json_handled_gracefully(self):
+        ctx = self._make_context(
+            extra={
+                "pipeline_action": "continue_analysis",
+                "continuation_context": "not-valid-json{",
+            }
+        )
+
+        result = OrchestratorAgent._apply_continuation_context(ctx)
+
+        summary = result.extra.get("_continuation_summary", "")
+        assert "CONTINUATION" in summary
+
+
+class TestContinuationSkipsClassification:
+    """Verify that continue_analysis skips intent classification and goes to full pipeline."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.complete = AsyncMock()
+        llm.get_context_window = MagicMock(return_value=128000)
+        return llm
+
+    @pytest.fixture
+    def mock_tracker(self):
+        tracker = MagicMock()
+        tracker.start = AsyncMock()
+        tracker.end = AsyncMock()
+        tracker.emit = AsyncMock()
+        tracker.step = MagicMock()
+        step_cm = AsyncMock()
+        step_cm.__aenter__ = AsyncMock(return_value=None)
+        step_cm.__aexit__ = AsyncMock(return_value=False)
+        tracker.step.return_value = step_cm
+        return tracker
+
+    @pytest.fixture
+    def mock_vs(self):
+        vs = MagicMock()
+        collection = MagicMock()
+        collection.count = MagicMock(return_value=0)
+        vs.get_or_create_collection = MagicMock(return_value=collection)
+        return vs
+
+    @pytest.fixture
+    def orch(self, mock_llm, mock_vs, mock_tracker):
+        return OrchestratorAgent(
+            llm_router=mock_llm,
+            vector_store=mock_vs,
+            workflow_tracker=mock_tracker,
+        )
+
+    @pytest.mark.asyncio
+    async def test_continue_analysis_skips_intent(self, orch, mock_llm, mock_tracker):
+        from app.agents.base import AgentContext
+
+        ctx = AgentContext(
+            project_id="test-proj",
+            connection_config=ConnectionConfig(
+                db_type="postgres",
+                db_host="localhost",
+                db_port=5432,
+                db_name="testdb",
+                db_user="user",
+            ),
+            user_question="Show me monthly revenue",
+            chat_history=[],
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            workflow_id="wf-cont",
+            extra={
+                "pipeline_action": "continue_analysis",
+                "continuation_context": (
+                    '{"sql_queries": [], "tool_call_log": [],'
+                    ' "partial_answer": "", "steps_used": 10,'
+                    ' "steps_total": 15}'
+                ),
+            },
+        )
+
+        with (
+            patch(
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.orchestrator.OrchestratorAgent._run_full_pipeline",
+                new_callable=AsyncMock,
+                return_value=AgentResponse(answer="Continued analysis"),
+            ) as mock_pipeline,
+            patch(
+                "app.agents.orchestrator.classify_intent",
+                new_callable=AsyncMock,
+            ) as mock_classify,
+        ):
+            resp = await orch.run(ctx)
+
+        mock_classify.assert_not_called()
+        mock_pipeline.assert_called_once()
+        assert resp.answer == "Continued analysis"

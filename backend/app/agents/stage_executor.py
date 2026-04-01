@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.agents.base import AgentContext, BaseAgent
+from app.agents.data_gate import DataGate, DataGateOutcome
 from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
 from app.agents.stage_context import (
     ExecutionPlan,
@@ -40,6 +41,7 @@ class StageExecutor:
         llm_router: LLMRouter,
         tracker: WorkflowTracker,
         validator: StageValidator | None = None,
+        data_gate: DataGate | None = None,
         mcp_source_agent: BaseAgent | None = None,
     ) -> None:
         self._sql = sql_agent
@@ -47,6 +49,7 @@ class StageExecutor:
         self._llm = llm_router
         self._tracker = tracker
         self._validator = validator or StageValidator()
+        self._data_gate = data_gate or DataGate()
         self._mcp_source = mcp_source_agent
 
     # ------------------------------------------------------------------
@@ -91,6 +94,7 @@ class StageExecutor:
                     failed_validation=StageValidationOutcome(
                         passed=False, errors=[result.error or "unknown"]
                     ),
+                    replan_eligible=stage.replan_on_failure,
                 )
 
             validation = self._validator.validate(stage, result, stage_ctx)
@@ -105,6 +109,28 @@ class StageExecutor:
                         stage_ctx=stage_ctx,
                         failed_stage=stage,
                         failed_validation=validation,
+                        replan_eligible=stage.replan_on_failure,
+                    )
+                result = retried
+
+            gate_outcome = self._data_gate.check(stage, result, stage_ctx)
+            await self._emit_data_gate(wf_id, stage, gate_outcome)
+
+            if not gate_outcome.passed:
+                retried = await self._retry_failed_data_gate(
+                    stage, stage_ctx, context, gate_outcome
+                )
+                if retried is None:
+                    await self._emit_stage_result(wf_id, stage, result)
+                    return _StageExecutorResult(
+                        status="stage_failed",
+                        stage_ctx=stage_ctx,
+                        failed_stage=stage,
+                        failed_validation=StageValidationOutcome(
+                            passed=False, errors=gate_outcome.errors
+                        ),
+                        data_gate_outcome=gate_outcome,
+                        replan_eligible=stage.replan_on_failure,
                     )
                 result = retried
 
@@ -179,13 +205,17 @@ class StageExecutor:
         stage_ctx: StageContext,
         context: AgentContext,
     ) -> StageResult:
-        """Execute a stage, retrying on retryable sub-agent errors."""
+        """Execute a stage, retrying on retryable sub-agent errors.
+
+        Uses per-stage ``max_retries`` (falls back to global setting).
+        """
         wf_id = context.workflow_id
-        for attempt in range(settings.max_stage_retries + 1):
+        max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
+        for attempt in range(max_retries + 1):
             result = await self._execute_stage(stage, stage_ctx, context)
             if result.status != "error":
                 return result
-            if attempt < settings.max_stage_retries:
+            if attempt < max_retries:
                 await self._tracker.emit(
                     wf_id,
                     "stage_retry",
@@ -204,9 +234,10 @@ class StageExecutor:
         context: AgentContext,
         validation: StageValidationOutcome,
     ) -> StageResult | None:
-        """Retry the stage up to max_stage_retries with error context."""
+        """Retry the stage with error context (uses per-stage max_retries)."""
         wf_id = context.workflow_id
-        for retry in range(settings.max_stage_retries):
+        max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
+        for retry in range(max_retries):
             await self._tracker.emit(
                 wf_id,
                 "stage_retry",
@@ -224,6 +255,46 @@ class StageExecutor:
             validation = self._validator.validate(stage, result, stage_ctx)
             await self._emit_stage_validation(wf_id, stage, validation)
             if validation.passed:
+                return result
+        return None
+
+    async def _retry_failed_data_gate(
+        self,
+        stage: PlanStage,
+        stage_ctx: StageContext,
+        context: AgentContext,
+        gate_outcome: DataGateOutcome,
+    ) -> StageResult | None:
+        """Retry after DataGate failure, feeding suggestions as error context."""
+        wf_id = context.workflow_id
+        max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
+        error_ctx = gate_outcome.error_summary
+        if gate_outcome.suggestions:
+            error_ctx += " Suggestions: " + "; ".join(gate_outcome.suggestions)
+        for retry in range(max_retries):
+            await self._tracker.emit(
+                wf_id,
+                "stage_retry",
+                "retrying",
+                f"Stage '{stage.stage_id}' data-gate failed, retry {retry + 1}",
+                stage_id=stage.stage_id,
+                attempt=retry + 2,
+                reason=error_ctx,
+            )
+            result = await self._execute_stage(
+                stage,
+                stage_ctx,
+                context,
+                error_context=error_ctx,
+            )
+            if result.status == "error":
+                continue
+            validation = self._validator.validate(stage, result, stage_ctx)
+            if not validation.passed:
+                continue
+            new_gate = self._data_gate.check(stage, result, stage_ctx)
+            await self._emit_data_gate(wf_id, stage, new_gate)
+            if new_gate.passed:
                 return result
         return None
 
@@ -672,6 +743,20 @@ class StageExecutor:
             index=idx,
         )
 
+    async def _emit_data_gate(self, wf_id: str, stage: PlanStage, outcome: DataGateOutcome) -> None:
+        await self._tracker.emit(
+            wf_id,
+            "data_gate",
+            "passed" if outcome.passed else "failed",
+            outcome.error_summary
+            or ("warnings: " + "; ".join(outcome.warnings) if outcome.warnings else "OK"),
+            stage_id=stage.stage_id,
+            passed=outcome.passed,
+            warnings=outcome.warnings,
+            errors=outcome.errors,
+            suggestions=outcome.suggestions,
+        )
+
     async def _emit_checkpoint(self, wf_id: str, stage: PlanStage, result: StageResult) -> None:
         preview: dict[str, Any] = {"stage_id": stage.stage_id}
         if result.query_result:
@@ -707,6 +792,8 @@ class _StageExecutorResult:
         checkpoint_result: StageResult | None = None,
         failed_stage: PlanStage | None = None,
         failed_validation: StageValidationOutcome | None = None,
+        data_gate_outcome: DataGateOutcome | None = None,
+        replan_eligible: bool = True,
     ) -> None:
         self.status = status  # completed | checkpoint | stage_failed
         self.stage_ctx = stage_ctx
@@ -715,3 +802,5 @@ class _StageExecutorResult:
         self.checkpoint_result = checkpoint_result
         self.failed_stage = failed_stage
         self.failed_validation = failed_validation
+        self.data_gate_outcome = data_gate_outcome
+        self.replan_eligible = replan_eligible

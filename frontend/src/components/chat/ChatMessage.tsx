@@ -22,6 +22,7 @@ import { ClarificationCard } from "./ClarificationCard";
 import { InsightCards, type Insight } from "./InsightCards";
 import { SessionContinuationBanner } from "./SessionContinuationBanner";
 import { SQLExplainer } from "./SQLExplainer";
+import { SQLResultSection } from "./SQLResultSection";
 import { VerificationBadge } from "./VerificationBadge";
 
 export const remarkPlugins = [remarkGfm];
@@ -387,116 +388,131 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
           />
         )}
 
-        {/* SQL Query — only for sql_result responses */}
-        {message.query && isSqlResult && (
-          <details className="mt-3 text-xs">
-            <summary className="cursor-pointer text-text-secondary hover:text-text-primary flex items-center gap-2">
-              View SQL Query
-              {sqlComplexity && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
-                  {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
-                </span>
-              )}
-            </summary>
-            <pre className="mt-2 p-3 bg-surface-1 rounded-lg overflow-x-auto max-w-full text-text-primary">
-              {message.query}
-            </pre>
-            {message.queryExplanation && (
-              <p className="mt-1 text-text-secondary">{message.queryExplanation}</p>
-            )}
-            <SQLExplainer
-              sql={message.query}
-              projectId={useAppStore.getState().activeProject?.id ?? ""}
-            />
-          </details>
-        )}
-
-        {/* Text / Visual toggle + Viz toolbar — for sql_result responses with visualization */}
-        {isSqlResult && hasViz && (
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-0.5 p-0.5 bg-surface-1/60 rounded-lg">
-              <button
-                onClick={() => setViewMode("viz")}
-                aria-label="Show visualization"
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  viewMode === "viz"
-                    ? "bg-surface-3 text-text-primary"
-                    : "text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                Visual
-              </button>
-              <button
-                onClick={() => setViewMode("text")}
-                aria-label="Show data as text"
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  viewMode === "text"
-                    ? "bg-surface-3 text-text-primary"
-                    : "text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                Text
-              </button>
-            </div>
-            {viewMode === "viz" && hasRawResult && (
-              <VizToolbar
-                activeType={activeVizType}
-                onTypeChange={handleVizTypeChange}
-                loading={vizLoading}
+        {/* Compound SQL results (2+ queries) */}
+        {isSqlResult && message.sqlResults && message.sqlResults.length >= 2 && (
+          <div className="mt-3">
+            {message.sqlResults.map((block, idx) => (
+              <SQLResultSection
+                key={idx}
+                block={block}
+                index={idx}
+                total={message.sqlResults!.length}
+                onSendMessage={onSendMessage}
               />
+            ))}
+          </div>
+        )}
+
+        {/* Single SQL result (legacy / 0-1 results) */}
+        {isSqlResult && (!message.sqlResults || message.sqlResults.length < 2) && (
+          <>
+            {message.query && (
+              <details className="mt-3 text-xs">
+                <summary className="cursor-pointer text-text-secondary hover:text-text-primary flex items-center gap-2">
+                  View SQL Query
+                  {sqlComplexity && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
+                      {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
+                    </span>
+                  )}
+                </summary>
+                <pre className="mt-2 p-3 bg-surface-1 rounded-lg overflow-x-auto max-w-full text-text-primary">
+                  {message.query}
+                </pre>
+                {message.queryExplanation && (
+                  <p className="mt-1 text-text-secondary">{message.queryExplanation}</p>
+                )}
+                <SQLExplainer
+                  sql={message.query}
+                  projectId={useAppStore.getState().activeProject?.id ?? ""}
+                />
+              </details>
             )}
-          </div>
-        )}
 
-        {/* Visualization — for sql_result responses in viz mode */}
-        {isSqlResult && hasViz && viewMode === "viz" && (
-          <div className="mt-2">
-            <div className="md:hidden">
-              {mobileVizExpanded ? (
-                <>
-                  <VizRenderer data={overrideViz ?? message.visualization!} />
+            {hasViz && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-0.5 p-0.5 bg-surface-1/60 rounded-lg">
                   <button
-                    onClick={() => setMobileVizExpanded(false)}
-                    className="mt-1.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+                    onClick={() => setViewMode("viz")}
+                    aria-label="Show visualization"
+                    className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                      viewMode === "viz"
+                        ? "bg-surface-3 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
                   >
-                    Collapse chart
+                    Visual
                   </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => setMobileVizExpanded(true)}
-                  className="w-full py-3 min-h-[44px] text-xs text-text-secondary hover:text-text-primary bg-surface-1/40 rounded-lg border border-border-default/30 transition-colors text-center"
-                >
-                  Tap to view chart
-                </button>
-              )}
-            </div>
-            <div className="hidden md:block">
-              <VizRenderer data={overrideViz ?? message.visualization!} />
-            </div>
-          </div>
-        )}
+                  <button
+                    onClick={() => setViewMode("text")}
+                    aria-label="Show data as text"
+                    className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                      viewMode === "text"
+                        ? "bg-surface-3 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    Text
+                  </button>
+                </div>
+                {viewMode === "viz" && hasRawResult && (
+                  <VizToolbar
+                    activeType={activeVizType}
+                    onTypeChange={handleVizTypeChange}
+                    loading={vizLoading}
+                  />
+                )}
+              </div>
+            )}
 
-        {/* Data table fallback — for sql_result responses in text mode */}
-        {isSqlResult && hasViz && viewMode === "text" && hasRawResult && (
-          <div className="mt-2">
-            <DataTable
-              data={{
-                columns: message.rawResult!.columns,
-                rows: message.rawResult!.rows.map((row) =>
-                  Object.fromEntries(
-                    message.rawResult!.columns.map((col, i) => [col, row[i]]),
-                  ),
-                ),
-                total_rows: message.rawResult!.total_rows,
-              }}
-            />
-          </div>
-        )}
+            {hasViz && viewMode === "viz" && (
+              <div className="mt-2">
+                <div className="md:hidden">
+                  {mobileVizExpanded ? (
+                    <>
+                      <VizRenderer data={overrideViz ?? message.visualization!} />
+                      <button
+                        onClick={() => setMobileVizExpanded(false)}
+                        className="mt-1.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+                      >
+                        Collapse chart
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setMobileVizExpanded(true)}
+                      className="w-full py-3 min-h-[44px] text-xs text-text-secondary hover:text-text-primary bg-surface-1/40 rounded-lg border border-border-default/30 transition-colors text-center"
+                    >
+                      Tap to view chart
+                    </button>
+                  )}
+                </div>
+                <div className="hidden md:block">
+                  <VizRenderer data={overrideViz ?? message.visualization!} />
+                </div>
+              </div>
+            )}
 
-        {/* Insight cards — below visualization for sql_result */}
-        {isSqlResult && metadata?.insights && metadata.insights.length > 0 && (
-          <InsightCards insights={metadata.insights} onDrillDown={onSendMessage} />
+            {hasViz && viewMode === "text" && hasRawResult && (
+              <div className="mt-2">
+                <DataTable
+                  data={{
+                    columns: message.rawResult!.columns,
+                    rows: message.rawResult!.rows.map((row) =>
+                      Object.fromEntries(
+                        message.rawResult!.columns.map((col, i) => [col, row[i]]),
+                      ),
+                    ),
+                    total_rows: message.rawResult!.total_rows,
+                  }}
+                />
+              </div>
+            )}
+
+            {metadata?.insights && metadata.insights.length > 0 && (
+              <InsightCards insights={metadata.insights} onDrillDown={onSendMessage} />
+            )}
+          </>
         )}
 
         {/* Executive summary button + inline summary */}

@@ -11,6 +11,12 @@ vi.mock("@/lib/api", () => ({
     chat: {
       askStream: vi.fn(() => new AbortController()),
       listSessions: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn().mockResolvedValue({
+        id: "new-session",
+        project_id: "p1",
+        title: "New Chat",
+        connection_id: null,
+      }),
       generateTitle: vi.fn().mockResolvedValue({ id: "s1", title: "Title" }),
       suggestions: vi.fn().mockResolvedValue([]),
       estimate: vi.fn().mockResolvedValue({
@@ -24,6 +30,7 @@ vi.mock("@/lib/api", () => ({
     },
     connections: {
       health: vi.fn().mockResolvedValue({ status: "healthy", latency_ms: 10 }),
+      reconnect: vi.fn().mockResolvedValue({ health: { status: "healthy" } }),
     },
   },
 }));
@@ -172,6 +179,7 @@ beforeEach(() => {
     activeConnection: null,
     activeSession: null,
     messages: [],
+    messagesBySession: {},
     isThinking: false,
     chatMode: "full",
     activeToolCalls: [],

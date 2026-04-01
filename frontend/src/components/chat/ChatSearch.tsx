@@ -4,9 +4,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { api } from "@/lib/api";
 import type { ChatSearchResult } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
-import type { ChatMessage } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { mapDtoToMessages } from "@/components/chat/ChatSessionList";
 
 const DEBOUNCE_MS = 300;
 
@@ -16,7 +16,7 @@ export function ChatSearch() {
   const chatSessions = useAppStore((s) => s.chatSessions);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
-  const setMessages = useAppStore((s) => s.setMessages);
+  const setSessionMessages = useAppStore((s) => s.setSessionMessages);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ChatSearchResult[]>([]);
@@ -95,31 +95,7 @@ export function ChatSearch() {
 
     try {
       const msgs = await api.chat.getMessages(session.id);
-      const mapped: ChatMessage[] = msgs.map((m) => {
-        let meta: Record<string, unknown> = {};
-        try {
-          meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
-        } catch {
-          /* malformed */
-        }
-        return {
-          id: m.id,
-          role: m.role as "user" | "assistant" | "system",
-          content: m.content,
-          query: (meta.query as string) || undefined,
-          queryExplanation: (meta.query_explanation as string) || undefined,
-          visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
-          error: (meta.error as string) || undefined,
-          metadataJson: m.metadata_json || undefined,
-          stalenessWarning: (meta.staleness_warning as string) || undefined,
-          responseType: (meta.response_type as ChatMessage["responseType"]) || undefined,
-          userRating: m.user_rating ?? undefined,
-          toolCallsJson: m.tool_calls_json || undefined,
-          rawResult: (meta.raw_result as ChatMessage["rawResult"]) ?? undefined,
-          timestamp: new Date(m.created_at).getTime(),
-        };
-      });
-      setMessages(mapped);
+      setSessionMessages(session.id, mapDtoToMessages(msgs));
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Failed to load messages",

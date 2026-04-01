@@ -447,12 +447,11 @@ class TestExecuteWithRetries:
         mock_sql_agent.run.return_value = error_result
 
         stage = _sql_stage("s1")
+        stage.max_retries = 1
         plan = _make_plan(stage)
         stage_ctx = StageContext(plan=plan)
 
-        with patch("app.agents.stage_executor.settings") as mock_settings:
-            mock_settings.max_stage_retries = 1
-            result = await executor._execute_with_retries(stage, stage_ctx, context)
+        result = await executor._execute_with_retries(stage, stage_ctx, context)
 
         assert result.status == "error"
         assert mock_sql_agent.run.call_count == 2  # initial + 1 retry

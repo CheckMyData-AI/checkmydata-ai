@@ -169,6 +169,7 @@ export function ChatPanel() {
   const sendPipelineAction = useCallback(
     (action: string, modification?: string) => {
       if (!activeProject || !pipelineRunId || !activeSession) return;
+      abortRef.current?.abort();
       setCheckpointStageId(undefined);
       setThinking(true);
       setLoading(true);
@@ -178,7 +179,7 @@ export function ChatPanel() {
       const ctrl = api.chat.askStream(
         {
           project_id: activeProject.id,
-          connection_id: activeConnection?.id,
+          connection_id: activeSession.connection_id ?? activeConnection?.id,
           message: modification || action,
           session_id: activeSession.id,
           pipeline_action: action,
@@ -252,7 +253,9 @@ export function ChatPanel() {
   const handleContinueAnalysis = useCallback(
     (continuationContext: string | null) => {
       if (!activeProject || !activeSession) return;
-      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      abortRef.current?.abort();
+      const currentMessages = useAppStore.getState().messages;
+      const lastUserMsg = [...currentMessages].reverse().find((m) => m.role === "user");
       const message = lastUserMsg?.content ?? "Continue the analysis";
 
       addMessage({
@@ -276,7 +279,7 @@ export function ChatPanel() {
       const ctrl = api.chat.askStream(
         {
           project_id: activeProject.id,
-          connection_id: activeConnection?.id,
+          connection_id: activeSession.connection_id ?? activeConnection?.id,
           message,
           session_id: activeSession.id,
           pipeline_action: "continue_analysis",
@@ -287,6 +290,14 @@ export function ChatPanel() {
           return next.length > 100 ? next.slice(-100) : next;
         }),
         (result: ChatResponse) => {
+          const contSqlResults = result.sql_results?.map((sr) => ({
+            query: sr.query ?? undefined,
+            queryExplanation: sr.query_explanation ?? undefined,
+            visualization: sr.visualization ?? undefined,
+            rawResult: sr.raw_result ?? undefined,
+            insights: sr.insights ?? undefined,
+          })) ?? undefined;
+
           addMessage({
             id: result.assistant_message_id || crypto.randomUUID(),
             role: "assistant",
@@ -300,6 +311,7 @@ export function ChatPanel() {
             stepsUsed: result.steps_used ?? undefined,
             stepsTotal: result.steps_total ?? undefined,
             continuationContext: result.continuation_context ?? undefined,
+            sqlResults: contSqlResults,
           });
           setThinking(false);
           setLoading(false);
@@ -337,7 +349,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, messages, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
+    [activeProject, activeConnection, activeSession, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
   useEffect(() => {
@@ -376,11 +388,72 @@ export function ChatPanel() {
     resetSessionUsage();
   }, [activeSession?.id, resetSessionUsage]);
 
+  const prevSessionRef = useRef<string | undefined>(activeSession?.id);
+  useEffect(() => {
+    const prevId = prevSessionRef.current;
+    const newId = activeSession?.id;
+    prevSessionRef.current = newId;
+    if (prevId && prevId !== newId) {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      if (isThinking) {
+        setThinking(false);
+        setLoading(false);
+        clearToolCalls();
+        setThinkingLog([]);
+        setPipelineStages([]);
+        setPipelineRunId(undefined);
+        setCheckpointStageId(undefined);
+        setStreamSteps([]);
+        setStreamingText((prev) => {
+          if (prev) {
+            useAppStore.getState().addSessionMessage(prevId, {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: prev + "\n\n*(Generation stopped — switched session)*",
+              timestamp: Date.now(),
+            });
+          }
+          return "";
+        });
+      }
+    }
+  }, [activeSession?.id, isThinking, setThinking, setLoading, clearToolCalls]);
+
   const canChat = activeProject && (activeConnection || chatMode === "knowledge_only");
 
   const handleSend = useCallback(
     async (content: string) => {
       if (!activeProject) return;
+
+      let currentSession = activeSession;
+      const isFirstMessage = messages.length === 0;
+
+      if (!currentSession) {
+        try {
+          const created = await api.chat.createSession({
+            project_id: activeProject.id,
+            connection_id: activeConnection?.id ?? undefined,
+          });
+          currentSession = {
+            id: created.id,
+            project_id: created.project_id,
+            title: created.title,
+            connection_id: created.connection_id ?? null,
+          };
+          setActiveSession(currentSession);
+          useAppStore.setState((state) => ({
+            chatSessions: [currentSession!, ...state.chatSessions],
+          }));
+        } catch (err) {
+          toast(err instanceof Error ? err.message : "Failed to create chat", "error");
+          return;
+        }
+      }
+
+      const sessionId = currentSession.id;
 
       const userMsg = {
         id: crypto.randomUUID(),
@@ -403,9 +476,9 @@ export function ChatPanel() {
       const ctrl = api.chat.askStream(
         {
           project_id: activeProject.id,
-          connection_id: activeConnection?.id,
+          connection_id: currentSession.connection_id ?? activeConnection?.id,
           message: content,
-          session_id: activeSession?.id,
+          session_id: sessionId,
         },
         (step) => {
           setStreamSteps((prev) => {
@@ -414,31 +487,24 @@ export function ChatPanel() {
           });
         },
         (result: ChatResponse) => {
-          if (!activeSession) {
-            const newSession = {
-              id: result.session_id,
-              project_id: activeProject.id,
-              title: content.slice(0, 50),
-              connection_id: activeConnection?.id ?? null,
-            };
-            setActiveSession(newSession);
-            useAppStore.setState((state) => ({
-              chatSessions: [newSession, ...state.chatSessions],
-            }));
-            api.chat.generateTitle(result.session_id).then((updated) => {
+          if (isFirstMessage) {
+            api.chat.generateTitle(sessionId).then((updated) => {
               const updatedSession = {
                 id: updated.id,
                 project_id: updated.project_id,
                 title: updated.title,
-                connection_id: activeConnection?.id ?? null,
+                connection_id: currentSession!.connection_id ?? null,
               };
-              setActiveSession(updatedSession);
-              useAppStore.setState((state) => ({
-                chatSessions: state.chatSessions.map((s) =>
-                  s.id === updated.id ? updatedSession : s,
-                ),
-              }));
-            }).catch(() => { /* keep truncated title */ });
+              useAppStore.setState((state) => {
+                const isCurrent = state.activeSession?.id === updated.id;
+                return {
+                  ...(isCurrent ? { activeSession: updatedSession } : {}),
+                  chatSessions: state.chatSessions.map((s) =>
+                    s.id === updated.id ? updatedSession : s,
+                  ),
+                };
+              });
+            }).catch(() => { /* keep default title */ });
           }
 
           if (result.user_message_id) {
@@ -474,6 +540,19 @@ export function ChatPanel() {
             | { columns: string[]; rows: unknown[][]; total_rows: number }
             | undefined;
 
+          const apiSqlResults = result.sql_results;
+          const sqlResults = apiSqlResults?.map((sr) => ({
+            query: sr.query ?? undefined,
+            queryExplanation: sr.query_explanation ?? undefined,
+            visualization: sr.visualization ?? undefined,
+            rawResult: sr.raw_result ?? undefined,
+            insights: sr.insights ?? undefined,
+          })) ?? undefined;
+
+          if (sqlResults) {
+            (metadataObj as Record<string, unknown>).sql_results = apiSqlResults;
+          }
+
           addMessage({
             id: result.assistant_message_id || crypto.randomUUID(),
             role: "assistant",
@@ -492,6 +571,7 @@ export function ChatPanel() {
             stepsUsed: result.steps_used ?? undefined,
             stepsTotal: result.steps_total ?? undefined,
             continuationContext: result.continuation_context ?? undefined,
+            sqlResults: sqlResults ?? undefined,
           });
 
           if (result.rules_changed) {
@@ -558,7 +638,7 @@ export function ChatPanel() {
             id: rotationEvent.new_session_id,
             project_id: activeProject.id,
             title: `Continued session`,
-            connection_id: activeConnection?.id ?? null,
+            connection_id: currentSession?.connection_id ?? activeConnection?.id ?? null,
           };
           setActiveSession(newSession);
           useAppStore.setState((state) => ({
@@ -580,7 +660,7 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
+    [activeProject, activeConnection, activeSession, messages.length, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
   const handleStop = useCallback(() => {

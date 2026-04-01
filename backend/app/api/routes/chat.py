@@ -430,6 +430,7 @@ class ChatResponse(BaseModel):
     steps_total: int = 0
     continuation_context: str | None = None
     clarification_data: dict | None = None
+    sql_results: list[dict] | None = None
 
 
 class SessionCreate(BaseModel):
@@ -849,6 +850,36 @@ def _build_raw_result(results) -> dict | None:
     }
 
 
+def _build_sql_results_payload(sql_result_blocks: list, answer: str = "") -> list[dict] | None:
+    """Serialize a list of SQLResultBlock objects for the API response.
+
+    Returns None when there are fewer than 2 blocks (single-result case
+    is handled by the legacy top-level fields for backward compatibility).
+    """
+    if len(sql_result_blocks) < 2:
+        return None
+    payload: list[dict] = []
+    for blk in sql_result_blocks:
+        blk_viz = None
+        if blk.results and blk.results.rows:
+            blk_viz = render(
+                result=blk.results,
+                viz_type=blk.viz_type,
+                config=blk.viz_config,
+                summary=answer,
+            )
+        payload.append(
+            {
+                "query": blk.query,
+                "query_explanation": blk.query_explanation,
+                "visualization": blk_viz,
+                "raw_result": _build_raw_result(blk.results),
+                "insights": blk.insights or [],
+            }
+        )
+    return payload
+
+
 @router.post("/ask", response_model=ChatResponse)
 @limiter.limit("20/minute")
 async def ask(
@@ -868,7 +899,16 @@ async def ask(
         config.connection_id = body.connection_id
 
     session_id = body.session_id
-    if not session_id:
+    if session_id:
+        validated = await _chat_svc.validate_session_access(
+            db, session_id, body.project_id, user["user_id"]
+        )
+        if not validated:
+            raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to this user/project",
+            )
+    else:
         chat_session = await _chat_svc.create_session(
             db,
             body.project_id,
@@ -983,6 +1023,8 @@ async def ask(
         else None
     )
 
+    http_sql_results_payload = _build_sql_results_payload(result.sql_results, result.answer)
+
     assistant_msg = await _chat_svc.add_message(
         db,
         session_id,
@@ -1006,6 +1048,8 @@ async def ask(
             "insights": result.insights or [],
             "suggested_followups": result.suggested_followups or [],
             "clarification_data": result.clarification_data,
+            "sql_results": http_sql_results_payload,
+            "continuation_context": result.continuation_context,
         },
         tool_calls_json=tool_calls_str,
     )
@@ -1100,6 +1144,7 @@ async def ask(
         steps_total=result.steps_total,
         continuation_context=result.continuation_context,
         clarification_data=result.clarification_data,
+        sql_results=http_sql_results_payload,
     )
 
 
@@ -1123,7 +1168,16 @@ async def ask_stream(
         config.connection_id = body.connection_id
 
     session_id = body.session_id
-    if not session_id:
+    if session_id:
+        validated = await _chat_svc.validate_session_access(
+            db, session_id, body.project_id, user["user_id"]
+        )
+        if not validated:
+            raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to this user/project",
+            )
+    else:
         chat_session = await _chat_svc.create_session(
             db,
             body.project_id,
@@ -1461,6 +1515,8 @@ async def ask_stream(
                 else None
             )
 
+            stream_sql_results = _build_sql_results_payload(result.sql_results, result.answer)
+
             async with _stream_session_factory() as stream_db:
                 assistant_msg = await _chat_svc.add_message(
                     stream_db,
@@ -1487,6 +1543,8 @@ async def ask_stream(
                         "insights": result.insights or [],
                         "suggested_followups": result.suggested_followups or [],
                         "clarification_data": result.clarification_data,
+                        "sql_results": stream_sql_results,
+                        "continuation_context": result.continuation_context,
                     },
                     tool_calls_json=tool_calls_str,
                 )
@@ -1584,6 +1642,7 @@ async def ask_stream(
                 "steps_total": result.steps_total,
                 "continuation_context": result.continuation_context,
                 "clarification_data": result.clarification_data,
+                "sql_results": stream_sql_results,
             }
             yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
         finally:
@@ -1815,6 +1874,8 @@ async def chat_websocket(
                     json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
                 )
 
+                ws_sql_results = _build_sql_results_payload(result.sql_results, result.answer)
+
                 async with async_session_factory() as db:
                     ws_assistant_msg = await _chat_svc.add_message(
                         db,
@@ -1840,6 +1901,8 @@ async def chat_websocket(
                             "staleness_warning": result.staleness_warning,
                             "suggested_followups": result.suggested_followups or [],
                             "clarification_data": result.clarification_data,
+                            "sql_results": ws_sql_results,
+                            "continuation_context": result.continuation_context,
                         },
                         tool_calls_json=ws_tool_calls_str,
                     )
@@ -1922,6 +1985,7 @@ async def chat_websocket(
                         "rules_changed": _has_rules_changed(result.tool_call_log),
                         "suggested_followups": result.suggested_followups or [],
                         "clarification_data": result.clarification_data,
+                        "sql_results": ws_sql_results,
                     }
                 )
             finally:

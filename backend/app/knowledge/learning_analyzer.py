@@ -583,6 +583,9 @@ class LLMAnalyzer:
             "query_pattern",
             "schema_gotcha",
             "performance_hint",
+            "pipeline_pattern",
+            "data_quality_hint",
+            "replan_recovery",
         }
 
         lessons: list[ExtractedLesson] = []

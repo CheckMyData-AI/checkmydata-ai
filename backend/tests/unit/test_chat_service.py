@@ -401,3 +401,163 @@ class TestEnsureWelcomeSession:
 
         assert created is True
         assert session.connection_id == "conn-123"
+
+
+class TestValidateSessionAccess:
+    @pytest.mark.asyncio
+    async def test_returns_session_for_valid_owner(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+        chat = await svc.create_session(db, proj.id, user_id=user.id)
+
+        result = await svc.validate_session_access(db, chat.id, proj.id, user.id)
+
+        assert result is not None
+        assert result.id == chat.id
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_wrong_user(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+        other = await _make_user(db)
+        chat = await svc.create_session(db, proj.id, user_id=user.id)
+
+        result = await svc.validate_session_access(db, chat.id, proj.id, other.id)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_wrong_project(self, db):
+        proj = await _make_project(db)
+        proj2 = await _make_project(db)
+        user = await _make_user(db)
+        chat = await svc.create_session(db, proj.id, user_id=user.id)
+
+        result = await svc.validate_session_access(db, chat.id, proj2.id, user.id)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_allows_null_user_sessions(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+        chat = await svc.create_session(db, proj.id, user_id=None)
+
+        result = await svc.validate_session_access(db, chat.id, proj.id, user.id)
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_nonexistent(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        result = await svc.validate_session_access(db, "no-such-id", proj.id, user.id)
+
+        assert result is None
+
+
+class TestGetHistoryPartialResult:
+    """Verify that step_limit_reached messages are tagged as partial in history."""
+
+    @pytest.mark.asyncio
+    async def test_partial_result_tagged_in_history(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+
+        meta = {
+            "query": "SELECT * FROM orders",
+            "viz_type": "table",
+            "row_count": 50,
+            "raw_result": {"columns": ["id", "total"], "rows": [[1, 100]]},
+            "response_type": "step_limit_reached",
+            "continuation_context": '{"sql_queries": []}',
+        }
+        await svc.add_message(db, chat.id, "user", "Show orders")
+        await svc.add_message(db, chat.id, "assistant", "Partial data", metadata=meta)
+
+        history = await svc.get_history_as_messages(db, chat.id)
+
+        asst_msg = history[1]
+        assert "partial" in asst_msg.content.lower()
+        assert "cut short" in asst_msg.content.lower()
+        assert "50 rows" in asst_msg.content
+
+    @pytest.mark.asyncio
+    async def test_completed_result_not_tagged_partial(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+
+        meta = {
+            "viz_type": "bar",
+            "row_count": 10,
+            "raw_result": {"columns": ["name"], "rows": [["Alice"]]},
+            "response_type": "sql_result",
+        }
+        await svc.add_message(db, chat.id, "user", "Show users")
+        await svc.add_message(db, chat.id, "assistant", "Here are users", metadata=meta)
+
+        history = await svc.get_history_as_messages(db, chat.id)
+
+        asst_msg = history[1]
+        assert "completed" in asst_msg.content
+        assert "cut short" not in asst_msg.content
+
+
+class TestMultiChatIndependence:
+    """Verify multiple sessions per user per project work independently."""
+
+    @pytest.mark.asyncio
+    async def test_multiple_sessions_same_user_project(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        chat1 = await svc.create_session(db, proj.id, title="Chat 1", user_id=user.id)
+        chat2 = await svc.create_session(db, proj.id, title="Chat 2", user_id=user.id)
+
+        await svc.add_message(db, chat1.id, "user", "Question in chat 1")
+        await svc.add_message(db, chat1.id, "assistant", "Answer in chat 1")
+        await svc.add_message(db, chat2.id, "user", "Question in chat 2")
+
+        history1 = await svc.get_history_as_messages(db, chat1.id)
+        history2 = await svc.get_history_as_messages(db, chat2.id)
+
+        assert len(history1) == 2
+        assert len(history2) == 1
+        assert history1[0].content == "Question in chat 1"
+        assert history2[0].content == "Question in chat 2"
+
+    @pytest.mark.asyncio
+    async def test_list_returns_all_user_sessions(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        await svc.create_session(db, proj.id, title="Chat A", user_id=user.id)
+        await svc.create_session(db, proj.id, title="Chat B", user_id=user.id)
+        await svc.create_session(db, proj.id, title="Chat C", user_id=user.id)
+
+        sessions = await svc.list_sessions(db, proj.id, user_id=user.id)
+
+        assert len(sessions) == 3
+        titles = {s.title for s in sessions}
+        assert titles == {"Chat A", "Chat B", "Chat C"}
+
+    @pytest.mark.asyncio
+    async def test_delete_one_session_preserves_others(self, db):
+        proj = await _make_project(db)
+        user = await _make_user(db)
+
+        chat1 = await svc.create_session(db, proj.id, title="Keep", user_id=user.id)
+        chat2 = await svc.create_session(db, proj.id, title="Delete", user_id=user.id)
+        await svc.add_message(db, chat1.id, "user", "Important")
+        await svc.add_message(db, chat2.id, "user", "Expendable")
+
+        await svc.delete_session(db, chat2.id)
+
+        sessions = await svc.list_sessions(db, proj.id, user_id=user.id)
+        assert len(sessions) == 1
+        assert sessions[0].id == chat1.id
+
+        history = await svc.get_history_as_messages(db, chat1.id)
+        assert len(history) == 1
+        assert history[0].content == "Important"

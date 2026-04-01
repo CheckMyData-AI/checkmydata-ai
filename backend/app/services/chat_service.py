@@ -1,10 +1,13 @@
 import json
+import logging
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
+
+logger = logging.getLogger(__name__)
 
 WELCOME_MESSAGE = (
     "Hello! I'm your data assistant for this project.\n"
@@ -134,10 +137,12 @@ class ChatService:
                     context_parts.append(f"insights: {len(meta['insights'])}")
                 if meta.get("suggested_followups"):
                     context_parts.append(f"followups: {', '.join(meta['suggested_followups'][:3])}")
+                is_partial = meta.get("response_type") == "step_limit_reached" or bool(
+                    meta.get("continuation_context")
+                )
+                tag = "partial — analysis was cut short" if is_partial else "completed"
                 if context_parts:
-                    content += (
-                        "\n\n[Previous result (completed): " + " | ".join(context_parts) + "]"
-                    )
+                    content += f"\n\n[Previous result ({tag}): " + " | ".join(context_parts) + "]"
             result.append(Message(role=m.role, content=content))
         return result
 
@@ -170,7 +175,11 @@ class ChatService:
         user_id: str,
         connection_id: str | None = None,
     ) -> tuple[ChatSession, bool]:
-        """Return the user's first chat session, creating one with welcome message if needed."""
+        """Return the user's first chat session, creating one with welcome message if needed.
+
+        Uses a check-then-create pattern with rollback on duplicate to handle
+        concurrent calls safely (e.g. two browser tabs loading simultaneously).
+        """
         count_stmt = (
             select(func.count())
             .select_from(ChatSession)
@@ -184,18 +193,46 @@ class ChatService:
             first = await self.list_sessions(session, project_id, user_id=user_id, limit=1)
             return first[0], False
 
-        chat = await self.create_session(
-            session,
-            project_id,
-            title="Welcome",
-            user_id=user_id,
-            connection_id=connection_id,
-        )
-        await self.add_message(
-            session,
-            chat.id,
-            role="assistant",
-            content=WELCOME_MESSAGE,
-            metadata={"response_type": "text", "is_welcome": True},
-        )
-        return chat, True
+        try:
+            chat = await self.create_session(
+                session,
+                project_id,
+                title="Welcome",
+                user_id=user_id,
+                connection_id=connection_id,
+            )
+            await self.add_message(
+                session,
+                chat.id,
+                role="assistant",
+                content=WELCOME_MESSAGE,
+                metadata={"response_type": "text", "is_welcome": True},
+            )
+            return chat, True
+        except Exception:
+            logger.debug(
+                "Concurrent welcome session creation, falling back to existing",
+                exc_info=True,
+            )
+            await session.rollback()
+            first = await self.list_sessions(session, project_id, user_id=user_id, limit=1)
+            if first:
+                return first[0], False
+            raise
+
+    async def validate_session_access(
+        self,
+        session: AsyncSession,
+        session_id: str,
+        project_id: str,
+        user_id: str,
+    ) -> ChatSession | None:
+        """Return the session if it belongs to the given project and user, else None."""
+        chat = await self.get_session(session, session_id)
+        if not chat:
+            return None
+        if chat.project_id != project_id:
+            return None
+        if chat.user_id and chat.user_id != user_id:
+            return None
+        return chat

@@ -177,7 +177,6 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   const setActiveProject = useAppStore((s) => s.setActiveProject);
   const setConnections = useAppStore((s) => s.setConnections);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
-  const clearMessages = useAppStore((s) => s.clearMessages);
   const setChatSessions = useAppStore((s) => s.setChatSessions);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
   const setUserRole = useAppStore((s) => s.setUserRole);
@@ -391,7 +390,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
     setSelectingId(project.id);
     setActiveProject(project);
     setUserRole(project.user_role || null);
-    clearMessages();
+    useAppStore.getState().clearAllSessionMessages();
     setActiveSession(null);
     setChatSessions([]);
     setConnections([]);
@@ -415,19 +414,8 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
           setActiveSession(welcomeSession);
           const msgs = await api.chat.getMessages(welcome.id);
           if (seq !== selectSeqRef.current) return;
-          const mapped = msgs.map((m) => {
-            let meta: Record<string, unknown> = {};
-            try { meta = m.metadata_json ? JSON.parse(m.metadata_json) : {}; } catch { /* ignore */ }
-            return {
-              id: m.id,
-              role: m.role as "user" | "assistant" | "system",
-              content: m.content,
-              responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
-              metadataJson: m.metadata_json || undefined,
-              timestamp: new Date(m.created_at).getTime(),
-            };
-          });
-          useAppStore.getState().setMessages(mapped);
+          const { mapDtoToMessages } = await import("@/components/chat/ChatSessionList");
+          useAppStore.getState().setSessionMessages(welcome.id, mapDtoToMessages(msgs));
         } catch { /* welcome session is best-effort */ }
       }
     } catch (err) {
@@ -466,7 +454,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         setActiveConnection(null);
         setChatSessions([]);
         setActiveSession(null);
-        clearMessages();
+        useAppStore.getState().clearAllSessionMessages();
       }
     } catch (err) {
       toast(

@@ -40,12 +40,18 @@ CheckMyData.ai is an AI-powered database query agent. Users connect databases (P
 backend/app/
 ├── agents/                 # Multi-agent orchestration system
 │   ├── orchestrator.py     # Main coordinator (OrchestratorAgent)
+│   ├── tool_dispatcher.py  # Meta-tool dispatch to sub-agents
+│   ├── response_builder.py # Response assembly and synthesis
+│   ├── context_loader.py   # Lazy context loading (tables, KB, learnings)
+│   ├── adaptive_planner.py # Quick (heuristic) + full (LLM) plan generation
+│   ├── data_gate.py        # Intermediate data-quality checks between stages
+│   ├── pipeline_learning.py# Pipeline-level learning extraction
 │   ├── sql_agent.py        # SQL generation, validation, execution
 │   ├── knowledge_agent.py  # RAG-powered codebase search
 │   ├── viz_agent.py        # Visualization type selection
 │   ├── mcp_source_agent.py # External MCP data source queries
-│   ├── query_planner.py    # Multi-stage plan decomposition
-│   ├── stage_executor.py   # Pipeline stage runner
+│   ├── query_planner.py    # Multi-stage plan decomposition (legacy)
+│   ├── stage_executor.py   # Pipeline stage runner with DataGate + replan
 │   ├── stage_validator.py  # Per-stage result validation
 │   ├── stage_context.py    # Pipeline state (ExecutionPlan, StageResult)
 │   ├── base.py             # AgentContext, AgentResult, BaseAgent
@@ -990,7 +996,7 @@ For complex queries that trigger the multi-stage pipeline:
 | `response_type` | Meaning | User Action |
 |-----------------|---------|-------------|
 | `text` | Plain conversational answer | None |
-| `sql_result` | Query + results + visualization | View data, provide feedback |
+| `sql_result` | Query + results + visualization (may contain compound `sql_results` array for multi-query answers) | View data, provide feedback |
 | `knowledge` | RAG-based answer with sources | View sources |
 | `clarification_request` | Agent needs more info | Answer the question |
 | `stage_checkpoint` | Intermediate pipeline result | Continue / Modify / Retry |
@@ -1119,7 +1125,7 @@ flowchart TB
     SQL["SQLAgent:\ngenerate SQL → validate → execute"]
     LLM2["LLM Call 2:\n'Based on the results...'"]
     VIZ["VizAgent:\nselect bar_chart"]
-    RESP["AgentResponse:\nanswer + query + results + viz"]
+    RESP["AgentResponse:\nanswer + query + results + viz\n+ sql_results (compound)"]
     SAVE["Save messages + RAG feedback"]
     FE["Render DataTable + BarChart"]
 

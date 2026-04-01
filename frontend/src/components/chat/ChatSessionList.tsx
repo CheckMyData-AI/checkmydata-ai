@@ -1,15 +1,54 @@
 "use client";
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
-import type { ChatMessage } from "@/stores/app-store";
+import type { ChatMessage, SQLResultBlock } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 
 const VISIBLE_CAP = 5;
+
+export function mapDtoToMessages(msgs: { id: string; role: string; content: string; metadata_json?: string | null; tool_calls_json?: string | null; user_rating?: number | null; created_at: string }[]): ChatMessage[] {
+  return msgs.map((m) => {
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
+    } catch {
+      /* malformed metadata */
+    }
+    return {
+      id: m.id,
+      role: m.role as "user" | "assistant" | "system",
+      content: m.content,
+      query: (meta.query as string) || undefined,
+      queryExplanation: (meta.query_explanation as string) || undefined,
+      visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
+      error: (meta.error as string) || undefined,
+      metadataJson: m.metadata_json || undefined,
+      stalenessWarning: (meta.staleness_warning as string) || undefined,
+      responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
+      userRating: m.user_rating ?? undefined,
+      toolCallsJson: m.tool_calls_json || undefined,
+      rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
+      timestamp: new Date(m.created_at).getTime(),
+      sqlResults: _hydrateSqlResults(meta.sql_results),
+    };
+  });
+}
+
+function _hydrateSqlResults(raw: unknown): SQLResultBlock[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw.map((sr: Record<string, unknown>) => ({
+    query: (sr.query as string) ?? undefined,
+    queryExplanation: (sr.query_explanation as string) ?? undefined,
+    visualization: (sr.visualization as Record<string, unknown>) ?? undefined,
+    rawResult: (sr.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
+    insights: (sr.insights as Array<{ type: string; title: string; description: string; confidence: number }>) ?? undefined,
+  }));
+}
 
 interface SessionItemProps {
   session: { id: string; title: string };
@@ -80,57 +119,47 @@ interface ChatSessionListProps {
 
 export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessionListProps) {
   const activeProject = useAppStore((s) => s.activeProject);
+  const activeConnection = useAppStore((s) => s.activeConnection);
   const connections = useAppStore((s) => s.connections);
   const chatSessions = useAppStore((s) => s.chatSessions);
   const activeSession = useAppStore((s) => s.activeSession);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
-  const setMessages = useAppStore((s) => s.setMessages);
+  const setSessionMessages = useAppStore((s) => s.setSessionMessages);
   const setChatSessions = useAppStore((s) => s.setChatSessions);
 
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const creatingRef = useRef(false);
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
   const handleSelect = useCallback(async (sessionId: string) => {
     const session = chatSessions.find((s) => s.id === sessionId);
-    if (!session) return;
+    if (!session || session.id === useAppStore.getState().activeSession?.id) return;
+
+    fetchAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    fetchAbortRef.current = ctrl;
 
     setActiveSession(session);
-    setLoadingSession(sessionId);
 
     if (session.connection_id) {
       const conn = connections.find((c) => c.id === session.connection_id);
       if (conn) setActiveConnection(conn);
     }
 
+    if (useAppStore.getState().hasSessionCache(sessionId)) {
+      setLoadingSession(null);
+      return;
+    }
+
+    setLoadingSession(sessionId);
     try {
       const msgs = await api.chat.getMessages(sessionId);
-      const mapped: ChatMessage[] = msgs.map((m) => {
-        let meta: Record<string, unknown> = {};
-        try {
-          meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
-        } catch {
-          /* malformed metadata */
-        }
-        return {
-          id: m.id,
-          role: m.role as "user" | "assistant" | "system",
-          content: m.content,
-          query: (meta.query as string) || undefined,
-          queryExplanation: (meta.query_explanation as string) || undefined,
-          visualization: (meta.visualization as Record<string, unknown>) ?? undefined,
-          error: (meta.error as string) || undefined,
-          metadataJson: m.metadata_json || undefined,
-          stalenessWarning: (meta.staleness_warning as string) || undefined,
-          responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
-          userRating: m.user_rating ?? undefined,
-          toolCallsJson: m.tool_calls_json || undefined,
-          rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
-          timestamp: new Date(m.created_at).getTime(),
-        };
-      });
-      setMessages(mapped);
+      if (ctrl.signal.aborted) return;
+      setSessionMessages(sessionId, mapDtoToMessages(msgs));
     } catch (err) {
+      if (ctrl.signal.aborted) return;
       toast(
         err instanceof Error
           ? err.message
@@ -138,9 +167,9 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
         "error",
       );
     } finally {
-      setLoadingSession(null);
+      if (!ctrl.signal.aborted) setLoadingSession(null);
     }
-  }, [chatSessions, connections, setActiveSession, setActiveConnection, setMessages, setLoadingSession]);
+  }, [chatSessions, connections, setActiveSession, setActiveConnection, setSessionMessages]);
 
   const handleDelete = useCallback(async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
@@ -150,9 +179,12 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
       const wasActive = useAppStore.getState().activeSession?.id === sessionId;
       const current = useAppStore.getState().chatSessions;
       setChatSessions(current.filter((s) => s.id !== sessionId));
+      useAppStore.setState((state) => {
+        const { [sessionId]: _, ...rest } = state.messagesBySession;
+        return { messagesBySession: rest };
+      });
       if (wasActive) {
         setActiveSession(null);
-        setMessages([]);
       }
     } catch (err) {
       toast(
@@ -160,12 +192,35 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
         "error",
       );
     }
-  }, [setChatSessions, setActiveSession, setMessages]);
+  }, [setChatSessions, setActiveSession]);
 
-  const handleNewChat = useCallback(() => {
-    setActiveSession(null);
-    setMessages([]);
-  }, [setActiveSession, setMessages]);
+  const handleNewChat = useCallback(async () => {
+    if (!activeProject || creatingRef.current) return;
+    creatingRef.current = true;
+    try {
+      const session = await api.chat.createSession({
+        project_id: activeProject.id,
+        connection_id: activeConnection?.id ?? undefined,
+      });
+      const newSession = {
+        id: session.id,
+        project_id: session.project_id,
+        title: session.title,
+        connection_id: session.connection_id ?? null,
+      };
+      useAppStore.setState((state) => ({
+        chatSessions: [newSession, ...state.chatSessions],
+      }));
+      setActiveSession(newSession);
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to create chat",
+        "error",
+      );
+    } finally {
+      creatingRef.current = false;
+    }
+  }, [activeProject, activeConnection, setActiveSession]);
 
   useEffect(() => {
     if (createRequested) {

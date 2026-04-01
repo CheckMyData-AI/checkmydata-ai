@@ -26,6 +26,9 @@ VALID_CATEGORIES = frozenset(
         "query_pattern",
         "schema_gotcha",
         "performance_hint",
+        "pipeline_pattern",
+        "data_quality_hint",
+        "replan_recovery",
     }
 )
 
@@ -36,6 +39,9 @@ CATEGORY_LABELS = {
     "query_pattern": "Query Patterns",
     "schema_gotcha": "Schema Gotchas",
     "performance_hint": "Performance Hints",
+    "pipeline_pattern": "Pipeline Patterns",
+    "data_quality_hint": "Data Quality Hints",
+    "replan_recovery": "Replan Recoveries",
 }
 
 SIMILARITY_THRESHOLD = 0.75
@@ -472,6 +478,9 @@ class AgentLearningService:
             "query_pattern",
             "schema_gotcha",
             "performance_hint",
+            "pipeline_pattern",
+            "data_quality_hint",
+            "replan_recovery",
         ]:
             items = by_category.get(cat)
             if not items:

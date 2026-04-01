@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-04-01
+
+### Added
+- **AdaptivePlanner** — replaces heuristic + LLM complexity detection with a unified planner that generates quick (deterministic) plans for simple queries and LLM-driven plans for complex ones. Supports `recent_learnings` injection
+- **DataGate** — intermediate data-quality validator between pipeline stages. Checks null rates, type consistency, duplicate rows, value ranges, truncation, and cross-stage consistency
+- **Replan loop** — when a pipeline stage fails after retries, the orchestrator asks the `AdaptivePlanner` to generate a new plan (up to 2 replans) that avoids the failed approach and reuses completed results
+- **PipelineLearningExtractor** — extracts lessons from pipeline events (replans, DataGate failures, validation failures) and stores them via `AgentLearningService` for future planning
+- **ToolDispatcher** — extracted from `OrchestratorAgent`; centralizes all meta-tool dispatch logic
+- **ResponseBuilder** — extracted from `OrchestratorAgent`; centralizes response assembly and synthesis
+- **ContextLoader** — extracted from `OrchestratorAgent`; lazy-loads table maps, KB, learnings, staleness
+- **Per-stage `max_retries`** — each `PlanStage` can define its own retry budget; `StageExecutor` respects it over the global setting
+- **`replan_on_failure` flag** — per-stage control over whether a failed stage triggers replanning
+- **Replan prompt** — `build_replan_prompt` in `planner_prompt.py` provides context about completed stages and the failure to guide replanning
+- **Pipeline learning categories** — `pipeline_pattern`, `data_quality_hint`, `replan_recovery` added to `AgentLearningService`
+
+### Changed
+- **Orchestrator slimmed** — `orchestrator.py` reduced from 2728 to ~1760 lines by extracting `ToolDispatcher`, `ResponseBuilder`, and `ContextLoader`
+- **`StageExecutor` unified validation loop** — now runs `StageValidator` then `DataGate` after each stage, with retry and replan signals
+- **Complexity detection** — replaced dual `detect_complexity` + `detect_complexity_adaptive` with `AdaptivePlanner._is_complex` (single deterministic check, no extra LLM call)
+- **Pipeline planning** — `_run_complex_pipeline` now uses `AdaptivePlanner._llm_plan` instead of `QueryPlanner.plan`, with learnings injected into the prompt
+
+## [1.4.0] - 2026-04-01
+
+### Added
+- **Compound SQL responses** — when a user asks multiple questions in one message, each SQL result now gets its own chart, "View SQL Query" section, and insights card. Previously only the last SQL result was shown
+- **`SQLResultBlock` dataclass** — new structured type for individual SQL results with their own viz_type, viz_config, and insights
+- **`SQLResultSection` React component** — extracted reusable component for rendering per-query SQL viewer, chart toggle, visualization, data table, and insight cards
+- **`sql_results` field** on `AgentResponse`, `ChatResponse`, SSE event, and `ChatMessage` — carries the array of compound results end-to-end from orchestrator to frontend
+- **VizAgent runs per-result** — each SQL result in a compound response gets its own visualization recommendation instead of only the last one
+
 ## [1.3.2] - 2026-04-01
 
 ### Changed
