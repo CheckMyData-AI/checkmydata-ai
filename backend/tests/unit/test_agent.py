@@ -418,7 +418,7 @@ class TestMaxIterations:
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
         ):
-            mock_settings.max_orchestrator_iterations = 25
+            mock_settings.max_orchestrator_iterations = 100
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.max_sub_agent_retries = 2

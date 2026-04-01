@@ -813,6 +813,127 @@ class TestWallClockTimeout:
             ]
             assert len(wall_clock_msgs) >= 1
 
+    @pytest.mark.asyncio
+    async def test_hard_timeout_uses_timeout_text_and_sets_flag(self):
+        """Hard wall-clock cutoff uses _build_timeout_text and sets response_type."""
+        from app.agents.base import AgentContext
+        from app.core.workflow_tracker import WorkflowTracker
+
+        mock_router = MagicMock()
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        mock_tracker.start = AsyncMock(return_value="wf-test")
+        mock_tracker.end = AsyncMock()
+
+        tool_calls_response = LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="query_database",
+                    arguments={"question": "test query"},
+                ),
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+
+        mock_router.complete = AsyncMock(return_value=tool_calls_response)
+        mock_router.get_context_window = MagicMock(return_value=8000)
+
+        agent = OrchestratorAgent(
+            llm_router=mock_router,
+            workflow_tracker=mock_tracker,
+        )
+
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="test question",
+            chat_history=[],
+            llm_router=mock_router,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+            extra={"_skip_complexity": True},
+        )
+
+        with (
+            patch.object(agent, "_has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch.object(
+                agent,
+                "_handle_meta_tool",
+                new=AsyncMock(return_value=("result text", None)),
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+            patch("app.agents.orchestrator.time") as mock_time,
+        ):
+            mock_settings.max_orchestrator_iterations = 100
+            mock_settings.max_parallel_tool_calls = 1
+            mock_settings.orchestrator_wrap_up_steps = 3
+            mock_settings.agent_wall_clock_timeout_seconds = 30
+            mock_settings.max_context_tokens = 8000
+            mock_settings.max_history_tokens = 2500
+            mock_settings.orchestrator_final_synthesis = False
+
+            monotonic_values = [0.0, 35.0, 35.0, 50.0, 50.0, 50.0]
+            mock_time.monotonic = MagicMock(side_effect=monotonic_values)
+
+            resp = await agent.run(ctx)
+
+        assert resp.response_type == "step_limit_reached"
+        assert "time limit" in resp.answer.lower()
+
+
+class TestBuildTimeoutText:
+    """Tests for _build_timeout_text static method."""
+
+    def test_no_data(self):
+        text = OrchestratorAgent._build_timeout_text(None, [])
+        assert "time limit" in text.lower()
+        assert "analysis steps" not in text.lower()
+
+    def test_with_sql_result(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        qr = QueryResult(columns=["id"], rows=[[1], [2]], row_count=2)
+        sql_res = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+        text = OrchestratorAgent._build_timeout_text(sql_res, [])
+        assert "time limit" in text.lower()
+        assert "2 rows" in text
+
+    def test_with_knowledge_sources(self):
+        from app.core.types import RAGSource
+
+        sources = [RAGSource(source_path="a.md"), RAGSource(source_path="b.md")]
+        text = OrchestratorAgent._build_timeout_text(None, sources)
+        assert "time limit" in text.lower()
+        assert "2 relevant document" in text
+
+
+class TestBuildPartialText:
+    """Tests for _build_partial_text static method."""
+
+    def test_no_data(self):
+        text = OrchestratorAgent._build_partial_text(None, [])
+        assert "maximum number of analysis steps" in text.lower()
+
+    def test_with_sql_result(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        qr = QueryResult(columns=["id"], rows=[[1]], row_count=1)
+        sql_res = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+        text = OrchestratorAgent._build_partial_text(sql_res, [])
+        assert "1 rows" in text or "1 row" in text
+
+    def test_with_knowledge_sources(self):
+        from app.core.types import RAGSource
+
+        sources = [RAGSource(source_path="a.md")]
+        text = OrchestratorAgent._build_partial_text(None, sources)
+        assert "1 relevant document" in text
+
 
 # ------------------------------------------------------------------
 # H-7: trim_loop_messages and should_wrap_up tests

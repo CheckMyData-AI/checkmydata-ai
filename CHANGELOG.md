@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.2] - 2026-04-01
+
+### Changed
+- **Agent step limits raised** — `max_orchestrator_iterations` 25 → 100, `max_sql_iterations` 3 → 15, `agent_wall_clock_timeout_seconds` 90 → 300. Prevents premature termination on complex queries or slow LLM responses
+- **Wall-clock timeout now uses distinct message** — hard timeout fallback produces "I reached the processing time limit" instead of the misleading "maximum number of analysis steps" message (via new `_build_timeout_text` method)
+- **Timeout sets `response_type` correctly** — `wall_clock_timeout_hit` flag ensures `response_type = "step_limit_reached"` when the wall-clock cutoff fires (previously fell through as `"sql_result"`)
+
+### Fixed
+- **SSE stream closing before agent finishes** — `stream_timeout_seconds` 120 → 360, `stream_safety_margin_seconds` 90 → 120 (total 480s). The old SSE deadline of 210s was shorter than the new 300s agent timeout, causing premature "Request timed out" errors and agent task cancellation
+
 ## [1.3.1] - 2026-03-31
 
 ### Fixed

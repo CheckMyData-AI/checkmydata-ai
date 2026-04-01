@@ -86,13 +86,13 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 25
+    max_orchestrator_iterations: int = 100
     orchestrator_wrap_up_steps: int = 3
     orchestrator_final_synthesis: bool = True
-    agent_wall_clock_timeout_seconds: int = 90
+    agent_wall_clock_timeout_seconds: int = 300
     max_parallel_tool_calls: int = 2
     max_sub_agent_retries: int = 2
-    max_sql_iterations: int = 3
+    max_sql_iterations: int = 15
     max_mcp_iterations: int = 5
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
@@ -105,8 +105,8 @@ class Settings(BaseSettings):
     max_stage_retries: int = 2
 
     # Streaming settings
-    stream_timeout_seconds: int = 120
-    stream_safety_margin_seconds: int = 90
+    stream_timeout_seconds: int = 360
+    stream_safety_margin_seconds: int = 120
 
     # Backup settings
     backup_enabled: bool = True

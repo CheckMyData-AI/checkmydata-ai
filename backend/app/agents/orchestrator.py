@@ -744,6 +744,7 @@ class OrchestratorAgent(BaseAgent):
         loop_budget = min(settings.max_context_tokens, context_window)
         wrap_up_injected = False
         step_limit_hit = False
+        wall_clock_timeout_hit = False
         wall_clock_start = time.monotonic()
         wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
@@ -915,9 +916,10 @@ class OrchestratorAgent(BaseAgent):
                     wall_clock_limit * 1.5,
                     wf_id,
                 )
-                final_text = llm_resp.content or self._build_partial_text(
+                final_text = llm_resp.content or self._build_timeout_text(
                     last_sql_result, knowledge_sources
                 )
+                wall_clock_timeout_hit = True
                 await self._stream_tokens(wf_id, final_text)
                 break
 
@@ -1053,7 +1055,7 @@ class OrchestratorAgent(BaseAgent):
                 final_text = self._build_partial_text(last_sql_result, knowledge_sources)
             step_limit_hit = True
 
-        if step_limit_hit:
+        if step_limit_hit or wall_clock_timeout_hit:
             response_type = "step_limit_reached"
         else:
             response_type = self._determine_response_type(
@@ -1136,7 +1138,7 @@ class OrchestratorAgent(BaseAgent):
         final_pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
 
         continuation_ctx: str | None = None
-        if step_limit_hit:
+        if step_limit_hit or wall_clock_timeout_hit:
             import json as _cont_json
 
             continuation_ctx = _cont_json.dumps(
@@ -2387,6 +2389,23 @@ class OrchestratorAgent(BaseAgent):
     ) -> str:
         """Build a static fallback message when the step limit is reached."""
         parts: list[str] = ["I reached the maximum number of analysis steps."]
+        if sql_result and sql_result.results:
+            rc = sql_result.results.row_count
+            parts.append(f"I found {rc} rows of data from the database.")
+        if knowledge_sources:
+            parts.append(
+                f"I found {len(knowledge_sources)} relevant document(s) from the knowledge base."
+            )
+        parts.append("Here is what I found so far based on the tools I used.")
+        return " ".join(parts)
+
+    @staticmethod
+    def _build_timeout_text(
+        sql_result: SQLAgentResult | None,
+        knowledge_sources: list[RAGSource],
+    ) -> str:
+        """Build a static fallback message when the wall-clock time limit is reached."""
+        parts: list[str] = ["I reached the processing time limit."]
         if sql_result and sql_result.results:
             rc = sql_result.results.row_count
             parts.append(f"I found {rc} rows of data from the database.")

@@ -262,7 +262,7 @@ Each component is truncated to fit its budget if necessary.
 
 **Step 5 — Tool-Calling Loop (Adaptive Step Budget)**
 
-The loop runs up to `max_orchestrator_iterations` (default 25, configurable in settings and overrideable per-project or per-request via `max_steps`):
+The loop runs up to `max_orchestrator_iterations` (default 100, configurable in settings and overrideable per-project or per-request via `max_steps`):
 
 ```
 for each iteration:
@@ -1286,7 +1286,7 @@ Key settings from `backend/app/config.py` that affect system behavior:
 | `openrouter_api_key` | — | OpenRouter API key |
 | `max_context_tokens` | varies | Maximum tokens for context window |
 | `max_history_tokens` | varies | Maximum tokens for chat history |
-| `max_orchestrator_iterations` | `25` | Tool-calling loop safety ceiling |
+| `max_orchestrator_iterations` | `100` | Tool-calling loop safety ceiling |
 | `orchestrator_wrap_up_steps` | `3` | Steps remaining to trigger wrap-up prompt |
 | `orchestrator_final_synthesis` | `true` | Enable LLM synthesis on step exhaustion |
 | `max_investigation_iterations` | `12` | Investigation agent loop limit |

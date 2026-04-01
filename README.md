@@ -138,7 +138,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `JWT_SECRET` | Secret for signing JWT tokens (change from default in production) |
 | One LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
 
-**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 90s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2). See `backend/.env.example` for all options.
+**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 300s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2). See `backend/.env.example` for all options.
 
 ## Development Commands
 
