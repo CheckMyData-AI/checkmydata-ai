@@ -1299,3 +1299,98 @@ class TestCompilePromptCrossConnection:
 
         assert "From Similar Connections" in prompt
         assert "[from sibling]" in prompt
+
+
+class TestNonAsciiRatio:
+    def test_empty_string(self):
+        from app.services.agent_learning_service import _non_ascii_ratio
+
+        assert _non_ascii_ratio("") == 0.0
+
+    def test_pure_ascii(self):
+        from app.services.agent_learning_service import _non_ascii_ratio
+
+        assert _non_ascii_ratio("hello world") == 0.0
+
+    def test_mixed(self):
+        from app.services.agent_learning_service import _non_ascii_ratio
+
+        ratio = _non_ascii_ratio("ab\u00e9c")
+        assert 0.2 < ratio < 0.3
+
+
+class TestPromoteGlobalPatterns:
+    @pytest.mark.asyncio
+    async def test_returns_patterns(self, svc):
+        patterns = [
+            {
+                "lesson_hash": "h1",
+                "lesson": "Use index on created_at",
+                "max_confidence": 0.9,
+                "connection_count": 3,
+            },
+        ]
+        mock_existing = MagicMock()
+        mock_existing.all.return_value = []
+
+        session = AsyncMock()
+        session.execute.return_value = mock_existing
+
+        with patch.object(
+            svc,
+            "get_global_patterns",
+            new_callable=AsyncMock,
+            return_value=patterns,
+        ):
+            lines = await svc.promote_global_patterns(
+                session,
+                "conn-new",
+            )
+
+        assert len(lines) == 1
+        assert "global pattern" in lines[0]
+        assert "3 DBs" in lines[0]
+
+    @pytest.mark.asyncio
+    async def test_skips_existing_hashes(self, svc):
+        patterns = [
+            {
+                "lesson_hash": "h1",
+                "lesson": "Already known",
+                "max_confidence": 0.8,
+                "connection_count": 2,
+            },
+        ]
+        mock_existing = MagicMock()
+        mock_existing.all.return_value = [("h1",)]
+
+        session = AsyncMock()
+        session.execute.return_value = mock_existing
+
+        with patch.object(
+            svc,
+            "get_global_patterns",
+            new_callable=AsyncMock,
+            return_value=patterns,
+        ):
+            lines = await svc.promote_global_patterns(
+                session,
+                "conn-1",
+            )
+
+        assert lines == []
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_patterns(self, svc):
+        with patch.object(
+            svc,
+            "get_global_patterns",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            lines = await svc.promote_global_patterns(
+                AsyncMock(),
+                "conn-1",
+            )
+
+        assert lines == []

@@ -151,7 +151,7 @@ def build_orchestrator_system_prompt(
         sections.append("")
         sections.append(
             "ERROR RECOVERY:\n"
-            '- "table not found": check the DATABASE TABLES list above for the correct '
+            '- "table not found": check the available tables for the correct '
             "name. Retry once with the corrected name.\n"
             '- "column not found": the SQL agent will auto-correct. If it fails twice, '
             "tell the user.\n"
@@ -166,12 +166,12 @@ def build_orchestrator_system_prompt(
         sections.append(
             "QUERY PLANNING:\n"
             "Before calling tools, decide your approach:\n"
-            "1. Which tables from the DATABASE TABLES map are relevant?\n"
+            "1. Which tables from the available schema are relevant?\n"
             "2. Single query or multiple? (prefer single)\n"
-            "3. If multiple, can they run in parallel (independent data) or must be "
-            "sequential (dependent)?\n"
-            "4. Do NOT query the database to 'explore' — the table map above tells you "
-            "what exists."
+            "3. If multiple, can they run in parallel (independent data) "
+            "or must be sequential (dependent)?\n"
+            "4. Do NOT query the database to 'explore' — the schema "
+            "tells you what exists."
         )
 
     sections.append("")
