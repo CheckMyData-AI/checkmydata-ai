@@ -182,7 +182,7 @@ class TestAnalyzeNegativeFeedback:
 
     @pytest.mark.asyncio
     async def test_blocklisted_subject_returns_empty(self):
-        """Negative feedback with a blocklisted table (information_schema) should not create learnings."""
+        """Blocklisted table (information_schema) should not create learnings."""
         analyzer = LearningAnalyzer()
         lessons = await analyzer.analyze_negative_feedback(
             session=AsyncMock(),

@@ -1175,8 +1175,7 @@ class OrchestratorAgent(BaseAgent):
             if sr.error:
                 error_types.append(sr.error[:60])
         logger.info(
-            "request_summary wf=%s steps=%d/%d wall_clock=%.1fs "
-            "sql_calls=%d response=%s errors=%s",
+            "request_summary wf=%s steps=%d/%d wall_clock=%.1fs sql_calls=%d response=%s errors=%s",
             wf_id,
             iteration + 1,
             max_iter,

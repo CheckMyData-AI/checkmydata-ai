@@ -40,6 +40,7 @@ _TABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+
 def _extract_tables(sql: str) -> list[str]:
     return [m.group(1).lower() for m in _TABLE_RE.finditer(sql)]
 

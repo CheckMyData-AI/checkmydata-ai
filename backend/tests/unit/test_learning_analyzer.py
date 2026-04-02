@@ -106,7 +106,7 @@ class TestTablePreference:
             ),
         ]
         lessons = analyzer._detect_table_preference(attempts, "test")
-        assert all(l.subject != "columns" for l in lessons)
+        assert all(lrn.subject != "columns" for lrn in lessons)
 
     def test_no_switch_detected(self):
         analyzer = LearningAnalyzer()

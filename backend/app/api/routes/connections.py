@@ -381,7 +381,9 @@ async def refresh_schema(
         if known_tables:
             try:
                 validation = await _learning_svc.validate_learnings_against_schema(
-                    db, connection_id, known_tables,
+                    db,
+                    connection_id,
+                    known_tables,
                 )
                 await db.commit()
             except Exception:
@@ -1032,7 +1034,9 @@ async def validate_learnings_schema(
 
     known_tables = {t.name for t in schema.tables}
     result = await _learning_svc.validate_learnings_against_schema(
-        db, connection_id, known_tables,
+        db,
+        connection_id,
+        known_tables,
     )
     await db.commit()
     return {"ok": True, **result}

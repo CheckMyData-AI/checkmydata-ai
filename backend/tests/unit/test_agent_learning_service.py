@@ -424,7 +424,10 @@ class TestValidateLearningQuality:
     def test_valid(self):
         from app.services.agent_learning_service import validate_learning_quality
 
-        err = validate_learning_quality("orders_v2", "Use orders_v2 instead of orders_legacy for revenue queries")
+        err = validate_learning_quality(
+            "orders_v2",
+            "Use orders_v2 instead of orders_legacy for revenue queries",
+        )
         assert err is None
 
 
@@ -974,8 +977,10 @@ class TestValidateLearningsAgainstSchema:
         orphan = _make_learning(subject="deleted_table", is_active=True)
         valid = _make_learning(id="l2", subject="orders", is_active=True)
 
-        with patch.object(svc, "get_learnings", new_callable=AsyncMock, return_value=[orphan, valid]):
-            with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock):
+        get_mock = AsyncMock(return_value=[orphan, valid])
+        inv_mock = AsyncMock()
+        with patch.object(svc, "get_learnings", get_mock):
+            with patch.object(svc, "_invalidate_summary", inv_mock):
                 result = await svc.validate_learnings_against_schema(
                     AsyncMock(), "conn-1", {"orders", "users"}
                 )
@@ -1003,9 +1008,7 @@ class TestValidateLearningsAgainstSchema:
         lrn = _make_learning(subject="order", is_active=True)
 
         with patch.object(svc, "get_learnings", new_callable=AsyncMock, return_value=[lrn]):
-            result = await svc.validate_learnings_against_schema(
-                AsyncMock(), "conn-1", {"orders"}
-            )
+            result = await svc.validate_learnings_against_schema(AsyncMock(), "conn-1", {"orders"})
 
         assert result["valid"] == 1
         assert result["deactivated"] == 0

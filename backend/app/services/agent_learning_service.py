@@ -456,7 +456,10 @@ class AgentLearningService:
         known_lower = {t.lower() for t in known_tables}
 
         learnings = await self.get_learnings(
-            session, connection_id, min_confidence=0.0, active_only=True,
+            session,
+            connection_id,
+            min_confidence=0.0,
+            active_only=True,
             skip_blocklisted=False,
         )
 

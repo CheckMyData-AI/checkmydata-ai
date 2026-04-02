@@ -88,8 +88,8 @@ class ConnectionHealthMonitor:
             else:
                 state.status = "degraded"
 
-            _QUIET_AFTER = 3
-            if state.consecutive_failures <= _QUIET_AFTER:
+            quiet_after = 3
+            if state.consecutive_failures <= quiet_after:
                 logger.warning(
                     "Health check failed for connection %s (attempt %d): %s",
                     connection_id,
