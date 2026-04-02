@@ -19,6 +19,7 @@ import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { CostEstimator } from "./CostEstimator";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
+import { useSessionPolling } from "@/hooks/useSessionPolling";
 
 export function ChatPanel() {
   const activeProject = useAppStore((s) => s.activeProject);
@@ -62,6 +63,11 @@ export function ChatPanel() {
   const [readinessBypassed, setReadinessBypassed] = useState(false);
   const [connHealthStatus, setConnHealthStatus] = useState<string>("unknown");
   const [reconnecting, setReconnecting] = useState(false);
+
+  const isBackgroundProcessing =
+    activeSession?.status === "processing" && !isThinking;
+
+  useSessionPolling();
 
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
@@ -895,6 +901,25 @@ export function ChatPanel() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+        {isBackgroundProcessing && (
+          <div className="flex gap-3">
+            <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden">
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce" />
+                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0.1s]" />
+                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0.2s]" />
+                </div>
+                <span className="text-sm text-text-secondary">
+                  Processing in background&hellip;
+                </span>
+              </div>
+              <p className="text-[11px] text-text-muted mt-1">
+                The response is being generated. It will appear here automatically.
+              </p>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />

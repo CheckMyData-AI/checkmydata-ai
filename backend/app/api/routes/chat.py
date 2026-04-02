@@ -446,6 +446,7 @@ class SessionResponse(BaseModel):
     project_id: str
     title: str
     connection_id: str | None = None
+    status: str = "idle"
     created_at: datetime | None = None
 
 
@@ -1284,6 +1285,173 @@ async def ask_stream(
 
     stream_timeout_seconds = app_settings.stream_timeout_seconds
 
+    from app.models.base import async_session_factory as _stream_session_factory
+
+    # Mark the session as processing so the frontend can detect in-progress runs
+    async with _stream_session_factory() as _status_db:
+        await _chat_svc.update_session_status(_status_db, session_id, "processing")
+
+    async def _background_finalize(
+        bg_task: asyncio.Task,
+        bg_session_id: str,
+        bg_body: ChatRequest,
+        bg_user_message_id: str,
+        bg_user_id: str,
+        bg_request_app,
+    ) -> None:
+        """Await the agent task and persist results even after SSE disconnect."""
+        bg_timeout = stream_timeout_seconds + 30
+        try:
+            try:
+                await asyncio.wait_for(asyncio.shield(bg_task), timeout=bg_timeout)
+            except TimeoutError:
+                logger.warning("Background finalize timed out for session %s", bg_session_id[:8])
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return
+            except (asyncio.CancelledError, Exception):
+                logger.debug(
+                    "Background task error for session %s",
+                    bg_session_id[:8],
+                    exc_info=True,
+                )
+                return
+
+            if not bg_task.done() or bg_task.cancelled():
+                return
+            try:
+                bg_result = bg_task.result()
+            except Exception:
+                logger.debug(
+                    "Background task raised for session %s",
+                    bg_session_id[:8],
+                    exc_info=True,
+                )
+                return
+            if bg_result is None:
+                return
+
+            bg_viz_data = None
+            if bg_result.results and not bg_result.error:
+                bg_viz_data = render(
+                    result=bg_result.results,
+                    viz_type=bg_result.viz_type,
+                    config=bg_result.viz_config,
+                    summary=bg_result.answer,
+                )
+
+            bg_raw_result = _build_raw_result(bg_result.results)
+            bg_rag = [
+                {"source_path": s.source_path, "distance": s.distance, "doc_type": s.doc_type}
+                for s in bg_result.knowledge_sources
+            ]
+            bg_tool_calls_str = (
+                json.dumps(bg_result.tool_call_log, default=str)
+                if bg_result.tool_call_log
+                else None
+            )
+            bg_usage = bg_result.token_usage or {}
+            bg_cost = _estimate_cost(
+                bg_result.llm_model,
+                bg_usage.get("prompt_tokens", 0),
+                bg_usage.get("completion_tokens", 0),
+            )
+            bg_enriched_usage = (
+                {
+                    **(bg_result.token_usage or {}),
+                    "provider": bg_result.llm_provider or "unknown",
+                    "model": bg_result.llm_model or "unknown",
+                    "estimated_cost_usd": bg_cost,
+                    "prompt_version": bg_result.prompt_version,
+                }
+                if bg_result.token_usage
+                else None
+            )
+            bg_sql_results = _build_sql_results_payload(bg_result.sql_results, bg_result.answer)
+
+            async with _stream_session_factory() as bg_db:
+                bg_assistant_msg = await _chat_svc.add_message(
+                    bg_db,
+                    bg_session_id,
+                    "assistant",
+                    bg_result.answer,
+                    metadata={
+                        "query": bg_result.query,
+                        "query_explanation": bg_result.query_explanation,
+                        "question": bg_body.message,
+                        "viz_type": bg_result.viz_type,
+                        "visualization": bg_viz_data,
+                        "raw_result": bg_raw_result,
+                        "error": bg_result.error,
+                        "workflow_id": bg_result.workflow_id,
+                        "row_count": (bg_result.results.row_count if bg_result.results else None),
+                        "execution_time_ms": (
+                            bg_result.results.execution_time_ms if bg_result.results else None
+                        ),
+                        "rag_sources": bg_rag,
+                        "token_usage": bg_enriched_usage,
+                        "response_type": bg_result.response_type,
+                        "staleness_warning": bg_result.staleness_warning,
+                        "insights": bg_result.insights or [],
+                        "suggested_followups": bg_result.suggested_followups or [],
+                        "clarification_data": bg_result.clarification_data,
+                        "sql_results": bg_sql_results,
+                        "continuation_context": bg_result.continuation_context,
+                    },
+                    tool_calls_json=bg_tool_calls_str,
+                )
+
+                try:
+                    await _usage_svc.record_usage(
+                        bg_db,
+                        user_id=bg_user_id,
+                        project_id=bg_body.project_id,
+                        session_id=bg_session_id,
+                        message_id=bg_assistant_msg.id,
+                        provider=bg_result.llm_provider or "unknown",
+                        model=bg_result.llm_model or "unknown",
+                        prompt_tokens=bg_usage.get("prompt_tokens", 0),
+                        completion_tokens=bg_usage.get("completion_tokens", 0),
+                        total_tokens=bg_usage.get("total_tokens", 0),
+                        estimated_cost_usd=bg_cost,
+                    )
+                except Exception:
+                    logger.warning("Background finalize: failed to record usage", exc_info=True)
+
+                if bg_result.workflow_id:
+                    try:
+                        trace_svc = getattr(bg_request_app.state, "trace_persistence_service", None)
+                        if trace_svc is not None:
+                            await trace_svc.finalize_trace(
+                                bg_result.workflow_id,
+                                project_id=bg_body.project_id,
+                                user_id=bg_user_id,
+                                session_id=bg_session_id,
+                                message_id=bg_user_message_id,
+                                assistant_message_id=bg_assistant_msg.id,
+                                question=bg_body.message,
+                                response_type=bg_result.response_type or "text",
+                                status="failed" if bg_result.error else "completed",
+                                error_message=bg_result.error,
+                            )
+                    except Exception:
+                        logger.warning("Background finalize: trace failed", exc_info=True)
+
+            logger.info("Background finalize completed for session %s", bg_session_id[:8])
+        except Exception:
+            logger.warning(
+                "Background finalize failed for session %s",
+                bg_session_id[:8],
+                exc_info=True,
+            )
+        finally:
+            async with _stream_session_factory() as _fin_db:
+                await _chat_svc.update_session_status(_fin_db, bg_session_id, "idle")
+            await agent_limiter.release(bg_user_id)
+
     async def _generate():
         result_holder: list = []
         queue = await tracker.subscribe()
@@ -1326,6 +1494,7 @@ async def ask_stream(
                 max_steps=stream_max_steps,
             )
             result_holder.append(res)
+            return res
 
         task = asyncio.create_task(_process())
 
@@ -1432,6 +1601,8 @@ async def ask_stream(
                 if remaining <= 0:
                     task.cancel()
                     await _finalize_on_error(wf_id, "Request timed out")
+                    async with _stream_session_factory() as _err_db:
+                        await _chat_svc.update_session_status(_err_db, session_id, "idle")
                     error_payload = {
                         "error": "Request timed out",
                         "error_type": "timeout",
@@ -1449,6 +1620,8 @@ async def ask_stream(
                     yield ": heartbeat\n\n"
                 except Exception as exc:
                     await _finalize_on_error(wf_id, str(exc))
+                    async with _stream_session_factory() as _err_db:
+                        await _chat_svc.update_session_status(_err_db, session_id, "idle")
                     error_payload = _build_structured_error(exc)
                     yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
                     return
@@ -1463,6 +1636,8 @@ async def ask_stream(
                     except Exception:
                         pass
                 await _finalize_on_error(wf_id, _task_err_msg)
+                async with _stream_session_factory() as _err_db:
+                    await _chat_svc.update_session_status(_err_db, session_id, "idle")
                 error_payload = {
                     "error": "No result",
                     "error_type": "internal",
@@ -1494,8 +1669,6 @@ async def ask_stream(
             tool_calls_str = (
                 json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
             )
-
-            from app.models.base import async_session_factory as _stream_session_factory
 
             s_usage = result.token_usage or {}
             s_cost = _estimate_cost(
@@ -1645,17 +1818,30 @@ async def ask_stream(
                 "sql_results": stream_sql_results,
             }
             yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
+            # Normal completion: mark session idle
+            async with _stream_session_factory() as _idle_db:
+                await _chat_svc.update_session_status(_idle_db, session_id, "idle")
         finally:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):
-                    pass
             await tracker.unsubscribe(queue)
-            if not released:
-                released = True
-                await agent_limiter.release(user["user_id"])
+            if not task.done():
+                # Client disconnected while agent is still running.
+                # Schedule a background finalizer to persist results instead of cancelling.
+                asyncio.create_task(
+                    _background_finalize(
+                        bg_task=task,
+                        bg_session_id=session_id,
+                        bg_body=body,
+                        bg_user_message_id=user_message_id,
+                        bg_user_id=user["user_id"],
+                        bg_request_app=request.app,
+                    )
+                )
+            else:
+                # Task already done (normal flow or error already handled).
+                # Release the limiter only if background finalizer wasn't scheduled.
+                if not released:
+                    released = True
+                    await agent_limiter.release(user["user_id"])
 
     return StreamingResponse(
         _generate(),

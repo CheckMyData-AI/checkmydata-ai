@@ -52,6 +52,29 @@ class TestChatSessions:
         assert resp.status_code == 200
         assert "connection_id" in resp.json()
 
+    async def test_session_response_includes_status(self, auth_client):
+        pid = await self._create_project(auth_client)
+        resp = await auth_client.post(
+            "/api/chat/sessions",
+            json={"project_id": pid, "title": "StatusCheck"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "status" in data
+        assert data["status"] == "idle"
+
+    async def test_list_sessions_includes_status(self, auth_client):
+        pid = await self._create_project(auth_client)
+        await auth_client.post(
+            "/api/chat/sessions",
+            json={"project_id": pid, "title": "S1"},
+        )
+        resp = await auth_client.get(f"/api/chat/sessions/{pid}")
+        assert resp.status_code == 200
+        for s in resp.json():
+            assert "status" in s
+            assert s["status"] == "idle"
+
     async def test_delete_session(self, auth_client):
         pid = await self._create_project(auth_client)
         resp = await auth_client.post(

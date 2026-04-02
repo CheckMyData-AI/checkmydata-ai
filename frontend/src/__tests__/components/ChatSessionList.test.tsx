@@ -66,6 +66,7 @@ function makeSessions(count: number): ChatSession[] {
     project_id: "proj1",
     title: `Session ${i + 1}`,
     connection_id: null,
+    status: "idle" as const,
     created_at: new Date().toISOString(),
   }));
 }
@@ -228,6 +229,26 @@ describe("ChatSessionList", () => {
     expect(store.setChatSessions).toHaveBeenCalled();
     expect(store.setActiveSession).toHaveBeenCalledWith(null);
     expect(mockedUseAppStore.setState).toHaveBeenCalled();
+  });
+
+  it("shows spinner icon for processing sessions", () => {
+    const sessions = makeSessions(3);
+    sessions[1].status = "processing";
+    setupStore({ chatSessions: sessions });
+    render(<ChatSessionList />);
+
+    const spinners = document.querySelectorAll(".animate-spin");
+    expect(spinners.length).toBe(1);
+  });
+
+  it("shows message-square icon for idle sessions", () => {
+    const sessions = makeSessions(2);
+    setupStore({ chatSessions: sessions });
+    render(<ChatSessionList />);
+
+    const spinners = document.querySelectorAll(".animate-spin");
+    expect(spinners.length).toBe(0);
+    expect(screen.getAllByTestId("icon-message-square")).toHaveLength(2);
   });
 
   it("delete of non-active session does not clear activeSession", async () => {

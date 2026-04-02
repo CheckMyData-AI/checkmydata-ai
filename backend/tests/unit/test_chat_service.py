@@ -403,6 +403,39 @@ class TestEnsureWelcomeSession:
         assert session.connection_id == "conn-123"
 
 
+class TestUpdateSessionStatus:
+    @pytest.mark.asyncio
+    async def test_set_processing(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+        assert chat.status == "idle"
+
+        await svc.update_session_status(db, chat.id, "processing")
+        updated = await svc.get_session(db, chat.id)
+        assert updated is not None
+        assert updated.status == "processing"
+
+    @pytest.mark.asyncio
+    async def test_set_idle(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+        await svc.update_session_status(db, chat.id, "processing")
+        await svc.update_session_status(db, chat.id, "idle")
+        updated = await svc.get_session(db, chat.id)
+        assert updated is not None
+        assert updated.status == "idle"
+
+    @pytest.mark.asyncio
+    async def test_noop_for_missing_session(self, db):
+        await svc.update_session_status(db, "nonexistent-id", "processing")
+
+    @pytest.mark.asyncio
+    async def test_new_session_has_idle_status(self, db):
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+        assert chat.status == "idle"
+
+
 class TestValidateSessionAccess:
     @pytest.mark.asyncio
     async def test_returns_session_for_valid_owner(self, db):

@@ -51,9 +51,10 @@ function _hydrateSqlResults(raw: unknown): SQLResultBlock[] | undefined {
 }
 
 interface SessionItemProps {
-  session: { id: string; title: string };
+  session: { id: string; title: string; status?: string };
   isActive: boolean;
   isLoading: boolean;
+  isProcessing: boolean;
   onSelect: (id: string) => void;
   onDelete: (e: React.MouseEvent, id: string) => void;
 }
@@ -62,6 +63,7 @@ const SessionItem = memo(function SessionItem({
   session,
   isActive,
   isLoading,
+  isProcessing,
   onSelect,
   onDelete,
 }: SessionItemProps) {
@@ -83,11 +85,15 @@ const SessionItem = memo(function SessionItem({
       {isActive && (
         <div className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
       )}
-      <Icon
-        name="message-square"
-        size={12}
-        className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
-      />
+      {isProcessing ? (
+        <span className="shrink-0 w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+      ) : (
+        <Icon
+          name="message-square"
+          size={12}
+          className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
+        />
+      )}
       <span
         className={`flex-1 min-w-0 text-xs truncate ${
           isActive ? "text-text-primary font-medium" : "text-text-secondary"
@@ -252,6 +258,7 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
             session={s}
             isActive={activeSession?.id === s.id}
             isLoading={loadingSession === s.id}
+            isProcessing={s.status === "processing"}
             onSelect={handleSelect}
             onDelete={handleDelete}
           />

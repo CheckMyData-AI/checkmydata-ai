@@ -183,6 +183,7 @@ export interface ChatSession {
   project_id: string;
   title: string;
   connection_id?: string | null;
+  status?: "idle" | "processing";
   created_at?: string | null;
 }
 

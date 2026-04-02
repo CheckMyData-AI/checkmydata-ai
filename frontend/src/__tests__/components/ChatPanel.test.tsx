@@ -125,6 +125,10 @@ vi.mock("@/components/connections/ConnectionHealth", () => ({
   ConnectionHealth: () => null,
 }));
 
+vi.mock("@/hooks/useSessionPolling", () => ({
+  useSessionPolling: vi.fn(),
+}));
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: "p1",
@@ -357,5 +361,50 @@ describe("ChatPanel", () => {
     const dots = document.querySelectorAll(".animate-bounce");
     expect(dots.length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByTestId("thinking-log")).not.toBeInTheDocument();
+  });
+
+  it("shows background processing indicator when session is processing but not thinking", async () => {
+    useAppStore.setState({
+      activeProject: makeProject(),
+      activeConnection: makeConnection(),
+      activeSession: {
+        id: "s1",
+        project_id: "p1",
+        title: "Test",
+        connection_id: "c1",
+        status: "processing",
+      },
+      messages: [
+        { id: "m1", role: "user", content: "query", timestamp: Date.now() },
+      ],
+      isThinking: false,
+    });
+
+    await renderPanel();
+    expect(screen.getByText(/Processing in background/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/The response is being generated/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show background processing when session is idle", async () => {
+    useAppStore.setState({
+      activeProject: makeProject(),
+      activeConnection: makeConnection(),
+      activeSession: {
+        id: "s1",
+        project_id: "p1",
+        title: "Test",
+        connection_id: "c1",
+        status: "idle",
+      },
+      messages: [
+        { id: "m1", role: "user", content: "query", timestamp: Date.now() },
+      ],
+      isThinking: false,
+    });
+
+    await renderPanel();
+    expect(screen.queryByText(/Processing in background/)).not.toBeInTheDocument();
   });
 });

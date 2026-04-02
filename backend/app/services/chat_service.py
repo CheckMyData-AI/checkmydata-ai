@@ -220,6 +220,18 @@ class ChatService:
                 return first[0], False
             raise
 
+    async def update_session_status(
+        self,
+        session: AsyncSession,
+        session_id: str,
+        status: str,
+    ) -> None:
+        """Set the processing status of a session ('idle' or 'processing')."""
+        chat = await self.get_session(session, session_id)
+        if chat:
+            chat.status = status
+            await session.commit()
+
     async def validate_session_access(
         self,
         session: AsyncSession,

@@ -34,6 +34,9 @@ class ChatSession(Base):
         index=True,
     )
     title: Mapped[str] = mapped_column(String(255), default="New Chat")
+    status: Mapped[str] = mapped_column(
+        String(20), default="idle", server_default="idle", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     project: Mapped[Project] = relationship(back_populates="chat_sessions")  # noqa: F821
