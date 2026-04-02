@@ -679,6 +679,8 @@ class OrchestratorAgent(BaseAgent):
         staleness_warning: str | None = None,
     ) -> AgentResponse:
         """Run the orchestrator tool-calling loop with the given context and tools."""
+        if table_map and not context.table_map:
+            context = replace(context, table_map=table_map)
         question = context.user_question
 
         context_window = self._llm.get_context_window(context.model)
@@ -788,10 +790,9 @@ class OrchestratorAgent(BaseAgent):
                     Message(
                         role="system",
                         content=(
-                            "TIME LIMIT REACHED. You have exceeded the allowed "
-                            "processing time. Do NOT make any more tool calls. "
-                            "Compose your final answer NOW using only the data "
-                            "you have gathered so far."
+                            "CRITICAL: TIME LIMIT REACHED. You MUST compose your "
+                            "final answer NOW. Any further tool calls will be "
+                            "REJECTED. Use only the data you already have."
                         ),
                     )
                 )
@@ -827,10 +828,10 @@ class OrchestratorAgent(BaseAgent):
                     Message(
                         role="system",
                         content=(
-                            f"IMPORTANT: You have {remaining_steps} analysis step(s) "
-                            "remaining. Compose your final answer now using the data "
-                            "you have gathered so far. Only make another tool call if "
-                            "it is absolutely essential."
+                            f"CRITICAL: You have {remaining_steps} analysis step(s) "
+                            "remaining. You MUST compose your final answer NOW using "
+                            "the data you have gathered so far. Do NOT make any more "
+                            "tool calls unless absolutely essential."
                         ),
                     )
                 )
@@ -930,12 +931,12 @@ class OrchestratorAgent(BaseAgent):
                 break
 
             hard_elapsed = time.monotonic() - wall_clock_start
-            if hard_elapsed > wall_clock_limit * 1.5:
+            if hard_elapsed > wall_clock_limit * 1.2:
                 logger.warning(
                     "Hard wall-clock cutoff (%.1fs > %.1fs, wf=%s), "
                     "LLM returned tool calls despite wrap-up — forcing break",
                     hard_elapsed,
-                    wall_clock_limit * 1.5,
+                    wall_clock_limit * 1.2,
                     wf_id,
                 )
                 final_text = llm_resp.content or ResponseBuilder.build_timeout_text(
@@ -1167,6 +1168,23 @@ class OrchestratorAgent(BaseAgent):
                 )
 
         await self._tracker.end(wf_id, "orchestrator", "completed", f"type={response_type}")
+
+        total_wall_clock = time.monotonic() - wall_clock_start
+        error_types = []
+        for sr in all_sql_results:
+            if sr.error:
+                error_types.append(sr.error[:60])
+        logger.info(
+            "request_summary wf=%s steps=%d/%d wall_clock=%.1fs "
+            "sql_calls=%d response=%s errors=%s",
+            wf_id,
+            iteration + 1,
+            max_iter,
+            total_wall_clock,
+            len(all_sql_results),
+            response_type,
+            error_types or "none",
+        )
 
         followups: list[str] = []
         if (

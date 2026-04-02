@@ -88,12 +88,21 @@ class ConnectionHealthMonitor:
             else:
                 state.status = "degraded"
 
-            logger.warning(
-                "Health check failed for connection %s (attempt %d): %s",
-                connection_id,
-                state.consecutive_failures,
-                exc,
-            )
+            _QUIET_AFTER = 3
+            if state.consecutive_failures <= _QUIET_AFTER:
+                logger.warning(
+                    "Health check failed for connection %s (attempt %d): %s",
+                    connection_id,
+                    state.consecutive_failures,
+                    exc,
+                )
+            else:
+                logger.debug(
+                    "Health check failed for connection %s (attempt %d, suppressed): %s",
+                    connection_id,
+                    state.consecutive_failures,
+                    exc,
+                )
 
         async with self._lock:
             self._health_state[connection_id] = state

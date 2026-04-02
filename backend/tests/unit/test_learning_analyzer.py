@@ -1,7 +1,7 @@
 """Unit tests for LearningAnalyzer heuristic extractors."""
 
 from app.core.query_validation import QueryAttempt, QueryError, QueryErrorType
-from app.knowledge.learning_analyzer import LearningAnalyzer, _extract_tables
+from app.knowledge.learning_analyzer import LearningAnalyzer, _extract_tables, _is_valid_subject
 
 
 class TestExtractTables:
@@ -48,8 +48,65 @@ class TestTablePreference:
         lessons = analyzer._detect_table_preference(attempts, "Show me revenue")
         assert len(lessons) >= 1
         assert lessons[0].category == "table_preference"
+        assert lessons[0].subject == "orders_v2"
         assert "orders_v2" in lessons[0].lesson
         assert "orders_legacy" in lessons[0].lesson
+        assert "for queries of this type" in lessons[0].lesson
+
+    def test_no_raw_question_in_lesson(self):
+        """Lesson text should not contain the raw user question."""
+        analyzer = LearningAnalyzer()
+        attempts = [
+            QueryAttempt(
+                attempt_number=1,
+                query="SELECT * FROM old_table",
+                explanation="",
+                error=QueryError(
+                    error_type=QueryErrorType.TABLE_NOT_FOUND,
+                    message="Table not found",
+                    raw_error="",
+                ),
+                results=None,
+            ),
+            QueryAttempt(
+                attempt_number=2,
+                query="SELECT * FROM new_table",
+                explanation="",
+                error=None,
+                results=_mock_result(),
+            ),
+        ]
+        question = "Найди в базе рефанды в каких таблицах они будут"
+        lessons = analyzer._detect_table_preference(attempts, question)
+        assert len(lessons) >= 1
+        assert question not in lessons[0].lesson
+        assert "Найди" not in lessons[0].lesson
+
+    def test_blocklisted_subject_skipped(self):
+        """Tables named 'columns', 'tables', etc. should not produce learnings."""
+        analyzer = LearningAnalyzer()
+        attempts = [
+            QueryAttempt(
+                attempt_number=1,
+                query="SELECT * FROM information_schema.columns",
+                explanation="",
+                error=QueryError(
+                    error_type=QueryErrorType.TABLE_NOT_FOUND,
+                    message="Not found",
+                    raw_error="",
+                ),
+                results=None,
+            ),
+            QueryAttempt(
+                attempt_number=2,
+                query="SELECT * FROM columns",
+                explanation="",
+                error=None,
+                results=_mock_result(),
+            ),
+        ]
+        lessons = analyzer._detect_table_preference(attempts, "test")
+        assert all(l.subject != "columns" for l in lessons)
 
     def test_no_switch_detected(self):
         analyzer = LearningAnalyzer()
@@ -178,6 +235,21 @@ class TestPerformanceHint:
         assert len(lessons) >= 1
         assert lessons[0].category == "performance_hint"
         assert "timeout" in lessons[0].lesson.lower()
+
+
+class TestSubjectBlocklist:
+    def test_blocklisted_subjects(self):
+        for subj in ["columns", "tables", "information_schema", "unknown", "schema"]:
+            assert not _is_valid_subject(subj), f"{subj} should be blocked"
+
+    def test_valid_subjects(self):
+        for subj in ["orders", "users", "google_voided_purchases", "subscription_users"]:
+            assert _is_valid_subject(subj), f"{subj} should be valid"
+
+    def test_case_insensitive(self):
+        assert not _is_valid_subject("COLUMNS")
+        assert not _is_valid_subject("Tables")
+        assert not _is_valid_subject("UNKNOWN")
 
 
 def _mock_result():

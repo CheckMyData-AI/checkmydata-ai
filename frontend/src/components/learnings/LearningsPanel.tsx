@@ -15,6 +15,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   query_pattern: "Query Patterns",
   schema_gotcha: "Schema Gotchas",
   performance_hint: "Performance Hints",
+  pipeline_pattern: "Pipeline Patterns",
+  data_quality_hint: "Data Quality Hints",
+  replan_recovery: "Replan Recoveries",
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -24,6 +27,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   query_pattern: "text-warning bg-warning-muted",
   schema_gotcha: "text-error bg-error-muted",
   performance_hint: "text-info bg-info-muted",
+  pipeline_pattern: "text-warning bg-warning-muted",
+  data_quality_hint: "text-error bg-error-muted",
+  replan_recovery: "text-success bg-success-muted",
 };
 
 type SortKey = "confidence" | "date" | "confirmed" | "applied";
@@ -100,6 +106,36 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
       toast("Learnings prompt recompiled", "success");
     } catch {
       toast("Failed to recompile", "error");
+    }
+  };
+
+  const handleConfirm = async (learningId: string) => {
+    try {
+      const result = await api.connections.confirmLearning(connectionId, learningId);
+      setLearnings((prev) =>
+        prev.map((l) =>
+          l.id === learningId
+            ? { ...l, confidence: result.confidence, times_confirmed: result.times_confirmed }
+            : l
+        )
+      );
+    } catch {
+      toast("Failed to confirm", "error");
+    }
+  };
+
+  const handleContradict = async (learningId: string) => {
+    try {
+      const result = await api.connections.contradictLearning(connectionId, learningId);
+      setLearnings((prev) =>
+        prev.map((l) =>
+          l.id === learningId
+            ? { ...l, confidence: result.confidence, is_active: result.is_active }
+            : l
+        )
+      );
+    } catch {
+      toast("Failed to contradict", "error");
     }
   };
 
@@ -319,6 +355,22 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                             </div>
                             {canEdit && (
                               <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                                <button
+                                  onClick={() => handleConfirm(l.id)}
+                                  className="p-1 rounded hover:bg-success-muted text-text-muted hover:text-success"
+                                  title="Confirm (upvote)"
+                                  aria-label="Confirm"
+                                >
+                                  <Icon name="thumbs-up" size={12} />
+                                </button>
+                                <button
+                                  onClick={() => handleContradict(l.id)}
+                                  className="p-1 rounded hover:bg-error-muted text-text-muted hover:text-error"
+                                  title="Contradict (downvote)"
+                                  aria-label="Contradict"
+                                >
+                                  <Icon name="thumbs-down" size={12} />
+                                </button>
                                 <button
                                   onClick={() => {
                                     setEditingId(l.id);

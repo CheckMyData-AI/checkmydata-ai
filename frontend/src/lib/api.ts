@@ -978,6 +978,16 @@ export const api = {
       request<{ ok: boolean; deleted: number }>(`/connections/${connId}/learnings`, { method: "DELETE" }),
     recompileLearnings: (connId: string) =>
       request<{ ok: boolean; compiled_prompt: string }>(`/connections/${connId}/learnings/recompile`, { method: "POST" }),
+    confirmLearning: (connId: string, learningId: string) =>
+      request<{ ok: boolean; id: string; confidence: number; times_confirmed: number }>(
+        `/connections/${connId}/learnings/${learningId}/confirm`,
+        { method: "POST" },
+      ),
+    contradictLearning: (connId: string, learningId: string) =>
+      request<{ ok: boolean; id: string; confidence: number; is_active: boolean }>(
+        `/connections/${connId}/learnings/${learningId}/contradict`,
+        { method: "POST" },
+      ),
     health: (id: string) =>
       request<ConnectionHealthState>(`/connections/${id}/health`),
     healthAll: (projectId: string) =>

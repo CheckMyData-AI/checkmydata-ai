@@ -83,6 +83,38 @@ def build_sql_system_prompt(
         sections.append("2. Load rules with `get_custom_rules`.")
         sections.append("3. Write and execute the query with `execute_query`.")
 
+    efficiency_parts: list[str] = []
+    if table_map:
+        efficiency_parts.append(
+            "- The DATABASE TABLES map is ALREADY in this prompt below. "
+            "Do NOT call get_db_index(overview) to re-fetch it."
+        )
+    if learnings_prompt:
+        efficiency_parts.append(
+            "- Agent learnings are ALREADY in this prompt below. "
+            "Do NOT call get_agent_learnings unless you need table-specific learnings "
+            "not shown above."
+        )
+    if notes_prompt:
+        efficiency_parts.append(
+            "- Session notes are ALREADY in this prompt below. "
+            "Do NOT call read_notes unless you need notes for specific tables "
+            "not shown above."
+        )
+    if efficiency_parts:
+        sections.append("")
+        sections.append("EFFICIENCY RULES:")
+        sections.extend(efficiency_parts)
+        if has_db_index:
+            sections.append(
+                "- Preferred workflow: get_query_context (for relevant tables only) "
+                "-> execute_query. Aim for 2-3 tool calls total."
+            )
+            sections.append(
+                "- For simple questions where the table map provides enough context, "
+                "go directly to execute_query."
+            )
+
     sections.append("")
     sections.append(
         "CURRENT QUESTION FOCUS:\n"

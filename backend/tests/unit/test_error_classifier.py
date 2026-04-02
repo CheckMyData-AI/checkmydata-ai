@@ -103,6 +103,28 @@ class TestMySQLClassification:
         assert err.error_type == QueryErrorType.PERMISSION_DENIED
         assert not err.is_retryable
 
+    def test_collation_mismatch(self):
+        err = self.clf.classify(
+            "Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and "
+            "(utf8mb4_general_ci,IMPLICIT) for operation 'UNION'",
+            "mysql",
+        )
+        assert err.error_type == QueryErrorType.COLLATION_MISMATCH
+        assert err.is_retryable
+
+
+class TestPostgresCollation:
+    def setup_method(self):
+        self.clf = ErrorClassifier()
+
+    def test_collation_mismatch(self):
+        err = self.clf.classify(
+            'ERROR: collation mismatch between "en_US.utf8" and "C"',
+            "postgresql",
+        )
+        assert err.error_type == QueryErrorType.COLLATION_MISMATCH
+        assert err.is_retryable
+
 
 class TestClickHouseClassification:
     def setup_method(self):

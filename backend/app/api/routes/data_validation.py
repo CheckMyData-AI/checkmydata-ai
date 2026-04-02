@@ -496,17 +496,23 @@ async def confirm_investigation_fix(
     notes_created: list[str] = []
 
     if inv.root_cause and inv.root_cause_category:
-        learning = await learning_svc.create_learning(
-            db,
-            connection_id=inv.connection_id,
-            category=_map_root_cause_to_learning_category(inv.root_cause_category),
-            subject=_extract_table_from_query(inv.original_query),
-            lesson=inv.root_cause,
-            confidence=0.9,
-            source_query=inv.original_query,
-            source_error=f"Investigation: {inv.user_complaint_type}",
-        )
-        learnings_created.append(learning.id)
+        try:
+            learning = await learning_svc.create_learning(
+                db,
+                connection_id=inv.connection_id,
+                category=_map_root_cause_to_learning_category(inv.root_cause_category),
+                subject=_extract_table_from_query(inv.original_query),
+                lesson=inv.root_cause,
+                confidence=0.9,
+                source_query=inv.original_query,
+                source_error=f"Investigation: {inv.user_complaint_type}",
+            )
+            learnings_created.append(learning.id)
+        except ValueError:
+            logger.warning(
+                "Skipped learning from investigation %s (quality check failed)",
+                investigation_id,
+            )
 
         note = await notes_svc.create_note(
             db,

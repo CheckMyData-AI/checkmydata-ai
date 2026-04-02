@@ -46,6 +46,53 @@ CATEGORY_LABELS = {
 
 SIMILARITY_THRESHOLD = 0.75
 
+MIN_LESSON_LENGTH = 15
+MAX_LESSON_LENGTH = 500
+
+SUBJECT_BLOCKLIST = frozenset(
+    {
+        "columns",
+        "tables",
+        "information_schema",
+        "pg_catalog",
+        "pg_stat",
+        "unknown",
+        "schema",
+        "dual",
+        "sysdiagrams",
+        "sys",
+    }
+)
+
+
+def _non_ascii_ratio(text: str) -> float:
+    """Return the fraction of characters that are non-ASCII (outside printable ASCII range)."""
+    if not text:
+        return 0.0
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    return non_ascii / len(text)
+
+
+def validate_learning_quality(subject: str, lesson: str) -> str | None:
+    """Return an error message if the learning fails quality checks, else None."""
+    if subject.lower() in SUBJECT_BLOCKLIST:
+        return f"Subject '{subject}' is in the blocklist"
+    if len(lesson.strip()) < MIN_LESSON_LENGTH:
+        return f"Lesson too short ({len(lesson.strip())} chars, min {MIN_LESSON_LENGTH})"
+    if _non_ascii_ratio(lesson) > 0.5:
+        return "Lesson text is mostly non-ASCII (likely raw user question in non-English)"
+    return None
+
+
+def normalize_lesson_text(lesson: str) -> str:
+    """Normalize whitespace, capitalize, and enforce max length."""
+    text = " ".join(lesson.split())
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    if len(text) > MAX_LESSON_LENGTH:
+        text = text[: MAX_LESSON_LENGTH - 1] + "\u2026"
+    return text
+
 
 class AgentLearningService:
     """Manages the lifecycle of per-connection agent learnings."""
@@ -67,6 +114,13 @@ class AgentLearningService:
     ) -> AgentLearning:
         if category not in VALID_CATEGORIES:
             raise ValueError(f"Invalid category: {category}")
+
+        lesson = normalize_lesson_text(lesson)
+
+        quality_err = validate_learning_quality(subject, lesson)
+        if quality_err:
+            logger.debug("Rejected learning (quality check): %s — %s", quality_err, lesson[:80])
+            raise ValueError(f"Learning quality check failed: {quality_err}")
 
         lhash = _lesson_hash(lesson)
 
@@ -251,6 +305,7 @@ class AgentLearningService:
         entry.confidence = min(1.0, entry.confidence + 0.1)
         entry.updated_at = datetime.now(UTC)
         await session.flush()
+        await self._invalidate_summary(session, entry.connection_id)
         return entry
 
     async def apply_learning(
@@ -291,6 +346,7 @@ class AgentLearningService:
             entry.is_active = False
         entry.updated_at = datetime.now(UTC)
         await session.flush()
+        await self._invalidate_summary(session, entry.connection_id)
         return entry
 
     # ------------------------------------------------------------------
@@ -303,6 +359,7 @@ class AgentLearningService:
         connection_id: str,
         min_confidence: float = 0.3,
         active_only: bool = True,
+        skip_blocklisted: bool = True,
     ) -> list[AgentLearning]:
         stmt = select(AgentLearning).where(
             AgentLearning.connection_id == connection_id,
@@ -315,7 +372,10 @@ class AgentLearningService:
             AgentLearning.times_confirmed.desc(),
         )
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        if skip_blocklisted:
+            rows = [r for r in rows if r.subject.lower() not in SUBJECT_BLOCKLIST]
+        return rows
 
     async def get_learnings_for_table(
         self,
@@ -335,7 +395,8 @@ class AgentLearningService:
         return [
             lrn
             for lrn in all_learnings
-            if tbl_lower in lrn.subject.lower() or tbl_lower in lrn.lesson.lower()
+            if lrn.subject.lower() not in SUBJECT_BLOCKLIST
+            and (tbl_lower in lrn.subject.lower() or tbl_lower in lrn.lesson.lower())
         ]
 
     async def get_learning_by_id(
@@ -372,6 +433,58 @@ class AgentLearningService:
             )
         )
         return result.scalar_one()
+
+    # ------------------------------------------------------------------
+    # Schema Validation
+    # ------------------------------------------------------------------
+
+    async def validate_learnings_against_schema(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        known_tables: set[str],
+    ) -> dict:
+        """Cross-check active learnings against the current DB schema.
+
+        Deactivates learnings whose ``subject`` references a table/column that
+        no longer exists in *known_tables* (case-insensitive).  Returns a
+        summary dict with counts.
+        """
+        if not known_tables:
+            return {"checked": 0, "deactivated": 0, "valid": 0}
+
+        known_lower = {t.lower() for t in known_tables}
+
+        learnings = await self.get_learnings(
+            session, connection_id, min_confidence=0.0, active_only=True,
+            skip_blocklisted=False,
+        )
+
+        deactivated = 0
+        valid = 0
+        for lrn in learnings:
+            subject_lower = lrn.subject.lower()
+            if subject_lower in known_lower or any(subject_lower in t for t in known_lower):
+                valid += 1
+            else:
+                lrn.is_active = False
+                lrn.updated_at = datetime.now(UTC)
+                deactivated += 1
+                logger.info(
+                    "Deactivated learning %s: subject '%s' not in current schema",
+                    lrn.id,
+                    lrn.subject,
+                )
+
+        if deactivated:
+            await session.flush()
+            await self._invalidate_summary(session, connection_id)
+
+        return {
+            "checked": len(learnings),
+            "deactivated": deactivated,
+            "valid": valid,
+        }
 
     # ------------------------------------------------------------------
     # Update / Delete
@@ -751,7 +864,10 @@ class AgentLearningService:
         """Reduce confidence of stale learnings and deactivate very low ones.
 
         Called periodically (e.g. daily).  Learnings not updated in >30 days
-        lose 0.02 confidence.  Those below 0.2 for >30 days are deactivated.
+        lose confidence:
+        - -0.05 if never applied (times_applied == 0) — faster cleanup
+        - -0.02 if previously applied — slower decay for proven learnings
+        Those below 0.2 are deactivated.
         Returns the number of affected rows.
         """
         from datetime import timedelta
@@ -772,7 +888,8 @@ class AgentLearningService:
         affected = 0
 
         for lrn in stale:
-            lrn.confidence = max(0.0, round(lrn.confidence - 0.02, 4))
+            penalty = 0.02 if lrn.times_applied > 0 else 0.05
+            lrn.confidence = max(0.0, round(lrn.confidence - penalty, 4))
             affected += 1
             affected_connections.add(lrn.connection_id)
 

@@ -17,6 +17,7 @@ class QueryErrorType(StrEnum):
     PERMISSION_DENIED = "permission_denied"
     CONNECTION_ERROR = "connection_error"
     TIMEOUT = "timeout"
+    COLLATION_MISMATCH = "collation_mismatch"
     EMPTY_RESULT = "empty_result"
     EXPLAIN_WARNING = "explain_warning"
     UNKNOWN = "unknown"

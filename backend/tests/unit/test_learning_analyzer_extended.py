@@ -180,6 +180,19 @@ class TestAnalyzeNegativeFeedback:
         )
         assert lessons == []
 
+    @pytest.mark.asyncio
+    async def test_blocklisted_subject_returns_empty(self):
+        """Negative feedback with a blocklisted table (information_schema) should not create learnings."""
+        analyzer = LearningAnalyzer()
+        lessons = await analyzer.analyze_negative_feedback(
+            session=AsyncMock(),
+            connection_id="conn-1",
+            query="SELECT * FROM information_schema.columns",
+            question="Show me column info",
+            error_detail="Wrong data returned",
+        )
+        assert lessons == []
+
 
 class TestFormatDiscoveryExtended:
     def test_thousands_division(self):

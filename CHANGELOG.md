@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1] - 2026-04-02
+
+### Added
+- **Agent Learning quality gates** — blocklist for SQL keywords/metadata subjects (`columns`, `tables`, `information_schema`, `pg_catalog`, etc.), minimum lesson length (15 chars), non-ASCII ratio rejection (>50%), and normalization (whitespace cleanup, capitalization, max 500 chars). Write-time validation via `validate_learning_quality()` and read-time filtering via `skip_blocklisted` flag
+- **Schema cross-validation** — `validate_learnings_against_schema()` deactivates learnings whose subject no longer exists in the DB schema. Runs automatically on schema refresh and available as manual `POST /connections/{id}/learnings/validate-schema` endpoint
+- **Learning confirm/contradict API** — `POST /connections/{id}/learnings/{lid}/confirm` (upvote) and `POST /connections/{id}/learnings/{lid}/contradict` (downvote) endpoints with RBAC (editor+). Votes immediately invalidate the compiled prompt cache
+- **Audit script** (`scripts/audit_learnings.py`) — production database learning audit tool with dry-run and apply modes; diagnoses blocklisted subjects, short lessons, and high non-ASCII content
+- **Orchestrator request summary logging** — each request now logs `request_summary` with step count, wall clock time, SQL call count, response type, and error types
+- **RulesManager view mode** — viewers can now click rules to read them in a read-only modal; editors get dirty-state tracking with disabled Save button when unchanged
+
+### Changed
+- **Accelerated confidence decay** — never-applied learnings (times_applied=0) lose 0.05 per 30-day cycle vs 0.02 for applied ones, enabling faster cleanup of unproven learnings
+- **Orchestrator hardened wrap-up** — time limit and step limit messages use stronger "CRITICAL" directive; hard wall-clock cutoff tightened from 1.5x to 1.2x to prevent excessive overruns
+- **Table map propagation** — orchestrator now sets `context.table_map` from the loaded table map when not already set, fixing downstream stages receiving empty table maps
+
+### Fixed
+- **Vote cache invalidation** — `confirm_learning()` and `contradict_learning()` now call `_invalidate_summary()` to clear the compiled prompt cache immediately after voting
+- **Blocklist filtering on read** — `get_learnings()` and `get_learnings_for_table()` now skip blocklisted subjects by default, catching legacy bad data that was stored before write-time validation
+
 ## [1.5.0] - 2026-04-01
 
 ### Added

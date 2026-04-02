@@ -62,7 +62,7 @@ class TestCreateLearning:
             connection_id="conn-1",
             category="table_preference",
             subject="orders",
-            lesson="Use orders_v2",
+            lesson="Use orders_v2 instead of orders_legacy for revenue queries",
         )
         session.add.assert_called_once()
         session.flush.assert_awaited()
@@ -204,13 +204,22 @@ class TestFindSimilar:
         assert result is None
 
 
+def _session_with_invalidate_support(get_return=None):
+    """Create a mock session that supports both get() and _invalidate_summary's execute()."""
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=get_return)
+    session.flush = AsyncMock()
+    exec_result = MagicMock()
+    exec_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=exec_result)
+    return session
+
+
 class TestConfirmLearning:
     @pytest.mark.asyncio
     async def test_increments_confidence_and_count(self, svc):
         entry = _real_learning(confidence=0.6, times_confirmed=1)
-        session = AsyncMock()
-        session.get = AsyncMock(return_value=entry)
-        session.flush = AsyncMock()
+        session = _session_with_invalidate_support(get_return=entry)
 
         result = await svc.confirm_learning(session, "l1")
         assert result is not None
@@ -220,9 +229,7 @@ class TestConfirmLearning:
     @pytest.mark.asyncio
     async def test_caps_at_1(self, svc):
         entry = _real_learning(confidence=0.95, times_confirmed=5)
-        session = AsyncMock()
-        session.get = AsyncMock(return_value=entry)
-        session.flush = AsyncMock()
+        session = _session_with_invalidate_support(get_return=entry)
 
         await svc.confirm_learning(session, "l1")
         assert entry.confidence <= 1.0
@@ -239,9 +246,7 @@ class TestContradictLearning:
     @pytest.mark.asyncio
     async def test_decreases_confidence(self, svc):
         entry = _real_learning(confidence=0.7)
-        session = AsyncMock()
-        session.get = AsyncMock(return_value=entry)
-        session.flush = AsyncMock()
+        session = _session_with_invalidate_support(get_return=entry)
 
         result = await svc.contradict_learning(session, "l1")
         assert result is not None
@@ -251,9 +256,7 @@ class TestContradictLearning:
     @pytest.mark.asyncio
     async def test_deactivates_below_threshold(self, svc):
         entry = _real_learning(confidence=0.05)
-        session = AsyncMock()
-        session.get = AsyncMock(return_value=entry)
-        session.flush = AsyncMock()
+        session = _session_with_invalidate_support(get_return=entry)
 
         await svc.contradict_learning(session, "l1")
         assert entry.confidence == 0.0
@@ -322,9 +325,38 @@ class TestCountLearnings:
 
 class TestDecayStale:
     @pytest.mark.asyncio
-    async def test_decays_old_learnings(self, svc):
+    async def test_decays_old_learnings_never_applied(self, svc):
+        """Never-applied learnings lose 0.05 confidence per cycle."""
         old_date = datetime.now(UTC) - timedelta(days=45)
-        entry = _real_learning(confidence=0.5, updated_at=old_date)
+        entry = _real_learning(confidence=0.5, times_applied=0, updated_at=old_date)
+
+        session = AsyncMock()
+        stale_result = MagicMock()
+        stale_result.scalars.return_value.all.return_value = [entry]
+        summary_result = MagicMock()
+        summary_result.scalar_one_or_none.return_value = None
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return stale_result
+            return summary_result
+
+        session.execute = mock_execute
+        session.flush = AsyncMock()
+
+        affected = await svc.decay_stale_learnings(session)
+        assert affected == 1
+        assert entry.confidence == pytest.approx(0.45, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_decays_old_learnings_previously_applied(self, svc):
+        """Previously-applied learnings lose only 0.02 confidence per cycle."""
+        old_date = datetime.now(UTC) - timedelta(days=45)
+        entry = _real_learning(confidence=0.5, times_applied=5, updated_at=old_date)
 
         session = AsyncMock()
         stale_result = MagicMock()

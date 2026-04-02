@@ -97,9 +97,9 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 
 ## Key Features
 
-- **Natural language to SQL** with self-healing validation loop (retry, repair, explain)
+- **Natural language to SQL** with self-healing validation loop (retry, repair, explain), dialect-aware error classification (column/table not found, syntax, collation mismatch, timeout, permission denied, etc.), and targeted repair hints
 - **Multi-agent orchestration** with LLM-based intent classification, adaptive planning (quick heuristic plans for simple queries, LLM-driven plans for complex ones), per-stage validation + DataGate quality checks, automatic replanning on failure (up to 2 replans), context-aware routing, history-aware turn isolation, tool-call deduplication, continuation-aware analysis resumption, and structured clarification questions (yes/no, multiple choice, free text) when user intent is ambiguous. The orchestrator classifies each request into an intent type (direct response, data query, knowledge query, MCP query, or mixed) before loading context, ensuring minimal resource usage for simple questions. When analysis hits the step or time limit, the "Continue analysis" button resumes from where it stopped — preserving executed SQL queries, intermediate results, and partial findings — instead of restarting from scratch
-- **Agent Learning Memory** -- automatically learns from query outcomes, pipeline replans, and DataGate failures; accumulated learnings are injected into planning prompts for future queries
+- **Agent Learning Memory** -- automatically learns from query outcomes, pipeline replans, and DataGate failures; accumulated learnings are injected into planning prompts for future queries. Quality gates enforce minimum lesson length, subject validation (blocklist for SQL keywords/metadata), and non-ASCII ratio checks to prevent polluted learnings. Read-time blocklist filtering also catches legacy bad data. Users can confirm (upvote) or contradict (downvote) individual learnings via the UI; votes invalidate the compiled prompt cache immediately. Confidence decay is accelerated for never-applied learnings (-0.05 vs -0.02 per 30-day cycle). Schema cross-validation runs automatically on schema refresh and is available as a manual API endpoint (`POST /connections/{id}/learnings/validate-schema`) to deactivate learnings referencing dropped tables. Nine learning categories are supported: Table Preferences, Column Usage, Data Formats, Query Patterns, Schema Gotchas, Performance Hints, Pipeline Patterns, Data Quality Hints, and Replan Recoveries
 - **Data validation feedback loop** -- wrong data investigation, benchmarks, proactive sanity checks
 - **Rich visualizations** -- bar, line, pie, scatter charts with on-the-fly type switching and XLSX/CSV/JSON export; compound queries produce multiple independent charts per answer
 - **Database indexing** -- AI-powered schema analysis with business descriptions, data patterns, and query hints
@@ -141,7 +141,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `JWT_SECRET` | Secret for signing JWT tokens (change from default in production) |
 | One LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
 
-**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 300s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2). See `backend/.env.example` for all options.
+**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 180s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2). See `backend/.env.example` for all options.
 
 ## Development Commands
 
@@ -166,7 +166,7 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **3,284 total tests** (2,501 backend unit + 410 integration + 364 frontend + 9 performance smoke)
+- **3,303 total tests** (2,501 backend unit + 410 integration + 383 frontend + 9 performance smoke)
 - **72%+ backend coverage** (CI-enforced minimum)
 - Zero flaky tests, zero skipped tests
 

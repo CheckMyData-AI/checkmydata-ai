@@ -43,14 +43,23 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
   const [rules, setRules] = useState<Rule[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
+  const [originalName, setOriginalName] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
   const [listLoading, setListLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const editingRule = editingId
     ? rules.find((r) => r.id === editingId)
     : null;
+
+  const viewingRule = viewingId
+    ? rules.find((r) => r.id === viewingId)
+    : null;
+
+  const isDirty = editingId !== null && (name !== originalName || content !== originalContent);
 
   useEffect(() => {
     if (createRequested && canEdit) {
@@ -98,10 +107,21 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
   };
 
   const handleEdit = (rule: Rule) => {
+    setViewingId(null);
     setEditingId(rule.id);
     setName(rule.name);
     setContent(rule.content);
+    setOriginalName(rule.name);
+    setOriginalContent(rule.content);
     setShowCreate(false);
+  };
+
+  const handleRowClick = (rule: Rule) => {
+    if (canEdit) {
+      handleEdit(rule);
+    } else {
+      setViewingId(rule.id);
+    }
   };
 
   const handleUpdate = async () => {
@@ -145,13 +165,16 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
     }
   };
 
-  const isFormOpen = showCreate || editingId !== null;
+  const isFormOpen = showCreate || editingId !== null || viewingId !== null;
 
   const cancel = () => {
     setEditingId(null);
+    setViewingId(null);
     setShowCreate(false);
     setName("");
     setContent("");
+    setOriginalName("");
+    setOriginalContent("");
   };
 
   return (
@@ -159,51 +182,60 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
       <FormModal
         open={isFormOpen}
         onClose={cancel}
-        title={editingId ? "Edit Rule" : "New Rule"}
+        title={viewingId ? "View Rule" : editingId ? "Edit Rule" : "New Rule"}
         maxWidth="max-w-3xl"
       >
-        <div className="space-y-2.5">
-          {editingRule?.is_default && (
-            <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
-              <Icon name="zap" size={10} />
-              This is the default metrics guide. Edit it to match your project.
-            </p>
-          )}
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Rule name"
-            aria-label="Rule name"
-            maxLength={255}
-            className={inputCls}
-          />
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="Rule content (markdown)"
-            aria-label="Rule content"
-            rows={12}
-            maxLength={50000}
-            className={inputCls + " resize-y min-h-[200px] font-mono text-[13px]"}
-          />
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={editingId ? handleUpdate : handleCreate}
-              disabled={saving}
-              className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {saving ? "Saving..." : editingId ? "Save" : "Create"}
-            </button>
-            {editingId && (
-              <button
-                onClick={cancel}
-                className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
-              >
-                Cancel
-              </button>
-            )}
+        {viewingRule ? (
+          <div className="space-y-2.5">
+            <p className="text-sm font-medium text-text-primary">{viewingRule.name}</p>
+            <pre className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-secondary font-mono whitespace-pre-wrap min-h-[200px] overflow-y-auto max-h-[60vh]">
+              {viewingRule.content}
+            </pre>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-2.5">
+            {editingRule?.is_default && (
+              <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
+                <Icon name="zap" size={10} />
+                This is the default metrics guide. Edit it to match your project.
+              </p>
+            )}
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Rule name"
+              aria-label="Rule name"
+              maxLength={255}
+              className={inputCls}
+            />
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Rule content (markdown)"
+              aria-label="Rule content"
+              rows={12}
+              maxLength={50000}
+              className={inputCls + " resize-y min-h-[200px] font-mono text-[13px]"}
+            />
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={editingId ? handleUpdate : handleCreate}
+                disabled={saving || (editingId !== null && !isDirty)}
+                className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? "Saving..." : editingId ? "Save" : "Create"}
+              </button>
+              {editingId && (
+                <button
+                  onClick={cancel}
+                  className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </FormModal>
 
       {listLoading && <Spinner />}
@@ -211,7 +243,11 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
         {rules.map((rule) => (
           <div
             key={rule.id}
-            className="group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md hover:bg-surface-1 transition-colors"
+            role="button"
+            tabIndex={0}
+            onClick={() => handleRowClick(rule)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(rule); } }}
+            className="group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md hover:bg-surface-1 transition-colors cursor-pointer"
           >
             <Icon
               name="file-text"
@@ -240,7 +276,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
                 <ActionButton
                   icon="pencil"
                   title="Edit rule"
-                  onClick={() => handleEdit(rule)}
+                  onClick={(e) => { e.stopPropagation(); handleEdit(rule); }}
                   size="xs"
                 />
               )}
@@ -248,7 +284,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
                 <ActionButton
                   icon="trash"
                   title="Delete rule"
-                  onClick={() => handleDelete(rule)}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(rule); }}
                   variant="danger"
                   size="xs"
                 />

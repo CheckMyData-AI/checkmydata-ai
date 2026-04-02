@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.query_validation import QueryAttempt, QueryErrorType
+from app.services.agent_learning_service import SUBJECT_BLOCKLIST
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,9 +40,13 @@ _TABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 def _extract_tables(sql: str) -> list[str]:
     return [m.group(1).lower() for m in _TABLE_RE.finditer(sql)]
+
+
+def _is_valid_subject(subject: str) -> bool:
+    """Return False for SQL keywords, metadata tables, and placeholder subjects."""
+    return subject.lower() not in SUBJECT_BLOCKLIST
 
 
 async def _load_sync_warnings_for_dedup(
@@ -167,6 +172,9 @@ class LearningAnalyzer:
         tables = _extract_tables(query)
         subject = tables[0] if tables else "unknown"
 
+        if not _is_valid_subject(subject):
+            return []
+
         if error_detail:
             lessons.append(
                 ExtractedLesson(
@@ -240,12 +248,16 @@ class LearningAnalyzer:
                 if is_success or (i + 2 < len(attempts) and attempts[-1].error is None):
                     for old_t in removed:
                         for new_t in added:
-                            topic = question[:80] if question else "data queries"
+                            if not _is_valid_subject(new_t):
+                                continue
                             lessons.append(
                                 ExtractedLesson(
                                     category="table_preference",
-                                    subject=old_t,
-                                    lesson=(f"Use `{new_t}` instead of `{old_t}` for {topic}"),
+                                    subject=new_t,
+                                    lesson=(
+                                        f"Use `{new_t}` instead of `{old_t}` "
+                                        f"for queries of this type"
+                                    ),
                                     confidence=0.65,
                                     source_query=next_attempt.query,
                                     source_error=failed.error.message if failed.error else None,
@@ -284,6 +296,9 @@ class LearningAnalyzer:
             tables = _extract_tables(failed.query)
             subject = tables[0] if tables else "unknown"
 
+            if not _is_valid_subject(subject):
+                continue
+
             if suggested:
                 correct_col = suggested[0]
                 lessons.append(
@@ -318,6 +333,9 @@ class LearningAnalyzer:
 
             tables = _extract_tables(attempts[i + 1].query)
             subject = tables[0] if tables else "unknown"
+
+            if not _is_valid_subject(subject):
+                continue
 
             if "/ 100" in fixed_q and "/ 100" not in failed_q:
                 col_match = re.search(r"(\w+)\s*/\s*100", fixed_q)
@@ -385,6 +403,9 @@ class LearningAnalyzer:
             fixed_q = next_attempt.query.lower()
             tables = _extract_tables(next_attempt.query)
             subject = tables[0] if tables else "unknown"
+
+            if not _is_valid_subject(subject):
+                continue
 
             if "deleted_at is null" in fixed_q and "deleted_at" not in failed_q:
                 lessons.append(
@@ -461,6 +482,10 @@ class LearningAnalyzer:
 
             tables = _extract_tables(attempt.query)
             subject = tables[0] if tables else "unknown"
+
+            if not _is_valid_subject(subject):
+                continue
+
             fixed_q = next_attempt.query.lower()
             failed_q = attempt.query.lower()
 
@@ -501,12 +526,16 @@ Your goal is to extract reusable lessons that will help future query generation.
 
 For each lesson, output a JSON array of objects with these fields:
 - "category": one of "table_preference", "column_usage", "data_format", \
-"query_pattern", "schema_gotcha", "performance_hint"
-- "subject": the main table or column the lesson is about
-- "lesson": a clear, actionable sentence (max 200 chars)
+"query_pattern", "schema_gotcha", "performance_hint", "pipeline_pattern", \
+"data_quality_hint", "replan_recovery"
+- "subject": the main table or column the lesson is about (must be a real \
+table/column name, NOT a SQL keyword like "columns" or "tables")
+- "lesson": a clear, actionable sentence in English (max 200 chars)
 - "confidence": a float between 0.5 and 0.9
 
 Only output lessons that are clearly supported by the evidence. Do NOT guess.
+The "subject" must be an actual database object name, not a generic term.
+The "lesson" must be in English, even if the user question was in another language.
 If there are no lessons, output an empty array: []
 
 Respond with ONLY the JSON array, no markdown fences, no explanation.

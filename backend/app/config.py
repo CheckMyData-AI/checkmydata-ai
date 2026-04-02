@@ -87,12 +87,12 @@ class Settings(BaseSettings):
 
     # Agent settings
     max_orchestrator_iterations: int = 100
-    orchestrator_wrap_up_steps: int = 3
+    orchestrator_wrap_up_steps: int = 2
     orchestrator_final_synthesis: bool = True
-    agent_wall_clock_timeout_seconds: int = 300
+    agent_wall_clock_timeout_seconds: int = 180
     max_parallel_tool_calls: int = 2
     max_sub_agent_retries: int = 2
-    max_sql_iterations: int = 15
+    max_sql_iterations: int = 10
     max_mcp_iterations: int = 5
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12

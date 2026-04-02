@@ -133,6 +133,24 @@ class TestProcessRejected:
         pipeline._notes_svc.create_note.assert_awaited_once()
         pipeline._learning_svc.create_learning.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_rejected_survives_quality_check_failure(self, pipeline, session):
+        """Pipeline should not crash when create_learning raises ValueError."""
+        pipeline._learning_svc.create_learning = AsyncMock(
+            side_effect=ValueError("Learning quality check failed: blocklisted subject")
+        )
+        fb = _make_feedback(
+            verdict="rejected",
+            rejection_reason="Wrong data returned",
+            user_expected_value="100",
+        )
+        result = await pipeline.process(session, fb, "proj-1")
+
+        assert len(result["notes_created"]) >= 1
+        assert len(result["learnings_created"]) == 0
+        assert "rejected" in result["resolution"].lower()
+        pipeline._benchmark_svc.flag_stale.assert_awaited_once()
+
 
 class TestProcessUnknown:
     @pytest.mark.asyncio

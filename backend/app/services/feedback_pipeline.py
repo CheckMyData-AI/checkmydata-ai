@@ -149,17 +149,23 @@ class FeedbackPipeline:
 
         category, lesson = _derive_learning(fb, reason)
         if category and lesson:
-            learning = await self._learning_svc.create_learning(
-                session,
-                connection_id=fb.connection_id,
-                category=category,
-                subject=_extract_subject(fb),
-                lesson=lesson,
-                confidence=0.7,
-                source_query=fb.query,
-                source_error=f"User rejection: {reason}",
-            )
-            result["learnings_created"].append(learning.id)
+            try:
+                learning = await self._learning_svc.create_learning(
+                    session,
+                    connection_id=fb.connection_id,
+                    category=category,
+                    subject=_extract_subject(fb),
+                    lesson=lesson,
+                    confidence=0.7,
+                    source_query=fb.query,
+                    source_error=f"User rejection: {reason}",
+                )
+                result["learnings_created"].append(learning.id)
+            except ValueError:
+                logger.warning(
+                    "Skipped learning from rejected feedback (quality check): subj=%s",
+                    _extract_subject(fb),
+                )
 
         metric_key = normalize_metric_key(fb.metric_description or fb.query[:100])
         await self._benchmark_svc.flag_stale(session, fb.connection_id, metric_key)

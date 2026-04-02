@@ -169,6 +169,8 @@ class SQLAgent(BaseAgent):
         table_map = ""
         if has_db_idx and cfg.connection_id:
             table_map = await self._build_table_map(cfg.connection_id, has_sync)
+        if not table_map and context.table_map:
+            table_map = context.table_map
 
         learnings_prompt = ""
         if has_learnings and cfg.connection_id:
@@ -211,6 +213,8 @@ class SQLAgent(BaseAgent):
             has_db_index=has_db_idx,
             has_code_db_sync=has_sync,
             has_learnings=has_learnings,
+            learnings_preloaded=bool(learnings_prompt),
+            notes_preloaded=bool(notes_prompt),
         )
 
         messages: list[Message] = [
@@ -704,16 +708,19 @@ class SQLAgent(BaseAgent):
         svc = AgentLearningService()
         async with ctx.tracker.step(wf_id, "sql:record_learn", f"Recording: {lesson[:60]}"):
             async with async_session_factory() as session:
-                entry = await svc.create_learning(
-                    session,
-                    connection_id=cid,
-                    category=category,
-                    subject=subject,
-                    lesson=lesson,
-                    confidence=0.8,
-                    source_query=kwargs.get("run_state", {}).get("last_query"),
-                )
-                await session.commit()
+                try:
+                    entry = await svc.create_learning(
+                        session,
+                        connection_id=cid,
+                        category=category,
+                        subject=subject,
+                        lesson=lesson,
+                        confidence=0.8,
+                        source_query=kwargs.get("run_state", {}).get("last_query"),
+                    )
+                    await session.commit()
+                except ValueError as exc:
+                    return f"Learning rejected by quality check: {exc}"
 
         return (
             f"Learning recorded successfully.\n"

@@ -278,8 +278,15 @@ def get_sql_agent_tools(
     has_db_index: bool = False,
     has_code_db_sync: bool = False,
     has_learnings: bool = False,
+    learnings_preloaded: bool = False,
+    notes_preloaded: bool = False,
 ) -> list[Tool]:
-    """Return the subset of SQL tools available given current context."""
+    """Return the subset of SQL tools available given current context.
+
+    When learnings or notes are already injected into the system prompt,
+    the corresponding read tools are omitted to prevent the LLM from
+    wasting steps on redundant context fetches.
+    """
     tools: list[Tool] = []
     if has_db_index:
         tools.append(GET_QUERY_CONTEXT_TOOL)
@@ -288,9 +295,10 @@ def get_sql_agent_tools(
     tools.append(GET_CUSTOM_RULES_TOOL)
     tools.append(EXECUTE_QUERY_TOOL)
     tools.append(RECORD_LEARNING_TOOL)
-    tools.append(READ_NOTES_TOOL)
+    if not notes_preloaded:
+        tools.append(READ_NOTES_TOOL)
     tools.append(WRITE_NOTE_TOOL)
-    if has_learnings:
+    if has_learnings and not learnings_preloaded:
         tools.append(GET_AGENT_LEARNINGS_TOOL)
     if has_code_db_sync:
         tools.append(GET_SYNC_CONTEXT_TOOL)

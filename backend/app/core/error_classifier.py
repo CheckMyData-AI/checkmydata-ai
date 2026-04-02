@@ -61,6 +61,11 @@ POSTGRES_PATTERNS: list[_Pattern] = [
         None,
     ),
     _Pattern(
+        re.compile(r"collation mismatch|could not determine which collation", re.I),
+        QueryErrorType.COLLATION_MISMATCH,
+        None,
+    ),
+    _Pattern(
         re.compile(r"could not connect|connection refused|connection reset", re.I),
         QueryErrorType.CONNECTION_ERROR,
         None,
@@ -96,6 +101,11 @@ MYSQL_PATTERNS: list[_Pattern] = [
     _Pattern(
         re.compile(r"Access denied|command denied", re.I),
         QueryErrorType.PERMISSION_DENIED,
+        None,
+    ),
+    _Pattern(
+        re.compile(r"Illegal mix of collations", re.I),
+        QueryErrorType.COLLATION_MISMATCH,
         None,
     ),
     _Pattern(

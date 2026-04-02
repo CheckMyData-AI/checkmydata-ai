@@ -118,6 +118,15 @@ class TestRepairHints:
         hints = self.strategy.get_repair_hints(err, self.schema)
         assert "performance" in hints.lower() or "index" in hints.lower()
 
+    def test_collation_mismatch_hints(self):
+        err = _error(QueryErrorType.COLLATION_MISMATCH)
+        hints = self.strategy.get_repair_hints(err, self.schema)
+        assert "collation" in hints.lower()
+        assert "collate" in hints.lower() or "convert" in hints.lower()
+
+    def test_collation_mismatch_retryable(self):
+        assert self.strategy.should_retry(_error(QueryErrorType.COLLATION_MISMATCH), 1, 3)
+
     def test_unknown_hints(self):
         err = _error(QueryErrorType.UNKNOWN)
         hints = self.strategy.get_repair_hints(err, self.schema)

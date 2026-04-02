@@ -294,6 +294,140 @@ class TestCreateLearning:
             mock_inv.assert_awaited_once_with(session, "conn-1")
 
 
+class TestQualityGate:
+    """Tests for learning quality validation."""
+
+    @pytest.mark.asyncio
+    async def test_blocklisted_subject_rejected(self, svc):
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="blocklist"):
+            await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="columns",
+                lesson="Use google_voided_purchases instead of columns for queries",
+            )
+
+    @pytest.mark.asyncio
+    async def test_unknown_subject_rejected(self, svc):
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="blocklist"):
+            await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="unknown",
+                lesson="Some lesson about an unknown table subject",
+            )
+
+    @pytest.mark.asyncio
+    async def test_too_short_lesson_rejected(self, svc):
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="too short"):
+            await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="short",
+            )
+
+    @pytest.mark.asyncio
+    async def test_mostly_non_ascii_rejected(self, svc):
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="non-ASCII"):
+            await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Найди в базе рефанды в каких таблицах они будут и покажи все данные",
+            )
+
+    @pytest.mark.asyncio
+    async def test_valid_lesson_passes(self, svc):
+        """A properly formed lesson should pass quality checks."""
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            m = MagicMock()
+            m.scalar_one_or_none.return_value = None
+            m.scalars.return_value.all.return_value = []
+            return m
+
+        session = AsyncMock()
+        session.execute = mock_execute
+        session.add = MagicMock()
+
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock):
+            entry = await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders_v2",
+                lesson="Use orders_v2 instead of orders_legacy for revenue queries",
+            )
+        assert entry.lesson.startswith("Use orders_v2")
+
+
+class TestNormalizeLessonText:
+    def test_whitespace_normalized(self):
+        from app.services.agent_learning_service import normalize_lesson_text
+
+        assert normalize_lesson_text("  hello   world  ") == "Hello world"
+
+    def test_capitalized(self):
+        from app.services.agent_learning_service import normalize_lesson_text
+
+        assert normalize_lesson_text("use table_x for joins") == "Use table_x for joins"
+
+    def test_truncated_at_max_length(self):
+        from app.services.agent_learning_service import normalize_lesson_text
+
+        long_text = "A" * 600
+        result = normalize_lesson_text(long_text)
+        assert len(result) == 500
+        assert result.endswith("\u2026")
+
+    def test_already_good(self):
+        from app.services.agent_learning_service import normalize_lesson_text
+
+        text = "Use `orders_v2` instead of `orders_legacy`"
+        assert normalize_lesson_text(text) == text
+
+
+class TestValidateLearningQuality:
+    def test_blocklisted_subject(self):
+        from app.services.agent_learning_service import validate_learning_quality
+
+        err = validate_learning_quality("columns", "Some valid lesson text here")
+        assert err is not None
+        assert "blocklist" in err
+
+    def test_short_lesson(self):
+        from app.services.agent_learning_service import validate_learning_quality
+
+        err = validate_learning_quality("orders", "short")
+        assert err is not None
+        assert "short" in err
+
+    def test_non_ascii(self):
+        from app.services.agent_learning_service import validate_learning_quality
+
+        err = validate_learning_quality("orders", "Найди в базе рефанды в каких таблицах они будут")
+        assert err is not None
+        assert "non-ASCII" in err
+
+    def test_valid(self):
+        from app.services.agent_learning_service import validate_learning_quality
+
+        err = validate_learning_quality("orders_v2", "Use orders_v2 instead of orders_legacy for revenue queries")
+        assert err is None
+
+
 class TestFindSimilar:
     @pytest.mark.asyncio
     async def test_no_candidates(self, svc):
@@ -336,6 +470,9 @@ class TestConfirmLearning:
         entry = _make_learning(confidence=0.5, times_confirmed=1)
         session = AsyncMock()
         session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
         result = await svc.confirm_learning(session, "l1")
         assert result.times_confirmed == 2
         assert result.confidence == 0.6
@@ -345,8 +482,22 @@ class TestConfirmLearning:
         entry = _make_learning(confidence=0.95, times_confirmed=10)
         session = AsyncMock()
         session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
         result = await svc.confirm_learning(session, "l1")
         assert result.confidence == 1.0
+
+    @pytest.mark.asyncio
+    async def test_confirm_invalidates_summary(self, svc):
+        entry = _make_learning(confidence=0.5, times_confirmed=0)
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
+        await svc.confirm_learning(session, "l1")
+        session.execute.assert_awaited()
 
 
 class TestApplyLearning:
@@ -389,6 +540,9 @@ class TestContradictLearning:
         entry = _make_learning(confidence=0.7)
         session = AsyncMock()
         session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
         result = await svc.contradict_learning(session, "l1")
         assert abs(result.confidence - 0.4) < 0.001
 
@@ -397,6 +551,9 @@ class TestContradictLearning:
         entry = _make_learning(confidence=0.2)
         session = AsyncMock()
         session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
         result = await svc.contradict_learning(session, "l1")
         assert result.confidence == 0.0
         assert result.is_active is False
@@ -406,9 +563,23 @@ class TestContradictLearning:
         entry = _make_learning(confidence=0.5, is_active=True)
         session = AsyncMock()
         session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
         result = await svc.contradict_learning(session, "l1")
         assert result.confidence == 0.2
         assert result.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_contradict_invalidates_summary(self, svc):
+        entry = _make_learning(confidence=0.7)
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=entry)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
+        await svc.contradict_learning(session, "l1")
+        session.execute.assert_awaited()
 
 
 class TestGetLearnings:
@@ -417,6 +588,23 @@ class TestGetLearnings:
         items = [_make_learning(), _make_learning(id="l2")]
         session = _mock_session(scalars_all=items)
         result = await svc.get_learnings(session, "conn-1")
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_filters_blocklisted_subjects(self, svc):
+        good = _make_learning(subject="orders")
+        bad = _make_learning(id="l2", subject="columns")
+        session = _mock_session(scalars_all=[good, bad])
+        result = await svc.get_learnings(session, "conn-1")
+        assert len(result) == 1
+        assert result[0].subject == "orders"
+
+    @pytest.mark.asyncio
+    async def test_skip_blocklisted_false_returns_all(self, svc):
+        good = _make_learning(subject="orders")
+        bad = _make_learning(id="l2", subject="columns")
+        session = _mock_session(scalars_all=[good, bad])
+        result = await svc.get_learnings(session, "conn-1", skip_blocklisted=False)
         assert len(result) == 2
 
 
@@ -430,10 +618,17 @@ class TestGetLearningsForTable:
 
     @pytest.mark.asyncio
     async def test_matches_lesson(self, svc):
-        item = _make_learning(subject="schema", lesson="The users table has UUID PK")
+        item = _make_learning(subject="orders_info", lesson="The users table has UUID PK")
         session = _mock_session(scalars_all=[item])
         result = await svc.get_learnings_for_table(session, "conn-1", "users")
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_skips_blocklisted_subject(self, svc):
+        item = _make_learning(subject="columns", lesson="The users table has UUID PK")
+        session = _mock_session(scalars_all=[item])
+        result = await svc.get_learnings_for_table(session, "conn-1", "users")
+        assert len(result) == 0
 
     @pytest.mark.asyncio
     async def test_no_match(self, svc):
@@ -691,9 +886,37 @@ class TestDecayStale:
         assert await svc.decay_stale_learnings(session) == 0
 
     @pytest.mark.asyncio
-    async def test_decays_confidence(self, svc):
+    async def test_decays_confidence_never_applied(self, svc):
+        """Never-applied learnings get faster decay (-0.05)."""
         stale = _make_learning(
             confidence=0.5,
+            times_applied=0,
+            updated_at=datetime.now(UTC) - timedelta(days=60),
+        )
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            m = MagicMock()
+            if call_count == 1:
+                m.scalars.return_value.all.return_value = [stale]
+            else:
+                m.scalar_one_or_none.return_value = None
+            return m
+
+        session = AsyncMock()
+        session.execute = mock_execute
+        count = await svc.decay_stale_learnings(session)
+        assert count == 1
+        assert stale.confidence == 0.45
+
+    @pytest.mark.asyncio
+    async def test_decays_confidence_previously_applied(self, svc):
+        """Previously-applied learnings get slower decay (-0.02)."""
+        stale = _make_learning(
+            confidence=0.5,
+            times_applied=3,
             updated_at=datetime.now(UTC) - timedelta(days=60),
         )
         call_count = 0
@@ -737,6 +960,55 @@ class TestDecayStale:
         session.execute = mock_execute
         await svc.decay_stale_learnings(session)
         assert stale.is_active is False
+
+
+class TestValidateLearningsAgainstSchema:
+    @pytest.mark.asyncio
+    async def test_empty_known_tables(self, svc):
+        session = AsyncMock()
+        result = await svc.validate_learnings_against_schema(session, "conn-1", set())
+        assert result == {"checked": 0, "deactivated": 0, "valid": 0}
+
+    @pytest.mark.asyncio
+    async def test_deactivates_orphaned_subjects(self, svc):
+        orphan = _make_learning(subject="deleted_table", is_active=True)
+        valid = _make_learning(id="l2", subject="orders", is_active=True)
+
+        with patch.object(svc, "get_learnings", new_callable=AsyncMock, return_value=[orphan, valid]):
+            with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock):
+                result = await svc.validate_learnings_against_schema(
+                    AsyncMock(), "conn-1", {"orders", "users"}
+                )
+
+        assert result["checked"] == 2
+        assert result["deactivated"] == 1
+        assert result["valid"] == 1
+        assert orphan.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_all_valid(self, svc):
+        lrn = _make_learning(subject="orders", is_active=True)
+
+        with patch.object(svc, "get_learnings", new_callable=AsyncMock, return_value=[lrn]):
+            result = await svc.validate_learnings_against_schema(
+                AsyncMock(), "conn-1", {"orders", "users"}
+            )
+
+        assert result["deactivated"] == 0
+        assert result["valid"] == 1
+
+    @pytest.mark.asyncio
+    async def test_partial_subject_match(self, svc):
+        """Subject 'order' matches known table 'orders' via substring."""
+        lrn = _make_learning(subject="order", is_active=True)
+
+        with patch.object(svc, "get_learnings", new_callable=AsyncMock, return_value=[lrn]):
+            result = await svc.validate_learnings_against_schema(
+                AsyncMock(), "conn-1", {"orders"}
+            )
+
+        assert result["valid"] == 1
+        assert result["deactivated"] == 0
 
 
 class TestPriorityScore:

@@ -375,11 +375,26 @@ async def refresh_schema(
             schema = await connector.introspect_schema()
         finally:
             await connector.disconnect()
+
+        known_tables = {t.name for t in schema.tables}
+        validation = {"checked": 0, "deactivated": 0, "valid": 0}
+        if known_tables:
+            try:
+                validation = await _learning_svc.validate_learnings_against_schema(
+                    db, connection_id, known_tables,
+                )
+                await db.commit()
+            except Exception:
+                logger.debug("Learning schema validation skipped", exc_info=True)
+
         return {
             "ok": True,
             "tables": len(schema.tables),
             "db_type": schema.db_type,
+            "learnings_validation": validation,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Schema refresh failed: %s", e)
         raise HTTPException(status_code=500, detail="Schema refresh failed")
@@ -982,3 +997,108 @@ async def recompile_learnings(
     prompt = await _learning_svc.compile_prompt(db, connection_id)
     await db.commit()
     return {"ok": True, "compiled_prompt": prompt}
+
+
+@router.post("/{connection_id}/learnings/validate-schema")
+@limiter.limit("10/minute")
+async def validate_learnings_schema(
+    request: Request,
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Cross-check learnings against the current DB schema.
+
+    Deactivates learnings whose subject no longer exists as a table.
+    """
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    config = await _svc.to_config(db, conn, user_id=user["user_id"])
+    try:
+        from app.connectors.registry import get_connector
+
+        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        await connector.connect(config)
+        try:
+            schema = await connector.introspect_schema()
+        finally:
+            await connector.disconnect()
+    except Exception as e:
+        logger.exception("Schema introspection failed for validation: %s", e)
+        raise HTTPException(status_code=500, detail="Could not introspect schema")
+
+    known_tables = {t.name for t in schema.tables}
+    result = await _learning_svc.validate_learnings_against_schema(
+        db, connection_id, known_tables,
+    )
+    await db.commit()
+    return {"ok": True, **result}
+
+
+@router.post("/{connection_id}/learnings/{learning_id}/confirm")
+@limiter.limit("30/minute")
+async def confirm_learning(
+    request: Request,
+    connection_id: str,
+    learning_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Upvote a learning — bumps confidence and times_confirmed."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    from app.models.agent_learning import AgentLearning
+
+    check = await db.get(AgentLearning, learning_id)
+    if not check or check.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
+
+    entry = await _learning_svc.confirm_learning(db, learning_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Learning not found")
+    await db.commit()
+    return {
+        "ok": True,
+        "id": entry.id,
+        "confidence": round(entry.confidence, 2),
+        "times_confirmed": entry.times_confirmed,
+    }
+
+
+@router.post("/{connection_id}/learnings/{learning_id}/contradict")
+@limiter.limit("30/minute")
+async def contradict_learning(
+    request: Request,
+    connection_id: str,
+    learning_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Downvote a learning — reduces confidence, may deactivate."""
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    from app.models.agent_learning import AgentLearning
+
+    check = await db.get(AgentLearning, learning_id)
+    if not check or check.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
+
+    entry = await _learning_svc.contradict_learning(db, learning_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Learning not found")
+    await db.commit()
+    return {
+        "ok": True,
+        "id": entry.id,
+        "confidence": round(entry.confidence, 2),
+        "is_active": entry.is_active,
+    }

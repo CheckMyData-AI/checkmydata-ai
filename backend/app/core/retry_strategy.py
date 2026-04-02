@@ -82,6 +82,14 @@ class RetryStrategy:
                 "Qualify the column with the table name, e.g. table.column."
             )
 
+        elif et == QueryErrorType.COLLATION_MISMATCH:
+            parts.append(
+                "MySQL collation mismatch in UNION/comparison. Fix:\n"
+                "  - Add COLLATE utf8mb4_general_ci to string columns in UNION\n"
+                "  - Or use CONVERT(col USING utf8mb4) before comparison\n"
+                "  - Ensure all UNION branches use same collation for string columns"
+            )
+
         elif et == QueryErrorType.TIMEOUT:
             parts.append(
                 "The query timed out. Try:\n"

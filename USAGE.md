@@ -166,8 +166,9 @@ With a project selected (and optionally a connection):
 Rules inject additional context into the LLM prompt:
 
 - **File-based**: Place `.md` or `.yaml` files in `./rules/`
-- **DB-based**: Create via the **Rules** section in the sidebar
+- **DB-based**: Create via the **Rules** section in the sidebar; click any rule to open it in a centered popup for editing (viewers see a read-only view)
 - **Default rule**: Every new project gets a comprehensive "Business Metrics & Guidelines" rule (fully editable)
+- **Dirty-state Save**: The Save button is only enabled when you've actually changed something
 
 ---
 

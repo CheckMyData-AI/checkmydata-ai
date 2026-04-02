@@ -532,18 +532,27 @@ Agent learnings are structured lessons extracted from query validation outcomes 
 - `AgentLearning`: connection_id, category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active
 - `AgentLearningSummary`: connection_id, total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
 
-**Categories**:
+**Categories** (9 total):
 
 | Category | Example |
 |----------|---------|
-| `table_preference` | "Use `transactions` instead of `legacy_payments` for revenue queries" |
+| `table_preference` | "Use `transactions` instead of `legacy_payments` for queries of this type" |
 | `column_usage` | "Column `user_name` does not exist on `users`. Use `full_name` instead" |
 | `data_format` | "Column `amount` on `orders` stores values in cents. Divide by 100 for dollars" |
 | `query_pattern` | "User flagged incorrect results for query on orders. Detail: missing date filter" |
 | `schema_gotcha` | "Table `users` uses soft-delete. Always filter with `WHERE deleted_at IS NULL`" |
 | `performance_hint` | "Table `events` can timeout on unfiltered queries. Always add LIMIT and date filter" |
+| `pipeline_pattern` | "This query type triggered 2 replans. Consider simplifying the plan" |
+| `data_quality_hint` | "DataGate error on stage 'fetch_users': cartesian join detected" |
+| `replan_recovery` | "Stage 'agg' (query_database) failed. Replan succeeded by splitting into sub-queries" |
 
 **AgentLearningService** (`backend/app/services/agent_learning_service.py`):
+
+- **Quality gates** (applied before storage):
+  - Subject blocklist: SQL keywords (`columns`, `tables`, `information_schema`, `unknown`, `schema`, etc.) are rejected
+  - Minimum lesson length: 15 characters
+  - Non-ASCII ratio check: lessons with >50% non-ASCII characters are rejected (prevents raw non-English user questions from being stored)
+  - Lesson normalization: whitespace collapse, capitalization, max 500 chars with ellipsis truncation
 
 - **Three-level deduplication**:
   1. Exact hash match (same lesson_hash + connection + category + subject)
@@ -552,15 +561,20 @@ Agent learnings are structured lessons extracted from query validation outcomes 
 
 - **Conflict resolution**: When creating a new learning, checks existing ones for contradictions. Detects negation flips ("use" vs "not use", "always" vs "never", "avoid" vs "prefer"). If the new lesson has higher confidence, the old conflicting one is deactivated.
 
+- **Schema cross-validation**: `validate_learnings_against_schema()` deactivates learnings whose subject no longer matches any known table in the current schema. It runs automatically during `POST /connections/{id}/refresh-schema` and is also available as a manual endpoint at `POST /connections/{id}/learnings/validate-schema`. Read-time blocklist filtering in `get_learnings()` additionally excludes legacy bad subjects (`columns`, `tables`, `information_schema`, etc.) from all prompts and API responses.
+
 - **Confidence lifecycle**:
   ```
   Create: 0.6 (default)
     ↓ confirmed by user or repeated: +0.1 (cap at 1.0)
     ↓ applied in query: tracked (times_applied counter)
     ↓ contradicted: -0.3
-    ↓ stale (30+ days): -0.02/month
+    ↓ stale (30+ days, never applied): -0.05/month
+    ↓ stale (30+ days, previously applied): -0.02/month
     ↓ below 0.2: deactivated
   ```
+
+- **User voting**: REST endpoints for confirm (upvote) and contradict (downvote) allow users to directly influence learning confidence via the LearningsPanel UI. Both operations invalidate the compiled summary cache immediately so the next agent prompt reflects the updated confidence.
 
 - **Prompt compilation** (`compile_prompt()`): Priority-ranked by composite score (confidence * 0.4 + log(confirmations) * 0.4 + log(applications) * 0.2). Top 30 learnings organized by category, with confidence percentages and critical flags (5+ confirmations).
 

@@ -134,6 +134,45 @@ def build_orchestrator_system_prompt(
             "answer it. Chained `process_data` calls on the same result set do not "
             "count toward this limit."
         )
+        sections.append("")
+        sections.append(
+            "STEP BUDGET:\n"
+            "Each tool call uses one analysis step. Plan before acting:\n"
+            "- Simple data question: 1 query_database -> compose answer (2 steps total)\n"
+            "- Question needing enrichment: 1 query_database + 1-2 process_data -> "
+            "answer (3-4 steps)\n"
+            "- Complex multi-faceted: max 2 parallel query_database -> answer (3 steps)\n"
+            "If a query fails, retry ONCE with a corrected question. After 2 failures, "
+            "explain the issue to the user instead of retrying.\n"
+            "Do NOT fire more than 2 parallel query_database calls — each one is expensive."
+        )
+
+    if has_connection:
+        sections.append("")
+        sections.append(
+            "ERROR RECOVERY:\n"
+            '- "table not found": check the DATABASE TABLES list above for the correct '
+            "name. Retry once with the corrected name.\n"
+            '- "column not found": the SQL agent will auto-correct. If it fails twice, '
+            "tell the user.\n"
+            '- "collation error" or UNION issues: the SQL agent handles this internally. '
+            "Do not retry from here.\n"
+            "- After a query_database call fails, do NOT call it again with the same "
+            "question. Adjust your question or approach."
+        )
+
+    if has_connection:
+        sections.append("")
+        sections.append(
+            "QUERY PLANNING:\n"
+            "Before calling tools, decide your approach:\n"
+            "1. Which tables from the DATABASE TABLES map are relevant?\n"
+            "2. Single query or multiple? (prefer single)\n"
+            "3. If multiple, can they run in parallel (independent data) or must be "
+            "sequential (dependent)?\n"
+            "4. Do NOT query the database to 'explore' — the table map above tells you "
+            "what exists."
+        )
 
     sections.append("")
     sections.append("GUIDELINES:")

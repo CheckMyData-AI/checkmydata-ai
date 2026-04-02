@@ -3,8 +3,7 @@
 Complements the SQL-level ``LearningAnalyzer`` by extracting lessons from:
 - Replan outcomes (what failed, what the replacement plan did)
 - DataGate failures (data quality issues in stage results)
-- Stage validation failures (structural issues across stages)
-- Orchestrator patterns (complexity estimation misses, cross-stage joins)
+- Pipeline completion patterns (complexity estimation misses, high retry rates)
 
 All lessons are stored via ``AgentLearningService`` using the same
 ``AgentLearning`` model, tagged with pipeline-specific categories:
@@ -18,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 from app.agents.data_gate import DataGateOutcome
 from app.agents.stage_context import StageContext
-from app.agents.stage_validator import StageValidationOutcome
 from app.knowledge.learning_analyzer import ExtractedLesson
 
 if TYPE_CHECKING:
@@ -111,51 +109,6 @@ class PipelineLearningExtractor:
                         lesson=f"DataGate warning on stage '{stage_id}': {warn[:250]}",
                         confidence=0.55,
                         source_query=query,
-                    )
-                )
-
-        return await self._store(session, connection_id, lessons)
-
-    async def extract_from_validation_failure(
-        self,
-        session: AsyncSession,
-        connection_id: str,
-        *,
-        stage_id: str,
-        stage_tool: str,
-        validation: StageValidationOutcome,
-        query: str | None = None,
-    ) -> list[ExtractedLesson]:
-        """Extract lessons from stage validation failures."""
-        lessons: list[ExtractedLesson] = []
-
-        for err in validation.errors:
-            if "missing expected columns" in err.lower():
-                lessons.append(
-                    ExtractedLesson(
-                        category="pipeline_pattern",
-                        subject=stage_tool,
-                        lesson=(
-                            f"Stage '{stage_id}' validation: {err[:250]}. "
-                            "Verify column names in the query match the schema."
-                        ),
-                        confidence=0.6,
-                        source_query=query,
-                        source_error=err,
-                    )
-                )
-            elif "expected at least" in err.lower() or "expected at most" in err.lower():
-                lessons.append(
-                    ExtractedLesson(
-                        category="pipeline_pattern",
-                        subject=stage_tool,
-                        lesson=(
-                            f"Stage '{stage_id}' validation: {err[:250]}. "
-                            "Adjust row-count expectations or add/remove filters."
-                        ),
-                        confidence=0.55,
-                        source_query=query,
-                        source_error=err,
                     )
                 )
 
