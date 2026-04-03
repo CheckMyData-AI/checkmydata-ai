@@ -95,8 +95,7 @@ def build_orchestrator_system_prompt(
     if custom_rules:
         sections.append("")
         sections.append(
-            "CUSTOM RULES & BUSINESS LOGIC (apply these when formulating "
-            "questions for sub-agents):"
+            "CUSTOM RULES & BUSINESS LOGIC (apply these when formulating questions for sub-agents):"
         )
         sections.append(custom_rules)
 

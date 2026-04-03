@@ -682,7 +682,11 @@ class TestSQLAgentCustomRulesInjection:
 
     @pytest.mark.asyncio
     async def test_rules_loaded_into_system_prompt(
-        self, agent, mock_llm, mock_custom_rules, context,
+        self,
+        agent,
+        mock_llm,
+        mock_custom_rules,
+        context,
     ):
         _stub_run_preamble(agent)
 
@@ -690,9 +694,7 @@ class TestSQLAgentCustomRulesInjection:
             "## Custom Rules\n### Revenue\nAlways divide amount by 100."
         )
 
-        mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response(content="Done.")
-        )
+        mock_llm.complete = AsyncMock(return_value=_make_llm_response(content="Done."))
 
         await agent.run(context)
 
@@ -707,14 +709,16 @@ class TestSQLAgentCustomRulesInjection:
 
     @pytest.mark.asyncio
     async def test_empty_rules_omitted_from_prompt(
-        self, agent, mock_llm, mock_custom_rules, context,
+        self,
+        agent,
+        mock_llm,
+        mock_custom_rules,
+        context,
     ):
         _stub_run_preamble(agent)
         mock_custom_rules.rules_to_context.return_value = ""
 
-        mock_llm.complete = AsyncMock(
-            return_value=_make_llm_response(content="Done.")
-        )
+        mock_llm.complete = AsyncMock(return_value=_make_llm_response(content="Done."))
 
         await agent.run(context)
 

@@ -68,9 +68,7 @@ def build_sql_system_prompt(
 
     if custom_rules:
         sections.append("")
-        sections.append(
-            "CUSTOM RULES & BUSINESS LOGIC (MANDATORY — always apply these):"
-        )
+        sections.append("CUSTOM RULES & BUSINESS LOGIC (MANDATORY — always apply these):")
         sections.append(custom_rules)
 
     sections.append("")
