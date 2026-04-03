@@ -399,11 +399,21 @@ class AdaptivePlanner:
     # ------------------------------------------------------------------
 
     _CONJUNCTION_WORDS = [
-        "and", "also", "plus",
-        "и", "также", "плюс",         # Russian
-        "y", "también", "además",       # Spanish
-        "und", "auch", "außerdem",      # German
-        "e", "também", "além disso",    # Portuguese
+        "and",
+        "also",
+        "plus",
+        "и",
+        "также",
+        "плюс",  # Russian
+        "y",
+        "también",
+        "además",  # Spanish
+        "und",
+        "auch",
+        "außerdem",  # German
+        "e",
+        "também",
+        "além disso",  # Portuguese
     ]
 
     @staticmethod
