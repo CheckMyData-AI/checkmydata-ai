@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.3] - 2026-04-03
+
+### Fixed
+- **Intent classifier parse error resilience** — `_parse_classification_response` now uses a three-tier extraction strategy: (1) direct `json.loads`, (2) regex-based `{...}` extraction for JSON with trailing text, (3) plain-text intent name recovery. Previously, LLM responses with trailing text or without JSON structure caused `parse_error` fallback to `MIXED` intent, leading to unnecessary full-context loading and slower responses
+- **Pipeline continuation crash protection** — `json.loads` calls on `stage_results_json` / `user_feedback_json` in `orchestrator.py` now wrapped in try/except, returning a user-friendly error instead of crashing when pipeline state is corrupted
+- **Complexity classifier logging** — `query_planner.py` now logs at WARNING level when the LLM returns non-JSON for complexity classification, making parse failures visible in production logs
+
+### Changed
+- **Intent classifier logging promoted** — parse_error and invalid_intent logs elevated from DEBUG to WARNING level for production visibility on Heroku
+
 ## [1.5.2] - 2026-04-03
 
 ### Added

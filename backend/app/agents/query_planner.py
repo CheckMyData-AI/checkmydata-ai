@@ -95,8 +95,13 @@ async def detect_complexity_adaptive(
         )
         result = json.loads(resp.content.strip())
         return bool(result.get("complex", False))
+    except json.JSONDecodeError:
+        logger.warning(
+            "Complexity classifier returned non-JSON: %s", resp.content[:120] if resp else "N/A"
+        )
+        return False
     except Exception:
-        logger.debug("Adaptive complexity classifier failed, defaulting to simple")
+        logger.debug("Adaptive complexity classifier failed, defaulting to simple", exc_info=True)
         return False
 
 

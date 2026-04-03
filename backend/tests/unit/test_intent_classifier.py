@@ -6,6 +6,8 @@ import pytest
 
 from app.agents.intent_classifier import (
     IntentType,
+    _extract_json,
+    _extract_plain_text_intent,
     _parse_classification_response,
     _valid_intents,
     classify_intent,
@@ -117,6 +119,97 @@ class TestParseClassificationResponse:
         valid = {"direct_response", "mixed"}
         result = _parse_classification_response(raw, valid)
         assert result.intent == IntentType.MIXED
+
+    def test_json_with_trailing_text(self):
+        raw = '{"intent": "data_query", "reason": "needs data"} Hope this helps!'
+        valid = {"direct_response", "data_query", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.DATA_QUERY
+
+    def test_plain_text_intent_recovery(self):
+        raw = "data_query"
+        valid = {"direct_response", "data_query", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.DATA_QUERY
+        assert result.reason == "recovered_from_text"
+
+    def test_plain_text_intent_in_sentence(self):
+        raw = "The intent is data_query because the user asked for statistics."
+        valid = {"direct_response", "data_query", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.DATA_QUERY
+        assert result.reason == "recovered_from_text"
+
+    def test_plain_text_quoted_intent(self):
+        raw = '"direct_response"'
+        valid = {"direct_response", "data_query", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.DIRECT_RESPONSE
+
+    def test_json_embedded_in_markdown(self):
+        raw = (
+            'Sure! Here is the result:\n```json\n'
+            '{"intent": "knowledge_query", "reason": "code Q"}\n```\n'
+        )
+        valid = {"direct_response", "knowledge_query", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.KNOWLEDGE_QUERY
+
+    def test_plain_text_invalid_intent_not_in_valid(self):
+        raw = "knowledge_query"
+        valid = {"direct_response", "mixed"}
+        result = _parse_classification_response(raw, valid)
+        assert result.intent == IntentType.MIXED
+        assert result.reason == "parse_error"
+
+
+# ------------------------------------------------------------------
+# _extract_json
+# ------------------------------------------------------------------
+
+
+class TestExtractJson:
+    def test_clean_json(self):
+        assert _extract_json('{"intent": "data_query"}') == {"intent": "data_query"}
+
+    def test_json_with_trailing(self):
+        result = _extract_json('{"intent": "data_query"} extra text')
+        assert result == {"intent": "data_query"}
+
+    def test_prefix_and_json(self):
+        result = _extract_json('Result: {"intent": "mixed", "reason": "ambiguous"}')
+        assert result is not None
+        assert result["intent"] == "mixed"
+
+    def test_no_json(self):
+        assert _extract_json("just plain text") is None
+
+    def test_empty(self):
+        assert _extract_json("") is None
+
+    def test_code_fence_wrapped(self):
+        raw = '```json\n{"intent": "data_query"}\n```'
+        result = _extract_json(raw)
+        assert result == {"intent": "data_query"}
+
+
+class TestExtractPlainTextIntent:
+    def test_exact_match(self):
+        assert _extract_plain_text_intent("data_query", {"data_query", "mixed"}) == "data_query"
+
+    def test_quoted(self):
+        result = _extract_plain_text_intent('"direct_response"', {"direct_response"})
+        assert result == "direct_response"
+
+    def test_in_sentence(self):
+        result = _extract_plain_text_intent("I think this is a data_query", {"data_query", "mixed"})
+        assert result == "data_query"
+
+    def test_not_in_valid_set(self):
+        assert _extract_plain_text_intent("data_query", {"direct_response", "mixed"}) is None
+
+    def test_no_intent_found(self):
+        assert _extract_plain_text_intent("hello world", {"data_query", "mixed"}) is None
 
 
 # ------------------------------------------------------------------

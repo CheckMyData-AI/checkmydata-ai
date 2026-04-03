@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -108,11 +109,12 @@ async def classify_intent(
     return _parse_classification_response(resp.content, valid)
 
 
-def _parse_classification_response(
-    raw: str,
-    valid_intents: set[str],
-) -> ClassifiedIntent:
-    """Parse the LLM JSON response into a ClassifiedIntent."""
+_JSON_OBJ_RE = re.compile(r"\{[^{}]*\}")
+_ALL_INTENT_VALUES = {e.value for e in IntentType}
+
+
+def _extract_json(raw: str) -> dict | None:
+    """Try increasingly aggressive strategies to pull a JSON object out of *raw*."""
     raw = raw.strip()
 
     if "```" in raw:
@@ -128,30 +130,75 @@ def _parse_classification_response(
 
     try:
         data = json.loads(raw)
+        if isinstance(data, list):
+            data = data[0] if data else None
+        return data if isinstance(data, dict) else None
     except json.JSONDecodeError:
-        logger.debug("Intent classification returned non-JSON: %s", raw[:120])
-        return ClassifiedIntent(intent=IntentType.MIXED, reason="parse_error")
+        pass
 
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    if not isinstance(data, dict):
-        logger.debug("Intent classification returned non-object JSON: %s", raw[:120])
-        return ClassifiedIntent(intent=IntentType.MIXED, reason="parse_error")
+    m = _JSON_OBJ_RE.search(raw)
+    if m:
+        try:
+            data = json.loads(m.group())
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
 
-    intent_str = data.get("intent", "").strip().lower()
-    reason = data.get("reason", "")
+    return None
 
-    if intent_str not in valid_intents:
-        logger.debug(
-            "Intent classification returned invalid intent '%s' (valid: %s)",
-            intent_str,
-            valid_intents,
+
+def _extract_plain_text_intent(raw: str, valid_intents: set[str]) -> str | None:
+    """Fallback: check if the raw LLM output contains a recognizable intent name."""
+    lower = raw.strip().strip('"\'').lower()
+    for intent_val in _ALL_INTENT_VALUES:
+        if intent_val in lower and intent_val in valid_intents:
+            return intent_val
+    return None
+
+
+def _parse_classification_response(
+    raw: str,
+    valid_intents: set[str],
+) -> ClassifiedIntent:
+    """Parse the LLM JSON response into a ClassifiedIntent."""
+    data = _extract_json(raw)
+
+    if data is not None:
+        intent_str = data.get("intent", "").strip().lower()
+        reason = data.get("reason", "")
+
+        if intent_str not in valid_intents:
+            logger.warning(
+                "Intent classification returned invalid intent '%s' (valid: %s), raw: %s",
+                intent_str,
+                valid_intents,
+                raw[:200],
+            )
+            return ClassifiedIntent(intent=IntentType.MIXED, reason=f"invalid_intent:{intent_str}")
+
+        try:
+            intent = IntentType(intent_str)
+        except ValueError:
+            return ClassifiedIntent(
+                intent=IntentType.MIXED, reason=f"unknown_intent:{intent_str}"
+            )
+
+        return ClassifiedIntent(intent=intent, reason=reason)
+
+    plain_intent = _extract_plain_text_intent(raw, valid_intents)
+    if plain_intent:
+        logger.info(
+            "Intent classifier: recovered intent '%s' from plain text (raw: %s)",
+            plain_intent,
+            raw[:120],
         )
-        return ClassifiedIntent(intent=IntentType.MIXED, reason=f"invalid_intent:{intent_str}")
+        try:
+            return ClassifiedIntent(
+                intent=IntentType(plain_intent), reason="recovered_from_text"
+            )
+        except ValueError:
+            pass
 
-    try:
-        intent = IntentType(intent_str)
-    except ValueError:
-        return ClassifiedIntent(intent=IntentType.MIXED, reason=f"unknown_intent:{intent_str}")
-
-    return ClassifiedIntent(intent=intent, reason=reason)
+    logger.warning("Intent classification returned unparseable response: %s", raw[:200])
+    return ClassifiedIntent(intent=IntentType.MIXED, reason="parse_error")

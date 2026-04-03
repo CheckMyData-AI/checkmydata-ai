@@ -1662,9 +1662,23 @@ class OrchestratorAgent(BaseAgent):
                     response_type="error",
                 )
 
-            plan = ExecutionPlan.from_json(pipeline_run.plan_json)
-            stage_results_raw = _json.loads(pipeline_run.stage_results_json)
-            user_feedback = _json.loads(pipeline_run.user_feedback_json)
+            try:
+                plan = ExecutionPlan.from_json(pipeline_run.plan_json)
+                stage_results_raw = _json.loads(pipeline_run.stage_results_json)
+                user_feedback = _json.loads(pipeline_run.user_feedback_json)
+            except (_json.JSONDecodeError, TypeError, KeyError) as exc:
+                logger.warning(
+                    "Failed to parse pipeline state for run %s: %s", run_id[:8], exc
+                )
+                await self._tracker.end(wf_id, "orchestrator", "failed", "Corrupted pipeline state")
+                return AgentResponse(
+                    answer=(
+                        "The saved analysis state is corrupted and cannot be resumed. "
+                        "Please start a new query."
+                    ),
+                    workflow_id=wf_id,
+                    response_type="error",
+                )
             current_idx = pipeline_run.current_stage_idx
 
         cur_stage_id = plan.stages[current_idx].stage_id if current_idx < len(plan.stages) else ""
