@@ -48,7 +48,7 @@ from app.agents.tool_dispatcher import (
 )
 from app.agents.tools.orchestrator_tools import get_orchestrator_tools
 from app.agents.validation import AgentResultValidator
-from app.agents.viz_agent import VizAgent, VizResult
+from app.agents.viz_agent import VizAgent
 from app.config import settings
 from app.connectors.base import QueryResult
 from app.core.context_budget import ContextBudgetManager
@@ -761,7 +761,6 @@ class OrchestratorAgent(BaseAgent):
         tool_call_log: list[dict] = []
         last_sql_result: SQLAgentResult | None = None
         all_sql_results: list[SQLAgentResult] = []
-        last_viz_result: VizResult | None = None
         knowledge_sources: list[RAGSource] = []
         has_mcp_result = False
         used_provider = ""
@@ -1173,7 +1172,7 @@ class OrchestratorAgent(BaseAgent):
                         step_label,
                         step_data=_sd_viz,
                     ):
-                        last_viz_result = await asyncio.wait_for(
+                        viz_result = await asyncio.wait_for(
                             self._viz.run(
                                 viz_ctx,
                                 results=sr.results,
@@ -1182,13 +1181,13 @@ class OrchestratorAgent(BaseAgent):
                             ),
                             timeout=settings.viz_timeout_seconds,
                         )
-                        _sd_viz["output_preview"] = f"type={last_viz_result.viz_type}"
-                    self.accum_usage(total_usage, last_viz_result.token_usage)
-                    sr_viz_type = last_viz_result.viz_type
-                    sr_viz_config = last_viz_result.viz_config
+                        _sd_viz["output_preview"] = f"type={viz_result.viz_type}"
+                    self.accum_usage(total_usage, viz_result.token_usage)
+                    sr_viz_type = viz_result.viz_type
+                    sr_viz_config = viz_result.viz_config
 
                     vv = self._validator.validate_viz_result(
-                        last_viz_result,
+                        viz_result,
                         row_count=sr.results.row_count,
                         column_count=len(sr.results.columns),
                     )
