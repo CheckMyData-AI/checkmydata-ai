@@ -86,8 +86,9 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 100
-    orchestrator_wrap_up_steps: int = 2
+    max_orchestrator_iterations: int = 12
+    max_simple_query_steps: int = 4
+    orchestrator_wrap_up_steps: int = 1
     orchestrator_final_synthesis: bool = True
     agent_wall_clock_timeout_seconds: int = 180
     max_parallel_tool_calls: int = 2
@@ -99,6 +100,7 @@ class Settings(BaseSettings):
     rag_relevance_threshold: float = 0.8
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
+    viz_timeout_seconds: int = 15
 
     # Pipeline settings
     pipeline_run_ttl_days: int = 7

@@ -31,6 +31,7 @@ from app.llm.router import LLMRouter
 logger = logging.getLogger(__name__)
 
 _COMPLEXITY_KEYWORDS = [
+    # English
     "summary table",
     "pivot",
     "breakdown",
@@ -44,6 +45,45 @@ _COMPLEXITY_KEYWORDS = [
     "step 2",
     "first find",
     "after that",
+    # Russian
+    "сводная таблица",
+    "разбивка по",
+    "сравни",
+    "для каждого",
+    "затем ",
+    "шаг 1",
+    "шаг 2",
+    "сначала найди",
+    "после этого",
+    "перекрёстн",
+    "корреляц",
+    # Spanish
+    "tabla resumen",
+    "desglose",
+    "comparar",
+    "para cada",
+    "paso 1",
+    "paso 2",
+    "primero encuentra",
+    "después de",
+    # German
+    "zusammenfassung",
+    "aufschlüsselung",
+    "vergleich",
+    "für jede",
+    "schritt 1",
+    "schritt 2",
+    "zuerst find",
+    "danach",
+    # Portuguese
+    "tabela resumo",
+    "detalhamento",
+    "comparar",
+    "para cada",
+    "passo 1",
+    "passo 2",
+    "primeiro encontr",
+    "depois disso",
 ]
 
 
@@ -358,6 +398,14 @@ class AdaptivePlanner:
     # Complexity heuristic
     # ------------------------------------------------------------------
 
+    _CONJUNCTION_WORDS = [
+        "and", "also", "plus",
+        "и", "также", "плюс",         # Russian
+        "y", "también", "además",       # Spanish
+        "und", "auch", "außerdem",      # German
+        "e", "também", "além disso",    # Portuguese
+    ]
+
     @staticmethod
     def _is_complex(question: str) -> bool:
         q_lower = question.lower()
@@ -365,7 +413,8 @@ class AdaptivePlanner:
             len(question) > 300,
             any(kw in q_lower for kw in _COMPLEXITY_KEYWORDS),
             question.count("?") > 1,
-            question.count(",") > 3 and any(v in q_lower for v in ["and", "also", "plus"]),
+            question.count(",") > 3
+            and any(v in q_lower for v in AdaptivePlanner._CONJUNCTION_WORDS),
         ]
         return sum(indicators) >= 2
 

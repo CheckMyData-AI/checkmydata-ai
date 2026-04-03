@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.2] - 2026-04-03
+
+### Added
+- **Hard step limits by query type** — simple data queries capped at 4 steps (`max_simple_query_steps`), global max reduced from 100 to 12 (`max_orchestrator_iterations`). Wrap-up injection fires 1 step before limit
+- **`query_database` call cap** — after 2 `query_database` calls in a single request, a hard system message is injected and the tool is stripped from the tool list, forcing the LLM to compose a final answer
+- **Multilingual complexity keywords** — `_COMPLEXITY_KEYWORDS` extended with Russian, Spanish, German, and Portuguese equivalents; conjunction words in `_is_complex` heuristic now include multilingual variants
+- **Per-viz timeout** — each `viz.run()` call wrapped with `asyncio.wait_for(timeout=viz_timeout_seconds)` (default 15s); catches `TimeoutError` and `CancelledError` with graceful fallback to table visualization
+- **Empty-answer guard** — all `_run_tool_loop` exit paths now check for empty `final_text`; when the LLM returns empty content but SQL results exist, `build_partial_text` is used as a fallback to guarantee a visible response
+- **Viz deduplication** — `viable_sql` is deduplicated by query text before the viz loop; duplicate queries keep only the result with more rows, preventing redundant viz calls
+- **`_stream_tokens` on all exit paths** — step-limit and synthesis-failure branches now always stream final text to the client, fixing silent empty responses
+
+### Changed
+- **Orchestrator prompt strengthened** — TOOL CALL ECONOMY, SINGLE-QUESTION RULE, and STEP BUDGET sections now explicitly instruct the LLM to combine sub-queries into one comprehensive SQL call; hard limit of 2 `query_database` calls stated in prompt
+- **`orchestrator_wrap_up_steps` default** changed from 2 to 1 for earlier wrap-up injection
+- **Config** — new settings: `max_simple_query_steps` (4), `viz_timeout_seconds` (15); `max_orchestrator_iterations` reduced from 100 to 12
+
 ## [1.5.1] - 2026-04-02
 
 ### Added

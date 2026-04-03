@@ -123,28 +123,36 @@ def build_orchestrator_system_prompt(
             "TOOL CALL ECONOMY:\n"
             "Before calling `query_database`, check whether the answer (or part of it) "
             "already exists in the conversation history. Only call tools for genuinely "
-            "new data needs. Prefer a single comprehensive query over multiple narrow ones."
+            "new data needs. Prefer a single comprehensive query over multiple narrow ones.\n"
+            "ALWAYS try to answer the FULL question in a SINGLE `query_database` call. "
+            "SQL is powerful — JOINs, GROUP BY, CASE WHEN, sub-queries, and CTEs can "
+            "handle complex requests in one statement. Only split into multiple calls "
+            "if the question explicitly asks about completely unrelated datasets."
         )
         sections.append("")
         sections.append(
             "SINGLE-QUESTION RULE:\n"
             "Each user message is ONE task. Do not decompose the conversation history "
             "plus the current message into multiple independent tasks. If the user asks "
-            "one question, make one (or at most two) **data retrieval** tool calls to "
-            "answer it. Chained `process_data` calls on the same result set do not "
+            "one question, make ONE `query_database` call to answer it. "
+            "If you find yourself planning 2+ `query_database` calls, STOP and "
+            "rethink — combine them into a single comprehensive question for the "
+            "SQL agent. Chained `process_data` calls on the same result set do not "
             "count toward this limit."
         )
         sections.append("")
         sections.append(
             "STEP BUDGET:\n"
-            "Each tool call uses one analysis step. Plan before acting:\n"
-            "- Simple data question: 1 query_database -> compose answer (2 steps total)\n"
+            "Each tool call uses one analysis step. You have a STRICT budget — "
+            "plan before acting:\n"
+            "- Simple data question: 1 query_database -> compose answer (2 steps)\n"
             "- Question needing enrichment: 1 query_database + 1-2 process_data -> "
             "answer (3-4 steps)\n"
             "- Complex multi-faceted: max 2 parallel query_database -> answer (3 steps)\n"
             "If a query fails, retry ONCE with a corrected question. After 2 failures, "
             "explain the issue to the user instead of retrying.\n"
-            "Do NOT fire more than 2 parallel query_database calls — each one is expensive."
+            "HARD LIMIT: You may call `query_database` at most 2 times total per "
+            "user question. After 2 calls, the tool will be disabled."
         )
 
     if has_connection:

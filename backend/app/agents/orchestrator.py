@@ -502,6 +502,7 @@ class OrchestratorAgent(BaseAgent):
             project_overview=project_overview,
             recent_learnings=recent_learnings,
             tools=tools,
+            max_steps_override=settings.max_simple_query_steps,
         )
 
     async def _run_knowledge_query(
@@ -677,6 +678,7 @@ class OrchestratorAgent(BaseAgent):
         recent_learnings: str | None,
         tools: list,
         staleness_warning: str | None = None,
+        max_steps_override: int | None = None,
     ) -> AgentResponse:
         """Run the orchestrator tool-calling loop with the given context and tools."""
         if table_map and not context.table_map:
@@ -764,6 +766,8 @@ class OrchestratorAgent(BaseAgent):
         has_mcp_result = False
         used_provider = ""
         used_model = ""
+        query_db_count = 0
+        query_db_cap_injected = False
 
         loop_budget = min(settings.max_context_tokens, context_window)
         wrap_up_injected = False
@@ -772,7 +776,11 @@ class OrchestratorAgent(BaseAgent):
         wall_clock_start = time.monotonic()
         wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
-        max_iter = context.max_orchestrator_steps or settings.max_orchestrator_iterations
+        max_iter = (
+            max_steps_override
+            or context.max_orchestrator_steps
+            or settings.max_orchestrator_iterations
+        )
         iteration = 0
         for iteration in range(max_iter):
             messages, did_trim = trim_loop_messages(messages, loop_budget)
@@ -840,6 +848,27 @@ class OrchestratorAgent(BaseAgent):
                     "Approaching step limit (%d/%d, wf=%s), finishing with available data",
                     iteration + 1,
                     max_iter,
+                    wf_id,
+                )
+
+            if query_db_count >= 2 and not query_db_cap_injected:
+                messages.append(
+                    Message(
+                        role="system",
+                        content=(
+                            f"CRITICAL: You have already executed {query_db_count} "
+                            "database queries. Do NOT call query_database again. "
+                            "Compose your FINAL ANSWER now using all the data "
+                            "you have collected so far."
+                        ),
+                    )
+                )
+                tools = [t for t in tools if t.name != "query_database"]
+                query_db_cap_injected = True
+                logger.info(
+                    "query_database cap reached (%d calls, wf=%s), "
+                    "tool stripped from further iterations",
+                    query_db_count,
                     wf_id,
                 )
 
@@ -927,6 +956,10 @@ class OrchestratorAgent(BaseAgent):
                     "Composing final answer…",
                 )
                 final_text = llm_resp.content or ""
+                if not final_text.strip() and all_sql_results:
+                    final_text = ResponseBuilder.build_partial_text(
+                        last_sql_result, knowledge_sources
+                    )
                 await self._stream_tokens(wf_id, final_text)
                 break
 
@@ -1021,6 +1054,8 @@ class OrchestratorAgent(BaseAgent):
                     }
                 )
 
+                if tc.name == "query_database":
+                    query_db_count += 1
                 if isinstance(sub_result, SQLAgentResult):
                     last_sql_result = sub_result
                     self._wf_sql_results[wf_id] = sub_result
@@ -1070,6 +1105,10 @@ class OrchestratorAgent(BaseAgent):
                         _sd_s.update(_llm_step_data(synthesis_messages, synth_resp))
                     self.accum_usage(total_usage, synth_resp.usage)
                     final_text = synth_resp.content or ""
+                    if not final_text.strip() and all_sql_results:
+                        final_text = ResponseBuilder.build_partial_text(
+                            last_sql_result, knowledge_sources
+                        )
                     await self._stream_tokens(wf_id, final_text)
                 except LLMError:
                     logger.warning(
@@ -1080,8 +1119,10 @@ class OrchestratorAgent(BaseAgent):
                     final_text = ResponseBuilder.build_partial_text(
                         last_sql_result, knowledge_sources
                     )
+                    await self._stream_tokens(wf_id, final_text)
             else:
                 final_text = ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources)
+                await self._stream_tokens(wf_id, final_text)
             step_limit_hit = True
 
         if step_limit_hit or wall_clock_timeout_hit:
@@ -1094,7 +1135,19 @@ class OrchestratorAgent(BaseAgent):
         viz_type = "text"
         viz_config: dict = {}
         sql_result_blocks: list[SQLResultBlock] = []
-        viable_sql = [sr for sr in all_sql_results if sr.results and sr.results.rows]
+        viable_sql_raw = [sr for sr in all_sql_results if sr.results and sr.results.rows]
+        seen_queries: dict[str, int] = {}
+        viable_sql: list[SQLAgentResult] = []
+        for sr in viable_sql_raw:
+            key = (sr.query or "").strip().lower()
+            if key in seen_queries:
+                prev_idx = seen_queries[key]
+                prev = viable_sql[prev_idx]
+                if sr.results and prev.results and sr.results.row_count > prev.results.row_count:
+                    viable_sql[prev_idx] = sr
+            else:
+                seen_queries[key] = len(viable_sql)
+                viable_sql.append(sr)
         if viable_sql and response_type in ("sql_result", "step_limit_reached"):
             viz_ctx = replace(
                 context,
@@ -1120,11 +1173,14 @@ class OrchestratorAgent(BaseAgent):
                         step_label,
                         step_data=_sd_viz,
                     ):
-                        last_viz_result = await self._viz.run(
-                            viz_ctx,
-                            results=sr.results,
-                            question=question,
-                            query=sr.query or "",
+                        last_viz_result = await asyncio.wait_for(
+                            self._viz.run(
+                                viz_ctx,
+                                results=sr.results,
+                                question=question,
+                                query=sr.query or "",
+                            ),
+                            timeout=settings.viz_timeout_seconds,
                         )
                         _sd_viz["output_preview"] = f"type={last_viz_result.viz_type}"
                     self.accum_usage(total_usage, last_viz_result.token_usage)
@@ -1138,7 +1194,7 @@ class OrchestratorAgent(BaseAgent):
                     )
                     if vv.fallback_viz_type:
                         sr_viz_type = vv.fallback_viz_type
-                except Exception:
+                except (Exception, asyncio.CancelledError):
                     logger.debug(
                         "Visualization %d/%d failed, falling back to table",
                         sr_idx + 1,

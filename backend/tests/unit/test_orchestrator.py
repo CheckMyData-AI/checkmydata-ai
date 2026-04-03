@@ -416,7 +416,7 @@ class TestHistoryBoundaryInPrompt:
             has_connection=True,
             db_type="postgres",
         )
-        assert "data retrieval" in prompt
+        assert "SINGLE-QUESTION RULE" in prompt
         assert "process_data" in prompt
         assert "do not count toward this limit" in prompt
 
@@ -801,11 +801,13 @@ class TestWallClockTimeout:
             patch("app.agents.orchestrator.time") as mock_time,
         ):
             mock_settings.max_orchestrator_iterations = 10
+            mock_settings.max_simple_query_steps = 4
             mock_settings.max_parallel_tool_calls = 1
             mock_settings.orchestrator_wrap_up_steps = 2
             mock_settings.agent_wall_clock_timeout_seconds = 30
             mock_settings.max_context_tokens = 8000
             mock_settings.max_history_tokens = 2500
+            mock_settings.viz_timeout_seconds = 15
 
             monotonic_values = [0.0, 35.0, 35.0, 35.0, 35.0]
             mock_time.monotonic = MagicMock(side_effect=monotonic_values)
@@ -883,12 +885,14 @@ class TestWallClockTimeout:
             patch("app.agents.orchestrator.time") as mock_time,
         ):
             mock_settings.max_orchestrator_iterations = 100
+            mock_settings.max_simple_query_steps = 4
             mock_settings.max_parallel_tool_calls = 1
             mock_settings.orchestrator_wrap_up_steps = 3
             mock_settings.agent_wall_clock_timeout_seconds = 30
             mock_settings.max_context_tokens = 8000
             mock_settings.max_history_tokens = 2500
             mock_settings.orchestrator_final_synthesis = False
+            mock_settings.viz_timeout_seconds = 15
 
             monotonic_values = [0.0, 35.0, 35.0, 50.0, 50.0, 50.0]
             mock_time.monotonic = MagicMock(side_effect=monotonic_values)

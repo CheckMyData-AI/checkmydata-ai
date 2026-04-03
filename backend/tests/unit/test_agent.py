@@ -262,6 +262,7 @@ class TestMaxIterations:
             patch("app.agents.orchestrator.settings") as mock_settings,
         ):
             mock_settings.max_orchestrator_iterations = 3
+            mock_settings.max_simple_query_steps = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.max_sub_agent_retries = 2
@@ -270,6 +271,7 @@ class TestMaxIterations:
             mock_settings.schema_cache_ttl_seconds = 300
             mock_settings.agent_wall_clock_timeout_seconds = 600
             mock_settings.max_parallel_tool_calls = 3
+            mock_settings.viz_timeout_seconds = 15
 
             resp = await agent.run(
                 question="loop forever",
@@ -332,6 +334,7 @@ class TestMaxIterations:
             patch("app.agents.orchestrator.settings") as mock_settings,
         ):
             mock_settings.max_orchestrator_iterations = 3
+            mock_settings.max_simple_query_steps = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = True
             mock_settings.max_sub_agent_retries = 2
@@ -340,6 +343,7 @@ class TestMaxIterations:
             mock_settings.schema_cache_ttl_seconds = 300
             mock_settings.agent_wall_clock_timeout_seconds = 600
             mock_settings.max_parallel_tool_calls = 3
+            mock_settings.viz_timeout_seconds = 15
 
             resp = await agent.run(
                 question="complex analysis",
@@ -377,6 +381,7 @@ class TestMaxIterations:
             patch("app.agents.orchestrator.settings") as mock_settings,
         ):
             mock_settings.max_orchestrator_iterations = 3
+            mock_settings.max_simple_query_steps = 3
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.max_sub_agent_retries = 2
@@ -385,6 +390,7 @@ class TestMaxIterations:
             mock_settings.schema_cache_ttl_seconds = 300
             mock_settings.agent_wall_clock_timeout_seconds = 600
             mock_settings.max_parallel_tool_calls = 3
+            mock_settings.viz_timeout_seconds = 15
 
             resp = await agent.run(
                 question="loop forever",
@@ -422,6 +428,7 @@ class TestMaxIterations:
             patch("app.agents.orchestrator.settings") as mock_settings,
         ):
             mock_settings.max_orchestrator_iterations = 100
+            mock_settings.max_simple_query_steps = 4
             mock_settings.orchestrator_wrap_up_steps = 1
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.max_sub_agent_retries = 2
@@ -430,6 +437,7 @@ class TestMaxIterations:
             mock_settings.schema_cache_ttl_seconds = 300
             mock_settings.agent_wall_clock_timeout_seconds = 600
             mock_settings.max_parallel_tool_calls = 3
+            mock_settings.viz_timeout_seconds = 15
 
             resp = await agent.run(
                 question="loop forever",
