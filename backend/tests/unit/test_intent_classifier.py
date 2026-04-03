@@ -148,7 +148,7 @@ class TestParseClassificationResponse:
 
     def test_json_embedded_in_markdown(self):
         raw = (
-            'Sure! Here is the result:\n```json\n'
+            "Sure! Here is the result:\n```json\n"
             '{"intent": "knowledge_query", "reason": "code Q"}\n```\n'
         )
         valid = {"direct_response", "knowledge_query", "mixed"}

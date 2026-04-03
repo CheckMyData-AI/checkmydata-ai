@@ -150,7 +150,7 @@ def _extract_json(raw: str) -> dict | None:
 
 def _extract_plain_text_intent(raw: str, valid_intents: set[str]) -> str | None:
     """Fallback: check if the raw LLM output contains a recognizable intent name."""
-    lower = raw.strip().strip('"\'').lower()
+    lower = raw.strip().strip("\"'").lower()
     for intent_val in _ALL_INTENT_VALUES:
         if intent_val in lower and intent_val in valid_intents:
             return intent_val
@@ -180,9 +180,7 @@ def _parse_classification_response(
         try:
             intent = IntentType(intent_str)
         except ValueError:
-            return ClassifiedIntent(
-                intent=IntentType.MIXED, reason=f"unknown_intent:{intent_str}"
-            )
+            return ClassifiedIntent(intent=IntentType.MIXED, reason=f"unknown_intent:{intent_str}")
 
         return ClassifiedIntent(intent=intent, reason=reason)
 
@@ -194,9 +192,7 @@ def _parse_classification_response(
             raw[:120],
         )
         try:
-            return ClassifiedIntent(
-                intent=IntentType(plain_intent), reason="recovered_from_text"
-            )
+            return ClassifiedIntent(intent=IntentType(plain_intent), reason="recovered_from_text")
         except ValueError:
             pass
 

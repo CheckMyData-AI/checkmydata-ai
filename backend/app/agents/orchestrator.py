@@ -1667,9 +1667,7 @@ class OrchestratorAgent(BaseAgent):
                 stage_results_raw = _json.loads(pipeline_run.stage_results_json)
                 user_feedback = _json.loads(pipeline_run.user_feedback_json)
             except (_json.JSONDecodeError, TypeError, KeyError) as exc:
-                logger.warning(
-                    "Failed to parse pipeline state for run %s: %s", run_id[:8], exc
-                )
+                logger.warning("Failed to parse pipeline state for run %s: %s", run_id[:8], exc)
                 await self._tracker.end(wf_id, "orchestrator", "failed", "Corrupted pipeline state")
                 return AgentResponse(
                     answer=(
