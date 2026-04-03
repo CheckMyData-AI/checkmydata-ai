@@ -51,6 +51,7 @@ def build_sql_system_prompt(
     notes_prompt: str = "",
     required_filters: str = "",
     column_value_mappings: str = "",
+    custom_rules: str = "",
 ) -> str:
     """Assemble a SQL-focused system prompt for the SQL agent."""
 
@@ -64,6 +65,13 @@ def build_sql_system_prompt(
             f"Current date/time: {current_datetime}. "
             "Use this for relative date calculations (yesterday, last week, last month, etc.)."
         )
+
+    if custom_rules:
+        sections.append("")
+        sections.append(
+            "CUSTOM RULES & BUSINESS LOGIC (MANDATORY — always apply these):"
+        )
+        sections.append(custom_rules)
 
     sections.append("")
     sections.append("WORKFLOW:")
@@ -88,6 +96,11 @@ def build_sql_system_prompt(
         efficiency_parts.append(
             "- The DATABASE TABLES map is ALREADY in this prompt below. "
             "Do NOT call get_db_index(overview) to re-fetch it."
+        )
+    if custom_rules:
+        efficiency_parts.append(
+            "- Custom rules & business logic are ALREADY in this prompt above. "
+            "Do NOT call get_custom_rules to re-fetch them."
         )
     if learnings_prompt:
         efficiency_parts.append(

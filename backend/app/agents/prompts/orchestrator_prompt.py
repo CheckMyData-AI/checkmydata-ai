@@ -18,6 +18,7 @@ def build_orchestrator_system_prompt(
     current_datetime: str | None = None,
     project_overview: str | None = None,
     recent_learnings: str | None = None,
+    custom_rules: str = "",
 ) -> str:
     project_label = f' for the project "{project_name}"' if project_name else ""
     sections: list[str] = [
@@ -90,6 +91,14 @@ def build_orchestrator_system_prompt(
     if table_map:
         sections.append("")
         sections.append(f"DATABASE TABLES (for routing context): {table_map}")
+
+    if custom_rules:
+        sections.append("")
+        sections.append(
+            "CUSTOM RULES & BUSINESS LOGIC (apply these when formulating "
+            "questions for sub-agents):"
+        )
+        sections.append(custom_rules)
 
     if project_overview:
         sections.append("")

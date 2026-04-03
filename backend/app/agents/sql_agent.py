@@ -193,6 +193,8 @@ class SQLAgent(BaseAgent):
         if cfg.connection_id:
             notes_prompt = await self._load_notes_prompt(cfg.connection_id)
 
+        custom_rules_text = await self._load_rules_for_prompt(context.project_id)
+
         system_prompt = build_sql_system_prompt(
             db_type=cfg.db_type,
             has_db_index=has_db_idx,
@@ -207,6 +209,7 @@ class SQLAgent(BaseAgent):
             notes_prompt=notes_prompt,
             required_filters=required_filters_text,
             column_value_mappings=column_value_mappings_text,
+            custom_rules=custom_rules_text,
         )
 
         tools = get_sql_agent_tools(
@@ -1346,6 +1349,24 @@ class SQLAgent(BaseAgent):
             return self._rules_engine.rules_to_context(file_rules + db_rules)
         except Exception:
             logger.debug("_load_rules_for_repair failed", exc_info=True)
+            return ""
+
+    _RULES_PROMPT_MAX_CHARS = 3000
+
+    async def _load_rules_for_prompt(self, project_id: str) -> str:
+        """Load custom rules for direct injection into the SQL system prompt."""
+        try:
+            rules_dir = f"{settings.custom_rules_dir}/{project_id}"
+            file_rules = self._rules_engine.load_rules(project_rules_dir=rules_dir)
+            db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
+            text = self._rules_engine.rules_to_context(file_rules + db_rules)
+            if not text:
+                return ""
+            if len(text) > self._RULES_PROMPT_MAX_CHARS:
+                text = text[: self._RULES_PROMPT_MAX_CHARS] + "\n... (truncated)"
+            return text
+        except Exception:
+            logger.debug("_load_rules_for_prompt failed", exc_info=True)
             return ""
 
     async def _load_distinct_values(self, cfg: ConnectionConfig) -> dict[str, dict[str, list[str]]]:

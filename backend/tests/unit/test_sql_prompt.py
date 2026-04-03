@@ -96,6 +96,34 @@ class TestBuildSqlSystemPrompt:
         assert "CURRENT QUESTION FOCUS" in prompt
         assert "do not treat prior queries" in prompt
 
+    def test_with_custom_rules(self):
+        prompt = build_sql_system_prompt(
+            custom_rules="## Custom Rules\n### Revenue Rule\nAlways divide amount by 100."
+        )
+        assert "CUSTOM RULES & BUSINESS LOGIC" in prompt
+        assert "MANDATORY" in prompt
+        assert "Always divide amount by 100" in prompt
+
+    def test_custom_rules_efficiency_hint(self):
+        prompt = build_sql_system_prompt(
+            table_map="users",
+            custom_rules="Some rule here",
+        )
+        assert "Custom rules & business logic are ALREADY in this prompt" in prompt
+        assert "Do NOT call get_custom_rules" in prompt
+
+    def test_custom_rules_empty_omitted(self):
+        prompt = build_sql_system_prompt(custom_rules="")
+        assert "CUSTOM RULES & BUSINESS LOGIC" not in prompt
+
+    def test_custom_rules_before_workflow(self):
+        prompt = build_sql_system_prompt(
+            custom_rules="My important rule",
+        )
+        rules_pos = prompt.index("CUSTOM RULES & BUSINESS LOGIC")
+        workflow_pos = prompt.index("WORKFLOW:")
+        assert rules_pos < workflow_pos
+
     def test_all_options_combined(self):
         prompt = build_sql_system_prompt(
             db_type="postgres",
@@ -111,6 +139,7 @@ class TestBuildSqlSystemPrompt:
             notes_prompt="Notes here",
             required_filters="status = active",
             column_value_mappings="type: 1=A",
+            custom_rules="Always use LEFT JOIN",
         )
         assert "expert SQL query agent" in prompt
         assert "get_query_context" in prompt
@@ -122,6 +151,8 @@ class TestBuildSqlSystemPrompt:
         assert "REQUIRED QUERY FILTERS" in prompt
         assert "COLUMN VALUE MEANINGS" in prompt
         assert "SQL DIALECT (postgres)" in prompt
+        assert "CUSTOM RULES & BUSINESS LOGIC" in prompt
+        assert "Always use LEFT JOIN" in prompt
 
 
 class TestPlannerPrompt:

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.4] - 2026-04-03
+
+### Fixed
+- **Custom rules ignored by orchestrator and SQL agent** — custom rules were never proactively injected into system prompts; they relied entirely on the LLM choosing to call optional tools (`get_custom_rules`, `get_query_context`), which was frequently skipped. Now rules are loaded via `CustomRulesEngine` and injected directly into both `build_orchestrator_system_prompt` and `build_sql_system_prompt` with budget-aware truncation (2000 chars for orchestrator, 3000 chars for SQL agent). The `ContextBudgetManager` `rules_text` slot (10% of budget) is now wired into the orchestrator's `_run_tool_loop`. An efficiency hint in the SQL prompt tells the LLM not to re-fetch rules via the tool when they're already in the prompt
+
 ## [1.5.3] - 2026-04-03
 
 ### Fixed

@@ -673,6 +673,76 @@ class TestSQLAgent:
 
 
 # ---------------------------------------------------------------------------
+# Custom rules injection into system prompt
+# ---------------------------------------------------------------------------
+
+
+class TestSQLAgentCustomRulesInjection:
+    """Verify that custom rules are loaded and injected into the SQL system prompt."""
+
+    @pytest.mark.asyncio
+    async def test_rules_loaded_into_system_prompt(
+        self, agent, mock_llm, mock_custom_rules, context,
+    ):
+        _stub_run_preamble(agent)
+
+        mock_custom_rules.rules_to_context.return_value = (
+            "## Custom Rules\n### Revenue\nAlways divide amount by 100."
+        )
+
+        mock_llm.complete = AsyncMock(
+            return_value=_make_llm_response(content="Done.")
+        )
+
+        await agent.run(context)
+
+        mock_custom_rules.load_rules.assert_called()
+        mock_custom_rules.load_db_rules.assert_called()
+
+        call_kwargs = mock_llm.complete.call_args.kwargs
+        messages = call_kwargs.get("messages", [])
+        system_msg = messages[0]
+        assert "CUSTOM RULES & BUSINESS LOGIC" in system_msg.content
+        assert "Always divide amount by 100" in system_msg.content
+
+    @pytest.mark.asyncio
+    async def test_empty_rules_omitted_from_prompt(
+        self, agent, mock_llm, mock_custom_rules, context,
+    ):
+        _stub_run_preamble(agent)
+        mock_custom_rules.rules_to_context.return_value = ""
+
+        mock_llm.complete = AsyncMock(
+            return_value=_make_llm_response(content="Done.")
+        )
+
+        await agent.run(context)
+
+        call_kwargs = mock_llm.complete.call_args.kwargs
+        messages = call_kwargs.get("messages", [])
+        system_msg = messages[0]
+        assert "CUSTOM RULES & BUSINESS LOGIC" not in system_msg.content
+
+    @pytest.mark.asyncio
+    async def test_rules_truncated_when_too_long(self, agent, mock_custom_rules, context):
+        long_rules = "x" * 5000
+        mock_custom_rules.rules_to_context.return_value = long_rules
+
+        text = await agent._load_rules_for_prompt("proj-1")
+
+        assert len(text) < len(long_rules)
+        assert text.endswith("... (truncated)")
+
+    @pytest.mark.asyncio
+    async def test_rules_load_failure_returns_empty(self, agent, mock_custom_rules, context):
+        mock_custom_rules.load_rules.side_effect = RuntimeError("disk error")
+
+        text = await agent._load_rules_for_prompt("proj-1")
+
+        assert text == ""
+
+
+# ---------------------------------------------------------------------------
 # ALM integration: extract_learnings, query_context, repair learnings
 # ---------------------------------------------------------------------------
 

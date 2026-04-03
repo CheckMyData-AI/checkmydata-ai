@@ -220,6 +220,24 @@ class OrchestratorAgent(BaseAgent):
             self._wf_enriched.pop(wid, None)
             self._wf_sql_results.pop(wid, None)
 
+    _ORCH_RULES_MAX_CHARS = 2000
+
+    async def _load_custom_rules_text(self, project_id: str) -> str:
+        """Load custom rules for injection into the orchestrator system prompt."""
+        try:
+            rules_dir = f"{settings.custom_rules_dir}/{project_id}"
+            file_rules = self._custom_rules.load_rules(project_rules_dir=rules_dir)
+            db_rules = await self._custom_rules.load_db_rules(project_id=project_id)
+            text = self._custom_rules.rules_to_context(file_rules + db_rules)
+            if not text:
+                return ""
+            if len(text) > self._ORCH_RULES_MAX_CHARS:
+                text = text[: self._ORCH_RULES_MAX_CHARS] + "\n... (truncated)"
+            return text
+        except Exception:
+            logger.debug("_load_custom_rules_text failed", exc_info=True)
+            return ""
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -484,6 +502,7 @@ class OrchestratorAgent(BaseAgent):
 
         project_overview = await self._ctx_loader.load_project_overview(context.project_id)
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
+        custom_rules_text = await self._load_custom_rules_text(context.project_id)
 
         tools = get_orchestrator_tools(
             has_connection=has_connection,
@@ -501,6 +520,7 @@ class OrchestratorAgent(BaseAgent):
             table_map=table_map,
             project_overview=project_overview,
             recent_learnings=recent_learnings,
+            custom_rules=custom_rules_text,
             tools=tools,
             max_steps_override=settings.max_simple_query_steps,
         )
@@ -638,6 +658,7 @@ class OrchestratorAgent(BaseAgent):
 
         project_overview = await self._ctx_loader.load_project_overview(context.project_id)
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
+        custom_rules_text = await self._load_custom_rules_text(context.project_id)
 
         tools = get_orchestrator_tools(
             has_connection=has_connection,
@@ -655,6 +676,7 @@ class OrchestratorAgent(BaseAgent):
             table_map=table_map,
             project_overview=project_overview,
             recent_learnings=recent_learnings,
+            custom_rules=custom_rules_text,
             tools=tools,
             staleness_warning=staleness_warning,
         )
@@ -676,6 +698,7 @@ class OrchestratorAgent(BaseAgent):
         table_map: str,
         project_overview: str | None,
         recent_learnings: str | None,
+        custom_rules: str = "",
         tools: list,
         staleness_warning: str | None = None,
         max_steps_override: int | None = None,
@@ -699,10 +722,12 @@ class OrchestratorAgent(BaseAgent):
             current_datetime=get_current_datetime_str(),
             project_overview="",
             recent_learnings="",
+            custom_rules="",
         )
         allocation = budget_mgr.allocate(
             system_prompt=base_prompt,
             schema_text=table_map,
+            rules_text=custom_rules,
             learnings_text=recent_learnings or "",
             overview_text=project_overview or "",
         )
@@ -717,6 +742,7 @@ class OrchestratorAgent(BaseAgent):
             current_datetime=get_current_datetime_str(),
             project_overview=allocation.overview_text,
             recent_learnings=allocation.learnings_text,
+            custom_rules=allocation.rules_text,
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]

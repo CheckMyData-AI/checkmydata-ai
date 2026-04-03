@@ -1119,7 +1119,8 @@ Links ORM models found in the codebase to actual database tables:
 `CustomRulesEngine` (`backend/app/knowledge/custom_rules.py`):
 - Users can create project-specific rules via the UI or the `manage_rules` meta-tool
 - Rules are markdown documents with guidelines about how to query the database
-- Injected into SQL agent prompts for domain-specific knowledge
+- Proactively injected into both the orchestrator and SQL agent system prompts (with budget-aware truncation) so every query respects business logic without relying on optional tool calls
+- Also available via `get_custom_rules` and `get_query_context` tools for additional retrieval
 
 ---
 

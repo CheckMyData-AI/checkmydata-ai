@@ -450,6 +450,40 @@ class TestHistoryBoundaryInPrompt:
         )
         assert "chain `process_data` calls sequentially" in prompt
 
+    def test_custom_rules_injected_into_prompt(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            custom_rules="## Custom Rules\n### Revenue\nDivide amount by 100.",
+        )
+        assert "CUSTOM RULES & BUSINESS LOGIC" in prompt
+        assert "Divide amount by 100" in prompt
+
+    def test_custom_rules_empty_omitted(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            custom_rules="",
+        )
+        assert "CUSTOM RULES & BUSINESS LOGIC" not in prompt
+
+    def test_custom_rules_placed_after_table_map(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            table_map="users, orders",
+            custom_rules="Some rule",
+        )
+        tables_pos = prompt.index("DATABASE TABLES")
+        rules_pos = prompt.index("CUSTOM RULES & BUSINESS LOGIC")
+        assert rules_pos > tables_pos
+
 
 class TestPipelineScopedContext:
     """Verify _run_complex_pipeline passes scoped context to StageExecutor."""
@@ -1362,6 +1396,77 @@ class TestOrchestratorIntentRouting:
 
         assert resp.response_type == "text"
         assert "42" in resp.answer
+
+    @pytest.mark.asyncio
+    async def test_data_query_loads_custom_rules(self, orch, mock_llm, base_context):
+        """Data queries should load custom rules into the orchestrator system prompt."""
+        from app.agents.base import AgentContext
+
+        ctx = AgentContext(
+            project_id="test-proj",
+            connection_config=ConnectionConfig(
+                db_type="postgres",
+                db_host="localhost",
+                db_port=5432,
+                db_name="testdb",
+                db_user="user",
+                connection_id="conn-1",
+            ),
+            user_question="What is total revenue?",
+            chat_history=[],
+            llm_router=mock_llm,
+            tracker=base_context.tracker,
+            workflow_id="wf-1",
+            project_name="TestProject",
+        )
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(content='{"intent": "data_query", "reason": "revenue"}'),
+                LLMResponse(content="Revenue is $42."),
+            ]
+        )
+
+        with (
+            patch(
+                "app.agents.context_loader.ContextLoader.has_mcp_sources",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.context_loader.ContextLoader.build_table_map",
+                new_callable=AsyncMock,
+                return_value="orders: id, amount",
+            ),
+            patch(
+                "app.agents.context_loader.ContextLoader.load_project_overview",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.context_loader.ContextLoader.load_recent_learnings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.agents.orchestrator.AdaptivePlanner._is_complex",
+                return_value=False,
+            ),
+            patch.object(
+                orch,
+                "_load_custom_rules_text",
+                new_callable=AsyncMock,
+                return_value="## Custom Rules\n### Revenue\nDivide amount by 100.",
+            ) as mock_load_rules,
+        ):
+            await orch.run(ctx)
+
+        mock_load_rules.assert_called_once_with("test-proj")
+        second_call_kwargs = mock_llm.complete.call_args_list[1].kwargs
+        messages = second_call_kwargs.get("messages", [])
+        system_msg = messages[0]
+        assert "CUSTOM RULES & BUSINESS LOGIC" in system_msg.content
+        assert "Divide amount by 100" in system_msg.content
 
     @pytest.mark.asyncio
     async def test_knowledge_query_path(self, orch, mock_llm, base_context, mock_vs):
