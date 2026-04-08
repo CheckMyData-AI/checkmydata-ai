@@ -240,7 +240,7 @@ class OrchestratorAgent(BaseAgent):
             return ""
 
     @staticmethod
-    def _emit_plan_summary(
+    async def _emit_plan_summary(
         tracker: WorkflowTracker,
         wf_id: str,
         *,
@@ -273,7 +273,7 @@ class OrchestratorAgent(BaseAgent):
         has_warnings = bool(table_hints)
         strategy = "pipeline" if len(tables) > 3 else "single_query"
 
-        tracker.emit(
+        await tracker.emit(
             wf_id,
             "plan_summary",
             "started",
@@ -807,7 +807,7 @@ class OrchestratorAgent(BaseAgent):
             table_hints=table_hints,
         )
 
-        self._emit_plan_summary(
+        await self._emit_plan_summary(
             context.tracker,
             wf_id,
             table_map=allocation.schema_text,
