@@ -15,7 +15,7 @@ const ReactMarkdown = dynamic(() => import("react-markdown"), {
 import { SuggestionChips } from "./SuggestionChips";
 import { ThinkingLog } from "./ThinkingLog";
 import { PlanSummaryCard, type PlanSummaryData } from "./PlanSummaryCard";
-import { ToolCallIndicator } from "./ToolCallIndicator";
+
 import { StageProgress, type PipelineStage } from "./StageProgress";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
@@ -31,7 +31,7 @@ export function ChatPanel() {
   const messages = useAppStore((s) => s.messages);
   const isThinking = useAppStore((s) => s.isThinking);
   const chatMode = useAppStore((s) => s.chatMode);
-  const activeToolCalls = useAppStore((s) => s.activeToolCalls);
+
   const restoringState = useAppStore((s) => s.restoringState);
   const sessionTokens = useAppStore((s) => s.sessionTokens);
   const sessionCost = useAppStore((s) => s.sessionCost);
@@ -960,7 +960,6 @@ export function ChatPanel() {
             ) : (
               <div className="bg-surface-2 rounded-xl px-4 py-3 space-y-2 max-w-[95%] md:max-w-[80%] overflow-hidden">
                 {planSummary && <PlanSummaryCard data={planSummary} collapsed={!!streamingText} />}
-                {activeToolCalls.length > 0 && <ToolCallIndicator events={activeToolCalls} />}
                 {thinkingLog.length > 0 ? (
                   <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
                 ) : (
