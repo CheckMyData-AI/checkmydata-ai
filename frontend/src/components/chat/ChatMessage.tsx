@@ -10,6 +10,7 @@ const ReactMarkdown = dynamic(() => import("react-markdown"), {
 });
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 import { useAppStore } from "@/stores/app-store";
+import { useReasoningStore } from "@/stores/reasoning-store";
 import { VizRenderer } from "@/components/viz/VizRenderer";
 import { VizToolbar } from "@/components/viz/VizToolbar";
 import { DataTable } from "@/components/viz/DataTable";
@@ -151,6 +152,33 @@ const complexityBadgeColors: Record<string, string> = {
   complex: "bg-warning-muted text-warning",
   expert: "bg-error-muted text-error",
 };
+
+function ReasoningButton({ messageId }: { messageId: string }) {
+  const hasTrace = useReasoningStore((s) => !!s.traces[messageId]);
+  const panelOpen = useReasoningStore((s) => s.panelOpen);
+  const activeId = useReasoningStore((s) => s.activeMessageId);
+  const openPanel = useReasoningStore((s) => s.openPanel);
+  const closePanel = useReasoningStore((s) => s.closePanel);
+
+  if (!hasTrace) return null;
+
+  const isActive = panelOpen && activeId === messageId;
+
+  return (
+    <button
+      onClick={() => (isActive ? closePanel() : openPanel(messageId))}
+      className={`text-[10px] ml-1 transition-colors ${
+        isActive ? "text-accent" : "text-text-tertiary hover:text-text-primary"
+      }`}
+      aria-label={isActive ? "Hide reasoning" : "Show reasoning"}
+      title="Agent reasoning"
+    >
+      <svg className="h-3.5 w-3.5 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 0-6.23.693L5 14.5m14.8.8 1.402 1.402c1.232 1.232.65 3.318-1.067 3.611l-.772.129a9 9 0 0 1-9.726 0l-.772-.13c-1.718-.292-2.3-2.378-1.067-3.61L5 14.5" />
+      </svg>
+    </button>
+  );
+}
 
 export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onContinueAnalysis, sessionId }: ChatMessageProps) {
   const isUser = message.role === "user";
@@ -616,6 +644,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
         {/* Thumbs up/down feedback + save to notes */}
         {!isUser && (
           <div className="mt-2 flex items-center gap-1">
+            <ReasoningButton messageId={message.id} />
             <button
               onClick={() => handleFeedback(1)}
               aria-label="Helpful"

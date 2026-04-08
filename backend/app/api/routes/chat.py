@@ -1555,6 +1555,7 @@ async def ask_stream(
                 pipeline_events = frozenset(
                     {
                         "plan",
+                        "plan_summary",
                         "stage_start",
                         "stage_result",
                         "stage_validation",
@@ -1580,6 +1581,8 @@ async def ask_stream(
                 elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
                     agent_name = event.step.split(":")[0]
                     event_data["agent"] = agent_name
+                    if event.extra:
+                        event_data["extra"] = event.extra
                     if event.status == "started":
                         yield (
                             f"event: agent_start\ndata: {json.dumps(event_data, default=str)}\n\n"

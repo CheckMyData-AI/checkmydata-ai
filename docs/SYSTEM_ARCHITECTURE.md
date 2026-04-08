@@ -1121,6 +1121,32 @@ Links ORM models found in the codebase to actual database tables:
 - Rules are markdown documents with guidelines about how to query the database
 - Proactively injected into both the orchestrator and SQL agent system prompts (with budget-aware truncation) so every query respects business logic without relying on optional tool calls
 - Also available via `get_custom_rules` and `get_query_context` tools for additional retrieval
+- **Rule Freshness Check**: the orchestrator prompt includes a `RULE FRESHNESS CHECK` instruction that compares query results against loaded rules, detects discrepancies (e.g., unknown enum values), and proposes updates via `manage_rules`
+- **Schema-aware rule validation**: `RuleService.validate_rules_against_schema()` checks rules for references to tables that were dropped during a schema refresh; wired into the `POST /connections/{id}/refresh-schema` endpoint alongside learning validation
+
+### 7.6 Table Resolution
+
+`table_resolver.py` (`backend/app/agents/table_resolver.py`):
+- Lightweight heuristic (no LLM) that parses the compact table map and matches user question terms against known tables
+- Uses exact, plural/singular, substring, and keyword-to-description matching
+- Returns `TableResolution(matched, fuzzy, unresolved)` with confidence scores for fuzzy matches
+- `build_resolution_hints()` generates prompt-injectable warnings for unresolved or fuzzy-matched terms
+- The orchestrator injects these hints into the system prompt; the `QUERY PLANNING` rule mandates using `ask_user` when TABLE RESOLUTION WARNINGS are present
+
+### 7.7 Execution Plan Visibility
+
+- The orchestrator emits a `plan_summary` event via `WorkflowTracker` before the tool-calling loop starts
+- Contains: tables, strategy (single_query/pipeline), rules_applied, learnings_applied, has_warnings
+- Forwarded via SSE as a `plan_summary` event type
+- Frontend renders a collapsible `PlanSummaryCard` above the thinking log
+
+### 7.8 Agent Reasoning Panel
+
+- `ReasoningPanel` (`frontend/src/components/chat/ReasoningPanel.tsx`): right-side sliding panel showing full orchestrator internals
+- `reasoning-store.ts`: Zustand store collecting per-message reasoning traces (steps, plan, thinking, timing)
+- SSE events (`step`, `agent_start`, `agent_end`, `thinking`, `tool_call`, `plan_summary`) are piped into the store during streaming
+- Brain icon button on each assistant message (`ChatMessage.tsx`) toggles the panel
+- Displays: plan summary, thinking log, step timeline with icons and durations
 
 ---
 

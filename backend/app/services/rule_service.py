@@ -77,6 +77,48 @@ class RuleService:
         await session.commit()
         return True
 
+    async def validate_rules_against_schema(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        known_tables: set[str],
+    ) -> list[dict]:
+        """Check rules for references to tables that no longer exist.
+
+        Extracts identifiers from rule content that structurally resemble
+        table names (contain underscores or match known table naming
+        patterns) and flags any that are **not** in *known_tables*.
+
+        Returns a list of ``{"rule_id", "rule_name", "missing_tables"}`` dicts.
+        """
+        import re
+
+        if not known_tables:
+            return []
+        known_lower = {t.lower() for t in known_tables}
+        identifier_re = re.compile(r"\b([a-z][a-z0-9_]*[a-z0-9])\b")
+        rules = await self.list_all(session, project_id=project_id)
+        issues: list[dict] = []
+        for rule in rules:
+            content_lower = (rule.content or "").lower()
+            if not content_lower:
+                continue
+            identifiers = set(identifier_re.findall(content_lower))
+            has_known_ref = bool(identifiers & known_lower)
+            if not has_known_ref:
+                continue
+            candidates = identifiers - known_lower
+            missing = [w for w in candidates if "_" in w and len(w) >= 4]
+            if missing:
+                issues.append(
+                    {
+                        "rule_id": str(rule.id),
+                        "rule_name": rule.name,
+                        "missing_tables": sorted(missing),
+                    }
+                )
+        return issues
+
     async def ensure_default_rule(
         self,
         session: AsyncSession,

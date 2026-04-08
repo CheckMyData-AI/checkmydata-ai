@@ -484,6 +484,56 @@ class TestHistoryBoundaryInPrompt:
         rules_pos = prompt.index("CUSTOM RULES & BUSINESS LOGIC")
         assert rules_pos > tables_pos
 
+    def test_table_hints_injected_into_prompt(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            table_map="orders(~1000, customer orders)",
+            table_hints="WARNING: 'invoices' does not match any known table.",
+        )
+        assert "TABLE RESOLUTION WARNINGS" in prompt
+        assert "invoices" in prompt
+
+    def test_table_hints_empty_omits_warnings_section(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+            table_hints="",
+        )
+        assert "TABLE RESOLUTION WARNINGS:\n" not in prompt
+
+    def test_rule_freshness_check_present_when_rules(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            custom_rules="Some rule content",
+        )
+        assert "RULE FRESHNESS CHECK" in prompt
+
+    def test_rule_freshness_check_absent_without_rules(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            custom_rules="",
+        )
+        assert "RULE FRESHNESS CHECK" not in prompt
+
+    def test_query_planning_mentions_ask_user(self):
+        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
+
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "ask_user" in prompt
+        assert "TABLE RESOLUTION WARNINGS" in prompt or "query_database" in prompt
+
 
 class TestPipelineScopedContext:
     """Verify _run_complex_pipeline passes scoped context to StageExecutor."""

@@ -19,6 +19,7 @@ def build_orchestrator_system_prompt(
     project_overview: str | None = None,
     recent_learnings: str | None = None,
     custom_rules: str = "",
+    table_hints: str = "",
 ) -> str:
     project_label = f' for the project "{project_name}"' if project_name else ""
     sections: list[str] = [
@@ -92,12 +93,27 @@ def build_orchestrator_system_prompt(
         sections.append("")
         sections.append(f"DATABASE TABLES (for routing context): {table_map}")
 
+    if table_hints:
+        sections.append("")
+        sections.append(f"TABLE RESOLUTION WARNINGS:\n{table_hints}")
+
     if custom_rules:
         sections.append("")
         sections.append(
             "CUSTOM RULES & BUSINESS LOGIC (apply these when formulating questions for sub-agents):"
         )
         sections.append(custom_rules)
+        sections.append("")
+        sections.append(
+            "RULE FRESHNESS CHECK:\n"
+            "After receiving query results, compare them against the custom rules above.\n"
+            "If results contain values, patterns, or data structures that contradict "
+            "or are missing from the rules:\n"
+            "1. Inform the user about the discrepancy (e.g. 'Query results show "
+            "status=archived which is not mentioned in the rule').\n"
+            "2. Suggest updating the rule via `manage_rules` with action='update'.\n"
+            "3. If the user confirms, update the rule with the corrected information."
+        )
 
     if project_overview:
         sections.append("")
@@ -187,7 +203,10 @@ def build_orchestrator_system_prompt(
             "3. If multiple, can they run in parallel (independent data) "
             "or must be sequential (dependent)?\n"
             "4. Do NOT query the database to 'explore' — the schema "
-            "tells you what exists."
+            "tells you what exists.\n"
+            "5. If TABLE RESOLUTION WARNINGS are present above, you MUST use "
+            "`ask_user` to clarify which table or data the user means "
+            "before proceeding with `query_database`."
         )
 
     sections.append("")

@@ -14,12 +14,15 @@ const ReactMarkdown = dynamic(() => import("react-markdown"), {
 });
 import { SuggestionChips } from "./SuggestionChips";
 import { ThinkingLog } from "./ThinkingLog";
+import { PlanSummaryCard, type PlanSummaryData } from "./PlanSummaryCard";
+import { ToolCallIndicator } from "./ToolCallIndicator";
 import { StageProgress, type PipelineStage } from "./StageProgress";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { CostEstimator } from "./CostEstimator";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
 import { useSessionPolling } from "@/hooks/useSessionPolling";
+import { useReasoningStore } from "@/stores/reasoning-store";
 
 export function ChatPanel() {
   const activeProject = useAppStore((s) => s.activeProject);
@@ -42,12 +45,19 @@ export function ChatPanel() {
   const bumpRulesVersion = useAppStore((s) => s.bumpRulesVersion);
   const addSessionUsage = useAppStore((s) => s.addSessionUsage);
   const resetSessionUsage = useAppStore((s) => s.resetSessionUsage);
+  const reasoningAddStep = useReasoningStore((s) => s.addStep);
+  const reasoningSetPlan = useReasoningStore((s) => s.setPlanSummary);
+  const reasoningAddThinking = useReasoningStore((s) => s.addThinkingLine);
+  const reasoningInitTrace = useReasoningStore((s) => s.initTrace);
+  const reasoningFinalize = useReasoningStore((s) => s.finalizeTrace);
+  const streamingMsgIdRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
   const [pipelineRunId, setPipelineRunId] = useState<string | undefined>();
   const [checkpointStageId, setCheckpointStageId] = useState<string | undefined>();
+  const [planSummary, setPlanSummary] = useState<PlanSummaryData | null>(null);
   const [thinkingLog, setThinkingLog] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [thinkingStartTime, setThinkingStartTime] = useState<number>(0);
@@ -73,6 +83,19 @@ export function ChatPanel() {
     (eventType: string, event: Record<string, unknown>) => {
       const extra = (event.extra ?? {}) as Record<string, unknown>;
       switch (eventType) {
+        case "plan_summary": {
+          const plan = {
+            tables: (extra.tables as string[]) ?? [],
+            strategy: (extra.strategy as string) ?? "single_query",
+            rules_applied: (extra.rules_applied as string[]) ?? [],
+            learnings_applied: (extra.learnings_applied as string[]) ?? [],
+            has_warnings: (extra.has_warnings as boolean) ?? false,
+          };
+          setPlanSummary(plan);
+          const mid = streamingMsgIdRef.current;
+          if (mid) reasoningSetPlan(mid, plan);
+          break;
+        }
         case "plan": {
           const rawStages = (extra.stages ?? []) as Array<{
             id: string;
@@ -153,7 +176,7 @@ export function ChatPanel() {
         }
       }
     },
-    [],
+    [reasoningSetPlan],
   );
 
   const handleThinkingEvent = useCallback(
@@ -164,8 +187,10 @@ export function ChatPanel() {
         const next = [...prev, detail];
         return next.length > 50 ? next.slice(-50) : next;
       });
+      const mid = streamingMsgIdRef.current;
+      if (mid) reasoningAddThinking(mid, detail);
     },
-    [],
+    [reasoningAddThinking],
   );
 
   const handleToken = useCallback((chunk: string) => {
@@ -179,7 +204,7 @@ export function ChatPanel() {
       setCheckpointStageId(undefined);
       setThinking(true);
       setLoading(true);
-      setThinkingLog([]);
+      setThinkingLog([]); setPlanSummary(null);
       setStreamingText("");
 
       const ctrl = api.chat.askStream(
@@ -217,7 +242,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
           if (result.response_type !== "stage_checkpoint" && result.response_type !== "stage_failed") {
             setPipelineStages([]);
@@ -237,7 +262,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
         },
         (toolEvent) => {
@@ -272,7 +297,7 @@ export function ChatPanel() {
       });
       setThinking(true);
       setLoading(true);
-      setThinkingLog([]);
+      setThinkingLog([]); setPlanSummary(null);
       setStreamingText("");
 
       const extra: Record<string, unknown> = {
@@ -323,7 +348,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
         },
         (streamErr: StreamError) => {
@@ -339,7 +364,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
         },
         (toolEvent) => {
@@ -404,11 +429,16 @@ export function ChatPanel() {
         abortRef.current.abort();
         abortRef.current = null;
       }
+      const mid = streamingMsgIdRef.current;
+      if (mid) {
+        reasoningFinalize(mid);
+        streamingMsgIdRef.current = null;
+      }
       if (isThinking) {
         setThinking(false);
         setLoading(false);
         clearToolCalls();
-        setThinkingLog([]);
+        setThinkingLog([]); setPlanSummary(null);
         setPipelineStages([]);
         setPipelineRunId(undefined);
         setCheckpointStageId(undefined);
@@ -426,7 +456,7 @@ export function ChatPanel() {
         });
       }
     }
-  }, [activeSession?.id, isThinking, setThinking, setLoading, clearToolCalls]);
+  }, [activeSession?.id, isThinking, setThinking, setLoading, clearToolCalls, reasoningFinalize]);
 
   const canChat = activeProject && (activeConnection || chatMode === "knowledge_only");
 
@@ -472,12 +502,16 @@ export function ChatPanel() {
       setLoading(true);
       setStreamSteps([]);
       clearToolCalls();
-      setThinkingLog([]);
+      setThinkingLog([]); setPlanSummary(null);
       setStreamingText("");
       setThinkingStartTime(Date.now());
       setPipelineStages([]);
       setPipelineRunId(undefined);
       setCheckpointStageId(undefined);
+
+      const tempMsgId = `stream-${sessionId}-${Date.now()}`;
+      streamingMsgIdRef.current = tempMsgId;
+      reasoningInitTrace(tempMsgId);
 
       const ctrl = api.chat.askStream(
         {
@@ -491,6 +525,19 @@ export function ChatPanel() {
             const next = [...prev, step as unknown as WorkflowEvent];
             return next.length > 100 ? next.slice(-100) : next;
           });
+          const mid = streamingMsgIdRef.current;
+          if (mid) {
+            const s = step as Record<string, unknown>;
+            reasoningAddStep(mid, {
+              step: (s.step as string) ?? "",
+              status: (s.status as string) ?? "",
+              detail: (s.detail as string) ?? "",
+              agent: s.agent as string | undefined,
+              elapsed_ms: s.elapsed_ms as number | undefined,
+              timestamp: Date.now(),
+              extra: s.extra as Record<string, unknown> | undefined,
+            });
+          }
         },
         (result: ChatResponse) => {
           if (isFirstMessage) {
@@ -559,8 +606,9 @@ export function ChatPanel() {
             (metadataObj as Record<string, unknown>).sql_results = apiSqlResults;
           }
 
+          const realMsgId = result.assistant_message_id || crypto.randomUUID();
           addMessage({
-            id: result.assistant_message_id || crypto.randomUUID(),
+            id: realMsgId,
             role: "assistant",
             content: result.answer,
             query: result.query || undefined,
@@ -579,6 +627,24 @@ export function ChatPanel() {
             continuationContext: result.continuation_context ?? undefined,
             sqlResults: sqlResults ?? undefined,
           });
+
+          {
+            const mid = streamingMsgIdRef.current;
+            if (mid) {
+              reasoningFinalize(mid);
+              if (mid !== realMsgId) {
+                const store = useReasoningStore.getState();
+                const trace = store.traces[mid];
+                if (trace) {
+                  useReasoningStore.setState((s) => {
+                    const { [mid]: _, ...rest } = s.traces;
+                    return { traces: { ...rest, [realMsgId]: trace } };
+                  });
+                }
+              }
+              streamingMsgIdRef.current = null;
+            }
+          }
 
           if (result.rules_changed) {
             bumpRulesVersion();
@@ -600,7 +666,7 @@ export function ChatPanel() {
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
 
           if (
@@ -622,11 +688,16 @@ export function ChatPanel() {
             isRetryable: streamErr.is_retryable !== false,
             timestamp: Date.now(),
           });
+          const mid = streamingMsgIdRef.current;
+          if (mid) {
+            reasoningFinalize(mid);
+            streamingMsgIdRef.current = null;
+          }
           setThinking(false);
           setLoading(false);
           setStreamSteps([]);
           clearToolCalls();
-          setThinkingLog([]);
+          setThinkingLog([]); setPlanSummary(null);
           setStreamingText("");
         },
         (toolEvent) => {
@@ -666,15 +737,20 @@ export function ChatPanel() {
       );
       abortRef.current = ctrl;
     },
-    [activeProject, activeConnection, activeSession, messages.length, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken],
+    [activeProject, activeConnection, activeSession, messages.length, addMessage, updateMessageId, setThinking, setLoading, setActiveSession, clearToolCalls, addToolCall, bumpRulesVersion, addSessionUsage, handlePipelineEvent, handleThinkingEvent, handleToken, reasoningInitTrace, reasoningFinalize, reasoningAddStep],
   );
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
+    const mid = streamingMsgIdRef.current;
+    if (mid) {
+      reasoningFinalize(mid);
+      streamingMsgIdRef.current = null;
+    }
     setThinking(false);
     setLoading(false);
     clearToolCalls();
-    setThinkingLog([]);
+    setThinkingLog([]); setPlanSummary(null);
     setStreamingText((prev) => {
       if (prev) {
         addMessage({
@@ -686,7 +762,7 @@ export function ChatPanel() {
       }
       return "";
     });
-  }, [setThinking, setLoading, clearToolCalls, addMessage]);
+  }, [setThinking, setLoading, clearToolCalls, addMessage, reasoningFinalize]);
 
   useEffect(() => {
     return () => {
@@ -883,6 +959,8 @@ export function ChatPanel() {
               </div>
             ) : (
               <div className="bg-surface-2 rounded-xl px-4 py-3 space-y-2 max-w-[95%] md:max-w-[80%] overflow-hidden">
+                {planSummary && <PlanSummaryCard data={planSummary} collapsed={!!streamingText} />}
+                {activeToolCalls.length > 0 && <ToolCallIndicator events={activeToolCalls} />}
                 {thinkingLog.length > 0 ? (
                   <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
                 ) : (

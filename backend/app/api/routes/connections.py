@@ -389,11 +389,25 @@ async def refresh_schema(
             except Exception:
                 logger.debug("Learning schema validation skipped", exc_info=True)
 
+        rules_issues: list[dict] = []
+        if known_tables and conn.project_id:
+            try:
+                from app.services.rule_service import RuleService
+
+                rules_issues = await RuleService().validate_rules_against_schema(
+                    db,
+                    conn.project_id,
+                    known_tables,
+                )
+            except Exception:
+                logger.debug("Rule schema validation skipped", exc_info=True)
+
         return {
             "ok": True,
             "tables": len(schema.tables),
             "db_type": schema.db_type,
             "learnings_validation": validation,
+            "rules_issues": rules_issues,
         }
     except HTTPException:
         raise

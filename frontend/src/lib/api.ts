@@ -1137,13 +1137,14 @@ export const api = {
             try {
               const parsed = JSON.parse(jsonStr);
               const pipelineEvents = new Set([
-                "plan", "stage_start", "stage_result", "stage_validation",
+                "plan", "plan_summary", "stage_start", "stage_result", "stage_validation",
                 "stage_complete", "checkpoint", "stage_retry",
               ]);
               if (eventType === "token") onToken?.((parsed as { chunk: string }).chunk ?? "");
               else if (eventType === "thinking") onThinking?.(parsed);
               else if (eventType === "step") onStep(parsed);
               else if (eventType === "tool_call") onToolCall?.(parsed);
+              else if (eventType === "agent_start" || eventType === "agent_end") onStep(parsed);
               else if (eventType === "result") { gotResult = true; onResult(parsed as ChatResponse); }
               else if (eventType === "error") { gotError = true; onError(parsed as StreamError); }
               else if (eventType === "session_rotated") onSessionRotated?.(parsed as { old_session_id: string; new_session_id: string; summary_preview: string; message_count: number; topics: string[] });

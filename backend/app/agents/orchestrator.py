@@ -42,6 +42,7 @@ from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.stage_context import ExecutionPlan, StageContext
 from app.agents.stage_executor import StageExecutor, _StageExecutorResult
 from app.agents.stage_validator import StageValidator
+from app.agents.table_resolver import build_resolution_hints, resolve_tables
 from app.agents.tool_dispatcher import (
     ToolDispatcher,
     _ClarificationRequestError,
@@ -237,6 +238,53 @@ class OrchestratorAgent(BaseAgent):
         except Exception:
             logger.debug("_load_custom_rules_text failed", exc_info=True)
             return ""
+
+    @staticmethod
+    def _emit_plan_summary(
+        tracker: WorkflowTracker,
+        wf_id: str,
+        *,
+        table_map: str,
+        custom_rules: str,
+        recent_learnings: str,
+        table_hints: str,
+    ) -> None:
+        """Emit a plan_summary event so the frontend can display context."""
+        import re as _re
+
+        tables = _re.findall(r"(\w+)\(", table_map) if table_map else []
+        rule_names: list[str] = []
+        if custom_rules:
+            rule_names = _re.findall(r"###\s+(.+?)(?:\s+\(id:|\n)", custom_rules)
+            if not rule_names:
+                rule_names = ["(custom rules loaded)"]
+        learning_subjects: list[str] = []
+        if recent_learnings:
+            for line in recent_learnings.splitlines():
+                line = line.strip().lstrip("- ")
+                if line.startswith("["):
+                    parts = line.split("]", 1)
+                    if len(parts) > 1:
+                        subj = parts[1].strip().split(":")[0].strip()
+                        if subj:
+                            learning_subjects.append(subj)
+            learning_subjects = learning_subjects[:10]
+
+        has_warnings = bool(table_hints)
+        strategy = "pipeline" if len(tables) > 3 else "single_query"
+
+        tracker.emit(
+            wf_id,
+            "plan_summary",
+            "started",
+            extra={
+                "tables": tables[:20],
+                "strategy": strategy,
+                "rules_applied": rule_names[:10],
+                "learnings_applied": learning_subjects,
+                "has_warnings": has_warnings,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -494,6 +542,11 @@ class OrchestratorAgent(BaseAgent):
             if cid:
                 table_map = await self._ctx_loader.build_table_map(cid, wf_id)
 
+        table_hints = ""
+        if table_map:
+            resolution = resolve_tables(question, table_map)
+            table_hints = build_resolution_hints(resolution)
+
         if has_connection and AdaptivePlanner._is_complex(question):
             logger.info("Complex data query detected — using multi-stage pipeline")
             return await self._run_complex_pipeline(
@@ -521,6 +574,7 @@ class OrchestratorAgent(BaseAgent):
             project_overview=project_overview,
             recent_learnings=recent_learnings,
             custom_rules=custom_rules_text,
+            table_hints=table_hints,
             tools=tools,
             max_steps_override=settings.max_simple_query_steps,
         )
@@ -647,6 +701,11 @@ class OrchestratorAgent(BaseAgent):
             if cid:
                 table_map = await self._ctx_loader.build_table_map(cid, wf_id)
 
+        table_hints = ""
+        if table_map:
+            resolution = resolve_tables(question, table_map)
+            table_hints = build_resolution_hints(resolution)
+
         is_complex = not context.extra.get("_skip_complexity") and AdaptivePlanner._is_complex(
             question
         )
@@ -677,6 +736,7 @@ class OrchestratorAgent(BaseAgent):
             project_overview=project_overview,
             recent_learnings=recent_learnings,
             custom_rules=custom_rules_text,
+            table_hints=table_hints,
             tools=tools,
             staleness_warning=staleness_warning,
         )
@@ -699,6 +759,7 @@ class OrchestratorAgent(BaseAgent):
         project_overview: str | None,
         recent_learnings: str | None,
         custom_rules: str = "",
+        table_hints: str = "",
         tools: list,
         staleness_warning: str | None = None,
         max_steps_override: int | None = None,
@@ -743,6 +804,16 @@ class OrchestratorAgent(BaseAgent):
             project_overview=allocation.overview_text,
             recent_learnings=allocation.learnings_text,
             custom_rules=allocation.rules_text,
+            table_hints=table_hints,
+        )
+
+        self._emit_plan_summary(
+            context.tracker,
+            wf_id,
+            table_map=allocation.schema_text,
+            custom_rules=allocation.rules_text,
+            recent_learnings=allocation.learnings_text,
+            table_hints=table_hints,
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]

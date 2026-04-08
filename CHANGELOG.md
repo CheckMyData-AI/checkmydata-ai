@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] - 2026-04-08
+
+### Fixed
+- **Rule schema validation now functional** — `validate_rules_against_schema` no longer requires a `previous_tables` diff (which was never supplied). Instead it scans rule content for underscore-delimited identifiers not present in `known_tables`, detecting stale table references without needing a before/after comparison
+- **Table resolution for complex queries** — `_run_data_query` now computes `table_hints` before the complexity check, so complex queries also benefit from programmatic table resolution instead of silently skipping it
+- **`build_resolution_hints` logic** — fuzzy NOTEs are no longer suppressed when some tables matched exactly; unresolved-term WARNINGs are now always emitted regardless of whether other terms were resolved
+- **Reasoning state cleanup on stream errors** — `handleSend` error handler, `handleStop`, and session-switch `useEffect` now finalize reasoning traces and clear `streamingMsgIdRef`, preventing orphaned traces and memory leaks
+- **Reasoning store memory bounds** — traces are capped at 20 (evicting oldest on overflow), steps per trace capped at 200, and `clearAllTraces` action added for session resets. `closePanel` now also clears `activeMessageId`
+- **ReasoningButton always visible** — moved out of the metadata-metrics conditional block so it appears for all assistant messages that have a reasoning trace, not only those with row_count/execution_time/token_usage
+- **ReasoningButton render efficiency** — store selector narrowed from `s.traces` (entire object) to `!!s.traces[messageId]` (boolean), eliminating unnecessary re-renders when other traces update
+- **`handleSend` useCallback deps** — added `reasoningInitTrace`, `reasoningFinalize`, `reasoningAddStep` to the dependency array
+
+## [1.6.0] - 2026-04-08
+
+### Added
+- **Programmatic table resolution** — new `table_resolver.py` with `resolve_tables()` heuristic that matches user question terms against known tables via exact, plural/singular, substring, and keyword-to-description matching. Generates prompt-injectable warnings for unresolved terms. Wired into `_run_data_query` and `_run_full_pipeline` as a soft-nudge before the tool-calling loop
+- **QUERY PLANNING rule 5** — orchestrator prompt now mandates `ask_user` when TABLE RESOLUTION WARNINGS are present, preventing the LLM from guessing at unknown tables
+- **RULE FRESHNESS CHECK** — new prompt section (only when custom rules are loaded) instructs the orchestrator to compare query results against loaded rules and propose updates via `manage_rules` when discrepancies are detected
+- **Schema-aware rule validation** — `RuleService.validate_rules_against_schema()` detects rules referencing tables that were dropped during schema refresh; wired into `POST /connections/{id}/refresh-schema` alongside existing learning validation
+- **Execution plan visibility** — `plan_summary` event emitted from orchestrator (tables, strategy, rules_applied, learnings_applied, has_warnings); forwarded via SSE; rendered as a collapsible `PlanSummaryCard` in the chat thinking area
+- **Agent Reasoning Panel** — new slide-out right-side panel (`ReasoningPanel.tsx`) showing full orchestrator internals: plan summary, thinking log, step-by-step timeline with icons and durations, rules and learnings applied. Brain icon on each assistant message toggles the panel
+- **Reasoning store** — new `reasoning-store.ts` (Zustand) collecting per-message reasoning traces from SSE events during streaming, with trace finalization and temp-to-real message ID mapping
+- **ToolCallIndicator wired into ChatPanel** — previously unused component now renders active tool calls as badges below the thinking area
+- **`agent_start`/`agent_end` SSE events forwarded** — enriched with `extra` metadata and consumed by the frontend SSE parser as step events for the reasoning panel
+
+### Changed
+- Orchestrator prompt `build_orchestrator_system_prompt` now accepts optional `table_hints` parameter
+- `_run_tool_loop` accepts optional `table_hints` parameter and emits `plan_summary` before the loop starts
+- SSE pipeline events set extended with `plan_summary` in both backend (`chat.py`) and frontend (`api.ts`)
+- `app/app/page.tsx` layout includes `ReasoningPanel` alongside `NotesPanel` in the right-side slot
+
 ## [1.5.4] - 2026-04-03
 
 ### Fixed

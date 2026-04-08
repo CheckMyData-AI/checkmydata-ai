@@ -19,6 +19,10 @@ const NotesPanel = dynamic(
   () => import("@/components/notes/NotesPanel").then((m) => m.NotesPanel),
   { ssr: false },
 );
+const ReasoningPanel = dynamic(
+  () => import("@/components/chat/ReasoningPanel").then((m) => m.ReasoningPanel),
+  { ssr: false },
+);
 const ActiveTasksWidget = dynamic(
   () => import("@/components/tasks/ActiveTasksWidget").then((m) => m.ActiveTasksWidget),
   { ssr: false },
@@ -199,9 +203,14 @@ export default function Home() {
               <PersistentLogToggle />
             </div>
             {!isMobile && (
-              <SectionErrorBoundary sectionName="Notes">
-                <NotesPanel />
-              </SectionErrorBoundary>
+              <>
+                <SectionErrorBoundary sectionName="Notes">
+                  <NotesPanel />
+                </SectionErrorBoundary>
+                <SectionErrorBoundary sectionName="Reasoning">
+                  <ReasoningPanel />
+                </SectionErrorBoundary>
+              </>
             )}
           </div>
           <LogPanel />
