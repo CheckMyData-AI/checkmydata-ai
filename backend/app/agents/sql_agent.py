@@ -244,6 +244,7 @@ class SQLAgent(BaseAgent):
                 f"SQL LLM call ({iteration + 1}/{max_sql_iter})",
                 step_data=_sd_llm,
             ):
+
                 async def _on_retry(_attempt: int, _exc: Exception, _wait: float) -> None:
                     await tracker.emit(
                         wf_id,
@@ -714,9 +715,7 @@ class SQLAgent(BaseAgent):
             raise RuntimeError("Expected 'connection_config' but got None")
         cid = cfg.connection_id
         if not cid:
-            return json.dumps(
-                {"status": "rejected", "reason": "connection ID not resolved"}
-            )
+            return json.dumps({"status": "rejected", "reason": "connection ID not resolved"})
 
         from app.models.base import async_session_factory
         from app.services.agent_learning_service import AgentLearningService
@@ -822,9 +821,7 @@ class SQLAgent(BaseAgent):
 
         cfg = ctx.connection_config
         if cfg is None or not cfg.connection_id:
-            return json.dumps(
-                {"status": "rejected", "reason": "connection ID not resolved"}
-            )
+            return json.dumps({"status": "rejected", "reason": "connection ID not resolved"})
 
         from app.models.base import async_session_factory
         from app.services.session_notes_service import SessionNotesService

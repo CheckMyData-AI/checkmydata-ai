@@ -148,9 +148,7 @@ class StageExecutor:
 
             for s in batch:
                 stage_ctx.current_stage_idx = stage_idx_map[s.stage_id]
-                await self._emit_stage_start(
-                    wf_id, s, stage_idx_map[s.stage_id], n_stages
-                )
+                await self._emit_stage_start(wf_id, s, stage_idx_map[s.stage_id], n_stages)
 
             if len(batch) == 1:
                 outcomes: list[_StageExecutorResult | None] = [
@@ -237,9 +235,7 @@ class StageExecutor:
         await self._emit_data_gate(wf_id, stage, gate_outcome)
 
         if not gate_outcome.passed:
-            retried = await self._retry_failed_data_gate(
-                stage, stage_ctx, context, gate_outcome
-            )
+            retried = await self._retry_failed_data_gate(stage, stage_ctx, context, gate_outcome)
             if retried is None:
                 await self._emit_stage_result(wf_id, stage, result)
                 return _StageExecutorResult(

@@ -113,9 +113,7 @@ class KnowledgeFreshnessService:
                     else:
                         head_sha = tracker.get_head_sha(repo_clone_dir)
                         if head_sha and head_sha != last_sha:
-                            behind = await tracker.count_commits_ahead(
-                                repo_clone_dir, last_sha
-                            )
+                            behind = await tracker.count_commits_ahead(repo_clone_dir, last_sha)
                             if behind:
                                 snapshot.git_behind_commits = behind
                                 warnings.append(

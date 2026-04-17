@@ -58,13 +58,17 @@ def _build_router_prompt(
     capabilities: list[str] = []
     routes: list[str] = []
 
-    routes.append('"direct" — greetings, thanks, meta-questions, casual conversation, '
-                  "follow-ups about already-displayed results that need no new data")
+    routes.append(
+        '"direct" — greetings, thanks, meta-questions, casual conversation, '
+        "follow-ups about already-displayed results that need no new data"
+    )
 
     if has_connection:
         capabilities.append("A database is connected (SQL queries are available).")
-        routes.append('"query" — questions requiring database queries for numbers, '
-                      "statistics, records, or analytics")
+        routes.append(
+            '"query" — questions requiring database queries for numbers, '
+            "statistics, records, or analytics"
+        )
     if has_knowledge_base:
         capabilities.append("A project knowledge base is indexed (code, docs, architecture).")
         routes.append('"knowledge" — questions about project code, architecture, or documentation')

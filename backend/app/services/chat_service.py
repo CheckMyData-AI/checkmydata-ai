@@ -46,14 +46,13 @@ async def session_processing_lock(session_id: str, *, wait: bool = False):
             lock.release()
         return
     if lock.locked():
-        raise SessionBusyError(
-            f"Chat session {session_id} is already processing another request."
-        )
+        raise SessionBusyError(f"Chat session {session_id} is already processing another request.")
     await lock.acquire()
     try:
         yield
     finally:
         lock.release()
+
 
 WELCOME_MESSAGE = (
     "Hello! I'm your data assistant for this project.\n"

@@ -409,9 +409,7 @@ class AgentLearningService:
         if table_filter:
             tbl_lower = table_filter.lower()
             rows = [
-                r
-                for r in rows
-                if tbl_lower in r.subject.lower() or tbl_lower in r.lesson.lower()
+                r for r in rows if tbl_lower in r.subject.lower() or tbl_lower in r.lesson.lower()
             ]
         if limit is not None and limit >= 0:
             rows = rows[:limit]

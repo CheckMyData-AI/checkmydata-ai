@@ -231,9 +231,7 @@ class ContextLoader:
                 action = ""
                 if ins.recommended_action:
                     action = f" → {ins.recommended_action[:140]}"
-                lines.append(
-                    f"- [{ins.severity}] [{ins.insight_type}] {title} ({conf}%){action}"
-                )
+                lines.append(f"- [{ins.severity}] [{ins.insight_type}] {title} ({conf}%){action}")
             return "\n".join(lines)
         except Exception:
             logger.debug("Failed to load active insights", exc_info=True)

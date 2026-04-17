@@ -45,11 +45,10 @@ class TestEvaluate:
     @pytest.mark.asyncio
     async def test_db_index_stale_warning(self):
         svc = KnowledgeFreshnessService()
-        with patch(
-            "app.services.db_index_service.DbIndexService"
-        ) as mock_db_cls, patch(
-            "app.services.code_db_sync_service.CodeDbSyncService"
-        ) as mock_sync_cls:
+        with (
+            patch("app.services.db_index_service.DbIndexService") as mock_db_cls,
+            patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
+        ):
             mock_db = mock_db_cls.return_value
             mock_db.get_index_age = AsyncMock(return_value=timedelta(hours=72))
             mock_sync = mock_sync_cls.return_value
@@ -67,11 +66,10 @@ class TestEvaluate:
     @pytest.mark.asyncio
     async def test_sync_stale_warning(self):
         svc = KnowledgeFreshnessService()
-        with patch(
-            "app.services.db_index_service.DbIndexService"
-        ) as mock_db_cls, patch(
-            "app.services.code_db_sync_service.CodeDbSyncService"
-        ) as mock_sync_cls:
+        with (
+            patch("app.services.db_index_service.DbIndexService") as mock_db_cls,
+            patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
+        ):
             mock_db = mock_db_cls.return_value
             mock_db.get_index_age = AsyncMock(return_value=timedelta(hours=1))
             mock_sync = mock_sync_cls.return_value
@@ -90,9 +88,7 @@ class TestEvaluate:
     async def test_db_check_failure_does_not_raise(self):
         svc = KnowledgeFreshnessService()
         mock_session = MagicMock()
-        with patch(
-            "app.services.db_index_service.DbIndexService"
-        ) as mock_db_cls:
+        with patch("app.services.db_index_service.DbIndexService") as mock_db_cls:
             mock_db = mock_db_cls.return_value
             mock_db.get_index_age = AsyncMock(side_effect=RuntimeError("boom"))
             snap = await svc.evaluate(

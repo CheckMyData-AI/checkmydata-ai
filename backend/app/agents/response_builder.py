@@ -220,8 +220,8 @@ class ResponseBuilder:
 
         data_parts: list[str] = []
 
-        results_to_summarize = all_sql_results if all_sql_results else (
-            [sql_result] if sql_result else []
+        results_to_summarize = (
+            all_sql_results if all_sql_results else ([sql_result] if sql_result else [])
         )
         for idx, sr in enumerate(results_to_summarize, 1):
             if not sr:
@@ -234,8 +234,7 @@ class ResponseBuilder:
             if sr.results:
                 r = sr.results
                 data_parts.append(
-                    f"  Result: {r.row_count} rows, columns: "
-                    f"{', '.join(r.columns[:20])}"
+                    f"  Result: {r.row_count} rows, columns: {', '.join(r.columns[:20])}"
                 )
                 if r.rows:
                     for row in r.rows[:10]:

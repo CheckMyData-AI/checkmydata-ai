@@ -876,10 +876,8 @@ class TestWallClockTimeout:
             synthesis_msgs = [
                 m
                 for m in second_call_messages
-                if m.role == "system" and (
-                    "TIME LIMIT REACHED" in m.content
-                    or "analysis budget" in m.content
-                )
+                if m.role == "system"
+                and ("TIME LIMIT REACHED" in m.content or "analysis budget" in m.content)
             ]
             assert len(synthesis_msgs) >= 1
 
@@ -1959,7 +1957,10 @@ class TestBuildSynthesisMessagesEnhanced:
         ]
 
         result = ResponseBuilder.build_synthesis_messages(
-            messages, sr2, [], 32000,
+            messages,
+            sr2,
+            [],
+            32000,
             all_sql_results=[sr1, sr2],
         )
 
@@ -1978,7 +1979,10 @@ class TestBuildSynthesisMessagesEnhanced:
             Message(role="user", content="Show me data"),
         ]
         result = ResponseBuilder.build_synthesis_messages(
-            messages, None, [], 32000,
+            messages,
+            None,
+            [],
+            32000,
         )
         user_msg = result[1].content
         assert "Do NOT mention step limits" in user_msg

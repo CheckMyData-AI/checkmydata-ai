@@ -77,9 +77,7 @@ class AnswerValidator:
 
         evidence = ""
         if sql_summaries:
-            evidence = "\n\n## Supporting data\n" + "\n".join(
-                f"- {s}" for s in sql_summaries[:5]
-            )
+            evidence = "\n\n## Supporting data\n" + "\n".join(f"- {s}" for s in sql_summaries[:5])
 
         user_payload = (
             f"## User question\n{question.strip()}\n\n"

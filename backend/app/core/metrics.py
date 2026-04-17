@@ -49,12 +49,8 @@ class MetricsCollector:
 
     def __init__(self, *, history: int = 1000) -> None:
         self._lock = threading.Lock()
-        self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(
-            int
-        )
-        self._sums: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(
-            float
-        )
+        self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(int)
+        self._sums: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
         self._history: deque[RequestMetrics] = deque(maxlen=history)
 
     def record_request(self, metrics: RequestMetrics) -> None:
@@ -68,27 +64,25 @@ class MetricsCollector:
             )
             with self._lock:
                 self._counters[("orchestrator_requests_total", labels)] += 1
-                self._sums[
-                    ("orchestrator_wall_clock_seconds_sum", labels)
-                ] += metrics.wall_clock_seconds
-                self._counters[
-                    ("orchestrator_wall_clock_seconds_count", labels)
-                ] += 1
-                self._counters[
-                    ("orchestrator_replans_total", labels)
-                ] += max(0, metrics.replan_count)
-                self._counters[
-                    ("orchestrator_retries_total", labels)
-                ] += max(0, metrics.retry_count)
-                self._counters[
-                    ("orchestrator_sql_calls_total", labels)
-                ] += max(0, metrics.sql_calls)
-                self._counters[
-                    ("orchestrator_tokens_prompt_total", labels)
-                ] += max(0, metrics.tokens_prompt)
-                self._counters[
-                    ("orchestrator_tokens_completion_total", labels)
-                ] += max(0, metrics.tokens_completion)
+                self._sums[("orchestrator_wall_clock_seconds_sum", labels)] += (
+                    metrics.wall_clock_seconds
+                )
+                self._counters[("orchestrator_wall_clock_seconds_count", labels)] += 1
+                self._counters[("orchestrator_replans_total", labels)] += max(
+                    0, metrics.replan_count
+                )
+                self._counters[("orchestrator_retries_total", labels)] += max(
+                    0, metrics.retry_count
+                )
+                self._counters[("orchestrator_sql_calls_total", labels)] += max(
+                    0, metrics.sql_calls
+                )
+                self._counters[("orchestrator_tokens_prompt_total", labels)] += max(
+                    0, metrics.tokens_prompt
+                )
+                self._counters[("orchestrator_tokens_completion_total", labels)] += max(
+                    0, metrics.tokens_completion
+                )
                 self._history.append(metrics)
         except Exception:  # never break a request because of metrics
             logger.debug("MetricsCollector.record_request failed", exc_info=True)
@@ -116,10 +110,10 @@ class MetricsCollector:
             else:
                 lines.append(f"{name} {value}")
 
-        for (name, labels), value in counters.items():
-            _emit(name, value, labels)
-        for (name, labels), value in sums.items():
-            _emit(name, value, labels)
+        for (name, labels), int_value in counters.items():
+            _emit(name, float(int_value), labels)
+        for (name, labels), float_value in sums.items():
+            _emit(name, float_value, labels)
         return "\n".join(lines) + "\n"
 
 

@@ -42,6 +42,7 @@ class AgentSettingsView:
     insight_ttl_days_warning: int
     insight_ttl_days_critical: int
 
+
 _config_logger = logging.getLogger(__name__)
 
 

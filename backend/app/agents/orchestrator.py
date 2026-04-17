@@ -368,12 +368,21 @@ class OrchestratorAgent(BaseAgent):
             if route_result.use_complex_pipeline and has_connection:
                 table_map = await self._load_table_map(context, wf_id)
                 return await self._run_complex_pipeline(
-                    context, wf_id, table_map, db_type, staleness_warning=None,
+                    context,
+                    wf_id,
+                    table_map,
+                    db_type,
+                    staleness_warning=None,
                 )
 
             # --- Unified tool loop for everything else ---
             return await self._run_unified_agent(
-                context, wf_id, has_connection, db_type, has_kb, has_mcp,
+                context,
+                wf_id,
+                has_connection,
+                db_type,
+                has_kb,
+                has_mcp,
                 route_result=route_result,
             )
 
@@ -536,9 +545,7 @@ class OrchestratorAgent(BaseAgent):
             context = replace(context, chat_history=trimmed)
 
         cfg_for_staleness = context.connection_config
-        connection_id_for_staleness = (
-            cfg_for_staleness.connection_id if cfg_for_staleness else None
-        )
+        connection_id_for_staleness = cfg_for_staleness.connection_id if cfg_for_staleness else None
         staleness_warning = (
             await self._ctx_loader.check_staleness(
                 context.project_id,
@@ -734,10 +741,7 @@ class OrchestratorAgent(BaseAgent):
         if is_continuation:
             wall_clock_limit = int(wall_clock_limit * 1.5)
 
-        max_iter = (
-            context.max_orchestrator_steps
-            or settings.max_orchestrator_iterations
-        )
+        max_iter = context.max_orchestrator_steps or settings.max_orchestrator_iterations
         if is_continuation:
             max_iter = int(max_iter * 1.5)
 
@@ -762,8 +766,7 @@ class OrchestratorAgent(BaseAgent):
             budget_pct = max(step_pct, time_pct)
 
             if not synthesis_phase and (
-                budget_pct >= emergency_pct
-                or should_wrap_up(messages, loop_budget)
+                budget_pct >= emergency_pct or should_wrap_up(messages, loop_budget)
             ):
                 synthesis_phase = True
                 reason = (
@@ -795,9 +798,7 @@ class OrchestratorAgent(BaseAgent):
                     f"time {int(elapsed_wall)}s/{int(wall_clock_limit)}s, "
                     f"queries: {query_db_count}]"
                 )
-                messages.append(
-                    Message(role="system", content=budget_status)
-                )
+                messages.append(Message(role="system", content=budget_status))
 
             pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
             if pct > 50:
@@ -930,9 +931,7 @@ class OrchestratorAgent(BaseAgent):
                 )
             )
 
-            active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(
-                llm_resp.tool_calls
-            )
+            active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(llm_resp.tool_calls)
 
             has_process_data = any(tc.name == "process_data" for tc in active_calls)
 
@@ -945,7 +944,10 @@ class OrchestratorAgent(BaseAgent):
                 ) -> tuple[str, Any]:
                     async with self._parallel_tool_sem:
                         return await self._dispatcher.dispatch(
-                            _tc, context, wf_id, total_usage,
+                            _tc,
+                            context,
+                            wf_id,
+                            total_usage,
                             remaining_wall_seconds=_dispatch_wall,
                         )
 
@@ -998,7 +1000,10 @@ class OrchestratorAgent(BaseAgent):
                 executed_pairs = {}
                 for single_tc in active_calls:
                     executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
-                        single_tc, context, wf_id, total_usage,
+                        single_tc,
+                        context,
+                        wf_id,
+                        total_usage,
                         remaining_wall_seconds=_dispatch_wall,
                     )
 
@@ -1053,7 +1058,10 @@ class OrchestratorAgent(BaseAgent):
             )
             if settings.orchestrator_final_synthesis:
                 synthesis_messages = ResponseBuilder.build_synthesis_messages(
-                    messages, last_sql_result, knowledge_sources, loop_budget,
+                    messages,
+                    last_sql_result,
+                    knowledge_sources,
+                    loop_budget,
                     all_sql_results=all_sql_results,
                 )
                 try:
@@ -1562,20 +1570,14 @@ class OrchestratorAgent(BaseAgent):
             from app.core.metrics import RequestMetrics, get_metrics_collector
 
             stage_ctx = exec_result.stage_ctx
-            error_count = sum(
-                1 for sr in stage_ctx.results.values() if sr.status == "error"
-            )
+            error_count = sum(1 for sr in stage_ctx.results.values() if sr.status == "error")
             get_metrics_collector().record_request(
                 RequestMetrics(
                     route="complex_pipeline",
                     complexity=str(context.extra.get("complexity") or "complex"),
-                    response_type=(
-                        "pipeline_failed" if error_count else "pipeline_success"
-                    ),
+                    response_type=("pipeline_failed" if error_count else "pipeline_success"),
                     replan_count=len(replan_history),
-                    sql_calls=sum(
-                        1 for s in stage_ctx.plan.stages if s.tool == "query_database"
-                    ),
+                    sql_calls=sum(1 for s in stage_ctx.plan.stages if s.tool == "query_database"),
                     iterations=len(stage_ctx.plan.stages),
                     error=bool(error_count),
                 )
@@ -1823,10 +1825,9 @@ class OrchestratorAgent(BaseAgent):
         status = "executing"
         results = list(stage_ctx.results.values())
         any_failed = any(sr.status == "error" for sr in results)
-        all_terminal_success = (
-            all(sr.status in ("success", "skipped", "degraded") for sr in results)
-            and len(results) == len(stage_ctx.plan.stages)
-        )
+        all_terminal_success = all(
+            sr.status in ("success", "skipped", "degraded") for sr in results
+        ) and len(results) == len(stage_ctx.plan.stages)
         if any_failed:
             status = "failed"
         elif all_terminal_success:
@@ -1973,7 +1974,7 @@ class OrchestratorAgent(BaseAgent):
 
             validator = AnswerValidator(self._llm)
             sql_summaries = [
-                (sr.summary or sr.query or "")[:200]
+                (sr.query_explanation or sr.query or "")[:200]
                 for sr in sql_results
                 if sr is not None
             ]

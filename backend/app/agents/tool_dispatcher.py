@@ -101,7 +101,10 @@ class ToolDispatcher:
 
         if tc.name == "query_database":
             sql_text, sql_sub = await self._handle_query_database(
-                tc, context, wf_id, total_usage,
+                tc,
+                context,
+                wf_id,
+                total_usage,
                 remaining_wall_seconds=remaining_wall_seconds,
             )
             self._emit_tool_result_thinking(wf_id, "SQL Agent", sql_sub)
@@ -245,9 +248,7 @@ class ToolDispatcher:
         sub_question: str = args.get("question", context.user_question)
 
         scoped_history = (
-            context.chat_history[-settings.history_tail_messages :]
-            if context.chat_history
-            else []
+            context.chat_history[-settings.history_tail_messages :] if context.chat_history else []
         )
         sql_context = replace(context, chat_history=scoped_history)
 

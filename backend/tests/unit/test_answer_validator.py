@@ -21,8 +21,7 @@ def _llm_with_response(text: str) -> MagicMock:
 class TestParseValidatorOutput:
     def test_clean_json(self):
         result = _parse_validator_output(
-            '{"addresses_question": true, "confidence": 0.9, '
-            '"is_partial": false, "reason": "ok"}'
+            '{"addresses_question": true, "confidence": 0.9, "is_partial": false, "reason": "ok"}'
         )
         assert result.addresses_question is True
         assert result.confidence == 0.9
