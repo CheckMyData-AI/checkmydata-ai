@@ -1,6 +1,7 @@
 import json
 import logging
 
+from app.config import settings
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
 
@@ -98,9 +99,6 @@ VISUALIZATION_TOOL = Tool(
 )
 
 
-_HISTORY_TAIL = 4
-
-
 class QueryBuilder:
     """Translates natural language questions into database queries using LLM.
 
@@ -136,7 +134,7 @@ class QueryBuilder:
         if rules_context:
             messages.append(Message(role="system", content=rules_context))
 
-        scoped = chat_history[-_HISTORY_TAIL:] if chat_history else []
+        scoped = chat_history[-settings.history_tail_messages :] if chat_history else []
         if scoped:
             messages.extend(scoped)
             messages.append(

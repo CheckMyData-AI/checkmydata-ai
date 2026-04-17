@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from app.agents.tools.sql_tools import EXECUTE_QUERY_TOOL
+from app.config import settings
 from app.llm.base import Message
 from app.llm.router import LLMRouter
 
@@ -52,7 +53,7 @@ class QueryRepairer:
             Message(role="system", content=system_prompt),
         ]
         if chat_history:
-            messages.extend(chat_history[-6:])
+            messages.extend(chat_history[-settings.history_tail_messages :])
         messages.append(
             Message(
                 role="user",

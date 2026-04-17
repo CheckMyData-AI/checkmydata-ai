@@ -31,6 +31,7 @@ class ContextData:
     project_overview: str | None = None
     recent_learnings: str | None = None
     staleness_warning: str | None = None
+    active_insights: str | None = None
 
 
 class ContextLoader:
@@ -168,6 +169,7 @@ class ContextLoader:
                     cfg.connection_id,
                     min_confidence=0.6,
                     active_only=True,
+                    limit=15,
                 )
             if not learnings:
                 return None
@@ -176,7 +178,7 @@ class ContextLoader:
                 learnings,
                 key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
                 reverse=True,
-            )[:15]
+            )
 
             lines = ["RECENT AGENT LEARNINGS (verified insights):"]
             for lrn in top:
@@ -190,35 +192,122 @@ class ContextLoader:
             )
             return None
 
-    async def check_staleness(self, project_id: str, wf_id: str = "") -> str | None:
+    async def load_relevant_insights(
+        self,
+        project_id: str,
+        *,
+        limit: int = 5,
+        min_confidence: float = 0.5,
+    ) -> str | None:
+        """Load top-N active insights to inject into the orchestrator prompt.
+
+        Returned text is a compact, agent-friendly summary; ``None`` when there
+        are no relevant insights or the lookup fails. Surfacing insights here
+        makes the agent aware of recent anomalies / known-good findings before
+        deciding how to answer the next question.
+        """
+        if not project_id:
+            return None
+        try:
+            from app.core.insight_memory import InsightMemoryService
+            from app.models.base import async_session_factory
+
+            svc = InsightMemoryService()
+            async with async_session_factory() as session:
+                insights = await svc.get_insights(
+                    session,
+                    project_id,
+                    status="active",
+                    min_confidence=min_confidence,
+                    limit=limit,
+                )
+            if not insights:
+                return None
+
+            lines = ["ACTIVE INSIGHTS (recent findings — consider when answering):"]
+            for ins in insights:
+                conf = int(ins.confidence * 100)
+                title = (ins.title or "")[:160]
+                action = ""
+                if ins.recommended_action:
+                    action = f" → {ins.recommended_action[:140]}"
+                lines.append(
+                    f"- [{ins.severity}] [{ins.insight_type}] {title} ({conf}%){action}"
+                )
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("Failed to load active insights", exc_info=True)
+            return None
+
+    async def load_relevant_knowledge(
+        self,
+        project_id: str,
+        question: str,
+        *,
+        n_results: int = 3,
+        max_chars: int = 1500,
+    ) -> str | None:
+        """Run a RAG query against the project's knowledge base for ``question``.
+
+        Returns a compact, agent-friendly text block of the top ``n_results``
+        chunks, capped at ``max_chars``, or ``None`` when the collection is
+        empty / the lookup fails. Wiring this into ``_run_unified_agent`` lets
+        the orchestrator reuse documentation context for normal SQL questions
+        instead of only at repair-time.
+        """
+        if not project_id or not question or not question.strip():
+            return None
+        try:
+            chunks = self._vector_store.query(project_id, question, n_results=n_results)
+            if not chunks:
+                return None
+            lines = ["RELEVANT KNOWLEDGE (top documentation snippets):"]
+            total = 0
+            for chunk in chunks:
+                doc = (chunk.get("document") or "").strip()
+                if not doc:
+                    continue
+                meta = chunk.get("metadata") or {}
+                source = meta.get("source_path") or meta.get("source") or "doc"
+                snippet = doc[:400]
+                line = f"- [{source}] {snippet}"
+                total += len(line)
+                if total > max_chars:
+                    break
+                lines.append(line)
+            if len(lines) == 1:
+                return None
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("Failed to load relevant knowledge", exc_info=True)
+            return None
+
+    async def check_staleness(
+        self,
+        project_id: str,
+        wf_id: str = "",
+        *,
+        connection_id: str | None = None,
+    ) -> str | None:
+        """Return a single freshness warning combining DB index, sync, and git signals."""
         try:
             from pathlib import Path
 
             from app.config import settings as app_settings
-            from app.knowledge.git_tracker import GitTracker
             from app.models.base import async_session_factory
+            from app.services.knowledge_freshness_service import (
+                KnowledgeFreshnessService,
+            )
 
             repo_dir = Path(app_settings.repo_clone_base_dir) / project_id
-            if not repo_dir.exists():
-                return None
-
-            git_tracker = GitTracker()
+            svc = KnowledgeFreshnessService()
             async with async_session_factory() as session:
-                last_sha = await git_tracker.get_last_indexed_sha(session, project_id)
-            if not last_sha:
-                return "Knowledge base has not been indexed yet."
-
-            head_sha = git_tracker.get_head_sha(repo_dir)
-            if head_sha == last_sha:
-                return None
-
-            behind = await git_tracker.count_commits_ahead(repo_dir, last_sha)
-            if behind > 0:
-                return (
-                    f"Knowledge base is {behind} commit(s) behind the current HEAD. "
-                    "Answers may be based on outdated code. Consider re-indexing."
+                return await svc.evaluate_summary(
+                    session,
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    repo_clone_dir=repo_dir,
                 )
-            return "Knowledge base may be out of date."
         except Exception:
             logger.debug("Staleness check failed", exc_info=True)
             if wf_id:

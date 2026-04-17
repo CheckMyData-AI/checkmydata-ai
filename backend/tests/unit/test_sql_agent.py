@@ -393,8 +393,11 @@ class TestSQLAgent:
     # 13
     @pytest.mark.asyncio
     async def test_record_learning(self, agent, context, config):
+        import json
+
         mock_entry = MagicMock()
         mock_entry.confidence = 0.8
+        mock_entry.id = "learn-1"
 
         mock_svc = MagicMock()
         mock_svc.create_learning = AsyncMock(return_value=mock_entry)
@@ -416,8 +419,9 @@ class TestSQLAgent:
                 "wf-1",
             )
 
-        assert "Learning recorded successfully" in result_text
-        assert "naming" in result_text
+        payload = json.loads(result_text)
+        assert payload["status"] == "ok"
+        assert payload["category"] == "naming"
         mock_session.commit.assert_awaited_once()
 
     # 14

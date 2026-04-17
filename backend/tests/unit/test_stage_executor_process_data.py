@@ -85,7 +85,7 @@ class TestParseProcessDataParams:
 
         assert params["operation"] == "filter_data"
 
-    def test_heuristic_phone_from_description(self):
+    def test_no_heuristic_phone_defaults_to_filter(self):
         stage = _make_stage(
             description="Convert phone numbers to destination countries",
             input_context="",
@@ -94,10 +94,9 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "phone_to_country"
-        assert params["column"] == "phone_number"
+        assert params["operation"] == "filter_data"
 
-    def test_heuristic_aggregate_from_description(self):
+    def test_no_heuristic_aggregate_defaults_to_filter(self):
         stage = _make_stage(
             description="Group and aggregate results by country",
             input_context="",
@@ -106,7 +105,7 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "aggregate_data"
+        assert params["operation"] == "filter_data"
 
     def test_fallback_to_filter_data(self):
         stage = _make_stage(description="Process the data", input_context="")
@@ -127,7 +126,7 @@ class TestParseProcessDataParams:
 
         assert params["operation"] == "filter_data"
 
-    def test_column_fallback_to_first(self):
+    def test_no_column_without_explicit_context(self):
         stage = _make_stage(
             description="Convert IPs",
             input_context="",
@@ -135,4 +134,4 @@ class TestParseProcessDataParams:
         qr = _make_qr(["address", "amount"])
 
         params = StageExecutor._parse_process_data_params(stage, qr)
-        assert params["column"] == "address"
+        assert "column" not in params

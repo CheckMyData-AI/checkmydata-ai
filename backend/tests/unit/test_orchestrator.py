@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent, SQLResultBlock
+from app.agents.response_builder import ResponseBuilder
 from app.connectors.base import ConnectionConfig, QueryResult, SchemaInfo
 from app.core.orchestrator import Orchestrator, OrchestratorResponse
 from app.llm.base import LLMResponse, Message, ToolCall
@@ -334,7 +335,7 @@ class TestDedupToolCalls:
             self._tc("1", question="revenue last month"),
             self._tc("2", question="user count"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
         assert len(kept) == 2
         assert len(skipped) == 0
 
@@ -343,7 +344,7 @@ class TestDedupToolCalls:
             self._tc("1", question="revenue last month"),
             self._tc("2", question="revenue last month"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
         assert len(kept) == 1
         assert kept[0].id == "1"
         assert "2" in skipped
@@ -354,7 +355,7 @@ class TestDedupToolCalls:
             self._tc("1", name="process_data", question="some op"),
             self._tc("2", name="process_data", question="some op"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
         assert len(kept) == 2
         assert len(skipped) == 0
 
@@ -363,7 +364,7 @@ class TestDedupToolCalls:
             self._tc("1", name="search_codebase", question="what is X"),
             self._tc("2", name="search_codebase", question="what is X"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
         assert len(kept) == 1
         assert "2" in skipped
 
@@ -374,12 +375,12 @@ class TestDedupToolCalls:
             self._tc("3", question="active users today"),
             self._tc("4", name="search_codebase", question="what is X"),
         ]
-        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls, [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
         assert len(kept) == 3
         assert "2" in skipped
 
     def test_empty_calls(self):
-        kept, skipped = OrchestratorAgent._dedup_tool_calls([], [])
+        kept, skipped = OrchestratorAgent._dedup_tool_calls([])
         assert kept == []
         assert skipped == {}
 
@@ -387,38 +388,24 @@ class TestDedupToolCalls:
 class TestHistoryBoundaryInPrompt:
     """Verify the orchestrator prompt builder includes focus directives."""
 
-    def test_current_turn_focus_in_prompt(self):
+    def test_principles_in_prompt(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
 
         prompt = build_orchestrator_system_prompt(
             has_connection=True,
             db_type="postgres",
         )
-        assert "CURRENT TURN FOCUS" in prompt
-        assert "TOOL CALL ECONOMY" in prompt
-        assert "SINGLE-QUESTION RULE" in prompt
-
-    def test_guidelines_still_present(self):
-        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
-
-        prompt = build_orchestrator_system_prompt(
-            has_connection=True,
-            db_type="postgres",
-        )
-        assert "GUIDELINES:" in prompt
+        assert "PRINCIPLES:" in prompt
         assert "query_database" in prompt
-        assert "REQUEST ANALYSIS PROTOCOL" in prompt
 
-    def test_single_question_rule_excludes_process_data(self):
+    def test_process_data_mentioned_in_prompt(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
 
         prompt = build_orchestrator_system_prompt(
             has_connection=True,
             db_type="postgres",
         )
-        assert "SINGLE-QUESTION RULE" in prompt
         assert "process_data" in prompt
-        assert "do not count toward this limit" in prompt
 
     def test_mcp_source_capability_shown_when_enabled(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
@@ -441,14 +428,15 @@ class TestHistoryBoundaryInPrompt:
         )
         assert "query_mcp_source" not in prompt
 
-    def test_parallel_guideline_excludes_process_data(self):
+    def test_process_data_sequential_guideline(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
 
         prompt = build_orchestrator_system_prompt(
             has_connection=True,
             db_type="postgres",
         )
-        assert "chain `process_data` calls sequentially" in prompt
+        assert "process_data" in prompt
+        assert "sequentially" in prompt
 
     def test_custom_rules_injected_into_prompt(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
@@ -483,28 +471,6 @@ class TestHistoryBoundaryInPrompt:
         tables_pos = prompt.index("DATABASE TABLES")
         rules_pos = prompt.index("CUSTOM RULES & BUSINESS LOGIC")
         assert rules_pos > tables_pos
-
-    def test_table_hints_injected_into_prompt(self):
-        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
-
-        prompt = build_orchestrator_system_prompt(
-            has_connection=True,
-            db_type="postgres",
-            table_map="orders(~1000, customer orders)",
-            table_hints="WARNING: 'invoices' does not match any known table.",
-        )
-        assert "TABLE RESOLUTION WARNINGS" in prompt
-        assert "invoices" in prompt
-
-    def test_table_hints_empty_omits_warnings_section(self):
-        from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
-
-        prompt = build_orchestrator_system_prompt(
-            has_connection=True,
-            db_type="postgres",
-            table_hints="",
-        )
-        assert "TABLE RESOLUTION WARNINGS:\n" not in prompt
 
     def test_rule_freshness_check_present_when_rules(self):
         from app.agents.prompts.orchestrator_prompt import build_orchestrator_system_prompt
@@ -782,7 +748,7 @@ class TestHandleProcessData:
         tracker = MagicMock(spec=WorkflowTracker)
         tracker.emit = AsyncMock()
         agent = OrchestratorAgent(llm_router=MagicMock(), workflow_tracker=tracker)
-        agent._wf_sql_results["wf-1"] = sql_res
+        agent._wf_sql_results["wf-1"] = [sql_res]
 
         enriched_qr = QueryResult(
             columns=["ip", "amount", "country"],
@@ -801,7 +767,7 @@ class TestHandleProcessData:
             result_text = await agent._dispatcher._handle_process_data(tc, "wf-1")
 
         assert sql_res.results is qr_original
-        assert agent._wf_sql_results["wf-1"].results is enriched_qr
+        assert agent._wf_sql_results["wf-1"][-1].results is enriched_qr
         assert "Added country" in result_text
 
 
@@ -887,14 +853,16 @@ class TestWallClockTimeout:
             mock_settings.max_orchestrator_iterations = 10
             mock_settings.max_simple_query_steps = 4
             mock_settings.max_parallel_tool_calls = 1
-            mock_settings.orchestrator_wrap_up_steps = 2
+            mock_settings.history_tail_messages = 4
             mock_settings.agent_wall_clock_timeout_seconds = 30
             mock_settings.max_context_tokens = 8000
             mock_settings.max_history_tokens = 2500
             mock_settings.viz_timeout_seconds = 15
+            mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_final_synthesis = True
 
-            monotonic_values = [0.0, 35.0, 35.0, 35.0, 35.0]
-            mock_time.monotonic = MagicMock(side_effect=monotonic_values)
+            _tick = iter([0.0] + [35.0] * 30)
+            mock_time.monotonic = MagicMock(side_effect=_tick)
 
             await agent.run(ctx)
 
@@ -905,12 +873,15 @@ class TestWallClockTimeout:
                 if mock_router.complete.call_args_list[1][0]
                 else [],
             )
-            wall_clock_msgs = [
+            synthesis_msgs = [
                 m
                 for m in second_call_messages
-                if m.role == "system" and "TIME LIMIT REACHED" in m.content
+                if m.role == "system" and (
+                    "TIME LIMIT REACHED" in m.content
+                    or "analysis budget" in m.content
+                )
             ]
-            assert len(wall_clock_msgs) >= 1
+            assert len(synthesis_msgs) >= 1
 
     @pytest.mark.asyncio
     async def test_hard_timeout_uses_timeout_text_and_sets_flag(self):
@@ -971,20 +942,21 @@ class TestWallClockTimeout:
             mock_settings.max_orchestrator_iterations = 100
             mock_settings.max_simple_query_steps = 4
             mock_settings.max_parallel_tool_calls = 1
-            mock_settings.orchestrator_wrap_up_steps = 3
+            mock_settings.history_tail_messages = 4
             mock_settings.agent_wall_clock_timeout_seconds = 30
             mock_settings.max_context_tokens = 8000
             mock_settings.max_history_tokens = 2500
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.viz_timeout_seconds = 15
+            mock_settings.agent_emergency_synthesis_pct = 0.90
 
-            monotonic_values = [0.0, 35.0, 35.0, 50.0, 50.0, 50.0]
-            mock_time.monotonic = MagicMock(side_effect=monotonic_values)
+            _tick = iter([0.0] + [50.0] * 30)
+            mock_time.monotonic = MagicMock(side_effect=_tick)
 
             resp = await agent.run(ctx)
 
         assert resp.response_type == "step_limit_reached"
-        assert "time limit" in resp.answer.lower()
+        assert "time limit" in resp.answer.lower() or "analysis steps" in resp.answer.lower()
 
 
 class TestBuildTimeoutText:
@@ -1326,10 +1298,16 @@ class TestOrchestratorIntentRouting:
 
     @pytest.mark.asyncio
     async def test_direct_response_path(self, orch, mock_llm, base_context):
-        """A greeting should be classified as direct_response and skip heavy context."""
+        """A greeting should be routed as direct and skip heavy context."""
         mock_llm.complete = AsyncMock(
             side_effect=[
-                LLMResponse(content='{"intent": "direct_response", "reason": "greeting"}'),
+                LLMResponse(
+                    content=(
+                        '{"route": "direct", "complexity": "simple", '
+                        '"approach": "Greeting", "estimated_queries": 0, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
                 LLMResponse(content="Hello! I am your data assistant."),
             ]
         )
@@ -1349,8 +1327,8 @@ class TestOrchestratorIntentRouting:
         assert mock_llm.complete.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_mixed_fallback_on_classification_error(self, orch, mock_llm, base_context):
-        """If classification fails, the orchestrator should fall back to the full pipeline."""
+    async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
+        """If router fails, the orchestrator should fall back to unified agent."""
         mock_llm.complete = AsyncMock(
             side_effect=[
                 RuntimeError("LLM is down"),
@@ -1377,10 +1355,6 @@ class TestOrchestratorIntentRouting:
                 "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "app.agents.orchestrator.AdaptivePlanner._is_complex",
-                return_value=False,
             ),
         ):
             resp = await orch.run(base_context)
@@ -1412,7 +1386,13 @@ class TestOrchestratorIntentRouting:
 
         mock_llm.complete = AsyncMock(
             side_effect=[
-                LLMResponse(content='{"intent": "data_query", "reason": "user count"}'),
+                LLMResponse(
+                    content=(
+                        '{"route": "query", "complexity": "simple", '
+                        '"approach": "Count users", "estimated_queries": 1, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
                 LLMResponse(content="There are 42 users in the database."),
             ]
         )
@@ -1436,10 +1416,6 @@ class TestOrchestratorIntentRouting:
                 "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "app.agents.orchestrator.AdaptivePlanner._is_complex",
-                return_value=False,
             ),
         ):
             resp = await orch.run(ctx)
@@ -1472,7 +1448,13 @@ class TestOrchestratorIntentRouting:
 
         mock_llm.complete = AsyncMock(
             side_effect=[
-                LLMResponse(content='{"intent": "data_query", "reason": "revenue"}'),
+                LLMResponse(
+                    content=(
+                        '{"route": "query", "complexity": "simple", '
+                        '"approach": "Revenue lookup", "estimated_queries": 1, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
                 LLMResponse(content="Revenue is $42."),
             ]
         )
@@ -1497,10 +1479,6 @@ class TestOrchestratorIntentRouting:
                 "app.agents.context_loader.ContextLoader.load_recent_learnings",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "app.agents.orchestrator.AdaptivePlanner._is_complex",
-                return_value=False,
             ),
             patch.object(
                 orch,
@@ -1527,7 +1505,13 @@ class TestOrchestratorIntentRouting:
 
         mock_llm.complete = AsyncMock(
             side_effect=[
-                LLMResponse(content='{"intent": "knowledge_query", "reason": "code architecture"}'),
+                LLMResponse(
+                    content=(
+                        '{"route": "knowledge", "complexity": "simple", '
+                        '"approach": "Look up User model", "estimated_queries": 0, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
                 LLMResponse(content="The User model has fields id, email, name."),
             ]
         )
@@ -1555,7 +1539,13 @@ class TestOrchestratorIntentRouting:
         """Verify _run_direct_response never calls _build_table_map."""
         mock_llm.complete = AsyncMock(
             side_effect=[
-                LLMResponse(content='{"intent": "direct_response", "reason": "meta question"}'),
+                LLMResponse(
+                    content=(
+                        '{"route": "direct", "complexity": "simple", '
+                        '"approach": "Meta question", "estimated_queries": 0, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
                 LLMResponse(content="I can help you explore your data."),
             ]
         )
@@ -1807,17 +1797,288 @@ class TestContinuationSkipsClassification:
                 return_value=False,
             ),
             patch(
-                "app.agents.orchestrator.OrchestratorAgent._run_full_pipeline",
+                "app.agents.orchestrator.OrchestratorAgent._run_unified_agent",
                 new_callable=AsyncMock,
                 return_value=AgentResponse(answer="Continued analysis"),
-            ) as mock_pipeline,
+            ) as mock_unified,
             patch(
-                "app.agents.orchestrator.classify_intent",
+                "app.agents.orchestrator.route_request",
                 new_callable=AsyncMock,
-            ) as mock_classify,
+            ) as mock_route,
         ):
             resp = await orch.run(ctx)
 
-        mock_classify.assert_not_called()
-        mock_pipeline.assert_called_once()
+        mock_route.assert_not_called()
+        mock_unified.assert_called_once()
         assert resp.answer == "Continued analysis"
+
+
+# ------------------------------------------------------------------
+# Two-phase loop and synthesis tests
+# ------------------------------------------------------------------
+
+
+class TestSynthesisPhaseToolStrip:
+    """Verify that during synthesis phase, tools are stripped from the LLM call."""
+
+    @pytest.mark.asyncio
+    async def test_synthesis_phase_strips_tools(self):
+        """When synthesis deadline is reached, LLM call should have tools=None."""
+        from app.agents.base import AgentContext
+        from app.core.workflow_tracker import WorkflowTracker
+
+        mock_router = MagicMock()
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        mock_tracker.start = AsyncMock(return_value="wf-test")
+        mock_tracker.end = AsyncMock()
+
+        tool_calls_response = LLMResponse(
+            content="thinking...",
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="query_database",
+                    arguments={"question": "test query"},
+                ),
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+
+        final_response = LLMResponse(
+            content="Here is the complete answer based on data gathered.",
+            tool_calls=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+
+        call_count = 0
+
+        async def mock_complete(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return tool_calls_response
+            return final_response
+
+        mock_router.complete = AsyncMock(side_effect=mock_complete)
+        mock_router.get_context_window = MagicMock(return_value=8000)
+
+        agent = OrchestratorAgent(
+            llm_router=mock_router,
+            workflow_tracker=mock_tracker,
+        )
+
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="test question",
+            chat_history=[],
+            llm_router=mock_router,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+            extra={"_skip_complexity": True},
+        )
+
+        with (
+            patch.object(agent._ctx_loader, "has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch.object(
+                agent._dispatcher,
+                "dispatch",
+                new=AsyncMock(return_value=("result text", None)),
+            ),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+            patch("app.agents.orchestrator.time") as mock_time,
+        ):
+            mock_settings.max_orchestrator_iterations = 10
+            mock_settings.max_parallel_tool_calls = 1
+            mock_settings.agent_wall_clock_timeout_seconds = 100
+            mock_settings.max_context_tokens = 8000
+            mock_settings.max_history_tokens = 2500
+            mock_settings.viz_timeout_seconds = 15
+            mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_final_synthesis = True
+
+            _tick = iter([0.0] + [95.0] * 30)
+            mock_time.monotonic = MagicMock(side_effect=_tick)
+
+            await agent.run(ctx)
+
+            assert call_count == 2
+            second_call_kwargs = mock_router.complete.call_args_list[1].kwargs
+            assert second_call_kwargs.get("tools") is None
+
+
+class TestResponseTypeWithData:
+    """Verify response_type is sql_result when data exists even after step limit."""
+
+    def test_determine_response_type_sql(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        sql_res = SQLAgentResult(
+            status="success",
+            query="SELECT 1",
+            results=QueryResult(columns=["a"], rows=[[1]], row_count=1),
+        )
+        result = ResponseBuilder.determine_response_type(sql_res, [])
+        assert result == "sql_result"
+
+
+class TestBuildSynthesisMessagesEnhanced:
+    """Tests for the enhanced build_synthesis_messages with all_sql_results."""
+
+    def test_includes_all_sql_results(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        sr1 = SQLAgentResult(
+            status="success",
+            query="SELECT month, revenue FROM sales",
+            query_explanation="Monthly revenue",
+            results=QueryResult(
+                columns=["month", "revenue"],
+                rows=[["Jan", 1000], ["Feb", 2000]],
+                row_count=2,
+            ),
+        )
+        sr2 = SQLAgentResult(
+            status="success",
+            query="SELECT method, total FROM payments",
+            query_explanation="Payment methods",
+            results=QueryResult(
+                columns=["method", "total"],
+                rows=[["card", 5000], ["cash", 3000]],
+                row_count=2,
+            ),
+        )
+
+        messages = [
+            Message(role="system", content="You are a data assistant."),
+            Message(role="user", content="Revenue analysis by payment method"),
+        ]
+
+        result = ResponseBuilder.build_synthesis_messages(
+            messages, sr2, [], 32000,
+            all_sql_results=[sr1, sr2],
+        )
+
+        assert len(result) == 2
+        user_msg = result[1].content
+        assert "SELECT month, revenue" in user_msg
+        assert "SELECT method, total" in user_msg
+        assert "Monthly revenue" in user_msg
+        assert "Payment methods" in user_msg
+        assert "reached its step limit" not in user_msg
+        assert "analysis is incomplete" not in user_msg
+
+    def test_prompt_instructs_no_limits_mention(self):
+        messages = [
+            Message(role="system", content="You are a data assistant."),
+            Message(role="user", content="Show me data"),
+        ]
+        result = ResponseBuilder.build_synthesis_messages(
+            messages, None, [], 32000,
+        )
+        user_msg = result[1].content
+        assert "Do NOT mention step limits" in user_msg
+        assert "complete answer" in user_msg.lower()
+
+
+class TestDispatcherRemainingWall:
+    """Verify ToolDispatcher.dispatch passes remaining_wall_seconds to SQL agent."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_passes_wall_seconds_to_sql_agent(self):
+        from app.agents.base import AgentContext
+        from app.agents.sql_agent import SQLAgent, SQLAgentResult
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.agents.validation import AgentResultValidator
+        from app.core.workflow_tracker import WorkflowTracker
+
+        mock_sql = MagicMock(spec=SQLAgent)
+        mock_sql.run = AsyncMock(
+            return_value=SQLAgentResult(
+                status="success",
+                query="SELECT 1",
+                results=QueryResult(columns=["a"], rows=[[1]], row_count=1),
+            )
+        )
+
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+
+        mock_validator = MagicMock(spec=AgentResultValidator)
+        mock_validator.validate_sql_result = MagicMock(
+            return_value=MagicMock(passed=True, warnings=[], errors=[])
+        )
+
+        dispatcher = ToolDispatcher(
+            sql_agent=mock_sql,
+            knowledge_agent=MagicMock(),
+            mcp_source_agent=MagicMock(),
+            validator=mock_validator,
+            tracker=mock_tracker,
+            wf_sql_results={},
+            wf_enriched={},
+        )
+
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="test",
+            chat_history=[],
+            llm_router=MagicMock(),
+            tracker=mock_tracker,
+            workflow_id="wf-1",
+        )
+
+        tc = ToolCall(id="tc1", name="query_database", arguments={"question": "test"})
+        await dispatcher.dispatch(tc, ctx, "wf-1", {}, remaining_wall_seconds=45.0)
+
+        mock_sql.run.assert_called_once()
+        call_kwargs = mock_sql.run.call_args.kwargs
+        assert call_kwargs.get("wall_clock_remaining") == 45.0
+
+
+class TestSqlAgentTimeBudget:
+    """Verify SQL agent caps query timeout based on wall_clock_remaining."""
+
+    def test_timeout_capped_by_wall_clock(self):
+        from app.agents.sql_agent import SQLAgent
+
+        agent = SQLAgent(
+            llm_router=MagicMock(),
+            vector_store=MagicMock(),
+            rules_engine=MagicMock(),
+        )
+        agent._wall_clock_remaining = 20.0
+        config = agent._build_validation_config()
+        assert config.query_timeout_seconds <= 10
+
+    def test_timeout_not_capped_when_no_wall_clock(self):
+        from app.agents.sql_agent import SQLAgent
+
+        agent = SQLAgent(
+            llm_router=MagicMock(),
+            vector_store=MagicMock(),
+            rules_engine=MagicMock(),
+        )
+        agent._wall_clock_remaining = None
+        config = agent._build_validation_config()
+        assert config.query_timeout_seconds == 30
+
+    def test_timeout_minimum_floor(self):
+        from app.agents.sql_agent import SQLAgent
+
+        agent = SQLAgent(
+            llm_router=MagicMock(),
+            vector_store=MagicMock(),
+            rules_engine=MagicMock(),
+        )
+        agent._wall_clock_remaining = 2.0
+        config = agent._build_validation_config()
+        assert config.query_timeout_seconds >= 5

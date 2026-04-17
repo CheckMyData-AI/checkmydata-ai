@@ -23,16 +23,16 @@ class TestBuildSqlSystemPrompt:
     def test_basic_prompt_no_flags(self):
         prompt = build_sql_system_prompt()
         assert "expert SQL query agent" in prompt
-        assert "get_schema_info" in prompt
+        assert "PRINCIPLES:" in prompt
 
     def test_with_db_index(self):
         prompt = build_sql_system_prompt(has_db_index=True)
-        assert "get_query_context" in prompt
+        assert "get_db_index" in prompt
 
     def test_with_db_index_stale(self):
         prompt = build_sql_system_prompt(has_db_index=True, db_index_stale=True)
         assert "WARNING" in prompt
-        assert "older than" in prompt
+        assert "stale" in prompt
 
     def test_with_code_db_sync(self):
         prompt = build_sql_system_prompt(has_code_db_sync=True)
@@ -91,10 +91,10 @@ class TestBuildSqlSystemPrompt:
         assert "COLUMN VALUE MEANINGS" in prompt
         assert "status: 1=active, 2=inactive" in prompt
 
-    def test_current_question_focus_directive(self):
+    def test_principles_directive(self):
         prompt = build_sql_system_prompt()
-        assert "CURRENT QUESTION FOCUS" in prompt
-        assert "do not treat prior queries" in prompt
+        assert "PRINCIPLES:" in prompt
+        assert "current question" in prompt.lower()
 
     def test_with_custom_rules(self):
         prompt = build_sql_system_prompt(
@@ -104,25 +104,25 @@ class TestBuildSqlSystemPrompt:
         assert "MANDATORY" in prompt
         assert "Always divide amount by 100" in prompt
 
-    def test_custom_rules_efficiency_hint(self):
+    def test_custom_rules_context_note(self):
         prompt = build_sql_system_prompt(
             table_map="users",
             custom_rules="Some rule here",
         )
-        assert "Custom rules & business logic are ALREADY in this prompt" in prompt
-        assert "Do NOT call get_custom_rules" in prompt
+        assert "already included below" in prompt
+        assert "custom rules" in prompt
 
     def test_custom_rules_empty_omitted(self):
         prompt = build_sql_system_prompt(custom_rules="")
         assert "CUSTOM RULES & BUSINESS LOGIC" not in prompt
 
-    def test_custom_rules_before_workflow(self):
+    def test_custom_rules_before_principles(self):
         prompt = build_sql_system_prompt(
             custom_rules="My important rule",
         )
         rules_pos = prompt.index("CUSTOM RULES & BUSINESS LOGIC")
-        workflow_pos = prompt.index("WORKFLOW:")
-        assert rules_pos < workflow_pos
+        principles_pos = prompt.index("PRINCIPLES:")
+        assert rules_pos < principles_pos
 
     def test_all_options_combined(self):
         prompt = build_sql_system_prompt(
@@ -142,7 +142,7 @@ class TestBuildSqlSystemPrompt:
             custom_rules="Always use LEFT JOIN",
         )
         assert "expert SQL query agent" in prompt
-        assert "get_query_context" in prompt
+        assert "get_db_index" in prompt
         assert "WARNING" in prompt
         assert "get_sync_context" in prompt
         assert "get_agent_learnings" in prompt

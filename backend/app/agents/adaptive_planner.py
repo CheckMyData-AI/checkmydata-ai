@@ -1,8 +1,9 @@
-"""AdaptivePlanner — generates quick or full execution plans.
+"""AdaptivePlanner — generates execution plans for complex queries.
 
-Quick plans: deterministic, instant (no LLM call).
 Full plans: LLM-based decomposition for complex/mixed queries.
 Replan: LLM-based re-planning when a stage fails after retries.
+
+Complexity detection is now handled by the unified router (router.py).
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import logging
 import uuid
 from typing import Any
 
-from app.agents.intent_classifier import IntentType
 from app.agents.prompts.planner_prompt import (
     PLANNER_SYSTEM_PROMPT,
     build_planner_user_prompt,
@@ -30,65 +30,9 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
-_COMPLEXITY_KEYWORDS = [
-    # English
-    "summary table",
-    "pivot",
-    "breakdown",
-    "cross-reference",
-    "compare",
-    "for each",
-    "match",
-    "correlate",
-    " then ",
-    "step 1",
-    "step 2",
-    "first find",
-    "after that",
-    # Russian
-    "сводная таблица",
-    "разбивка по",
-    "сравни",
-    "для каждого",
-    "затем ",
-    "шаг 1",
-    "шаг 2",
-    "сначала найди",
-    "после этого",
-    "перекрёстн",
-    "корреляц",
-    # Spanish
-    "tabla resumen",
-    "desglose",
-    "comparar",
-    "para cada",
-    "paso 1",
-    "paso 2",
-    "primero encuentra",
-    "después de",
-    # German
-    "zusammenfassung",
-    "aufschlüsselung",
-    "vergleich",
-    "für jede",
-    "schritt 1",
-    "schritt 2",
-    "zuerst find",
-    "danach",
-    # Portuguese
-    "tabela resumo",
-    "detalhamento",
-    "comparar",
-    "para cada",
-    "passo 1",
-    "passo 2",
-    "primeiro encontr",
-    "depois disso",
-]
-
 
 class AdaptivePlanner:
-    """Generates execution plans adaptively based on intent and complexity."""
+    """Generates execution plans via LLM-based decomposition."""
 
     def __init__(self, llm_router: LLMRouter) -> None:
         self._llm = llm_router
@@ -96,7 +40,6 @@ class AdaptivePlanner:
     async def plan(
         self,
         question: str,
-        intent: IntentType,
         *,
         table_map: str = "",
         db_type: str | None = None,
@@ -106,18 +49,7 @@ class AdaptivePlanner:
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
     ) -> ExecutionPlan:
-        if intent == IntentType.DIRECT_RESPONSE:
-            return self._quick_direct_plan(question)
-
-        if intent == IntentType.DATA_QUERY and not self._is_complex(question):
-            return self._quick_data_plan(question)
-
-        if intent == IntentType.KNOWLEDGE_QUERY:
-            return self._quick_knowledge_plan(question)
-
-        if intent == IntentType.MCP_QUERY:
-            return self._quick_mcp_plan(question)
-
+        """Generate an LLM-based execution plan for the question."""
         plan = await self._llm_plan(
             question,
             table_map=table_map,
@@ -146,6 +78,7 @@ class AdaptivePlanner:
         db_type: str | None = None,
         preferred_provider: str | None = None,
         model: str | None = None,
+        replan_history: list[dict[str, str]] | None = None,
     ) -> ExecutionPlan | None:
         """Generate a new plan after a stage failure, keeping completed stages."""
         completed_summaries = []
@@ -171,6 +104,7 @@ class AdaptivePlanner:
             error=error,
             table_map=table_map,
             db_type=db_type,
+            replan_history=replan_history,
         )
 
         for attempt in range(2):
@@ -227,24 +161,8 @@ class AdaptivePlanner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _quick_direct_plan(question: str) -> ExecutionPlan:
-        return ExecutionPlan(
-            plan_id=str(uuid.uuid4()),
-            question=question,
-            plan_type="quick",
-            stages=[
-                PlanStage(
-                    stage_id="respond",
-                    description=question,
-                    tool="synthesize",
-                    max_retries=0,
-                    replan_on_failure=False,
-                ),
-            ],
-        )
-
-    @staticmethod
     def _quick_data_plan(question: str) -> ExecutionPlan:
+        """Last-resort single-stage plan when LLM planning fails entirely."""
         return ExecutionPlan(
             plan_id=str(uuid.uuid4()),
             question=question,
@@ -255,38 +173,6 @@ class AdaptivePlanner:
                     description=question,
                     tool="query_database",
                     validation=StageValidation(min_rows=0),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _quick_knowledge_plan(question: str) -> ExecutionPlan:
-        return ExecutionPlan(
-            plan_id=str(uuid.uuid4()),
-            question=question,
-            plan_type="quick",
-            stages=[
-                PlanStage(
-                    stage_id="search",
-                    description=question,
-                    tool="search_codebase",
-                    max_retries=1,
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _quick_mcp_plan(question: str) -> ExecutionPlan:
-        return ExecutionPlan(
-            plan_id=str(uuid.uuid4()),
-            question=question,
-            plan_type="quick",
-            stages=[
-                PlanStage(
-                    stage_id="query",
-                    description=question,
-                    tool="query_mcp_source",
-                    max_retries=1,
                 ),
             ],
         )
@@ -393,40 +279,6 @@ class AdaptivePlanner:
                 return None
 
         return args
-
-    # ------------------------------------------------------------------
-    # Complexity heuristic
-    # ------------------------------------------------------------------
-
-    _CONJUNCTION_WORDS = [
-        "and",
-        "also",
-        "plus",
-        "и",
-        "также",
-        "плюс",  # Russian
-        "y",
-        "también",
-        "además",  # Spanish
-        "und",
-        "auch",
-        "außerdem",  # German
-        "e",
-        "também",
-        "além disso",  # Portuguese
-    ]
-
-    @staticmethod
-    def _is_complex(question: str) -> bool:
-        q_lower = question.lower()
-        indicators = [
-            len(question) > 300,
-            any(kw in q_lower for kw in _COMPLEXITY_KEYWORDS),
-            question.count("?") > 1,
-            question.count(",") > 3
-            and any(v in q_lower for v in AdaptivePlanner._CONJUNCTION_WORDS),
-        ]
-        return sum(indicators) >= 2
 
     # ------------------------------------------------------------------
     # Auto-inject validation criteria

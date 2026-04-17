@@ -1,13 +1,59 @@
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
 
 logger = logging.getLogger(__name__)
+
+
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+_SESSION_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _get_session_lock(session_id: str) -> asyncio.Lock:
+    async with _SESSION_LOCKS_GUARD:
+        lock = _SESSION_LOCKS.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SESSION_LOCKS[session_id] = lock
+        return lock
+
+
+class SessionBusyError(Exception):
+    """Raised when another request is already processing the same chat session."""
+
+
+@asynccontextmanager
+async def session_processing_lock(session_id: str, *, wait: bool = False):
+    """Async context manager that serializes concurrent work on a chat session.
+
+    By default, raises ``SessionBusyError`` immediately if the lock is held.
+    Pass ``wait=True`` to queue behind the holder.
+    """
+    lock = await _get_session_lock(session_id)
+    if wait:
+        await lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+        return
+    if lock.locked():
+        raise SessionBusyError(
+            f"Chat session {session_id} is already processing another request."
+        )
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
 
 WELCOME_MESSAGE = (
     "Hello! I'm your data assistant for this project.\n"
@@ -95,7 +141,7 @@ class ChatService:
         return msg
 
     async def get_history_as_messages(
-        self, session: AsyncSession, session_id: str, limit: int = 20
+        self, session: AsyncSession, session_id: str, limit: int | None = None
     ) -> list[Message]:
         """Fetch recent chat messages and enrich assistant messages with metadata.
 
@@ -104,11 +150,12 @@ class ChatService:
         work in layers: DB limit prevents loading thousands of rows, token
         limit ensures the context stays within LLM budget.
         """
+        effective_limit = limit if limit is not None else settings.history_db_load_limit
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-            .limit(limit)
+            .limit(effective_limit)
         )
         rows = await session.execute(stmt)
         recent = list(reversed(rows.scalars().all()))

@@ -79,19 +79,27 @@ class ResponseBuilder:
                 "The analysis pipeline completed, but no summary was generated. "
                 "Please review the data or try rephrasing your question."
             )
+            degraded_reason = None
+            for stage in exec_result.stage_ctx.plan.stages:
+                sr = exec_result.stage_ctx.get_result(stage.stage_id)
+                if sr and sr.status == "degraded" and sr.degraded_reason:
+                    degraded_reason = sr.degraded_reason
+                    break
+            response_type = "pipeline_complete_degraded" if degraded_reason else "pipeline_complete"
             return AgentResponse(
                 answer=answer,
                 query=last_sql_result.query if last_sql_result else None,
                 results=last_sql_result.query_result if last_sql_result else None,
                 workflow_id=wf_id,
                 staleness_warning=staleness_warning,
-                response_type="pipeline_complete",
+                response_type=response_type,
                 viz_type="table" if last_sql_result else "text",
                 viz_config={"pipeline_run_id": pipeline_run_id},
                 token_usage=total_usage,
                 tool_call_log=tool_call_log,
                 steps_used=completed,
                 steps_total=n_stages,
+                error=degraded_reason,
             )
 
         if exec_result.status == "checkpoint":
@@ -129,9 +137,18 @@ class ResponseBuilder:
         fail_msg = ""
         if exec_result.failed_validation:
             fail_msg = exec_result.failed_validation.error_summary
+        elif exec_result.failed_stage:
+            failed_sr = exec_result.stage_ctx.get_result(exec_result.failed_stage.stage_id)
+            if failed_sr and failed_sr.error:
+                fail_msg = failed_sr.error
         stage_desc = exec_result.failed_stage.description if exec_result.failed_stage else ""
+        error_detail = (
+            f"Stage '{stage_desc}' failed: {fail_msg}"
+            if stage_desc
+            else (fail_msg or "Pipeline failed")
+        )
         return AgentResponse(
-            answer=f"Stage '{stage_desc}' failed: {fail_msg}\n\n"
+            answer=f"{error_detail}\n\n"
             "Would you like me to **retry** with a different approach, "
             "or **modify** the request?",
             workflow_id=wf_id,
@@ -145,6 +162,7 @@ class ResponseBuilder:
             tool_call_log=tool_call_log,
             steps_used=completed,
             steps_total=n_stages,
+            error=error_detail,
         )
 
     @staticmethod
@@ -187,6 +205,7 @@ class ResponseBuilder:
         sql_result: SQLAgentResult | None,
         knowledge_sources: list[RAGSource],
         context_window: int,
+        all_sql_results: list[SQLAgentResult] | None = None,
     ) -> list[Message]:
         """Build a compact message list for a final synthesis LLM call.
 
@@ -200,18 +219,36 @@ class ResponseBuilder:
         )
 
         data_parts: list[str] = []
-        if sql_result and sql_result.query:
-            data_parts.append(f"SQL query executed: {sql_result.query}")
-        if sql_result and sql_result.results:
-            r = sql_result.results
-            data_parts.append(
-                f"Query returned {r.row_count} rows, {len(r.columns)} columns: "
-                f"{', '.join(r.columns[:20])}"
-            )
-            if r.rows:
-                sample = r.rows[:5]
-                for row in sample:
-                    data_parts.append(f"  {row}")
+
+        results_to_summarize = all_sql_results if all_sql_results else (
+            [sql_result] if sql_result else []
+        )
+        for idx, sr in enumerate(results_to_summarize, 1):
+            if not sr:
+                continue
+            label = f"Query {idx}" if len(results_to_summarize) > 1 else "Query"
+            if sr.query:
+                data_parts.append(f"{label}: {sr.query}")
+            if sr.query_explanation:
+                data_parts.append(f"  Purpose: {sr.query_explanation}")
+            if sr.results:
+                r = sr.results
+                data_parts.append(
+                    f"  Result: {r.row_count} rows, columns: "
+                    f"{', '.join(r.columns[:20])}"
+                )
+                if r.rows:
+                    for row in r.rows[:10]:
+                        data_parts.append(f"    {row}")
+                    if r.row_count > 10:
+                        data_parts.append(f"    ... and {r.row_count - 10} more rows")
+            if sr.insights:
+                for ins in sr.insights[:3]:
+                    lbl = ins.get("label", "")
+                    val = ins.get("value", "")
+                    if lbl:
+                        data_parts.append(f"  Insight: {lbl}: {val}")
+
         if knowledge_sources:
             for src in knowledge_sources[:5]:
                 raw = getattr(src, "content", "") if hasattr(src, "content") else str(src)
@@ -225,25 +262,40 @@ class ResponseBuilder:
                 preview = m.content[:300].replace("\n", " ").strip()
                 tool_summaries.append(f"[{name}] {preview}")
 
-        budget = int(context_window * 0.4)
-        chars_budget = budget * 4
+        from app.config import settings as _app_settings
+        from app.llm.router import LLMRouter
 
-        collected = "DATA COLLECTED SO FAR:\n" + "\n".join(data_parts)
+        budget_tokens = int(context_window * _app_settings.synthesis_data_token_budget_pct)
+
+        collected = "DATA COLLECTED:\n" + "\n".join(data_parts)
         if tool_summaries:
             tool_section = "\n\nTOOL RESULTS SUMMARY:\n" + "\n".join(tool_summaries)
-            if len(collected) + len(tool_section) < chars_budget:
+            if (
+                LLMRouter.estimate_tokens(collected) + LLMRouter.estimate_tokens(tool_section)
+                < budget_tokens
+            ):
                 collected += tool_section
 
-        if len(collected) > chars_budget:
-            collected = collected[:chars_budget] + "\n... (truncated)"
+        if LLMRouter.estimate_tokens(collected) > budget_tokens:
+            char_budget = max(1, budget_tokens * 4)
+            collected = collected[:char_budget] + "\n... (truncated)"
+
+        user_question = ""
+        for m in reversed(loop_messages):
+            if m.role == "user" and m.content:
+                user_question = m.content
+                break
 
         user_msg = Message(
             role="user",
             content=(
-                "The analysis reached its step limit before completing. "
-                "Based on all the data collected above, please provide a "
-                "comprehensive answer to the original question. Summarize "
-                "the findings clearly and note if the analysis is incomplete.\n\n" + collected
+                "Based on all the data collected below, provide a complete, "
+                "professional analysis answering the original question. "
+                "Structure your answer with clear sections and key findings. "
+                "Do NOT mention step limits, partial results, or that "
+                "anything was cut short — present this as a complete answer.\n\n"
+                + (f"Original question: {user_question}\n\n" if user_question else "")
+                + collected
             ),
         )
 

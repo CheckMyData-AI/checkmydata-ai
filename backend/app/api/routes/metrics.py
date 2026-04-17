@@ -5,9 +5,10 @@ import time
 from collections import defaultdict
 from threading import Lock
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.api.deps import get_current_user
+from app.core.metrics import get_metrics_collector
 
 router = APIRouter()
 
@@ -58,8 +59,31 @@ async def get_metrics(_user: dict = Depends(get_current_user)):
                 "avg_latency_ms": round(avg_latency, 1),
             }
 
+    orchestrator_recent = [
+        {
+            "route": m.route,
+            "complexity": m.complexity,
+            "response_type": m.response_type,
+            "wall_clock_seconds": round(m.wall_clock_seconds, 2),
+            "iterations": m.iterations,
+            "sql_calls": m.sql_calls,
+            "replan_count": m.replan_count,
+            "retry_count": m.retry_count,
+            "error": m.error,
+        }
+        for m in get_metrics_collector().snapshot_recent(50)
+    ]
+
     return {
         "active_workflows": len(active_workflows),
         "request_stats": path_stats,
         "uptime_seconds": round(time.monotonic(), 1),
+        "orchestrator_recent": orchestrator_recent,
     }
+
+
+@router.get("/metrics/prometheus", response_class=Response)
+async def get_prometheus(_user: dict = Depends(get_current_user)) -> Response:
+    """Render orchestrator counters in Prometheus text-exposition format."""
+    body = get_metrics_collector().render_prometheus()
+    return Response(content=body, media_type="text/plain; version=0.0.4")

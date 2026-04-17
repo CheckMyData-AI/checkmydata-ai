@@ -128,31 +128,7 @@ class TestVizAgent:
         assert result.viz_type == "text"
         assert result.summary == "active"
 
-    # 6. preferred_viz respected
-    @pytest.mark.asyncio
-    async def test_preferred_viz_bar_chart(self, agent, context):
-        result = await agent.run(
-            context,
-            results=_qr(
-                columns=["month", "revenue"],
-                rows=[["Jan", 100], ["Feb", 200]],
-            ),
-            preferred_viz="bar_chart",
-        )
-        assert result.viz_type == "bar_chart"
-
-    # 7. pie_chart downgraded to bar_chart when too many categories
-    @pytest.mark.asyncio
-    async def test_preferred_viz_pie_too_many_categories(self, agent, context):
-        rows = [[f"cat-{i}", i] for i in range(21)]
-        result = await agent.run(
-            context,
-            results=_qr(columns=["category", "count"], rows=rows),
-            preferred_viz="pie_chart",
-        )
-        assert result.viz_type == "bar_chart"
-
-    # 8. LLM recommendation via tool call
+    # 6. LLM recommendation via tool call
     @pytest.mark.asyncio
     async def test_llm_recommendation(self, agent, context, mock_llm):
         mock_llm.complete = AsyncMock(
@@ -361,52 +337,7 @@ class TestVizAgent:
         )
         assert result.viz_type == "bar_chart"
 
-    # 16. preferred_viz generates proper config
-    @pytest.mark.asyncio
-    async def test_preferred_viz_generates_config(self, agent, context):
-        result = await agent.run(
-            context,
-            results=_qr(
-                columns=["month", "revenue"],
-                rows=[["Jan", 100], ["Feb", 200]],
-            ),
-            preferred_viz="bar_chart",
-        )
-        assert result.viz_type == "bar_chart"
-        assert "labels_column" in result.viz_config
-        assert "data_columns" in result.viz_config
-
-    # 17. preferred_viz pie generates data_column (singular)
-    @pytest.mark.asyncio
-    async def test_preferred_viz_pie_config(self, agent, context):
-        result = await agent.run(
-            context,
-            results=_qr(
-                columns=["category", "count"],
-                rows=[["A", 10], ["B", 20], ["C", 30]],
-            ),
-            preferred_viz="pie_chart",
-        )
-        assert result.viz_type == "pie_chart"
-        assert "labels_column" in result.viz_config
-        assert "data_column" in result.viz_config
-
-    # 18. preferred_viz scatter generates x/y columns
-    @pytest.mark.asyncio
-    async def test_preferred_viz_scatter_config(self, agent, context):
-        result = await agent.run(
-            context,
-            results=_qr(
-                columns=["age", "income"],
-                rows=[[25, 50000], [30, 60000]],
-            ),
-            preferred_viz="scatter",
-        )
-        assert result.viz_type == "scatter"
-        assert "x_column" in result.viz_config
-        assert "y_column" in result.viz_config
-
-    # 19. validate_and_fix_config regenerates when columns are wrong
+    # 16. validate_and_fix_config regenerates when columns are wrong
     def test_validate_and_fix_config_regenerates(self, agent):
         results = _qr(
             columns=["month", "revenue"],
@@ -502,18 +433,6 @@ class TestValidateAndFixConfigEdgeCases:
         assert fixed["labels_column"] in results.columns
         for dc in fixed.get("data_columns", []):
             assert dc in results.columns
-
-
-class TestGenerateConfig:
-    def test_table_type_returns_empty(self):
-        results = _qr(columns=["a", "b"], rows=[["x", 1]])
-        cfg = VizAgent._generate_config(results, "table")
-        assert cfg == {}
-
-    def test_unknown_type_returns_empty(self):
-        results = _qr(columns=["a", "b"], rows=[["x", 1]])
-        cfg = VizAgent._generate_config(results, "unknown_viz")
-        assert cfg == {}
 
 
 class TestSummarizeResults:

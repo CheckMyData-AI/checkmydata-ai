@@ -63,13 +63,12 @@ class TestBuildAgentSystemPrompt:
         )
         assert "AI data assistant" in prompt
 
-    def test_re_visualization_section_when_connection(self):
+    def test_principles_section_when_connection(self):
         prompt = build_agent_system_prompt(
             has_connection=True,
             db_type="postgres",
         )
-        assert "RE-VISUALIZATION:" in prompt
-        assert "pie chart" in prompt.lower() or "chart" in prompt.lower()
+        assert "PRINCIPLES:" in prompt
 
     def test_no_re_visualization_without_connection(self):
         prompt = build_agent_system_prompt(

@@ -112,16 +112,47 @@ class TestWorkflowTracker:
         await t.unsubscribe(queue)  # should not raise
 
     @pytest.mark.asyncio
-    async def test_full_queue_drops_subscriber(self):
+    async def test_full_queue_drops_non_essential_silently(self):
+        """Non-essential events are dropped without evicting the subscriber."""
         t = WorkflowTracker()
         queue = await t.subscribe()
 
-        # fill the queue to its maximum capacity (1024)
         for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
             queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
 
-        # next broadcast should evict the full queue
+        # non-essential event: silently dropped, subscriber retained
         await t.emit("y", "s2", "started")
+        assert queue in t._subscribers
+        assert queue.qsize() == WorkflowTracker._QUEUE_MAXSIZE
+
+    @pytest.mark.asyncio
+    async def test_full_queue_evicts_oldest_for_essential(self):
+        """Essential events (e.g. pipeline_end) evict oldest non-essential to be delivered."""
+        t = WorkflowTracker()
+        queue = await t.subscribe()
+
+        for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
+            queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
+
+        await t.emit("y", "pipeline_end", "completed")
+        assert queue in t._subscribers
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        assert any(e.step == "pipeline_end" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_full_queue_drops_subscriber_when_only_essential(self):
+        """If the queue is full of essential events, the subscriber is evicted."""
+        t = WorkflowTracker()
+        queue = await t.subscribe()
+
+        for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
+            queue.put_nowait(
+                WorkflowEvent(workflow_id="x", step="pipeline_end", status="completed")
+            )
+
+        await t.emit("y", "pipeline_end", "completed")
         assert queue not in t._subscribers
 
     @pytest.mark.asyncio

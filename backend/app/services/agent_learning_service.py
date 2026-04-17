@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import Counter
@@ -92,6 +93,19 @@ def normalize_lesson_text(lesson: str) -> str:
     if len(text) > MAX_LESSON_LENGTH:
         text = text[: MAX_LESSON_LENGTH - 1] + "\u2026"
     return text
+
+
+_COMPILE_LOCKS: dict[str, asyncio.Lock] = {}
+_COMPILE_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _get_compile_lock(connection_id: str) -> asyncio.Lock:
+    async with _COMPILE_LOCKS_GUARD:
+        lock = _COMPILE_LOCKS.get(connection_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _COMPILE_LOCKS[connection_id] = lock
+        return lock
 
 
 class AgentLearningService:
@@ -360,13 +374,30 @@ class AgentLearningService:
         min_confidence: float = 0.3,
         active_only: bool = True,
         skip_blocklisted: bool = True,
+        *,
+        category_filter: list[str] | None = None,
+        table_filter: str | None = None,
+        limit: int | None = None,
     ) -> list[AgentLearning]:
+        """Single source of truth for retrieving agent learnings.
+
+        Filters:
+        - ``min_confidence`` — minimum confidence threshold
+        - ``active_only`` — only learnings with ``is_active = True``
+        - ``skip_blocklisted`` — drop learnings whose subject is a blocked schema name
+        - ``category_filter`` — restrict to one or more categories
+        - ``table_filter`` — restrict to learnings mentioning a specific table
+          (matched against either subject or lesson, case-insensitive)
+        - ``limit`` — cap the number of returned rows after filtering
+        """
         stmt = select(AgentLearning).where(
             AgentLearning.connection_id == connection_id,
             AgentLearning.confidence >= min_confidence,
         )
         if active_only:
             stmt = stmt.where(AgentLearning.is_active.is_(True))
+        if category_filter:
+            stmt = stmt.where(AgentLearning.category.in_(category_filter))
         stmt = stmt.order_by(
             AgentLearning.confidence.desc(),
             AgentLearning.times_confirmed.desc(),
@@ -375,6 +406,15 @@ class AgentLearningService:
         rows = list(result.scalars().all())
         if skip_blocklisted:
             rows = [r for r in rows if r.subject.lower() not in SUBJECT_BLOCKLIST]
+        if table_filter:
+            tbl_lower = table_filter.lower()
+            rows = [
+                r
+                for r in rows
+                if tbl_lower in r.subject.lower() or tbl_lower in r.lesson.lower()
+            ]
+        if limit is not None and limit >= 0:
+            rows = rows[:limit]
         return rows
 
     async def get_learnings_for_table(
@@ -383,21 +423,15 @@ class AgentLearningService:
         connection_id: str,
         table_name: str,
     ) -> list[AgentLearning]:
-        tbl_lower = table_name.lower()
-        result = await session.execute(
-            select(AgentLearning).where(
-                AgentLearning.connection_id == connection_id,
-                AgentLearning.is_active.is_(True),
-                AgentLearning.confidence >= 0.3,
-            )
+        """Convenience wrapper around :meth:`get_learnings` with a table filter."""
+        return await self.get_learnings(
+            session,
+            connection_id,
+            min_confidence=0.3,
+            active_only=True,
+            skip_blocklisted=True,
+            table_filter=table_name,
         )
-        all_learnings = result.scalars().all()
-        return [
-            lrn
-            for lrn in all_learnings
-            if lrn.subject.lower() not in SUBJECT_BLOCKLIST
-            and (tbl_lower in lrn.subject.lower() or tbl_lower in lrn.lesson.lower())
-        ]
 
     async def get_learning_by_id(
         self,
@@ -568,6 +602,34 @@ class AgentLearningService:
         return conf_part + confirmed_part + applied_part
 
     async def compile_prompt(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        *,
+        force: bool = True,
+    ) -> str:
+        """Compile the learnings prompt for *connection_id*.
+
+        Acquires a per-connection asyncio lock so concurrent recompilations
+        serialize cleanly. When ``force=False`` (the path used by
+        ``get_or_compile_summary``), waiters that arrive after the lock holder
+        finishes will see the freshly cached prompt and return immediately.
+        """
+        lock = await _get_compile_lock(connection_id)
+        async with lock:
+            if not force:
+                cached = await session.execute(
+                    select(AgentLearningSummary).where(
+                        AgentLearningSummary.connection_id == connection_id
+                    )
+                )
+                cached_summary = cached.scalar_one_or_none()
+                if cached_summary and cached_summary.compiled_prompt:
+                    return cached_summary.compiled_prompt
+
+            return await self._compile_prompt_locked(session, connection_id)
+
+    async def _compile_prompt_locked(
         self,
         session: AsyncSession,
         connection_id: str,
@@ -815,7 +877,7 @@ class AgentLearningService:
         if summary and summary.compiled_prompt:
             return summary.compiled_prompt
 
-        return await self.compile_prompt(session, connection_id)
+        return await self.compile_prompt(session, connection_id, force=False)
 
     async def get_summary(
         self,

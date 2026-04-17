@@ -170,6 +170,8 @@ def _summarise_pair(assistant_msg: Message, tool_msgs: list[Message]) -> str:
 def trim_loop_messages(
     messages: list[Message],
     max_tokens: int,
+    *,
+    history_budget_tokens: int | None = None,
 ) -> tuple[list[Message], bool]:
     """Trim an agent's in-loop message list to stay within *max_tokens*.
 
@@ -179,13 +181,20 @@ def trim_loop_messages(
     2. If still over budget, collapse oldest assistant+tool pairs into a
        single system summary message.
 
+    When ``history_budget_tokens`` is provided, it caps the chat-history
+    portion explicitly (overrides the default 80% heuristic). This is used
+    by the orchestrator to honour the ``ContextBudgetManager`` allocation.
+
     Returns ``(trimmed_messages, did_trim)`` so callers can emit events.
     """
     if not messages or len(messages) < 3:
         return messages, False
 
     total = estimate_messages_tokens(messages)
-    threshold = int(max_tokens * _TRIM_THRESHOLD)
+    if history_budget_tokens is not None and history_budget_tokens > 0:
+        threshold = history_budget_tokens
+    else:
+        threshold = int(max_tokens * _TRIM_THRESHOLD)
     if total <= threshold:
         return messages, False
 

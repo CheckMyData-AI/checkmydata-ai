@@ -19,6 +19,7 @@ from app.config import settings
 from app.connectors.mcp_client import MCPClientAdapter
 from app.core.history_trimmer import trim_loop_messages
 from app.llm.base import LLMResponse, Message, Tool, ToolParameter
+from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
@@ -168,11 +169,13 @@ class MCPSourceAgent(BaseAgent):
         for _iteration in range(settings.max_mcp_iterations):
             messages, _ = trim_loop_messages(messages, mcp_loop_budget)
             try:
-                llm_resp: LLMResponse = await self._llm.complete(
+                llm_resp: LLMResponse = await llm_call_with_retry(
+                    self._llm,
                     messages=messages,
                     tools=tools,
                     preferred_provider=context.preferred_provider,
                     model=context.model,
+                    component="mcp_source_agent",
                 )
             except Exception:
                 logger.exception("MCPSourceAgent LLM call failed (iter %d)", _iteration)

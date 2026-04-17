@@ -44,6 +44,23 @@ class WorkflowEvent:
 
 BACKGROUND_PIPELINES = frozenset({"index_repo", "db_index", "code_db_sync"})
 
+ESSENTIAL_STEPS = frozenset(
+    {
+        "pipeline_end",
+        "result",
+        "answer",
+        "error",
+        "clarification",
+        "interactive_required",
+    }
+)
+
+
+def _is_essential(event: "WorkflowEvent") -> bool:
+    return event.step in ESSENTIAL_STEPS or (
+        event.status in {"failed", "completed"} and event.step == "pipeline_end"
+    )
+
 
 class WorkflowTracker:
     """In-memory event bus that broadcasts workflow step events to subscribers."""
@@ -197,6 +214,29 @@ class WorkflowTracker:
             self._subscribers.append(queue)
         return queue
 
+    @staticmethod
+    def _drop_oldest_non_essential(queue: asyncio.Queue["WorkflowEvent"]) -> int:
+        """Best-effort drop of oldest non-essential events from *queue*.
+
+        Returns number of events dropped. We rebuild the queue's internal deque
+        in-place to skip non-essential events while preserving order of the rest.
+        """
+        try:
+            internal = queue._queue  # type: ignore[attr-defined]
+        except AttributeError:
+            return 0
+        before = len(internal)
+        if before == 0:
+            return 0
+        kept = [e for e in internal if _is_essential(e)]
+        dropped = before - len(kept)
+        if dropped <= 0:
+            return 0
+        internal.clear()
+        for e in kept:
+            internal.append(e)
+        return dropped
+
     async def unsubscribe(self, queue: asyncio.Queue[WorkflowEvent]) -> None:
         async with self._lock:
             try:
@@ -214,16 +254,37 @@ class WorkflowTracker:
             short,
             f" {event.elapsed_ms:.0f}ms" if event.elapsed_ms is not None else "",
         )
+        essential = _is_essential(event)
         async with self._lock:
             dead: list[asyncio.Queue[WorkflowEvent]] = []
             for queue in self._subscribers:
                 try:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
-                    dead.append(queue)
+                    if essential:
+                        dropped = self._drop_oldest_non_essential(queue)
+                        if dropped:
+                            try:
+                                queue.put_nowait(event)
+                                logger.warning(
+                                    "Backpressure: dropped %d non-essential event(s) "
+                                    "to deliver essential %s",
+                                    dropped,
+                                    event.step,
+                                )
+                                continue
+                            except asyncio.QueueFull:
+                                pass
+                        dead.append(queue)
+                    else:
+                        logger.debug(
+                            "Backpressure: dropping non-essential event %s on full queue",
+                            event.step,
+                        )
             if dead:
                 logger.warning(
-                    "Dropping %d subscriber(s) due to full queues (maxsize=%d)",
+                    "Dropping %d subscriber(s) due to full queues with essential events "
+                    "undeliverable (maxsize=%d)",
                     len(dead),
                     self._QUEUE_MAXSIZE,
                 )

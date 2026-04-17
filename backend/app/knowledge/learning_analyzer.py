@@ -113,15 +113,19 @@ class LearningAnalyzer:
         if not connection_id or not attempts:
             return []
 
+        from app.config import settings as _settings
+
+        mode = (_settings.learning_analyzer_mode or "hybrid").lower()
         lessons: list[ExtractedLesson] = []
 
-        if len(attempts) > 1:
-            lessons.extend(self._detect_table_preference(attempts, question))
-            lessons.extend(self._detect_column_correction(attempts))
-            lessons.extend(self._detect_format_discovery(attempts))
-            lessons.extend(self._detect_schema_gotcha(attempts))
-
-        lessons.extend(self._detect_performance_hint(attempts))
+        if mode == "llm_first":
+            lessons = await self._llm_extract(connection_id, attempts)
+            if not lessons:
+                lessons = self._heuristic_extract(attempts, question)
+        else:
+            lessons = self._heuristic_extract(attempts, question)
+            if mode == "hybrid" and not lessons and len(attempts) >= 2:
+                lessons = await self._llm_extract(connection_id, attempts)
 
         if not lessons:
             return []
@@ -212,6 +216,49 @@ class LearningAnalyzer:
 
         await session.commit()
         return lessons
+
+    # ------------------------------------------------------------------
+    # Mode dispatchers
+    # ------------------------------------------------------------------
+
+    def _heuristic_extract(
+        self,
+        attempts: list[QueryAttempt],
+        question: str,
+    ) -> list[ExtractedLesson]:
+        """Run all legacy ``_detect_*`` extractors on the attempt sequence."""
+        lessons: list[ExtractedLesson] = []
+        if len(attempts) > 1:
+            lessons.extend(self._detect_table_preference(attempts, question))
+            lessons.extend(self._detect_column_correction(attempts))
+            lessons.extend(self._detect_format_discovery(attempts))
+            lessons.extend(self._detect_schema_gotcha(attempts))
+        lessons.extend(self._detect_performance_hint(attempts))
+        return lessons
+
+    async def _llm_extract(
+        self,
+        connection_id: str,
+        attempts: list[QueryAttempt],
+    ) -> list[ExtractedLesson]:
+        """Delegate to :class:`LLMAnalyzer` (cooldown-aware) and return its lessons.
+
+        Failures and cooldown skips return an empty list so the caller can
+        gracefully fall back to heuristics.
+        """
+        if len(attempts) < 2:
+            return []
+        try:
+            llm_analyzer = LLMAnalyzer()
+            if not llm_analyzer.should_run(connection_id):
+                return []
+            from app.models.base import async_session_factory
+
+            async with async_session_factory() as llm_session:
+                return await llm_analyzer.analyze(llm_session, connection_id, attempts)
+        except Exception:
+            logger.debug("LLM-based extraction failed; falling back to heuristics", exc_info=True)
+            return []
 
     # ------------------------------------------------------------------
     # Heuristic extractors

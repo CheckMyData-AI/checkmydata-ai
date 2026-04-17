@@ -98,8 +98,15 @@ def build_replan_prompt(
     error: str,
     table_map: str = "",
     db_type: str | None = None,
+    replan_history: list[dict[str, str]] | None = None,
 ) -> str:
-    """Build the user prompt for a replan after stage failure."""
+    """Build the user prompt for a replan after stage failure.
+
+    ``replan_history`` is a list of prior replan attempts (most-recent last):
+    ``[{"attempt": 1, "failed_stage": "s1", "error": "..."}, ...]``. When
+    multiple replans have already been tried, including this history prevents
+    the LLM from retrying the same approach repeatedly.
+    """
     parts = [
         f"Original question:\n{question}",
         "\n## Completed stages (keep these results):",
@@ -110,8 +117,16 @@ def build_replan_prompt(
     else:
         parts.append("(none)")
 
+    if replan_history:
+        parts.append("\n## Previous replan attempts (do NOT repeat these approaches):")
+        for h in replan_history:
+            attempt = h.get("attempt", "?")
+            stage = h.get("failed_stage", "?")
+            err = (h.get("error", "") or "")[:300]
+            parts.append(f"- attempt {attempt}: stage '{stage}' failed → {err}")
+
     parts.append(
-        f"\n## Failed stage:\n"
+        f"\n## Latest failed stage:\n"
         f"- Stage ID: {failed_stage_id}\n"
         f"- Description: {failed_stage_desc}\n"
         f"- Tool: {failed_stage_tool}\n"
@@ -119,10 +134,10 @@ def build_replan_prompt(
     )
     parts.append(
         "\n## Task:\n"
-        "Create a NEW execution plan that achieves the same goal but avoids "
-        "the approach that failed. You may reuse completed stage results "
-        "by referencing their stage_ids in depends_on. Include new stages "
-        "that take a different approach to get the data."
+        "Create a NEW execution plan that achieves the same goal but takes a "
+        "fundamentally different approach from anything tried above. You may "
+        "reuse completed stage results by referencing their stage_ids in "
+        "depends_on. Avoid repeating any failed query shape or table choice."
     )
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")

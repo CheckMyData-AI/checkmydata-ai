@@ -22,10 +22,6 @@ from app.agents.data_gate import DataGate
 from app.agents.errors import (
     AgentFatalError,
 )
-from app.agents.intent_classifier import (
-    IntentType,
-    classify_intent,
-)
 from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.pipeline_learning import PipelineLearningExtractor
@@ -38,11 +34,11 @@ from app.agents.response_builder import (
     ResponseBuilder,
     SQLResultBlock,
 )
+from app.agents.router import RouteResult, route_request
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.stage_context import ExecutionPlan, StageContext
 from app.agents.stage_executor import StageExecutor, _StageExecutorResult
 from app.agents.stage_validator import StageValidator
-from app.agents.table_resolver import build_resolution_hints, resolve_tables
 from app.agents.tool_dispatcher import (
     ToolDispatcher,
     _ClarificationRequestError,
@@ -184,7 +180,8 @@ class OrchestratorAgent(BaseAgent):
             vector_store=self._vector_store,
         )
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
-        self._wf_sql_results: dict[str, SQLAgentResult] = {}
+        self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
+        self._wf_sql_lock = asyncio.Lock()
         self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
         self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
         self._mcp_cache: dict[str, tuple[bool, float]] = {}
@@ -247,7 +244,6 @@ class OrchestratorAgent(BaseAgent):
         table_map: str,
         custom_rules: str,
         recent_learnings: str,
-        table_hints: str,
     ) -> None:
         """Emit a plan_summary event so the frontend can display context."""
         import re as _re
@@ -270,7 +266,6 @@ class OrchestratorAgent(BaseAgent):
                             learning_subjects.append(subj)
             learning_subjects = learning_subjects[:10]
 
-        has_warnings = bool(table_hints)
         strategy = "pipeline" if len(tables) > 3 else "single_query"
 
         await tracker.emit(
@@ -282,7 +277,6 @@ class OrchestratorAgent(BaseAgent):
                 "strategy": strategy,
                 "rules_applied": rule_names[:10],
                 "learnings_applied": learning_subjects,
-                "has_warnings": has_warnings,
             },
         )
 
@@ -302,7 +296,7 @@ class OrchestratorAgent(BaseAgent):
         stale_seconds = 300
         enriched = self._wf_enriched.get(wf_id)
         if enriched and (_time.time() - enriched[1]) < stale_seconds:
-            self._wf_sql_results[wf_id] = enriched[0]
+            self._wf_sql_results[wf_id] = [enriched[0]]
         else:
             self._wf_sql_results.pop(wf_id, None)
             self._wf_enriched.pop(wf_id, None)
@@ -325,44 +319,43 @@ class OrchestratorAgent(BaseAgent):
             has_kb = self._ctx_loader.has_knowledge_base(context.project_id)
             has_mcp = await self._ctx_loader.has_mcp_sources(context.project_id, wf_id)
 
-            # Skip classification for continuation or pipeline/complexity overrides
-            if is_continuation or context.extra.get("_skip_complexity"):
-                logger.info(
-                    "Skipping intent classification (%s, wf=%s)",
-                    "continuation" if is_continuation else "complexity_override",
-                    wf_id,
-                )
-                return await self._run_full_pipeline(
-                    context, wf_id, has_connection, db_type, has_kb, has_mcp
-                )
+            # --- LLM-driven routing ---
+            await self._tracker.emit(wf_id, "thinking", "in_progress", "Routing request…")
 
-            # --- Phase 1: LLM intent classification ---
-            await self._tracker.emit(wf_id, "thinking", "in_progress", "Classifying request…")
-            intent_result = await classify_intent(
-                context.user_question,
-                self._llm,
-                has_connection=has_connection,
-                has_knowledge_base=has_kb,
-                has_mcp_sources=has_mcp,
-                chat_history=context.chat_history,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-            )
+            if is_continuation or context.extra.get("_skip_complexity"):
+                route_result = RouteResult(
+                    route="explore",
+                    complexity="moderate",
+                    approach="Continuation — resuming previous analysis with all tools.",
+                    estimated_queries=2,
+                    needs_multiple_data_sources=False,
+                )
+            else:
+                route_result = await route_request(
+                    context.user_question,
+                    self._llm,
+                    has_connection=has_connection,
+                    has_knowledge_base=has_kb,
+                    has_mcp_sources=has_mcp,
+                    chat_history=context.chat_history,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                )
             logger.info(
-                "Intent classified as %s (reason: %s, wf=%s)",
-                intent_result.intent.value,
-                intent_result.reason,
+                "Router: route=%s complexity=%s (wf=%s)",
+                route_result.route,
+                route_result.complexity,
                 wf_id,
             )
             await self._tracker.emit(
                 wf_id,
                 "thinking",
                 "in_progress",
-                f"Intent: {intent_result.intent.value} ({intent_result.reason})",
+                f"Route: {route_result.route} ({route_result.complexity})",
             )
 
-            # --- Phase 2: Route to the appropriate execution chain ---
-            if intent_result.intent == IntentType.DIRECT_RESPONSE:
+            # --- Direct response: no tools needed ---
+            if route_result.is_direct:
                 return await self._run_direct_response(
                     context,
                     wf_id,
@@ -371,20 +364,17 @@ class OrchestratorAgent(BaseAgent):
                     has_mcp,
                 )
 
-            if intent_result.intent == IntentType.DATA_QUERY:
-                return await self._run_data_query(
-                    context, wf_id, has_connection, db_type, has_kb, has_mcp
+            # --- Complex pipeline for multi-stage analysis ---
+            if route_result.use_complex_pipeline and has_connection:
+                table_map = await self._load_table_map(context, wf_id)
+                return await self._run_complex_pipeline(
+                    context, wf_id, table_map, db_type, staleness_warning=None,
                 )
 
-            if intent_result.intent == IntentType.KNOWLEDGE_QUERY:
-                return await self._run_knowledge_query(context, wf_id, has_kb)
-
-            if intent_result.intent == IntentType.MCP_QUERY:
-                return await self._run_mcp_query(context, wf_id, has_mcp)
-
-            # IntentType.MIXED or any unexpected value
-            return await self._run_full_pipeline(
-                context, wf_id, has_connection, db_type, has_kb, has_mcp
+            # --- Unified tool loop for everything else ---
+            return await self._run_unified_agent(
+                context, wf_id, has_connection, db_type, has_kb, has_mcp,
+                route_result=route_result,
             )
 
         except _ClarificationRequestError as cr:
@@ -439,7 +429,7 @@ class OrchestratorAgent(BaseAgent):
             )
 
     # ------------------------------------------------------------------
-    # Intent-based execution paths
+    # Execution paths
     # ------------------------------------------------------------------
 
     async def _run_direct_response(
@@ -462,7 +452,7 @@ class OrchestratorAgent(BaseAgent):
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
         if context.chat_history:
-            for m in context.chat_history[-4:]:
+            for m in context.chat_history[-settings.history_tail_messages :]:
                 messages.append(m)
         messages.append(Message(role="user", content=context.user_question))
 
@@ -504,7 +494,23 @@ class OrchestratorAgent(BaseAgent):
             steps_total=1,
         )
 
-    async def _run_data_query(
+    async def _load_table_map(self, context: AgentContext, wf_id: str) -> str:
+        """Load the table map for the connected database, if available."""
+        if not context.connection_config:
+            return ""
+        cid = context.connection_config.connection_id
+        if not cid:
+            cid = await self._ctx_loader.resolve_connection_id(
+                context.project_id,
+                context.connection_config,
+            )
+            if cid and context.connection_config:
+                context.connection_config.connection_id = cid
+        if cid:
+            return await self._ctx_loader.build_table_map(cid, wf_id)
+        return ""
+
+    async def _run_unified_agent(
         self,
         context: AgentContext,
         wf_id: str,
@@ -512,10 +518,10 @@ class OrchestratorAgent(BaseAgent):
         db_type: str | None,
         has_kb: bool,
         has_mcp: bool,
+        *,
+        route_result: RouteResult,
     ) -> AgentResponse:
-        """Handle data/SQL questions: load DB context, expose DB tools, check complexity."""
-        question = context.user_question
-
+        """Unified agent loop — all tools available, LLM decides usage."""
         if context.chat_history:
             from app.config import settings as app_settings
 
@@ -529,194 +535,43 @@ class OrchestratorAgent(BaseAgent):
             )
             context = replace(context, chat_history=trimmed)
 
-        table_map = ""
-        if has_connection and context.connection_config:
-            cid = context.connection_config.connection_id
-            if not cid:
-                cid = await self._ctx_loader.resolve_connection_id(
-                    context.project_id,
-                    context.connection_config,
-                )
-                if cid and context.connection_config:
-                    context.connection_config.connection_id = cid
-            if cid:
-                table_map = await self._ctx_loader.build_table_map(cid, wf_id)
-
-        table_hints = ""
-        if table_map:
-            resolution = resolve_tables(question, table_map)
-            table_hints = build_resolution_hints(resolution)
-
-        if has_connection and AdaptivePlanner._is_complex(question):
-            logger.info("Complex data query detected — using multi-stage pipeline")
-            return await self._run_complex_pipeline(
-                context, wf_id, table_map, db_type, staleness_warning=None
+        cfg_for_staleness = context.connection_config
+        connection_id_for_staleness = (
+            cfg_for_staleness.connection_id if cfg_for_staleness else None
+        )
+        staleness_warning = (
+            await self._ctx_loader.check_staleness(
+                context.project_id,
+                wf_id,
+                connection_id=connection_id_for_staleness,
             )
+            if (has_kb or connection_id_for_staleness)
+            else None
+        )
+
+        table_map = ""
+        if has_connection:
+            table_map = await self._load_table_map(context, wf_id)
 
         project_overview = await self._ctx_loader.load_project_overview(context.project_id)
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
-        custom_rules_text = await self._load_custom_rules_text(context.project_id)
-
-        tools = get_orchestrator_tools(
-            has_connection=has_connection,
-            has_knowledge_base=False,
-            has_mcp_sources=False,
-        )
-
-        return await self._run_tool_loop(
-            context,
-            wf_id,
-            has_connection=has_connection,
-            db_type=db_type,
-            has_kb=False,
-            has_mcp=False,
-            table_map=table_map,
-            project_overview=project_overview,
-            recent_learnings=recent_learnings,
-            custom_rules=custom_rules_text,
-            table_hints=table_hints,
-            tools=tools,
-            max_steps_override=settings.max_simple_query_steps,
-        )
-
-    async def _run_knowledge_query(
-        self,
-        context: AgentContext,
-        wf_id: str,
-        has_kb: bool,
-    ) -> AgentResponse:
-        """Handle code/architecture questions: load KB context, expose search_codebase only."""
-        if context.chat_history:
-            from app.config import settings as app_settings
-
-            trimmed = await trim_history(
-                context.chat_history,
-                max_tokens=app_settings.max_history_tokens,
-                llm_router=self._llm,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                summary_model=app_settings.history_summary_model or None,
+        active_insights = await self._ctx_loader.load_relevant_insights(context.project_id)
+        if active_insights:
+            recent_learnings = (
+                (recent_learnings + "\n\n" + active_insights)
+                if recent_learnings
+                else active_insights
             )
-            context = replace(context, chat_history=trimmed)
-
-        staleness_warning = await self._ctx_loader.check_staleness(context.project_id, wf_id)
-        project_overview = await self._ctx_loader.load_project_overview(context.project_id)
-
-        tools = get_orchestrator_tools(
-            has_connection=False,
-            has_knowledge_base=has_kb,
-            has_mcp_sources=False,
-        )
-
-        return await self._run_tool_loop(
-            context,
-            wf_id,
-            has_connection=False,
-            db_type=None,
-            has_kb=has_kb,
-            has_mcp=False,
-            table_map="",
-            project_overview=project_overview,
-            recent_learnings=None,
-            tools=tools,
-            staleness_warning=staleness_warning,
-        )
-
-    async def _run_mcp_query(
-        self,
-        context: AgentContext,
-        wf_id: str,
-        has_mcp: bool,
-    ) -> AgentResponse:
-        """Handle MCP source questions: expose only query_mcp_source tool."""
-        if context.chat_history:
-            from app.config import settings as app_settings
-
-            trimmed = await trim_history(
-                context.chat_history,
-                max_tokens=app_settings.max_history_tokens,
-                llm_router=self._llm,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                summary_model=app_settings.history_summary_model or None,
+        if has_kb and context.user_question:
+            relevant_knowledge = await self._ctx_loader.load_relevant_knowledge(
+                context.project_id, context.user_question
             )
-            context = replace(context, chat_history=trimmed)
-
-        tools = get_orchestrator_tools(
-            has_connection=False,
-            has_knowledge_base=False,
-            has_mcp_sources=has_mcp,
-        )
-
-        return await self._run_tool_loop(
-            context,
-            wf_id,
-            has_connection=False,
-            db_type=None,
-            has_kb=False,
-            has_mcp=has_mcp,
-            table_map="",
-            project_overview=None,
-            recent_learnings=None,
-            tools=tools,
-        )
-
-    async def _run_full_pipeline(
-        self,
-        context: AgentContext,
-        wf_id: str,
-        has_connection: bool,
-        db_type: str | None,
-        has_kb: bool,
-        has_mcp: bool,
-    ) -> AgentResponse:
-        """Full pipeline for mixed/ambiguous intents — loads ALL context, ALL tools."""
-        question = context.user_question
-
-        staleness_warning = await self._ctx_loader.check_staleness(context.project_id, wf_id)
-
-        if context.chat_history:
-            from app.config import settings as app_settings
-
-            trimmed = await trim_history(
-                context.chat_history,
-                max_tokens=app_settings.max_history_tokens,
-                llm_router=self._llm,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                summary_model=app_settings.history_summary_model or None,
-            )
-            context = replace(context, chat_history=trimmed)
-
-        table_map = ""
-        if has_connection and context.connection_config:
-            cid = context.connection_config.connection_id
-            if not cid:
-                cid = await self._ctx_loader.resolve_connection_id(
-                    context.project_id,
-                    context.connection_config,
+            if relevant_knowledge:
+                recent_learnings = (
+                    (recent_learnings + "\n\n" + relevant_knowledge)
+                    if recent_learnings
+                    else relevant_knowledge
                 )
-                if cid and context.connection_config:
-                    context.connection_config.connection_id = cid
-            if cid:
-                table_map = await self._ctx_loader.build_table_map(cid, wf_id)
-
-        table_hints = ""
-        if table_map:
-            resolution = resolve_tables(question, table_map)
-            table_hints = build_resolution_hints(resolution)
-
-        is_complex = not context.extra.get("_skip_complexity") and AdaptivePlanner._is_complex(
-            question
-        )
-        if has_connection and is_complex:
-            logger.info("Complex query detected — using multi-stage pipeline")
-            return await self._run_complex_pipeline(
-                context, wf_id, table_map, db_type, staleness_warning
-            )
-
-        project_overview = await self._ctx_loader.load_project_overview(context.project_id)
-        recent_learnings = await self._ctx_loader.load_recent_learnings(context)
         custom_rules_text = await self._load_custom_rules_text(context.project_id)
 
         tools = get_orchestrator_tools(
@@ -736,9 +591,9 @@ class OrchestratorAgent(BaseAgent):
             project_overview=project_overview,
             recent_learnings=recent_learnings,
             custom_rules=custom_rules_text,
-            table_hints=table_hints,
             tools=tools,
             staleness_warning=staleness_warning,
+            route_result=route_result,
         )
 
     # ------------------------------------------------------------------
@@ -759,10 +614,9 @@ class OrchestratorAgent(BaseAgent):
         project_overview: str | None,
         recent_learnings: str | None,
         custom_rules: str = "",
-        table_hints: str = "",
         tools: list,
         staleness_warning: str | None = None,
-        max_steps_override: int | None = None,
+        route_result: RouteResult | None = None,
     ) -> AgentResponse:
         """Run the orchestrator tool-calling loop with the given context and tools."""
         if table_map and not context.table_map:
@@ -804,8 +658,13 @@ class OrchestratorAgent(BaseAgent):
             project_overview=allocation.overview_text,
             recent_learnings=allocation.learnings_text,
             custom_rules=allocation.rules_text,
-            table_hints=table_hints,
         )
+
+        if route_result and route_result.approach:
+            system_prompt += (
+                f"\n\nROUTER ANALYSIS (complexity={route_result.complexity}):\n"
+                f"{route_result.approach}"
+            )
 
         await self._emit_plan_summary(
             context.tracker,
@@ -813,7 +672,6 @@ class OrchestratorAgent(BaseAgent):
             table_map=allocation.schema_text,
             custom_rules=allocation.rules_text,
             recent_learnings=allocation.learnings_text,
-            table_hints=table_hints,
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -863,23 +721,32 @@ class OrchestratorAgent(BaseAgent):
         used_provider = ""
         used_model = ""
         query_db_count = 0
-        query_db_cap_injected = False
 
         loop_budget = min(settings.max_context_tokens, context_window)
-        wrap_up_injected = False
+        history_budget = allocation.chat_history_tokens or None
+        synthesis_phase = False
         step_limit_hit = False
         wall_clock_timeout_hit = False
         wall_clock_start = time.monotonic()
         wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
+        is_continuation = bool(context.extra.get("_continuation_summary"))
+        if is_continuation:
+            wall_clock_limit = int(wall_clock_limit * 1.5)
+
         max_iter = (
-            max_steps_override
-            or context.max_orchestrator_steps
+            context.max_orchestrator_steps
             or settings.max_orchestrator_iterations
         )
+        if is_continuation:
+            max_iter = int(max_iter * 1.5)
+
+        emergency_pct = settings.agent_emergency_synthesis_pct
         iteration = 0
         for iteration in range(max_iter):
-            messages, did_trim = trim_loop_messages(messages, loop_budget)
+            messages, did_trim = trim_loop_messages(
+                messages, loop_budget, history_budget_tokens=history_budget
+            )
             if did_trim:
                 await self._tracker.emit(
                     wf_id,
@@ -889,106 +756,72 @@ class OrchestratorAgent(BaseAgent):
                 )
 
             elapsed_wall = time.monotonic() - wall_clock_start
-            if not wrap_up_injected and elapsed_wall > wall_clock_limit:
+
+            step_pct = (iteration + 1) / max_iter
+            time_pct = elapsed_wall / wall_clock_limit if wall_clock_limit else 1.0
+            budget_pct = max(step_pct, time_pct)
+
+            if not synthesis_phase and (
+                budget_pct >= emergency_pct
+                or should_wrap_up(messages, loop_budget)
+            ):
+                synthesis_phase = True
+                reason = (
+                    "emergency budget limit" if budget_pct >= emergency_pct else "context budget"
+                )
                 messages.append(
                     Message(
                         role="system",
                         content=(
-                            "CRITICAL: TIME LIMIT REACHED. You MUST compose your "
-                            "final answer NOW. Any further tool calls will be "
-                            "REJECTED. Use only the data you already have."
+                            "EMERGENCY: You have used most of your analysis budget "
+                            f"({reason}, {budget_pct:.0%} used). You MUST compose "
+                            "your complete final answer NOW using the data you have "
+                            "gathered so far. Do NOT make any more tool calls."
                         ),
                     )
                 )
-                wrap_up_injected = True
-                logger.warning(
-                    "Wall-clock timeout (%.1fs > %ds, wf=%s), forcing wrap-up",
+                logger.info(
+                    "Emergency synthesis (%s, step %d/%d, %.1fs/%.0fs, wf=%s)",
+                    reason,
+                    iteration + 1,
+                    max_iter,
                     elapsed_wall,
                     wall_clock_limit,
                     wf_id,
                 )
-
-            if not wrap_up_injected and should_wrap_up(messages, loop_budget):
+            elif not synthesis_phase and iteration > 0:
+                budget_status = (
+                    f"[Budget: step {iteration + 1}/{max_iter}, "
+                    f"time {int(elapsed_wall)}s/{int(wall_clock_limit)}s, "
+                    f"queries: {query_db_count}]"
+                )
                 messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            "IMPORTANT: You are running low on context space. "
-                            "Do NOT make any more tool calls. Compose your "
-                            "final answer now using the data you have "
-                            "gathered so far."
-                        ),
-                    )
-                )
-                wrap_up_injected = True
-                logger.info(
-                    "Approaching context limit (wf=%s), finishing with available data",
-                    wf_id,
-                )
-
-            remaining_steps = max_iter - iteration - 1
-            if not wrap_up_injected and remaining_steps <= settings.orchestrator_wrap_up_steps:
-                messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            f"CRITICAL: You have {remaining_steps} analysis step(s) "
-                            "remaining. You MUST compose your final answer NOW using "
-                            "the data you have gathered so far. Do NOT make any more "
-                            "tool calls unless absolutely essential."
-                        ),
-                    )
-                )
-                wrap_up_injected = True
-                logger.info(
-                    "Approaching step limit (%d/%d, wf=%s), finishing with available data",
-                    iteration + 1,
-                    max_iter,
-                    wf_id,
-                )
-
-            if query_db_count >= 2 and not query_db_cap_injected:
-                messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            f"CRITICAL: You have already executed {query_db_count} "
-                            "database queries. Do NOT call query_database again. "
-                            "Compose your FINAL ANSWER now using all the data "
-                            "you have collected so far."
-                        ),
-                    )
-                )
-                tools = [t for t in tools if t.name != "query_database"]
-                query_db_cap_injected = True
-                logger.info(
-                    "query_database cap reached (%d calls, wf=%s), "
-                    "tool stripped from further iterations",
-                    query_db_count,
-                    wf_id,
+                    Message(role="system", content=budget_status)
                 )
 
             pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
             if pct > 50:
                 logger.debug("Context usage: ~%d%% of model limit (wf=%s)", pct, wf_id)
 
+            phase_label = "synthesis" if synthesis_phase else f"step {iteration + 1}/{max_iter}"
             await self._tracker.emit(
                 wf_id,
                 "thinking",
                 "in_progress",
-                f"Analyzing request (step {iteration + 1}/{max_iter})…",
+                f"Analyzing request ({phase_label})…",
             )
+            effective_tools = None if synthesis_phase else (tools if tools else None)
             try:
                 _sd: dict[str, Any] = {}
                 async with self._tracker.step(
                     wf_id,
                     "orchestrator:llm_call",
-                    f"Orchestrator LLM ({iteration + 1}/{max_iter})",
+                    f"Orchestrator LLM ({phase_label})",
                     step_data=_sd,
                 ):
                     llm_resp = await self._llm_call_with_retry(
                         messages=messages,
-                        tools=tools if tools else None,
+                        tools=effective_tools,
                         preferred_provider=context.preferred_provider,
                         model=context.model,
                         wf_id=wf_id,
@@ -1001,7 +834,9 @@ class OrchestratorAgent(BaseAgent):
                         wf_id,
                     )
                     aggressive = int(loop_budget * 0.6)
-                    messages, _ = trim_loop_messages(messages, aggressive)
+                    messages, _ = trim_loop_messages(
+                        messages, aggressive, history_budget_tokens=history_budget
+                    )
                     try:
                         _sd_r: dict[str, Any] = {}
                         async with self._tracker.step(
@@ -1012,7 +847,7 @@ class OrchestratorAgent(BaseAgent):
                         ):
                             llm_resp = await self._llm_call_with_retry(
                                 messages=messages,
-                                tools=tools if tools else None,
+                                tools=effective_tools,
                                 preferred_provider=context.preferred_provider,
                                 model=context.model,
                                 wf_id=wf_id,
@@ -1096,10 +931,12 @@ class OrchestratorAgent(BaseAgent):
             )
 
             active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(
-                llm_resp.tool_calls, context.chat_history
+                llm_resp.tool_calls
             )
 
             has_process_data = any(tc.name == "process_data" for tc in active_calls)
+
+            _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
 
             if len(active_calls) > 1 and not has_process_data:
 
@@ -1107,7 +944,10 @@ class OrchestratorAgent(BaseAgent):
                     _tc: ToolCall,
                 ) -> tuple[str, Any]:
                     async with self._parallel_tool_sem:
-                        return await self._dispatcher.dispatch(_tc, context, wf_id, total_usage)
+                        return await self._dispatcher.dispatch(
+                            _tc, context, wf_id, total_usage,
+                            remaining_wall_seconds=_dispatch_wall,
+                        )
 
                 gather_results = await asyncio.gather(
                     *(_throttled_meta_tool(tc) for tc in active_calls),
@@ -1119,19 +959,47 @@ class OrchestratorAgent(BaseAgent):
                     if isinstance(res, _ClarificationRequestError):
                         raise res
                     if isinstance(res, Exception):
-                        logger.warning(
-                            "Parallel tool call %s failed: %s",
-                            active_calls[i].name,
-                            res,
+                        from app.agents.errors import (
+                            AgentError,
+                            AgentFatalError,
+                            AgentRetryableError,
                         )
-                        executed_pairs[tc_id] = (f"Error: {res}", None)
+
+                        if isinstance(res, LLMError):
+                            err_msg = res.user_message
+                        elif isinstance(res, (AgentRetryableError, AgentFatalError, AgentError)):
+                            err_msg = str(res) or type(res).__name__
+                        else:
+                            err_msg = f"{type(res).__name__}: {res}"
+
+                        logger.warning(
+                            "Parallel tool call %s failed (%s): %s",
+                            active_calls[i].name,
+                            type(res).__name__,
+                            res,
+                            exc_info=res,
+                        )
+                        await self._tracker.emit(
+                            wf_id,
+                            "tool_call:error",
+                            "error",
+                            f"{active_calls[i].name} failed: {err_msg}",
+                            tool=active_calls[i].name,
+                            error=err_msg,
+                            error_type=type(res).__name__,
+                        )
+                        executed_pairs[tc_id] = (
+                            f"Tool '{active_calls[i].name}' failed: {err_msg}",
+                            None,
+                        )
                     else:
                         executed_pairs[tc_id] = res  # type: ignore[assignment]
             else:
                 executed_pairs = {}
                 for single_tc in active_calls:
                     executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
-                        single_tc, context, wf_id, total_usage
+                        single_tc, context, wf_id, total_usage,
+                        remaining_wall_seconds=_dispatch_wall,
                     )
 
             tool_pairs: list[tuple[str, Any]] = []
@@ -1154,7 +1022,11 @@ class OrchestratorAgent(BaseAgent):
                     query_db_count += 1
                 if isinstance(sub_result, SQLAgentResult):
                     last_sql_result = sub_result
-                    self._wf_sql_results[wf_id] = sub_result
+                    bucket = self._wf_sql_results.setdefault(wf_id, [])
+                    if tc.name == "process_data" and bucket:
+                        bucket[-1] = sub_result
+                    else:
+                        bucket.append(sub_result)
                     if tc.name == "process_data" and all_sql_results:
                         all_sql_results[-1] = sub_result
                     else:
@@ -1181,7 +1053,8 @@ class OrchestratorAgent(BaseAgent):
             )
             if settings.orchestrator_final_synthesis:
                 synthesis_messages = ResponseBuilder.build_synthesis_messages(
-                    messages, last_sql_result, knowledge_sources, loop_budget
+                    messages, last_sql_result, knowledge_sources, loop_budget,
+                    all_sql_results=all_sql_results,
                 )
                 try:
                     _sd_s: dict[str, Any] = {}
@@ -1222,7 +1095,25 @@ class OrchestratorAgent(BaseAgent):
             step_limit_hit = True
 
         if step_limit_hit or wall_clock_timeout_hit:
-            response_type = "step_limit_reached"
+            has_meaningful_data = (
+                last_sql_result is not None
+                and last_sql_result.results is not None
+                and last_sql_result.results.rows
+            )
+            answer_addresses_question = await self._validate_partial_answer(
+                final_text,
+                question=question,
+                sql_results=all_sql_results,
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+                wf_id=wf_id,
+            )
+            if has_meaningful_data and answer_addresses_question:
+                response_type = ResponseBuilder.determine_response_type(
+                    last_sql_result, knowledge_sources, has_mcp_result
+                )
+            else:
+                response_type = "step_limit_reached"
         else:
             response_type = ResponseBuilder.determine_response_type(
                 last_sql_result, knowledge_sources, has_mcp_result
@@ -1247,7 +1138,11 @@ class OrchestratorAgent(BaseAgent):
         if viable_sql and response_type in ("sql_result", "step_limit_reached"):
             viz_ctx = replace(
                 context,
-                chat_history=context.chat_history[-4:] if context.chat_history else [],
+                chat_history=(
+                    context.chat_history[-settings.history_tail_messages :]
+                    if context.chat_history
+                    else []
+                ),
             )
             n_viz = len(viable_sql)
             label = f"Choosing visualization{'s' if n_viz > 1 else ''}…"
@@ -1336,6 +1231,22 @@ class OrchestratorAgent(BaseAgent):
             response_type,
             error_types or "none",
         )
+        try:
+            from app.core.metrics import RequestMetrics, get_metrics_collector
+
+            get_metrics_collector().record_request(
+                RequestMetrics(
+                    route="unified",
+                    complexity=str(context.extra.get("complexity") or "unknown"),
+                    response_type=response_type,
+                    sql_calls=len(all_sql_results),
+                    iterations=iteration + 1,
+                    wall_clock_seconds=total_wall_clock,
+                    error=bool(error_types),
+                )
+            )
+        except Exception:
+            logger.debug("metrics collector failed (non-critical)", exc_info=True)
 
         followups: list[str] = []
         if (
@@ -1425,8 +1336,6 @@ class OrchestratorAgent(BaseAgent):
     # Multi-stage pipeline
     # ------------------------------------------------------------------
 
-    _MAX_REPLANS = 2
-
     async def _run_complex_pipeline(
         self,
         context: AgentContext,
@@ -1450,6 +1359,13 @@ class OrchestratorAgent(BaseAgent):
         adaptive = AdaptivePlanner(self._llm)
 
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
+        active_insights = await self._ctx_loader.load_relevant_insights(context.project_id)
+        if active_insights:
+            recent_learnings = (
+                (recent_learnings + "\n\n" + active_insights)
+                if recent_learnings
+                else active_insights
+            )
 
         _sd_plan: dict[str, Any] = {"input_preview": context.user_question[:_PREVIEW_MAX]}
         async with self._tracker.step(
@@ -1508,9 +1424,9 @@ class OrchestratorAgent(BaseAgent):
 
         try:
             pipeline_run = await self._create_pipeline_run(context, plan)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to create pipeline run record")
-            raise AgentFatalError("Pipeline initialisation failed") from None
+            raise AgentFatalError("Pipeline initialisation failed") from exc
 
         data_gate = DataGate()
         executor = StageExecutor(
@@ -1525,7 +1441,11 @@ class OrchestratorAgent(BaseAgent):
 
         pipeline_ctx = replace(
             context,
-            chat_history=context.chat_history[-4:] if context.chat_history else [],
+            chat_history=(
+                context.chat_history[-settings.history_tail_messages :]
+                if context.chat_history
+                else []
+            ),
         )
         replan_history: list[dict[str, Any]] = []
 
@@ -1534,10 +1454,11 @@ class OrchestratorAgent(BaseAgent):
             exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
 
             replan_count = 0
+            max_replans = settings.max_pipeline_replans
             while (
                 exec_result.status == "stage_failed"
                 and exec_result.replan_eligible
-                and replan_count < self._MAX_REPLANS
+                and replan_count < max_replans
             ):
                 failed = exec_result.failed_stage
                 if not failed:
@@ -1569,7 +1490,7 @@ class OrchestratorAgent(BaseAgent):
                     "thinking",
                     "in_progress",
                     f"Stage '{failed.stage_id}' failed after retries — replanning "
-                    f"(attempt {replan_count}/{self._MAX_REPLANS})…",
+                    f"(attempt {replan_count}/{max_replans})…",
                 )
 
                 completed = exec_result.stage_ctx.results
@@ -1582,6 +1503,7 @@ class OrchestratorAgent(BaseAgent):
                     db_type=db_type,
                     preferred_provider=context.preferred_provider,
                     model=context.model,
+                    replan_history=replan_history,
                 )
                 if not new_plan:
                     logger.warning("Replanning returned no plan — giving up")
@@ -1636,6 +1558,30 @@ class OrchestratorAgent(BaseAgent):
             )
 
         await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
+        try:
+            from app.core.metrics import RequestMetrics, get_metrics_collector
+
+            stage_ctx = exec_result.stage_ctx
+            error_count = sum(
+                1 for sr in stage_ctx.results.values() if sr.status == "error"
+            )
+            get_metrics_collector().record_request(
+                RequestMetrics(
+                    route="complex_pipeline",
+                    complexity=str(context.extra.get("complexity") or "complex"),
+                    response_type=(
+                        "pipeline_failed" if error_count else "pipeline_success"
+                    ),
+                    replan_count=len(replan_history),
+                    sql_calls=sum(
+                        1 for s in stage_ctx.plan.stages if s.tool == "query_database"
+                    ),
+                    iterations=len(stage_ctx.plan.stages),
+                    error=bool(error_count),
+                )
+            )
+        except Exception:
+            logger.debug("metrics collector failed (non-critical)", exc_info=True)
         return ResponseBuilder.build_pipeline_response(
             exec_result,
             wf_id,
@@ -1816,7 +1762,11 @@ class OrchestratorAgent(BaseAgent):
             )
             resume_ctx = replace(
                 context,
-                chat_history=context.chat_history[-4:] if context.chat_history else [],
+                chat_history=(
+                    context.chat_history[-settings.history_tail_messages :]
+                    if context.chat_history
+                    else []
+                ),
             )
             exec_result = await executor.execute(
                 plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
@@ -1871,9 +1821,15 @@ class OrchestratorAgent(BaseAgent):
         from app.models.pipeline_run import PipelineRun
 
         status = "executing"
-        if all(sr.status in ("success", "skipped") for sr in stage_ctx.results.values()) and len(
-            stage_ctx.results
-        ) == len(stage_ctx.plan.stages):
+        results = list(stage_ctx.results.values())
+        any_failed = any(sr.status == "error" for sr in results)
+        all_terminal_success = (
+            all(sr.status in ("success", "skipped", "degraded") for sr in results)
+            and len(results) == len(stage_ctx.plan.stages)
+        )
+        if any_failed:
+            status = "failed"
+        elif all_terminal_success:
             status = "completed"
 
         try:
@@ -1982,34 +1938,65 @@ class OrchestratorAgent(BaseAgent):
                 )
                 await asyncio.sleep(wait)
                 delay *= 2.0
-            except LLMAllProvidersFailedError as exc:
-                last_exc = exc
-                if attempt >= _LLM_CALL_MAX_RETRIES:
-                    break
-                logger.warning(
-                    "All providers failed (attempt %d/%d), retrying whole chain in %.1fs",
-                    attempt,
-                    _LLM_CALL_MAX_RETRIES,
-                    delay,
-                )
-                await self._tracker.emit(
-                    wf_id,
-                    "orchestrator:llm_retry",
-                    "retrying",
-                    "All providers failed, retrying…",
-                )
-                await self._tracker.emit(
-                    wf_id,
-                    "thinking",
-                    "in_progress",
-                    "All providers failed, retrying…",
-                )
-                await asyncio.sleep(delay)
-                delay *= 2.0
+            except LLMAllProvidersFailedError:
+                # Router has already exhausted every provider — bubble up.
+                raise
 
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("LLM call failed without exception")
+
+    async def _validate_partial_answer(
+        self,
+        final_text: str,
+        *,
+        question: str,
+        sql_results: list[SQLAgentResult],
+        preferred_provider: str | None,
+        model: str | None,
+        wf_id: str,
+    ) -> bool:
+        """Return ``True`` when the partial answer addresses the question.
+
+        Used after the agent hits ``step_limit_hit`` / ``wall_clock_timeout_hit``
+        to decide whether to surface the answer as ``sql_result`` or as
+        ``step_limit_reached`` (with the "Continue analysis" CTA). Failures
+        default to ``True`` so we never block a usable answer behind a flaky
+        validator call.
+        """
+        if not final_text or not final_text.strip():
+            return False
+        if not settings.answer_validator_enabled:
+            return len(final_text.strip()) > 80
+        try:
+            from app.agents.answer_validator import AnswerValidator
+
+            validator = AnswerValidator(self._llm)
+            sql_summaries = [
+                (sr.summary or sr.query or "")[:200]
+                for sr in sql_results
+                if sr is not None
+            ]
+            verdict = await validator.validate(
+                question=question,
+                answer=final_text,
+                sql_summaries=sql_summaries,
+                preferred_provider=preferred_provider,
+                model=model,
+            )
+            await self._tracker.emit(
+                wf_id,
+                "orchestrator:answer_validator",
+                "completed",
+                f"answer addresses question = {verdict.addresses_question}",
+                addresses_question=verdict.addresses_question,
+                confidence=verdict.confidence,
+                reason=verdict.reason,
+            )
+            return verdict.addresses_question
+        except Exception:
+            logger.debug("Answer validator failed (non-critical)", exc_info=True)
+            return len(final_text.strip()) > 80
 
     async def _stream_tokens(
         self,

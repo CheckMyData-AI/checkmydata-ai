@@ -28,7 +28,7 @@ from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.llm.errors import LLMError
-from app.services.chat_service import ChatService
+from app.services.chat_service import ChatService, SessionBusyError, session_processing_lock
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
@@ -918,6 +918,16 @@ async def ask(
         )
         session_id = chat_session.id
 
+    _session_lock_cm = session_processing_lock(session_id)
+    try:
+        await _session_lock_cm.__aenter__()
+    except SessionBusyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="This chat session is currently processing another request. "
+            "Please wait for it to complete.",
+        ) from exc
+
     user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
     history = await _chat_svc.get_history_as_messages(db, session_id)
 
@@ -981,6 +991,10 @@ async def ask(
                 )
         except Exception:
             logger.warning("Failed to finalize trace after agent crash", exc_info=True)
+        try:
+            await _session_lock_cm.__aexit__(type(agent_exc), agent_exc, None)
+        except Exception:
+            logger.debug("Session lock release failed", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="An internal error occurred while processing your request.",
@@ -1127,7 +1141,7 @@ async def ask(
         except Exception:
             logger.warning("Failed to finalize request trace", exc_info=True)
 
-    return ChatResponse(
+    response = ChatResponse(
         session_id=session_id,
         answer=result.answer,
         query=result.query or None,
@@ -1147,6 +1161,11 @@ async def ask(
         clarification_data=result.clarification_data,
         sql_results=http_sql_results_payload,
     )
+    try:
+        await _session_lock_cm.__aexit__(None, None, None)
+    except Exception:
+        logger.debug("Session lock release failed", exc_info=True)
+    return response
 
 
 @router.post("/ask/stream")
@@ -1186,6 +1205,16 @@ async def ask_stream(
             connection_id=body.connection_id,
         )
         session_id = chat_session.id
+
+    _stream_lock_cm = session_processing_lock(session_id)
+    try:
+        await _stream_lock_cm.__aenter__()
+    except SessionBusyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="This chat session is currently processing another request. "
+            "Please wait for it to complete.",
+        ) from exc
 
     user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
     user_message_id = user_msg.id
@@ -1451,6 +1480,10 @@ async def ask_stream(
             async with _stream_session_factory() as _fin_db:
                 await _chat_svc.update_session_status(_fin_db, bg_session_id, "idle")
             await agent_limiter.release(bg_user_id)
+            try:
+                await _stream_lock_cm.__aexit__(None, None, None)
+            except Exception:
+                logger.debug("Stream session lock release failed", exc_info=True)
 
     async def _generate():
         result_holder: list = []

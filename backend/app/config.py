@@ -1,8 +1,46 @@
 import base64
 import logging
+from dataclasses import dataclass
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True)
+class AgentSettingsView:
+    """Immutable, typed grouping of agent-related thresholds.
+
+    Provides a single named-tuple-like surface so consumers can pass
+    ``settings.agent`` around instead of importing the full ``Settings``
+    object. The fields are populated lazily via :pyattr:`Settings.agent`.
+    """
+
+    max_orchestrator_iterations: int
+    agent_wall_clock_timeout_seconds: int
+    max_parallel_tool_calls: int
+    max_sub_agent_retries: int
+    max_sql_iterations: int
+    max_mcp_iterations: int
+    max_knowledge_iterations: int
+    max_investigation_iterations: int
+    agent_emergency_synthesis_pct: float
+    history_tail_messages: int
+    history_db_load_limit: int
+    synthesis_data_token_budget_pct: float
+    min_synthesis_length: int
+    slow_query_warning_ms: int
+    pipeline_run_ttl_days: int
+    max_stage_retries: int
+    max_pipeline_replans: int
+    pipeline_max_parallel_stages: int
+    llm_result_preview_rows: int
+    answer_validator_enabled: bool
+    learning_weight_confidence: float
+    learning_weight_confirmed: float
+    learning_weight_applied: float
+    insight_ttl_days_low: int
+    insight_ttl_days_warning: int
+    insight_ttl_days_critical: int
 
 _config_logger = logging.getLogger(__name__)
 
@@ -86,9 +124,7 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 12
-    max_simple_query_steps: int = 4
-    orchestrator_wrap_up_steps: int = 1
+    max_orchestrator_iterations: int = 20
     orchestrator_final_synthesis: bool = True
     agent_wall_clock_timeout_seconds: int = 180
     max_parallel_tool_calls: int = 2
@@ -102,9 +138,56 @@ class Settings(BaseSettings):
     max_pie_categories: int = 20
     viz_timeout_seconds: int = 15
 
+    # Emergency synthesis threshold (fraction of budget used before forced synthesis)
+    agent_emergency_synthesis_pct: float = 0.90
+    router_model: str = ""  # optional fast model for the router LLM call
+
+    # History tail / load limits (centralized, used across orchestrator + sub-agents)
+    history_tail_messages: int = 4
+    history_db_load_limit: int = 20
+
+    # Synthesis budget (fraction of context window used to pack data into final synthesis)
+    synthesis_data_token_budget_pct: float = 0.4
+    # Minimum length the synthesis answer must reach before we treat it as a real answer
+    # (rather than falling back to the static "step_limit_reached" message). 0 disables.
+    min_synthesis_length: int = 0
+
+    # Slow query warning threshold (post-validator)
+    slow_query_warning_ms: int = 30_000
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
+    max_pipeline_replans: int = 2
+    # Maximum stages run concurrently in one DAG level. Set to 1 to disable
+    # parallel stage execution.
+    pipeline_max_parallel_stages: int = 3
+
+    # SQL agent
+    llm_result_preview_rows: int = 20
+
+    # Answer quality validator (LLM-based, optional). Falls back to length
+    # heuristic when disabled or when the validator call fails.
+    answer_validator_enabled: bool = True
+
+    # Knowledge / learnings
+    learning_weight_confidence: float = 0.4
+    learning_weight_confirmed: float = 0.4
+    learning_weight_applied: float = 0.2
+
+    # Learning analyzer mode (D10):
+    #   "heuristic"  — only the legacy `_detect_*` rules
+    #   "hybrid"     — run heuristics first; fall back to LLMAnalyzer when empty
+    #   "llm_first"  — always run LLMAnalyzer first; heuristics fill any gaps
+    learning_analyzer_mode: str = "hybrid"
+
+    # Insight memory TTL (days). 0 = never expire.
+    insight_ttl_days_low: int = 7
+    insight_ttl_days_warning: int = 30
+    insight_ttl_days_critical: int = 0  # never expire
+
+    # Subject blocklist (extends built-in list)
+    learning_subject_blocklist_extra: list[str] = []
 
     # Streaming settings
     stream_timeout_seconds: int = 360
@@ -142,6 +225,38 @@ class Settings(BaseSettings):
     health_degraded_latency_ms: int = 3000
     ssh_connect_timeout: int = 30
     ssh_command_timeout: int = 60
+
+    @property
+    def agent(self) -> AgentSettingsView:
+        """Typed view over agent-related thresholds (X1)."""
+        return AgentSettingsView(
+            max_orchestrator_iterations=self.max_orchestrator_iterations,
+            agent_wall_clock_timeout_seconds=self.agent_wall_clock_timeout_seconds,
+            max_parallel_tool_calls=self.max_parallel_tool_calls,
+            max_sub_agent_retries=self.max_sub_agent_retries,
+            max_sql_iterations=self.max_sql_iterations,
+            max_mcp_iterations=self.max_mcp_iterations,
+            max_knowledge_iterations=self.max_knowledge_iterations,
+            max_investigation_iterations=self.max_investigation_iterations,
+            agent_emergency_synthesis_pct=self.agent_emergency_synthesis_pct,
+            history_tail_messages=self.history_tail_messages,
+            history_db_load_limit=self.history_db_load_limit,
+            synthesis_data_token_budget_pct=self.synthesis_data_token_budget_pct,
+            min_synthesis_length=self.min_synthesis_length,
+            slow_query_warning_ms=self.slow_query_warning_ms,
+            pipeline_run_ttl_days=self.pipeline_run_ttl_days,
+            max_stage_retries=self.max_stage_retries,
+            max_pipeline_replans=self.max_pipeline_replans,
+            pipeline_max_parallel_stages=self.pipeline_max_parallel_stages,
+            llm_result_preview_rows=self.llm_result_preview_rows,
+            answer_validator_enabled=self.answer_validator_enabled,
+            learning_weight_confidence=self.learning_weight_confidence,
+            learning_weight_confirmed=self.learning_weight_confirmed,
+            learning_weight_applied=self.learning_weight_applied,
+            insight_ttl_days_low=self.insight_ttl_days_low,
+            insight_ttl_days_warning=self.insight_ttl_days_warning,
+            insight_ttl_days_critical=self.insight_ttl_days_critical,
+        )
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":

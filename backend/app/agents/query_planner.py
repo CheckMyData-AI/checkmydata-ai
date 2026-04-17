@@ -1,108 +1,21 @@
-"""QueryPlanner — decomposes complex queries into an ExecutionPlan.
+"""Plan validation helpers and tool schema (formerly ``QueryPlanner``).
 
-Two responsibilities:
-1. **Complexity detection** — fast heuristic, no LLM call.
-2. **Planning** — a single LLM call that produces an ``ExecutionPlan``.
+The legacy :class:`QueryPlanner` class has been removed; ``AdaptivePlanner`` is the
+sole entry point for execution-plan generation. This module retains:
+
+- ``_VALID_TOOLS``: the set of tool names a stage may use.
+- ``_validate_plan_structure``: checks tools, dependencies, and cycles.
+- ``_CREATE_PLAN_TOOL``: the OpenAI-style tool schema used by ``AdaptivePlanner``
+  when asking the LLM to emit a structured plan.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import uuid
 from typing import Any
-
-from app.agents.prompts.planner_prompt import (
-    PLANNER_SYSTEM_PROMPT,
-    build_planner_user_prompt,
-)
-from app.agents.stage_context import ExecutionPlan, PlanStage, StageValidation
-from app.llm.base import Message
-from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
-_COMPLEXITY_KEYWORDS = [
-    "summary table",
-    "pivot",
-    "breakdown",
-    "cross-reference",
-    "compare",
-    "for each",
-    "match",
-    "correlate",
-    " then ",
-    "step 1",
-    "step 2",
-    "first find",
-    "after that",
-]
-
-
-# ------------------------------------------------------------------
-# Complexity detection
-# ------------------------------------------------------------------
-
-
-def detect_complexity(question: str) -> bool:
-    """Fast heuristic check — no LLM call."""
-    q_lower = question.lower()
-    indicators = [
-        len(question) > 300,
-        any(kw in q_lower for kw in _COMPLEXITY_KEYWORDS),
-        question.count("?") > 1,
-        question.count(",") > 3 and any(v in q_lower for v in ["and", "also", "plus"]),
-    ]
-    return sum(indicators) >= 2
-
-
-async def detect_complexity_adaptive(
-    question: str,
-    llm_router: LLMRouter,
-    preferred_provider: str | None = None,
-    model: str | None = None,
-) -> bool:
-    """Heuristic first, LLM fallback for borderline scores."""
-    q_lower = question.lower()
-    indicators = [
-        len(question) > 300,
-        any(kw in q_lower for kw in _COMPLEXITY_KEYWORDS),
-        question.count("?") > 1,
-        question.count(",") > 3 and any(v in q_lower for v in ["and", "also", "plus"]),
-    ]
-    score = sum(indicators)
-    if score >= 2:
-        return True
-    if score == 0:
-        return False
-    try:
-        resp = await llm_router.complete(
-            messages=[
-                Message(
-                    role="system",
-                    content=(
-                        "Determine if the user's question requires multiple sequential "
-                        "database queries, cross-referencing, or multi-step analysis. "
-                        'Reply ONLY with JSON: {"complex": true/false, "reason": "..."}'
-                    ),
-                ),
-                Message(role="user", content=question[:500]),
-            ],
-            max_tokens=60,
-            temperature=0.0,
-            preferred_provider=preferred_provider,
-            model=model,
-        )
-        result = json.loads(resp.content.strip())
-        return bool(result.get("complex", False))
-    except json.JSONDecodeError:
-        logger.warning(
-            "Complexity classifier returned non-JSON: %s", resp.content[:120] if resp else "N/A"
-        )
-        return False
-    except Exception:
-        logger.debug("Adaptive complexity classifier failed, defaulting to simple", exc_info=True)
-        return False
 
 
 # ------------------------------------------------------------------
@@ -225,121 +138,3 @@ _CREATE_PLAN_TOOL = {
 }
 
 
-# ------------------------------------------------------------------
-# QueryPlanner class
-# ------------------------------------------------------------------
-
-
-class QueryPlanner:
-    """Calls the LLM once to produce an ``ExecutionPlan``."""
-
-    def __init__(self, llm_router: LLMRouter) -> None:
-        self._llm = llm_router
-
-    async def plan(
-        self,
-        question: str,
-        *,
-        table_map: str = "",
-        db_type: str | None = None,
-        preferred_provider: str | None = None,
-        model: str | None = None,
-        project_overview: str | None = None,
-        current_datetime: str | None = None,
-    ) -> ExecutionPlan | None:
-        """Return an ``ExecutionPlan`` or ``None`` on unrecoverable failure."""
-        for attempt in range(2):
-            raw = await self._call_llm(
-                question,
-                table_map=table_map,
-                db_type=db_type,
-                preferred_provider=preferred_provider,
-                model=model,
-                project_overview=project_overview,
-                current_datetime=current_datetime,
-            )
-            if raw is None:
-                continue
-
-            stages_raw = raw.get("stages", [])
-            errors = _validate_plan_structure(stages_raw)
-            if errors:
-                logger.warning("Plan validation failed (attempt %d): %s", attempt + 1, errors)
-                continue
-
-            stages = [
-                PlanStage(
-                    stage_id=s["stage_id"],
-                    description=s["description"],
-                    tool=s["tool"],
-                    depends_on=s.get("depends_on", []),
-                    input_context=s.get("input_context", ""),
-                    validation=StageValidation.from_dict(s.get("validation", {})),
-                    checkpoint=s.get("checkpoint", False),
-                )
-                for s in stages_raw
-            ]
-
-            return ExecutionPlan(
-                plan_id=str(uuid.uuid4()),
-                question=question,
-                stages=stages,
-                complexity_reason=raw.get("complexity_reason", ""),
-            )
-
-        logger.error("QueryPlanner failed after 2 attempts — falling back to flat loop")
-        return None
-
-    async def _call_llm(
-        self,
-        question: str,
-        *,
-        table_map: str,
-        db_type: str | None,
-        preferred_provider: str | None,
-        model: str | None,
-        project_overview: str | None = None,
-        current_datetime: str | None = None,
-    ) -> dict[str, Any] | None:
-        messages = [
-            Message(role="system", content=PLANNER_SYSTEM_PROMPT),
-            Message(
-                role="user",
-                content=build_planner_user_prompt(
-                    question,
-                    table_map,
-                    db_type,
-                    project_overview=project_overview,
-                    current_datetime=current_datetime,
-                ),
-            ),
-        ]
-        try:
-            resp = await self._llm.complete(
-                messages=messages,
-                tools=[_CREATE_PLAN_TOOL],  # type: ignore[list-item]
-                preferred_provider=preferred_provider,
-                model=model,
-            )
-        except Exception:
-            logger.exception("Planner LLM call failed")
-            return None
-
-        if not resp.tool_calls:
-            logger.warning("Planner did not call create_execution_plan tool")
-            return None
-
-        tc = resp.tool_calls[0]
-        if tc.name != "create_execution_plan":
-            logger.warning("Planner called unexpected tool: %s", tc.name)
-            return None
-
-        args = tc.arguments
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                logger.warning("Planner returned invalid JSON arguments")
-                return None
-
-        return args

@@ -161,6 +161,7 @@ class TestExecute:
 
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 0
+            mock_settings.pipeline_max_parallel_stages = 1
             result = await executor.execute(plan, context)
 
         assert result.status == "stage_failed"
@@ -207,6 +208,7 @@ class TestExecute:
 
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 1
+            mock_settings.pipeline_max_parallel_stages = 1
             result = await executor.execute(plan, context)
 
         assert result.status == "completed"
@@ -495,8 +497,10 @@ class TestHistoryScoping:
         stage = _sql_stage("s1")
         await executor._run_sql_stage("test q", stage, context_with_history)
 
+        from app.config import settings as _s
+
         call_ctx = mock_sql_agent.run.call_args[0][0]
-        assert len(call_ctx.chat_history) == StageExecutor._SUB_AGENT_HISTORY_TAIL
+        assert len(call_ctx.chat_history) == _s.history_tail_messages
         assert len(context_with_history.chat_history) == 10
 
     @pytest.mark.asyncio
@@ -511,8 +515,10 @@ class TestHistoryScoping:
         stage = _kb_stage("kb1")
         await executor._run_knowledge_stage("test q", stage, context_with_history)
 
+        from app.config import settings as _s
+
         call_ctx = mock_knowledge_agent.run.call_args[0][0]
-        assert len(call_ctx.chat_history) == StageExecutor._SUB_AGENT_HISTORY_TAIL
+        assert len(call_ctx.chat_history) == _s.history_tail_messages
 
     @pytest.mark.asyncio
     async def test_sql_stage_handles_empty_history(self, executor, context, mock_sql_agent):

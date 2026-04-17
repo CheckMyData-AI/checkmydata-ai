@@ -23,11 +23,46 @@ from app.config import settings
 from app.connectors.base import QueryResult
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import Message
-from app.llm.errors import RETRYABLE_LLM_ERRORS
+from app.llm.errors import LLMError
+from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
 from app.services.data_processor import get_data_processor
 
 logger = logging.getLogger(__name__)
+
+
+def _stage_error_message(exc: BaseException) -> str:
+    """Convert a sub-agent exception into a user-friendly stage error string.
+
+    Prefers ``LLMError.user_message`` (typed-friendly); falls back to ``str(exc)``
+    truncated to keep stage records compact.
+    """
+    if isinstance(exc, LLMError):
+        return exc.user_message
+    msg = str(exc).strip()
+    if not msg:
+        msg = type(exc).__name__
+    return msg[:500]
+
+
+def _classify_stage_error(exc: BaseException) -> str:
+    """Map an exception into a stage ``error_category``.
+
+    Returns one of ``transient | configuration | data_missing | fatal``.
+    Used by :class:`StageExecutor` to decide whether retry is sensible.
+    """
+    from app.agents.errors import AgentFatalError, AgentRetryableError
+    from app.llm.errors import LLMAllProvidersFailedError, LLMError
+
+    if isinstance(exc, AgentRetryableError):
+        return "transient"
+    if isinstance(exc, AgentFatalError):
+        return "fatal"
+    if isinstance(exc, LLMAllProvidersFailedError):
+        return "configuration"
+    if isinstance(exc, LLMError):
+        return "transient" if getattr(exc, "is_retryable", False) else "configuration"
+    return "transient"
 
 
 class StageExecutor:
@@ -64,12 +99,17 @@ class StageExecutor:
         resume_from: int = 0,
         stage_ctx: StageContext | None = None,
     ) -> _StageExecutorResult:
-        """Run stages from *resume_from* onward.
+        """Run stages topologically — parallel where dependencies allow.
 
-        Returns a ``_StageExecutorResult`` which the orchestrator inspects
-        to decide whether the pipeline is complete, at a checkpoint, or
-        needs user intervention.
+        Stages whose ``depends_on`` is empty (or already satisfied) and that
+        are not yet present in ``stage_ctx.results`` form a "ready batch" and
+        are dispatched concurrently (capped by
+        ``settings.pipeline_max_parallel_stages``). The first failure in a
+        batch short-circuits the pipeline. Checkpoints pause execution after
+        the batch in which they appear completes.
         """
+        import asyncio as _asyncio
+
         wf_id = context.workflow_id
 
         if stage_ctx is None:
@@ -77,75 +117,60 @@ class StageExecutor:
 
         await self._emit_plan(wf_id, plan)
 
-        for idx in range(resume_from, len(plan.stages)):
-            stage = plan.stages[idx]
-            stage_ctx.current_stage_idx = idx
+        n_stages = len(plan.stages)
+        stage_idx_map = {s.stage_id: i for i, s in enumerate(plan.stages)}
+        max_parallel = max(1, settings.pipeline_max_parallel_stages)
 
-            await self._emit_stage_start(wf_id, stage, idx, len(plan.stages))
+        while True:
+            completed_ids = set(stage_ctx.results.keys())
+            if len(completed_ids) >= n_stages:
+                break
 
-            result = await self._execute_with_retries(stage, stage_ctx, context)
+            ready: list[PlanStage] = [
+                s
+                for s in plan.stages
+                if s.stage_id not in completed_ids
+                and stage_idx_map[s.stage_id] >= resume_from
+                and all(dep in completed_ids for dep in s.depends_on)
+            ]
+            if not ready:
+                logger.warning(
+                    "Pipeline stuck: %d stage(s) remain with unmet dependencies",
+                    n_stages - len(completed_ids),
+                )
+                break
 
-            if result.status == "error":
-                await self._emit_stage_result(wf_id, stage, result)
-                return _StageExecutorResult(
-                    status="stage_failed",
-                    stage_ctx=stage_ctx,
-                    failed_stage=stage,
-                    failed_validation=StageValidationOutcome(
-                        passed=False, errors=[result.error or "unknown"]
-                    ),
-                    replan_eligible=stage.replan_on_failure,
+            batch = ready[:max_parallel]
+            for i, s in enumerate(batch):
+                if s.checkpoint:
+                    batch = batch[: i + 1]
+                    break
+
+            for s in batch:
+                stage_ctx.current_stage_idx = stage_idx_map[s.stage_id]
+                await self._emit_stage_start(
+                    wf_id, s, stage_idx_map[s.stage_id], n_stages
                 )
 
-            validation = self._validator.validate(stage, result, stage_ctx)
-            await self._emit_stage_validation(wf_id, stage, validation)
-
-            if not validation.passed:
-                retried = await self._retry_failed_validation(stage, stage_ctx, context, validation)
-                if retried is None:
-                    await self._emit_stage_result(wf_id, stage, result)
-                    return _StageExecutorResult(
-                        status="stage_failed",
-                        stage_ctx=stage_ctx,
-                        failed_stage=stage,
-                        failed_validation=validation,
-                        replan_eligible=stage.replan_on_failure,
+            if len(batch) == 1:
+                outcomes: list[_StageExecutorResult | None] = [
+                    await self._process_one_stage(batch[0], stage_ctx, context)
+                ]
+            else:
+                outcomes = list(
+                    await _asyncio.gather(
+                        *(self._process_one_stage(s, stage_ctx, context) for s in batch),
+                        return_exceptions=False,
                     )
-                result = retried
-
-            gate_outcome = self._data_gate.check(stage, result, stage_ctx)
-            await self._emit_data_gate(wf_id, stage, gate_outcome)
-
-            if not gate_outcome.passed:
-                retried = await self._retry_failed_data_gate(
-                    stage, stage_ctx, context, gate_outcome
                 )
-                if retried is None:
-                    await self._emit_stage_result(wf_id, stage, result)
-                    return _StageExecutorResult(
-                        status="stage_failed",
-                        stage_ctx=stage_ctx,
-                        failed_stage=stage,
-                        failed_validation=StageValidationOutcome(
-                            passed=False, errors=gate_outcome.errors
-                        ),
-                        data_gate_outcome=gate_outcome,
-                        replan_eligible=stage.replan_on_failure,
-                    )
-                result = retried
 
-            stage_ctx.set_result(stage.stage_id, result)
-            await self._emit_stage_complete(wf_id, stage, result, idx)
-            await self._emit_stage_result(wf_id, stage, result)
+            for stage, outcome in zip(batch, outcomes):
+                if outcome is not None and outcome.status == "stage_failed":
+                    return outcome
 
-            if stage.checkpoint:
-                await self._emit_checkpoint(wf_id, stage, result)
-                return _StageExecutorResult(
-                    status="checkpoint",
-                    stage_ctx=stage_ctx,
-                    checkpoint_stage=stage,
-                    checkpoint_result=result,
-                )
+            for stage, outcome in zip(batch, outcomes):
+                if outcome is not None and outcome.status == "checkpoint":
+                    return outcome
 
         last_stage = plan.stages[-1] if plan.stages else None
         if last_stage and last_stage.tool == "synthesize":
@@ -155,8 +180,94 @@ class StageExecutor:
                     status="completed", stage_ctx=stage_ctx, final_answer=last_result.summary
                 )
 
-        final = await self._synthesize(stage_ctx, context)
-        return _StageExecutorResult(status="completed", stage_ctx=stage_ctx, final_answer=final)
+        final_answer, _degraded_reason = await self._synthesize(stage_ctx, context)
+        return _StageExecutorResult(
+            status="completed", stage_ctx=stage_ctx, final_answer=final_answer
+        )
+
+    async def _process_one_stage(
+        self,
+        stage: PlanStage,
+        stage_ctx: StageContext,
+        context: AgentContext,
+    ) -> _StageExecutorResult | None:
+        """Run a single stage end-to-end (dispatch, validate, data-gate, persist).
+
+        Returns ``None`` when the stage succeeded and the pipeline should
+        continue, a ``_StageExecutorResult`` with status ``"stage_failed"`` on
+        failure, or status ``"checkpoint"`` when this stage paused the
+        pipeline.
+        """
+        wf_id = context.workflow_id
+        idx = next(
+            (i for i, s in enumerate(stage_ctx.plan.stages) if s.stage_id == stage.stage_id), 0
+        )
+
+        result = await self._execute_with_retries(stage, stage_ctx, context)
+
+        if result.status == "error":
+            await self._emit_stage_result(wf_id, stage, result)
+            return _StageExecutorResult(
+                status="stage_failed",
+                stage_ctx=stage_ctx,
+                failed_stage=stage,
+                failed_validation=StageValidationOutcome(
+                    passed=False, errors=[result.error or "unknown"]
+                ),
+                replan_eligible=stage.replan_on_failure,
+            )
+
+        validation = self._validator.validate(stage, result, stage_ctx)
+        await self._emit_stage_validation(wf_id, stage, validation)
+
+        if not validation.passed:
+            retried = await self._retry_failed_validation(stage, stage_ctx, context, validation)
+            if retried is None:
+                await self._emit_stage_result(wf_id, stage, result)
+                return _StageExecutorResult(
+                    status="stage_failed",
+                    stage_ctx=stage_ctx,
+                    failed_stage=stage,
+                    failed_validation=validation,
+                    replan_eligible=stage.replan_on_failure,
+                )
+            result = retried
+
+        gate_outcome = self._data_gate.check(stage, result, stage_ctx)
+        await self._emit_data_gate(wf_id, stage, gate_outcome)
+
+        if not gate_outcome.passed:
+            retried = await self._retry_failed_data_gate(
+                stage, stage_ctx, context, gate_outcome
+            )
+            if retried is None:
+                await self._emit_stage_result(wf_id, stage, result)
+                return _StageExecutorResult(
+                    status="stage_failed",
+                    stage_ctx=stage_ctx,
+                    failed_stage=stage,
+                    failed_validation=StageValidationOutcome(
+                        passed=False, errors=gate_outcome.errors
+                    ),
+                    data_gate_outcome=gate_outcome,
+                    replan_eligible=stage.replan_on_failure,
+                )
+            result = retried
+
+        stage_ctx.set_result(stage.stage_id, result)
+        await self._emit_stage_complete(wf_id, stage, result, idx)
+        await self._emit_stage_result(wf_id, stage, result)
+
+        if stage.checkpoint:
+            await self._emit_checkpoint(wf_id, stage, result)
+            return _StageExecutorResult(
+                status="checkpoint",
+                stage_ctx=stage_ctx,
+                checkpoint_stage=stage,
+                checkpoint_result=result,
+            )
+
+        return None
 
     # ------------------------------------------------------------------
     # Stage dispatch
@@ -190,13 +301,15 @@ class StageExecutor:
                         stage_id=stage.stage_id,
                         status="error",
                         error=f"Unknown tool: {stage.tool}",
+                        error_category="fatal",
                     )
         except Exception as exc:
             logger.exception("Stage '%s' raised an exception", stage.stage_id)
             return StageResult(
                 stage_id=stage.stage_id,
                 status="error",
-                error=str(exc),
+                error=_stage_error_message(exc),
+                error_category=_classify_stage_error(exc),
             )
 
     async def _execute_with_retries(
@@ -214,6 +327,13 @@ class StageExecutor:
         for attempt in range(max_retries + 1):
             result = await self._execute_stage(stage, stage_ctx, context)
             if result.status != "error":
+                return result
+            if not result.retryable:
+                logger.info(
+                    "Stage '%s' failed with non-retryable error_category=%s; skipping retry",
+                    stage.stage_id,
+                    result.error_category,
+                )
                 return result
             if attempt < max_retries:
                 await self._tracker.emit(
@@ -331,8 +451,6 @@ class StageExecutor:
     # Stage runners
     # ------------------------------------------------------------------
 
-    _SUB_AGENT_HISTORY_TAIL = 4
-
     async def _run_sql_stage(
         self,
         question: str,
@@ -341,16 +459,26 @@ class StageExecutor:
     ) -> StageResult:
         scoped = replace(
             context,
-            chat_history=context.chat_history[-self._SUB_AGENT_HISTORY_TAIL :]
+            chat_history=context.chat_history[-settings.history_tail_messages :]
             if context.chat_history
             else [],
         )
         try:
             sql_result = await self._sql.run(scoped, question=question)
         except (AgentRetryableError, AgentFatalError, AgentError) as e:
-            return StageResult(stage_id=stage.stage_id, status="error", error=str(e))
-        except RETRYABLE_LLM_ERRORS as e:
-            return StageResult(stage_id=stage.stage_id, status="error", error=e.user_message)
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=_stage_error_message(e),
+                error_category=_classify_stage_error(e),
+            )
+        except LLMError as e:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=e.user_message,
+                error_category=_classify_stage_error(e),
+            )
 
         if sql_result.status == "error":
             return StageResult(
@@ -381,16 +509,26 @@ class StageExecutor:
     ) -> StageResult:
         scoped = replace(
             context,
-            chat_history=context.chat_history[-self._SUB_AGENT_HISTORY_TAIL :]
+            chat_history=context.chat_history[-settings.history_tail_messages :]
             if context.chat_history
             else [],
         )
         try:
             kb_result = await self._knowledge.run(scoped, question=question)
         except (AgentRetryableError, AgentFatalError, AgentError) as e:
-            return StageResult(stage_id=stage.stage_id, status="error", error=str(e))
-        except RETRYABLE_LLM_ERRORS as e:
-            return StageResult(stage_id=stage.stage_id, status="error", error=e.user_message)
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=_stage_error_message(e),
+                error_category=_classify_stage_error(e),
+            )
+        except LLMError as e:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=e.user_message,
+                error_category=_classify_stage_error(e),
+            )
 
         answer = getattr(kb_result, "answer", "")
         return StageResult(
@@ -420,13 +558,22 @@ class StageExecutor:
             Message(role="user", content=question),
         ]
         try:
-            resp = await self._llm.complete(
+            resp = await llm_call_with_retry(
+                self._llm,
                 messages=messages,
+                tools=None,
                 preferred_provider=context.preferred_provider,
                 model=context.model,
+                component="analysis_stage",
             )
         except Exception as exc:
-            return StageResult(stage_id=stage.stage_id, status="error", error=str(exc))
+            logger.warning("Analysis stage '%s' LLM call failed", stage.stage_id, exc_info=True)
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=_stage_error_message(exc),
+                error_category=_classify_stage_error(exc),
+            )
 
         return StageResult(
             stage_id=stage.stage_id,
@@ -447,12 +594,15 @@ class StageExecutor:
                 stage_id=stage.stage_id,
                 status="error",
                 error="MCP source agent not configured for this pipeline",
+                error_category="configuration",
             )
         try:
             result = await self._mcp_source.run(
                 replace(
                     context,
-                    chat_history=context.chat_history[-4:] if context.chat_history else [],
+                    chat_history=context.chat_history[-settings.history_tail_messages :]
+                    if context.chat_history
+                    else [],
                 ),
                 question=question,
             )
@@ -469,7 +619,8 @@ class StageExecutor:
             return StageResult(
                 stage_id=stage.stage_id,
                 status="error",
-                error=str(exc),
+                error=_stage_error_message(exc),
+                error_category=_classify_stage_error(exc),
             )
 
     async def _run_process_data_stage(
@@ -502,6 +653,7 @@ class StageExecutor:
                 stage_id=stage.stage_id,
                 status="error",
                 error="No query result available from previous stages to process.",
+                error_category="data_missing",
             )
 
         params = self._parse_process_data_params(stage, source_qr)
@@ -521,7 +673,8 @@ class StageExecutor:
             return StageResult(
                 stage_id=stage.stage_id,
                 status="error",
-                error=str(exc),
+                error=_stage_error_message(exc),
+                error_category=_classify_stage_error(exc),
             )
 
         await self._tracker.emit(
@@ -540,7 +693,11 @@ class StageExecutor:
 
     @staticmethod
     def _parse_process_data_params(stage: PlanStage, source_qr: QueryResult) -> dict[str, Any]:
-        """Extract operation params from ``input_context`` (JSON) with fallback heuristics."""
+        """Extract operation params from ``input_context`` (JSON).
+
+        The planner must specify the operation explicitly. No keyword-based
+        inference is performed.
+        """
         params: dict[str, Any] = {}
         if stage.input_context:
             try:
@@ -551,33 +708,12 @@ class StageExecutor:
                 pass
 
         if "operation" not in params:
-            desc_lower = (stage.description + " " + (stage.input_context or "")).lower()
-            if "filter" in desc_lower:
-                params["operation"] = "filter_data"
-            elif "phone" in desc_lower or "dial" in desc_lower or "e.164" in desc_lower:
-                params["operation"] = "phone_to_country"
-            elif "aggregat" in desc_lower or "group" in desc_lower:
-                params["operation"] = "aggregate_data"
-            else:
-                logger.warning(
-                    "Could not determine process_data operation from input_context, "
-                    "defaulting to filter_data"
-                )
-                params["operation"] = "filter_data"
-
-        needs_column = params["operation"] in (
-            "ip_to_country",
-            "phone_to_country",
-            "filter_data",
-        )
-        if needs_column and "column" not in params:
-            keyword = "ip" if params["operation"] == "ip_to_country" else "phone"
-            for col in source_qr.columns:
-                if keyword in col.lower():
-                    params["column"] = col
-                    break
-            if "column" not in params and source_qr.columns:
-                params["column"] = source_qr.columns[0]
+            logger.warning(
+                "process_data stage '%s' missing 'operation' in input_context, "
+                "defaulting to filter_data",
+                stage.stage_id,
+            )
+            params["operation"] = "filter_data"
 
         if "aggregations" in params and isinstance(params["aggregations"], dict):
             params["aggregations"] = list(params["aggregations"].items())
@@ -591,19 +727,25 @@ class StageExecutor:
         context: AgentContext,
     ) -> StageResult:
         """Produce the final user-facing answer from all stages."""
-        answer = await self._synthesize(stage_ctx, context)
+        answer, degraded_reason = await self._synthesize(stage_ctx, context)
         return StageResult(
             stage_id=stage.stage_id,
-            status="success",
+            status="degraded" if degraded_reason else "success",
             summary=answer,
+            degraded_reason=degraded_reason,
         )
 
     async def _synthesize(
         self,
         stage_ctx: StageContext,
         context: AgentContext,
-    ) -> str:
-        """Combine all stage results into a final answer."""
+    ) -> tuple[str, str | None]:
+        """Combine all stage results into a final answer.
+
+        Returns ``(answer, degraded_reason)``. ``degraded_reason`` is ``None``
+        on success and a short user-facing string when synthesis had to fall
+        back (LLM call failed) so the caller can flag the response as degraded.
+        """
         parts: list[str] = [
             f"Original question: {stage_ctx.plan.question}\n",
         ]
@@ -641,19 +783,26 @@ class StageExecutor:
             Message(role="user", content="\n".join(parts)),
         ]
         try:
-            resp = await self._llm.complete(
+            resp = await llm_call_with_retry(
+                self._llm,
                 messages=messages,
+                tools=None,
                 preferred_provider=context.preferred_provider,
                 model=context.model,
+                component="synthesis_stage",
             )
-            return resp.content or ""
-        except Exception:
+            return resp.content or "", None
+        except Exception as exc:
             logger.exception("Synthesis LLM call failed")
             lines = []
             for s in stage_ctx.plan.stages:
                 sr = stage_ctx.get_result(s.stage_id)
                 lines.append(f"Stage {s.stage_id}: {sr.summary if sr else 'N/A'}")
-            return "Pipeline completed all stages but synthesis failed. " + "\n".join(lines)
+            fallback = (
+                "Pipeline completed all stages but the final synthesis step failed. "
+                "Showing per-stage results:\n" + "\n".join(lines)
+            )
+            return fallback, _stage_error_message(exc)
 
     # ------------------------------------------------------------------
     # Helpers

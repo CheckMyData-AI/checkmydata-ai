@@ -465,7 +465,8 @@ class TestDecayStaleNotes:
 
         count = await svc.decay_stale_notes(session, days_threshold=60, decay_amount=0.1)
         assert count == 3
-        session.execute.assert_awaited_once()
+        # Two execute calls: decay update + deactivation update.
+        assert session.execute.await_count == 2
 
     @pytest.mark.asyncio
     async def test_decay_zero_when_no_stale(self):

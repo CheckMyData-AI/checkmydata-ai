@@ -149,14 +149,20 @@ _MAX_SAMPLE_ROWS = 10
 @dataclass
 class StageResult:
     stage_id: str
-    status: str = "success"  # success | error | skipped
+    status: str = "success"  # success | error | skipped | degraded
     query: str | None = None
     query_result: QueryResult | None = None
     summary: str = ""
     error: str | None = None
+    error_category: str = "transient"  # transient | configuration | data_missing | fatal
+    degraded_reason: str | None = None  # populated when status == "degraded"
     token_usage: dict[str, int] = field(
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
+
+    @property
+    def retryable(self) -> bool:
+        return self.status == "error" and self.error_category == "transient"
 
     def to_summary_dict(self) -> dict[str, Any]:
         """Compact representation for DB persistence (no full rows)."""

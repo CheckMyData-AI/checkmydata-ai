@@ -24,7 +24,7 @@ from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.validation import AgentResultValidator
 from app.config import settings
 from app.core.workflow_tracker import WorkflowTracker
-from app.llm.base import Message, ToolCall
+from app.llm.base import ToolCall
 from app.llm.errors import RETRYABLE_LLM_ERRORS
 from app.services.data_processor import get_data_processor
 
@@ -56,7 +56,7 @@ class ToolDispatcher:
         mcp_source_agent: MCPSourceAgent,
         validator: AgentResultValidator,
         tracker: WorkflowTracker,
-        wf_sql_results: dict[str, SQLAgentResult],
+        wf_sql_results: dict[str, list[SQLAgentResult]],
         wf_enriched: dict[str, tuple[SQLAgentResult, float]],
     ) -> None:
         self._sql = sql_agent
@@ -77,6 +77,8 @@ class ToolDispatcher:
         context: AgentContext,
         wf_id: str,
         total_usage: dict[str, int],
+        *,
+        remaining_wall_seconds: float | None = None,
     ) -> tuple[str, Any]:
         """Dispatch a meta-tool call to the appropriate sub-agent.
 
@@ -98,7 +100,10 @@ class ToolDispatcher:
         await self._tracker.emit(wf_id, "thinking", "in_progress", desc)
 
         if tc.name == "query_database":
-            sql_text, sql_sub = await self._handle_query_database(tc, context, wf_id, total_usage)
+            sql_text, sql_sub = await self._handle_query_database(
+                tc, context, wf_id, total_usage,
+                remaining_wall_seconds=remaining_wall_seconds,
+            )
             self._emit_tool_result_thinking(wf_id, "SQL Agent", sql_sub)
             return sql_text, sql_sub
         if tc.name == "search_codebase":
@@ -117,7 +122,8 @@ class ToolDispatcher:
             return mcp_text, mcp_sub
         if tc.name == "process_data":
             pd_text = await self._handle_process_data(tc, wf_id)
-            pd_sub = self._wf_sql_results.get(wf_id)
+            bucket = self._wf_sql_results.get(wf_id) or []
+            pd_sub = bucket[-1] if bucket else None
             return pd_text, pd_sub
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
@@ -135,15 +141,17 @@ class ToolDispatcher:
     @staticmethod
     def dedup_tool_calls(
         tool_calls: list[ToolCall],
-        chat_history: list[Message],
     ) -> tuple[list[ToolCall], dict[str, str]]:
-        """Remove duplicate data-retrieval tool calls.
+        """Remove semantically duplicate data-retrieval tool calls.
+
+        Uses normalized word-set comparison to catch paraphrased duplicates,
+        not just exact string matches.
 
         Returns ``(deduped_calls, skipped_map)`` where *skipped_map* maps
         ``tool_call.id`` to a synthetic result string for skipped calls.
         """
         skipped: dict[str, str] = {}
-        seen_questions: dict[str, str] = {}
+        seen: list[tuple[str, set[str], str]] = []
 
         kept: list[ToolCall] = []
         for tc in tool_calls:
@@ -153,18 +161,29 @@ class ToolDispatcher:
 
             args = tc.arguments or {}
             q = (args.get("question") or "").strip()
-            q_norm = q.lower()
-            dedup_key = f"{tc.name}::{q_norm}"
+            q_words = set(q.lower().split())
 
-            if dedup_key in seen_questions:
+            is_dup = False
+            for prev_name, prev_words, _ in seen:
+                if prev_name != tc.name:
+                    continue
+                if not q_words or not prev_words:
+                    continue
+                overlap = len(q_words & prev_words) / max(len(q_words | prev_words), 1)
+                if overlap > 0.8:
+                    is_dup = True
+                    break
+
+            if is_dup:
                 skipped[tc.id] = (
-                    "Duplicate request — this question is identical to another "
-                    "tool call in this batch. Results will come from the first call."
+                    "Duplicate request — this question is semantically equivalent "
+                    "to another tool call in this batch. Results will come from "
+                    "the first call."
                 )
-                logger.info("Dedup: skipped duplicate %s call: %s", tc.name, q[:80])
+                logger.info("Dedup: skipped similar %s call: %s", tc.name, q[:80])
                 continue
 
-            seen_questions[dedup_key] = tc.id
+            seen.append((tc.name, q_words, tc.id))
             kept.append(tc)
 
         if skipped:
@@ -219,12 +238,17 @@ class ToolDispatcher:
         context: AgentContext,
         wf_id: str,
         total_usage: dict[str, int],
+        *,
+        remaining_wall_seconds: float | None = None,
     ) -> tuple[str, SQLAgentResult | None]:
         args = tc.arguments or {}
         sub_question: str = args.get("question", context.user_question)
 
-        _sql_history_tail = 4
-        scoped_history = context.chat_history[-_sql_history_tail:] if context.chat_history else []
+        scoped_history = (
+            context.chat_history[-settings.history_tail_messages :]
+            if context.chat_history
+            else []
+        )
         sql_context = replace(context, chat_history=scoped_history)
 
         for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
@@ -236,7 +260,11 @@ class ToolDispatcher:
                     f"SQL Agent (attempt {attempt + 1})",
                     step_data=_sd_sql,
                 ):
-                    sql_result = await self._sql.run(sql_context, question=sub_question)
+                    sql_result = await self._sql.run(
+                        sql_context,
+                        question=sub_question,
+                        wall_clock_remaining=remaining_wall_seconds,
+                    )
                     preview_parts = []
                     if sql_result.query:
                         preview_parts.append(f"SQL: {sql_result.query[:300]}")
@@ -296,7 +324,8 @@ class ToolDispatcher:
         args = tc.arguments or {}
         operation: str = args.get("operation", "")
 
-        wf_sql = self._wf_sql_results.get(wf_id)
+        bucket = self._wf_sql_results.get(wf_id) or []
+        wf_sql = bucket[-1] if bucket else None
         if wf_sql is None or wf_sql.results is None:
             return (
                 "Error: no query results available to process. "
@@ -319,7 +348,10 @@ class ToolDispatcher:
             return "Error: data processing failed unexpectedly."
 
         updated_sql = replace(wf_sql, results=processed.query_result)
-        self._wf_sql_results[wf_id] = updated_sql
+        if bucket:
+            bucket[-1] = updated_sql
+        else:
+            self._wf_sql_results.setdefault(wf_id, []).append(updated_sql)
         self._wf_enriched[wf_id] = (updated_sql, _time.time())
 
         result_qr = processed.query_result
@@ -402,7 +434,11 @@ class ToolDispatcher:
                 ):
                     kb_ctx = replace(
                         context,
-                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
+                        chat_history=(
+                            context.chat_history[-settings.history_tail_messages :]
+                            if context.chat_history
+                            else []
+                        ),
                     )
                     knowledge_result: KnowledgeResult = await self._knowledge.run(  # type: ignore[assignment]
                         kb_ctx, question=sub_question
@@ -675,7 +711,11 @@ class ToolDispatcher:
                 ):
                     mcp_ctx = replace(
                         context,
-                        chat_history=(context.chat_history[-4:] if context.chat_history else []),
+                        chat_history=(
+                            context.chat_history[-settings.history_tail_messages :]
+                            if context.chat_history
+                            else []
+                        ),
                     )
                     result = await self._mcp_source.run(
                         mcp_ctx,

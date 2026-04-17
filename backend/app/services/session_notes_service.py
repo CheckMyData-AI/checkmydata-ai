@@ -289,14 +289,21 @@ class SessionNotesService:
         session: AsyncSession,
         days_threshold: int = 60,
         decay_amount: float = 0.1,
+        deactivate_below: float = 0.2,
     ) -> int:
-        """Reduce confidence of unverified notes inactive for *days_threshold*+ days."""
+        """Reduce confidence of unverified notes inactive for *days_threshold*+ days.
+
+        When the post-decay confidence falls below ``deactivate_below`` the note
+        is also marked inactive (``is_active = False``) and ``deactivated_at`` is
+        set, so it stops surfacing in agent prompts. Mirrors the deactivation
+        flow used by :class:`AgentLearningService`.
+        """
         from datetime import timedelta
 
         from sqlalchemy import update
 
         cutoff = datetime.now(UTC) - timedelta(days=days_threshold)
-        result = await session.execute(
+        decay_result = await session.execute(
             update(SessionNote)
             .where(
                 SessionNote.is_active.is_(True),
@@ -306,4 +313,15 @@ class SessionNotesService:
             )
             .values(confidence=func.greatest(0.1, SessionNote.confidence - decay_amount))
         )
-        return result.rowcount  # type: ignore[attr-defined]
+        decayed = decay_result.rowcount or 0  # type: ignore[attr-defined]
+
+        await session.execute(
+            update(SessionNote)
+            .where(
+                SessionNote.is_active.is_(True),
+                SessionNote.is_verified.is_(False),
+                SessionNote.confidence < deactivate_below,
+            )
+            .values(is_active=False, deactivated_at=datetime.now(UTC))
+        )
+        return decayed

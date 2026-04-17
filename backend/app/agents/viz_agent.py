@@ -51,21 +51,19 @@ class VizAgent(BaseAgent):
     ) -> VizResult:
         question = question or context.user_question
 
-        rule_based = self._rule_based_pick(results, preferred_viz)
-        if rule_based is not None:
-            return rule_based
+        edge_case = self._edge_case_fallback(results)
+        if edge_case is not None:
+            return edge_case
 
         return await self._llm_pick(context, results, question, query)
 
     # ------------------------------------------------------------------
-    # Rule-based fast path (no LLM call)
+    # Minimal edge-case fallbacks (no LLM needed)
     # ------------------------------------------------------------------
 
-    def _rule_based_pick(
-        self,
-        results: QueryResult,
-        preferred_viz: str | None,
-    ) -> VizResult | None:
+    @staticmethod
+    def _edge_case_fallback(results: QueryResult) -> VizResult | None:
+        """Handle trivial cases where LLM reasoning is unnecessary."""
         if results.error or not results.rows:
             return VizResult(viz_type="text", summary="No data to display.")
 
@@ -85,66 +83,7 @@ class VizAgent(BaseAgent):
                 summary=str(val),
             )
 
-        from app.agents.validation import AgentResultValidator
-
-        if preferred_viz and preferred_viz in AgentResultValidator.VALID_VIZ_TYPES:
-            if preferred_viz == "pie_chart" and len(rows) > settings.max_pie_categories:
-                preferred_viz = "bar_chart"
-            config = self._generate_config(results, preferred_viz)
-            return VizResult(viz_type=preferred_viz, viz_config=config)
-
-        if len(cols) == 2 and len(rows) == 1:
-            return VizResult(
-                viz_type="text",
-                summary=" | ".join(f"{cols[i]}: {rows[0][i]}" for i in range(len(cols))),
-            )
-
-        if len(cols) >= 2:
-            has_numeric = any(isinstance(rows[0][i], (int, float)) for i in range(len(cols)))
-            labels_col, data_cols = _auto_detect_columns(results, "bar_chart")
-
-            if has_numeric and data_cols:
-                if len(rows) <= settings.max_pie_categories and len(data_cols) == 1:
-                    config = {
-                        "labels_column": labels_col,
-                        "data_column": data_cols[0],
-                    }
-                    return VizResult(viz_type="pie_chart", viz_config=config)
-
-                if len(rows) > 50 and len(data_cols) >= 1:
-                    config = {"labels_column": labels_col, "data_columns": data_cols}
-                    return VizResult(viz_type="line_chart", viz_config=config)
-
-                if len(rows) > 1 and len(data_cols) >= 1:
-                    config = {"labels_column": labels_col, "data_columns": data_cols}
-                    return VizResult(viz_type="bar_chart", viz_config=config)
-
-        if len(cols) == 1:
-            return VizResult(viz_type="table")
-
         return None
-
-    @staticmethod
-    def _generate_config(results: QueryResult, viz_type: str) -> dict[str, Any]:
-        """Auto-generate viz_config based on column type detection."""
-        if viz_type in ("table", "text", "number"):
-            return {}
-        labels_col, data_cols = _auto_detect_columns(results, viz_type)
-        if viz_type in ("bar_chart", "line_chart"):
-            return {"labels_column": labels_col, "data_columns": data_cols}
-        if viz_type == "pie_chart":
-            fallback = results.columns[min(1, len(results.columns) - 1)]
-            return {
-                "labels_column": labels_col,
-                "data_column": data_cols[0] if data_cols else fallback,
-            }
-        if viz_type == "scatter":
-            fallback = results.columns[min(1, len(results.columns) - 1)]
-            return {
-                "x_column": labels_col,
-                "y_column": data_cols[0] if data_cols else fallback,
-            }
-        return {}
 
     # ------------------------------------------------------------------
     # LLM-based pick

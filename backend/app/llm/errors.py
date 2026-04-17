@@ -126,9 +126,15 @@ class LLMConnectionError(LLMError):
 
 
 class LLMAllProvidersFailedError(LLMError):
-    """Every configured provider failed (after individual retries)."""
+    """Every configured provider failed (after individual retries).
 
-    is_retryable = True  # caller may retry the whole chain once more
+    Not retryable at the orchestrator level: the router has already
+    exhausted every provider in the chain (each with their own retries).
+    Retrying again at the caller would multiply latency and cost without
+    a meaningful chance of success.
+    """
+
+    is_retryable = False
     retry_after_seconds = 3.0
 
     @property

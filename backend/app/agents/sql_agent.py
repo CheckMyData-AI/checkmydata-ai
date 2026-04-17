@@ -42,6 +42,7 @@ from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.entity_extractor import ProjectKnowledge
 from app.knowledge.vector_store import VectorStore
 from app.llm.base import LLMResponse, Message, ToolCall
+from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
 from app.services.project_cache_service import ProjectCacheService
 
@@ -62,33 +63,17 @@ def _cap_tool_result(tool_name: str, text: str) -> str:
     return text[:cap] + f"\n... (truncated, {len(text)} chars total)"
 
 
-def _extract_warning_tag(warnings_text: str) -> str:
-    """Derive a short tag from conversion_warnings for the table map."""
-    text = warnings_text.lower()
-    if "cent" in text or "/ 100" in text:
-        return "!cents"
-    if "soft" in text and "delet" in text:
-        return "!soft-del"
-    if "utc" in text or "timezone" in text:
-        return "!tz"
-    if "enum" in text:
-        return "!enum"
-    if "json" in text:
-        return "!json"
-    return "!warn"
-
-
 def _build_enriched_table_map(entries: list, sync_warnings_map: dict[str, str]) -> str:
-    """One-liner-per-table map, annotated with sync warning tags."""
+    """One-liner-per-table map, annotated with raw warning text."""
     items: list[str] = []
     for e in entries:
         if not e.is_active or e.relevance_score < 2:
             continue
         rows = f"~{e.row_count:,}" if e.row_count else "?"
         desc = (e.business_description or "")[:50].rstrip(".")
-        tag = sync_warnings_map.get(e.table_name.lower(), "")
-        tag_str = f" [{tag}]" if tag else ""
-        items.append(f"{e.table_name}({rows}, {desc}){tag_str}")
+        warn = sync_warnings_map.get(e.table_name.lower(), "")
+        warn_str = f" [!{warn[:40]}]" if warn else ""
+        items.append(f"{e.table_name}({rows}, {desc}){warn_str}")
     return ", ".join(items) if items else ""
 
 
@@ -151,9 +136,11 @@ class SQLAgent(BaseAgent):
         context: AgentContext,
         *,
         question: str = "",
+        wall_clock_remaining: float | None = None,
     ) -> SQLAgentResult:
         question = question or context.user_question
         cfg = context.connection_config
+        self._wall_clock_remaining = wall_clock_remaining
 
         if cfg is None:
             raise AgentFatalError("No database connection configured")
@@ -257,11 +244,22 @@ class SQLAgent(BaseAgent):
                 f"SQL LLM call ({iteration + 1}/{max_sql_iter})",
                 step_data=_sd_llm,
             ):
-                llm_resp: LLMResponse = await self._llm.complete(
+                async def _on_retry(_attempt: int, _exc: Exception, _wait: float) -> None:
+                    await tracker.emit(
+                        wf_id,
+                        "sql:llm_retry",
+                        "retrying",
+                        f"Attempt {_attempt} failed ({type(_exc).__name__}), retrying…",
+                    )
+
+                llm_resp: LLMResponse = await llm_call_with_retry(
+                    self._llm,
                     messages=messages,
                     tools=tools if tools else None,
                     preferred_provider=provider,
                     model=model,
+                    component="sql_agent",
+                    on_retry=_on_retry,
                 )
                 _sd_llm["input_preview"] = self._messages_preview(messages)
                 _sd_llm["output_preview"] = (llm_resp.content or "")[:500]
@@ -691,19 +689,34 @@ class SQLAgent(BaseAgent):
     async def _handle_record_learning(
         self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
     ) -> str:
+        """Record a learning. Always returns a structured JSON status string.
+
+        The shape ``{"status": "ok"|"rejected", "reason": str, ...}`` lets the
+        LLM detect rejection and re-attempt with a fixed payload (e.g. a longer
+        lesson, a non-blocked subject) instead of silently moving on.
+        """
+        import json
+
         category: str = args.get("category", "")
         subject: str = args.get("subject", "").strip()
         lesson: str = args.get("lesson", "").strip()
 
         if not category or not subject or not lesson:
-            return "Error: category, subject, and lesson are all required."
+            return json.dumps(
+                {
+                    "status": "rejected",
+                    "reason": "category, subject, and lesson are all required",
+                }
+            )
 
         cfg = ctx.connection_config
         if cfg is None:
             raise RuntimeError("Expected 'connection_config' but got None")
         cid = cfg.connection_id
         if not cid:
-            return "Error: connection ID not resolved."
+            return json.dumps(
+                {"status": "rejected", "reason": "connection ID not resolved"}
+            )
 
         from app.models.base import async_session_factory
         from app.services.agent_learning_service import AgentLearningService
@@ -723,14 +736,29 @@ class SQLAgent(BaseAgent):
                     )
                     await session.commit()
                 except ValueError as exc:
-                    return f"Learning rejected by quality check: {exc}"
+                    return json.dumps(
+                        {
+                            "status": "rejected",
+                            "reason": str(exc),
+                            "category": category,
+                            "subject": subject,
+                            "hint": (
+                                "Adjust subject/lesson and retry: subject must not be a "
+                                "generic SQL keyword and lesson must be specific and "
+                                "long enough."
+                            ),
+                        }
+                    )
 
-        return (
-            f"Learning recorded successfully.\n"
-            f"- **Category:** {category}\n"
-            f"- **Subject:** {subject}\n"
-            f"- **Lesson:** {lesson}\n"
-            f"- **Confidence:** {int(entry.confidence * 100)}%"
+        return json.dumps(
+            {
+                "status": "ok",
+                "id": entry.id,
+                "category": category,
+                "subject": subject,
+                "lesson": lesson,
+                "confidence": round(entry.confidence, 2),
+            }
         )
 
     # ------------------------------------------------------------------
@@ -777,16 +805,26 @@ class SQLAgent(BaseAgent):
     async def _handle_write_note(
         self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
     ) -> str:
+        """Persist a session note. Returns a structured JSON status string."""
+        import json
+
         category: str = args.get("category", "")
         subject: str = args.get("subject", "").strip()
         note_text: str = args.get("note", "").strip()
 
         if not category or not subject or not note_text:
-            return "Error: category, subject, and note are all required."
+            return json.dumps(
+                {
+                    "status": "rejected",
+                    "reason": "category, subject, and note are all required",
+                }
+            )
 
         cfg = ctx.connection_config
         if cfg is None or not cfg.connection_id:
-            return "Error: connection ID not resolved."
+            return json.dumps(
+                {"status": "rejected", "reason": "connection ID not resolved"}
+            )
 
         from app.models.base import async_session_factory
         from app.services.session_notes_service import SessionNotesService
@@ -794,24 +832,37 @@ class SQLAgent(BaseAgent):
         svc = SessionNotesService()
         async with ctx.tracker.step(wf_id, "sql:write_note", f"Recording note: {note_text[:60]}"):
             async with async_session_factory() as session:
-                entry = await svc.create_note(
-                    session,
-                    connection_id=cfg.connection_id,
-                    project_id=ctx.project_id,
-                    category=category,
-                    subject=subject,
-                    note=note_text,
-                    confidence=0.7,
-                    source_session_id=ctx.extra.get("session_id"),
-                )
-                await session.commit()
+                try:
+                    entry = await svc.create_note(
+                        session,
+                        connection_id=cfg.connection_id,
+                        project_id=ctx.project_id,
+                        category=category,
+                        subject=subject,
+                        note=note_text,
+                        confidence=0.7,
+                        source_session_id=ctx.extra.get("session_id"),
+                    )
+                    await session.commit()
+                except ValueError as exc:
+                    return json.dumps(
+                        {
+                            "status": "rejected",
+                            "reason": str(exc),
+                            "category": category,
+                            "subject": subject,
+                        }
+                    )
 
-        return (
-            f"Note recorded successfully.\n"
-            f"- **Category:** {category}\n"
-            f"- **Subject:** {subject}\n"
-            f"- **Note:** {note_text}\n"
-            f"- **Confidence:** {int(entry.confidence * 100)}%"
+        return json.dumps(
+            {
+                "status": "ok",
+                "id": entry.id,
+                "category": category,
+                "subject": subject,
+                "note": note_text,
+                "confidence": round(entry.confidence, 2),
+            }
         )
 
     # ------------------------------------------------------------------
@@ -863,10 +914,16 @@ class SQLAgent(BaseAgent):
         reports: list,
         ctx: AgentContext,
     ) -> None:
-        """Persist critical/warning anomalies as insight records."""
-        significant = [r for r in reports if r.severity in ("critical", "warning")]
-        if not significant or not ctx.project_id:
+        """Persist anomalies and reconcile against existing insights.
+
+        Critical/warning reports are stored (or merged via dedup). After
+        storing, :meth:`InsightMemoryService.reconcile_with_query_results`
+        auto-confirms insights re-observed by this query and dismisses stale
+        anomalies that this query did not reproduce.
+        """
+        if not ctx.project_id:
             return
+        significant = [r for r in reports if r.severity in ("critical", "warning")]
         try:
             from app.core.insight_memory import InsightMemoryService
             from app.models.base import async_session_factory
@@ -886,6 +943,13 @@ class SQLAgent(BaseAgent):
                         recommended_action=report.recommended_action,
                         expected_impact=report.expected_impact,
                         confidence=report.confidence,
+                    )
+                if reports:
+                    await svc.reconcile_with_query_results(
+                        session,
+                        project_id=ctx.project_id,
+                        connection_id=conn_id,
+                        fresh_reports=reports,
                     )
                 await session.commit()
         except Exception:
@@ -986,7 +1050,7 @@ class SQLAgent(BaseAgent):
             if not relevant:
                 relevant = all_entries[:10]
         else:
-            relevant = self._auto_detect_tables(question, all_entries)
+            relevant = [e for e in all_entries if e.is_active and e.relevance_score >= 2][:12]
 
         if ctx.connection_config is None:
             raise RuntimeError("Expected 'connection_config' but got None")
@@ -999,7 +1063,7 @@ class SQLAgent(BaseAgent):
         file_rules = self._rules_engine.load_rules(project_rules_dir=rules_dir)
         db_rules = await self._rules_engine.load_db_rules(project_id=ctx.project_id)
         all_rules = file_rules + db_rules
-        rules_text = self._filter_rules(all_rules, question, relevant)
+        rules_text = self._format_rules(all_rules)
 
         parts: list[str] = ["## Query Context\n"]
 
@@ -1078,9 +1142,14 @@ class SQLAgent(BaseAgent):
         self._schema_cache.put(key, schema)
         return schema
 
-    @staticmethod
-    def _build_validation_config() -> ValidationConfig:
+    def _build_validation_config(self) -> ValidationConfig:
         from app.config import settings as app_settings
+
+        timeout = app_settings.query_timeout_seconds
+        remaining = getattr(self, "_wall_clock_remaining", None)
+        if remaining is not None and remaining > 0:
+            budget_timeout = int(remaining * 0.5)
+            timeout = max(5, min(timeout, budget_timeout))
 
         return ValidationConfig(
             max_retries=app_settings.query_max_retries,
@@ -1088,7 +1157,7 @@ class SQLAgent(BaseAgent):
             enable_schema_validation=app_settings.query_enable_schema_validation,
             empty_result_retry=app_settings.query_empty_result_retry,
             explain_row_warning_threshold=app_settings.query_explain_row_warning_threshold,
-            query_timeout_seconds=app_settings.query_timeout_seconds,
+            query_timeout_seconds=timeout,
         )
 
     # ------------------------------------------------------------------
@@ -1180,9 +1249,7 @@ class SQLAgent(BaseAgent):
                         sync_entries = await sync_svc.get_sync(session, connection_id)
                     for se in sync_entries:
                         if se.conversion_warnings and se.confidence_score >= 3:
-                            tag = _extract_warning_tag(se.conversion_warnings)
-                            if tag:
-                                sync_warnings_map[se.table_name.lower()] = tag
+                            sync_warnings_map[se.table_name.lower()] = se.conversion_warnings
                 except Exception:
                     logger.debug("Code-DB sync enrichment parse failed", exc_info=True)
 
@@ -1408,11 +1475,12 @@ class SQLAgent(BaseAgent):
                     cfg.connection_id,
                     min_confidence=0.5,
                     active_only=True,
+                    limit=15,
                 )
             if not learnings:
                 return ""
             lines = []
-            for lrn in learnings[:15]:
+            for lrn in learnings:
                 lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}")
             return "\n".join(lines)
         except Exception:
@@ -1656,53 +1724,11 @@ class SQLAgent(BaseAgent):
         return "\n".join(parts)
 
     @staticmethod
-    def _auto_detect_tables(question: str, entries: list) -> list:
-        q_lower = question.lower()
-        scored: list[tuple[int, object]] = []
-        for entry in entries:
-            if not entry.is_active and entry.relevance_score <= 1:
-                continue
-            score = 0
-            tbl_lower = entry.table_name.lower()
-            if tbl_lower in q_lower:
-                score += 10
-            desc = (entry.business_description or "").lower()
-            for word in q_lower.split():
-                if len(word) > 3 and word in desc:
-                    score += 2
-                if len(word) > 3 and word in tbl_lower:
-                    score += 3
-            if entry.relevance_score >= 4:
-                score += 2
-            if score > 0:
-                scored.append((score, entry))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if scored:
-            return [e for _, e in scored[:8]]
-        return [e for e in entries if e.is_active and e.relevance_score >= 3][:8]
-
-    @staticmethod
-    def _filter_rules(all_rules: list, question: str, relevant_entries: list) -> str:
+    def _format_rules(all_rules: list) -> str:
+        """Include all rules (budget-trimmed) and let the LLM decide relevance."""
         if not all_rules:
             return ""
-        q_lower = question.lower()
-        table_names = {e.table_name.lower() for e in relevant_entries}
-        matched: list[str] = []
-        for rule in all_rules:
-            content_lower = rule.content.lower()
-            relevant = False
-            for tbl in table_names:
-                if tbl in content_lower:
-                    relevant = True
-                    break
-            if not relevant:
-                for word in q_lower.split():
-                    if len(word) > 4 and word in content_lower:
-                        relevant = True
-                        break
-            if relevant:
-                matched.append(f"**{rule.name}:** {rule.content[:500]}")
-        if not matched and all_rules:
-            for rule in all_rules[:2]:
-                matched.append(f"**{rule.name}:** {rule.content[:300]}")
-        return "\n".join(matched)
+        parts: list[str] = []
+        for rule in all_rules[:10]:
+            parts.append(f"**{rule.name}:** {rule.content[:500]}")
+        return "\n".join(parts)

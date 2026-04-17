@@ -4,6 +4,103 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.0] - 2026-04-13
+
+### Changed
+- **Orchestrator audit & improvement plan implementation** — completed the full multi-phase improvement program covering conversation handling, error handling, SQL planning, data/knowledge layer, observability, and long-term refactors.
+
+#### Phase 3 — Error handling parity
+- Centralized LLM retry/back-off via shared `llm_call_with_retry` helper.
+- Stage-error normalization (`_stage_error_message`, `_classify_stage_error`); `StageResult` now carries `error_category` (`transient | configuration | data_missing | fatal`) and a `retryable` property.
+- Pipeline `AgentResponse` now correctly populates `error` and supports a `degraded` synthesis status with `degraded_reason`.
+- `LLMAllProvidersFailedError.is_retryable = False` (no infinite provider thrash).
+- Parallel tool-call errors are typed (`tool_call:error` events with structured `error_type`).
+
+#### Phase 4 — Planner/executor improvements
+- Removed the legacy `QueryPlanner` class (`AdaptivePlanner` is now the sole planner).
+- `_MAX_REPLANS` moved to `settings.max_pipeline_replans`.
+- Replan history is threaded into `build_replan_prompt` so the LLM avoids repeating failed approaches.
+- Repair context (`ContextEnricher.build_repair_context`) now includes attempt error type and longer query/error excerpts.
+- Stage executor implements topological scheduling with `pipeline_max_parallel_stages` for safe parallel stage execution.
+
+#### Phase 5 — Data/knowledge layer
+- **Insight expiry & dedup (D1, D2):** `InsightRecord.expires_at` is now set per severity; `_find_duplicate` uses title+description+type+severity; `expire_old_insights` reaper added.
+- **Unified learning API (D12):** `AgentLearningService.get_learnings(...)` consolidates the previous getters with category/table/confidence/limit filters.
+- **Unified freshness (D6):** new `KnowledgeFreshnessService` combines DB-index age, code↔DB sync status, and Git HEAD into a single `staleness_warning`.
+- **Note deactivation (D5):** `SessionNote.deactivated_at` column + `decay_stale_notes` now deactivates notes whose confidence drops below `deactivate_below`. Alembic migration `a5b6c7d8e9f0_add_deactivated_at_to_session_notes` ships the column.
+- **Structured tool responses (D14):** `_handle_record_learning` and `_handle_write_note` return JSON (`{"status": "ok"|"rejected", ...}`) so the LLM can parse outcomes and retry.
+- **RAG pre-query (D13):** `ContextLoader.load_relevant_knowledge` injects the top-K relevant KB chunks into the orchestrator context for every question.
+- **Insight reconciliation (D15):** `InsightMemoryService.reconcile_with_query_results` auto-confirms reproduced anomalies and dismisses stale ones.
+- **Insight injection (D11):** `ContextLoader.load_relevant_insights` surfaces the top active insights for the orchestrator prompt.
+
+#### Phase 6 — Quality and observability
+- **Answer validator (S11):** new `AnswerValidator` LLM-based quality gate replaces the `len > 80` heuristic when step / wall-clock limits are hit. Toggle via `answer_validator_enabled`.
+- **Metrics (X2):** new `MetricsCollector` records per-request route / complexity / response_type / replans / retries / SQL calls / wall clock. Exposed at `/metrics` (recent rows) and `/metrics/prometheus` (text exposition format).
+- **Settings group (X1):** new `AgentSettingsView` dataclass (accessible via `settings.agent`) groups all agent-related thresholds into a single typed view.
+- **End-to-end tests (X5):** added integration coverage for the question → router → complex pipeline → stage failure → replan → success path.
+
+#### Phase 7 — Long-term
+- **LLM-first learning analyzer (D10):** new `learning_analyzer_mode` setting (`heuristic | hybrid | llm_first`); the analyzer now falls back to (or leads with) the LLM extractor while keeping the legacy `_detect_*` rules as a fast pre-filter.
+- **ClickHouse EXPLAIN warnings (S5):** `ExplainValidator` now parses ClickHouse plan text and warns on full MergeTree scans without `PREWHERE`/`WHERE` and on unbounded result sets.
+- **Token-aware synthesis budget (S8):** `ResponseBuilder.build_synthesis_messages` now budgets data inclusion by real token estimates (`LLMRouter.estimate_tokens`) instead of a `chars / 4` heuristic.
+
+### Added
+- `pipeline_max_parallel_stages` config (default `3`).
+- `answer_validator_enabled` config (default `True`).
+- `learning_analyzer_mode` config (default `"hybrid"`).
+- `KnowledgeFreshnessService`, `AnswerValidator`, `MetricsCollector`, `AgentSettingsView` modules.
+- `/metrics/prometheus` endpoint.
+- Alembic migration `a5b6c7d8e9f0_add_deactivated_at_to_session_notes`.
+- New unit tests: `test_answer_validator.py`, `test_metrics_collector.py`, `test_knowledge_freshness_service.py`.
+
+### Removed
+- `QueryPlanner` class (legacy plan-decomposition path).
+- Hardcoded `_MAX_REPLANS` constant in `orchestrator.py`.
+
+## [1.8.0] - 2026-04-14
+
+### Changed
+- **LLM-driven agent architecture refactor** — eliminated hardcoded heuristics, keyword matching, and rigid decision logic across the entire agent system, empowering the LLM to make all routing, complexity, tool selection, and budget decisions based on context
+- **Unified LLM router** (`router.py`) — replaces `intent_classifier.py` and `AdaptivePlanner._is_complex()` with a single LLM call that determines route, complexity, approach, estimated queries, and multi-source needs
+- **Unified tool loop** — merged `_run_data_query`, `_run_knowledge_query`, `_run_mcp_query` into a single `_run_unified_agent` that provides all available tools to the LLM without intent-gated tool surface restrictions
+- **Dynamic budget management** — replaced rigid synthesis deadlines (`orchestrator_synthesis_reserve_steps`, `orchestrator_synthesis_time_ratio`, `orchestrator_max_query_db_calls`) with per-iteration budget injection; the LLM self-regulates based on step/time percentages with emergency synthesis at 90% threshold
+- **LLM-driven visualization** — `VizAgent` now delegates all chart type selection to the LLM, replacing `_rule_based_pick()` with a minimal `_edge_case_fallback` for degenerate cases only
+- **LLM-driven SQL table/rule handling** — removed `_auto_detect_tables`, `_filter_rules`, `_extract_warning_tag` from `sql_agent.py`; the LLM receives the full table map and all custom rules directly
+- **LLM-driven query repair** — `retry_strategy.py` now passes raw error details and schema context to the repair LLM instead of pre-generated hint templates per error type
+- **Semantic tool deduplication** — `tool_dispatcher.py` uses word-overlap similarity (Jaccard, threshold 0.8) instead of exact string matching
+- **Simplified prompts** — `orchestrator_prompt.py` and `sql_prompt.py` replaced rigid behavioral rules (TOOL CALL ECONOMY, SINGLE-QUESTION RULE, STEP BUDGET, ERROR RECOVERY, QUERY PLANNING, SELF-IMPROVEMENT PROTOCOL) with concise PRINCIPLES sections, letting the LLM decide approach
+- **Removed `_parse_process_data_params` heuristics** — `stage_executor.py` no longer infers operations from description keywords; operation must be explicit in `input_context`
+
+### Removed
+- `table_resolver.py` — LLM + table map handles resolution
+- `_COMPLEXITY_KEYWORDS`, `_TEMPORAL_PATTERN`, `_DIMENSION_KEYWORDS`, `_CONJUNCTION_WORDS` from `adaptive_planner.py`
+- `detect_complexity`, `detect_complexity_adaptive` from `query_planner.py`
+- `build_classification_prompt` from `orchestrator_prompt.py`
+- `max_simple_query_steps`, `orchestrator_synthesis_reserve_steps`, `orchestrator_synthesis_time_ratio`, `orchestrator_max_query_db_calls` config settings
+
+### Added
+- `agent_emergency_synthesis_pct` config setting (default: 0.90) — budget threshold for emergency synthesis
+- `router_model` config setting — optional model override for the routing LLM call
+
+## [1.7.0] - 2026-04-14
+
+### Changed
+- **Always-deliver orchestrator (two-phase loop)** — the orchestrator tool-calling loop now operates in two phases: Phase 1 (data gathering) runs tool calls normally, and Phase 2 (mandatory synthesis) strips all tools from the LLM call, guaranteeing a text response. The system automatically enters Phase 2 when step budget (`orchestrator_synthesis_reserve_steps`, default 2) or time budget (`orchestrator_synthesis_time_ratio`, default 65%) is mostly consumed. This eliminates the "Analysis reached step limit" dead-end: even when resources are exhausted, the system always produces a complete, professional answer from whatever data was gathered
+- **Time-budget propagation to sub-agents** — the orchestrator now threads `remaining_wall_seconds` through `ToolDispatcher` to the SQL agent. The SQL agent caps its per-query timeout at `min(query_timeout_seconds, remaining_wall * 0.5)` (floor: 5s), preventing a single slow query from consuming the entire time budget
+- **Smarter synthesis prompt** — `ResponseBuilder.build_synthesis_messages` now includes ALL SQL query results (not just the last one), with query explanations and insights. The prompt instructs the LLM to produce a complete, professional analysis without mentioning step limits or partial results
+- **Graceful response_type on budget exhaustion** — when synthesis produces a valid answer and at least one SQL result has data, the `response_type` is set to `sql_result` instead of `step_limit_reached`, giving users a normal-looking answer rather than a warning banner
+- **Expanded complexity detection** — `AdaptivePlanner._is_complex` now recognizes temporal ranges ("last N months"), comparison keywords ("which performed better", "vs"), and multi-dimensional analysis patterns ("by payment method", "by region"). Revenue analysis queries that previously ran through the flat tool loop now get the more robust multi-stage pipeline
+- **Continuation budget boost** — `continue_analysis` runs receive 50% more steps and wall-clock budget, reducing the chance of hitting limits again during continuation
+- **Lighter repair queries on timeout** — when a SQL query times out and enters the repair loop, the repair hints now explicitly instruct the LLM to produce a lighter query (add LIMIT, remove unnecessary JOINs, narrow date ranges, use approximate aggregations)
+- **Two-phase step budget prompt** — the orchestrator system prompt STEP BUDGET section updated to describe the two-phase model, instructing the LLM to maintain a running analysis so it can synthesize from partial data at any point
+- **`query_database` cap raised to 3** — new `orchestrator_max_query_db_calls` setting (default 3, up from hard-coded 2) allows richer multi-query analyses
+
+### Added
+- `orchestrator_synthesis_reserve_steps` config setting (default: 2) — steps reserved for the synthesis phase
+- `orchestrator_synthesis_time_ratio` config setting (default: 0.65) — fraction of wall-clock time after which synthesis begins
+- `orchestrator_max_query_db_calls` config setting (default: 3) — configurable cap on `query_database` calls per request
+- `wall_clock_remaining` parameter on `SQLAgent.run()` for time-aware query timeout capping
+
 ## [1.6.1] - 2026-04-08
 
 ### Fixed

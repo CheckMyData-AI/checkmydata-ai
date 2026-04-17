@@ -100,11 +100,17 @@ class ContextEnricher:
                 sections.append(f"## Relevant Documentation\n{doc_context}")
 
         if len(attempt_history) > 1:
-            history_lines = ["## Previous Attempts"]
+            history_lines = ["## Previous Attempts (do NOT repeat these patterns)"]
             for prev in attempt_history[:-1]:
-                err_msg = prev.error.message if prev.error else "OK"
+                if prev.error:
+                    err_type = prev.error.error_type.value
+                    err_msg = prev.error.message
+                else:
+                    err_type = "ok"
+                    err_msg = "OK"
                 history_lines.append(
-                    f"Attempt {prev.attempt_number}: `{prev.query[:200]}` → {err_msg}"
+                    f"Attempt {prev.attempt_number} [{err_type}]: "
+                    f"`{prev.query[:500]}` → {err_msg[:400]}"
                 )
             sections.append("\n".join(history_lines))
 

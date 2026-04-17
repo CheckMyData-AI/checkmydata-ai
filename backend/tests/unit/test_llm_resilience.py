@@ -169,11 +169,11 @@ class TestErrorHierarchy:
         assert LLMServerError().is_retryable is True
         assert LLMTimeoutError().is_retryable is True
         assert LLMConnectionError().is_retryable is True
-        assert LLMAllProvidersFailedError().is_retryable is True
 
     def test_non_retryable_errors_have_flag(self):
         assert LLMAuthError().is_retryable is False
         assert LLMTokenLimitError().is_retryable is False
+        assert LLMAllProvidersFailedError().is_retryable is False
 
     def test_user_messages_are_friendly(self):
         for cls in [

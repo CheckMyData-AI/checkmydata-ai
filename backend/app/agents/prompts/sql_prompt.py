@@ -71,121 +71,44 @@ def build_sql_system_prompt(
         sections.append("CUSTOM RULES & BUSINESS LOGIC (MANDATORY — always apply these):")
         sections.append(custom_rules)
 
-    sections.append("")
-    sections.append("WORKFLOW:")
-
-    if has_db_index:
-        sections.append(
-            "1. Call `get_query_context` with the user's question — it returns "
-            "table schemas, column types, distinct enum values, conversion "
-            "warnings, and rules in one compact bundle."
-        )
-        sections.append("2. Write and execute the query with `execute_query`.")
-    else:
-        sections.append(
-            "1. Check the schema with `get_schema_info` (overview first, "
-            "then table_detail for relevant tables)."
-        )
-        sections.append("2. Load rules with `get_custom_rules`.")
-        sections.append("3. Write and execute the query with `execute_query`.")
-
-    efficiency_parts: list[str] = []
+    available_context: list[str] = []
     if table_map:
-        efficiency_parts.append(
-            "- The DATABASE TABLES map is ALREADY in this prompt below. "
-            "Do NOT call get_db_index(overview) to re-fetch it."
-        )
+        available_context.append("table map")
     if custom_rules:
-        efficiency_parts.append(
-            "- Custom rules & business logic are ALREADY in this prompt above. "
-            "Do NOT call get_custom_rules to re-fetch them."
-        )
+        available_context.append("custom rules")
     if learnings_prompt:
-        efficiency_parts.append(
-            "- Agent learnings are ALREADY in this prompt below. "
-            "Do NOT call get_agent_learnings unless you need table-specific learnings "
-            "not shown above."
-        )
+        available_context.append("agent learnings")
     if notes_prompt:
-        efficiency_parts.append(
-            "- Session notes are ALREADY in this prompt below. "
-            "Do NOT call read_notes unless you need notes for specific tables "
-            "not shown above."
-        )
-    if efficiency_parts:
+        available_context.append("session notes")
+    if available_context:
         sections.append("")
-        sections.append("EFFICIENCY RULES:")
-        sections.extend(efficiency_parts)
-        if has_db_index:
-            sections.append(
-                "- Preferred workflow: get_query_context (for relevant tables only) "
-                "-> execute_query. Aim for 2-3 tool calls total."
-            )
-            sections.append(
-                "- For simple questions where the table map provides enough context, "
-                "go directly to execute_query."
-            )
+        sections.append(
+            f"The following context is already included below: "
+            f"{', '.join(available_context)}. Do not re-fetch what is already here."
+        )
 
     sections.append("")
     sections.append(
-        "CURRENT QUESTION FOCUS:\n"
-        "Focus on the specific question provided. Conversation history, if any, "
-        "is for reference during query repair — do not treat prior queries or "
-        "results as new tasks to execute."
+        "PRINCIPLES:\n"
+        "- Generate only SELECT / read-only queries unless explicitly asked otherwise.\n"
+        "- Use exact table and column names from the schema.\n"
+        "- Include LIMIT for potentially large result sets.\n"
+        "- Focus on the current question — conversation history is reference only.\n"
+        "- Record new data observations with `write_note` or `record_learning`.\n"
+        "- After getting results, sanity-check the data before returning it."
     )
-
-    sections.append("")
-    sections.append("RULES:")
-    sections.append("- Only generate SELECT / read-only queries unless explicitly asked otherwise.")
-    sections.append("- Use the EXACT table and column names from the schema.")
-    sections.append("- Use Foreign Key relationships for correct JOINs.")
-    sections.append("- Include LIMIT (default 100) for potentially large result sets.")
-    sections.append("- Explain your query logic briefly in the explanation parameter.")
 
     if has_db_index:
         stale_note = ""
         if db_index_stale:
-            stale_note = (
-                " WARNING: The DB index is older than the configured TTL — "
-                "verify against `get_schema_info`."
-            )
-        sections.append(
-            f"- DB Index is available (`get_db_index`). "
-            f"`get_schema_info` is always live truth; DB index is a snapshot.{stale_note}"
-        )
+            stale_note = " (WARNING: DB index may be stale — verify with `get_schema_info`)"
+        sections.append(f"- DB Index available via `get_db_index`.{stale_note}")
 
     if has_code_db_sync:
-        sections.append(
-            "- Code-DB sync is available (`get_sync_context`). "
-            "Check it for data format conventions before writing queries."
-        )
+        sections.append("- Code-DB sync available via `get_sync_context`.")
 
     if has_learnings:
-        sections.append(
-            "- Agent learnings are available (`get_agent_learnings`). "
-            "Review them before writing queries to avoid repeating mistakes."
-        )
-
-    sections.append("- When you discover something new about the data, use `record_learning`.")
-    sections.append(
-        "- Use `read_notes` to check session notes before writing queries. "
-        "Use `write_note` to record observations about data patterns."
-    )
-
-    sections.append("")
-    sections.append(
-        "SELF-IMPROVEMENT PROTOCOL:\n"
-        "1. Before writing a query, check session notes for relevant observations.\n"
-        "2. After getting results, run a quick sanity check:\n"
-        "   - Are numeric values in a reasonable range?\n"
-        "   - Do aggregations make sense (sum of parts ≈ total)?\n"
-        "   - Are there unexpected NULLs or zeros?\n"
-        "3. When you discover something new about the data (column format, "
-        "business logic, naming convention), ALWAYS use `write_note` to record it.\n"
-        "4. If you find a discrepancy between what the code says and what the "
-        "data shows, record it as a note with category 'data_observation'.\n"
-        "5. If a previous session note is relevant, apply it and confirm it still holds."
-    )
+        sections.append("- Agent learnings available via `get_agent_learnings`.")
 
     if sync_conventions or sync_critical_warnings:
         sections.append("")

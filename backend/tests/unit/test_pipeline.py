@@ -1,6 +1,6 @@
 """Tests for the multi-stage query pipeline.
 
-Covers: QueryPlanner, StageExecutor, StageContext, StageValidator,
+Covers: StageExecutor, StageContext, StageValidator,
 complexity detection, persistence, error recovery, and resume.
 """
 
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agents.base import AgentContext
-from app.agents.query_planner import QueryPlanner, _validate_plan_structure, detect_complexity
+from app.agents.query_planner import _validate_plan_structure
 from app.agents.stage_context import (
     ExecutionPlan,
     PlanStage,
@@ -24,7 +24,7 @@ from app.agents.stage_executor import StageExecutor
 from app.agents.stage_validator import StageValidationOutcome, StageValidator
 from app.connectors.base import ConnectionConfig, QueryResult
 from app.core.workflow_tracker import WorkflowTracker
-from app.llm.base import LLMResponse, ToolCall
+from app.llm.base import LLMResponse
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -103,38 +103,6 @@ def mock_context(mock_llm, mock_tracker) -> AgentContext:
 # ------------------------------------------------------------------
 # Complexity Detection
 # ------------------------------------------------------------------
-
-
-class TestComplexityDetection:
-    def test_simple_query(self):
-        assert detect_complexity("Show me total revenue") is False
-
-    def test_short_query_with_one_keyword(self):
-        assert detect_complexity("Compare revenue by month") is False
-
-    def test_complex_long_query_with_keywords(self):
-        q = (
-            "Find products renewed by subscription vs top-up, "
-            "match to unique users, compute average check, "
-            "product duration, and create a summary table. "
-            "Comment on findings." * 3
-        )
-        assert detect_complexity(q) is True
-
-    def test_multiple_questions(self):
-        q = "What are the top products? How do they compare to last month? What trends do you see?"
-        assert detect_complexity(q) is True
-
-    def test_step_based_query(self):
-        q = (
-            "Step 1: find all users who signed up last month, "
-            "including their emails, names, and regions. "
-            "Step 2: match them to orders, compute totals, "
-            "and calculate average order value. "
-            "Then create a summary table with breakdown by region, "
-            "and also compare to the previous month's performance."
-        )
-        assert detect_complexity(q) is True
 
 
 # ------------------------------------------------------------------
@@ -313,66 +281,6 @@ class TestStageValidator:
 
 
 # ------------------------------------------------------------------
-# QueryPlanner
-# ------------------------------------------------------------------
-
-
-class TestQueryPlanner:
-    @pytest.mark.asyncio
-    async def test_successful_planning(self, mock_llm):
-        plan_args = {
-            "stages": [
-                {"stage_id": "s1", "description": "Get data", "tool": "query_database"},
-                {
-                    "stage_id": "s2",
-                    "description": "Summarize",
-                    "tool": "synthesize",
-                    "depends_on": ["s1"],
-                },
-            ],
-            "complexity_reason": "Multi-step",
-        }
-        mock_llm.complete = AsyncMock(
-            return_value=LLMResponse(
-                content="",
-                tool_calls=[ToolCall(id="tc1", name="create_execution_plan", arguments=plan_args)],
-            )
-        )
-        planner = QueryPlanner(mock_llm)
-        plan = await planner.plan("complex question", table_map="users: id, name")
-        assert plan is not None
-        assert len(plan.stages) == 2
-        assert plan.stages[0].stage_id == "s1"
-
-    @pytest.mark.asyncio
-    async def test_fallback_on_invalid_plan(self, mock_llm):
-        bad_args = {"stages": [], "complexity_reason": "empty"}
-        mock_llm.complete = AsyncMock(
-            return_value=LLMResponse(
-                content="",
-                tool_calls=[ToolCall(id="tc1", name="create_execution_plan", arguments=bad_args)],
-            )
-        )
-        planner = QueryPlanner(mock_llm)
-        result = await planner.plan("query")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_fallback_on_llm_exception(self, mock_llm):
-        mock_llm.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
-        planner = QueryPlanner(mock_llm)
-        result = await planner.plan("query")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_no_tool_call_returns_none(self, mock_llm):
-        mock_llm.complete = AsyncMock(return_value=LLMResponse(content="I can't plan this"))
-        planner = QueryPlanner(mock_llm)
-        result = await planner.plan("query")
-        assert result is None
-
-
-# ------------------------------------------------------------------
 # StageExecutor
 # ------------------------------------------------------------------
 
@@ -509,6 +417,7 @@ class TestStageExecutor:
 
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 0
+            mock_settings.pipeline_max_parallel_stages = 1
             result = await executor.execute(plan, mock_context)
 
         assert result.status == "stage_failed"

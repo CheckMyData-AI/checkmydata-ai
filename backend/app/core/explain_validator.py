@@ -68,6 +68,8 @@ class ExplainValidator:
                 warnings.extend(self._analyze_pg(result))
             elif dt == "mysql":
                 warnings.extend(self._analyze_mysql(result))
+            elif dt == "clickhouse":
+                warnings.extend(self._analyze_clickhouse(result))
         except Exception as exc:
             logger.debug("EXPLAIN plan analysis failed: %s", exc)
 
@@ -101,6 +103,49 @@ class ExplainValidator:
 
         for child in node.get("Plans", []):
             self._walk_pg_plan(child, warnings)
+
+    def _analyze_clickhouse(self, result) -> list[str]:
+        """Look for full-table-scan / large-read patterns in ClickHouse plan text.
+
+        ClickHouse ``EXPLAIN`` returns a tree of pipeline node descriptions in
+        text form (one row per node). We parse the joined text for known
+        red-flag tokens — ``ReadFromMergeTree`` without a ``PREWHERE``/``WHERE``,
+        ``Filter`` over the entire table, etc.
+        """
+        warnings: list[str] = []
+        if not result.rows:
+            return warnings
+
+        plan_text_parts: list[str] = []
+        for row in result.rows:
+            for cell in row:
+                if cell is None:
+                    continue
+                if isinstance(cell, (list, tuple)):
+                    plan_text_parts.extend(str(c) for c in cell if c is not None)
+                else:
+                    plan_text_parts.append(str(cell))
+        plan_text = "\n".join(plan_text_parts)
+
+        if not plan_text:
+            return warnings
+
+        plan_lower = plan_text.lower()
+        if (
+            "readfrommergetree" in plan_lower
+            and "prewhere" not in plan_lower
+            and "where" not in plan_lower
+        ):
+            warnings.append(
+                "ClickHouse plan does a full MergeTree scan with no PREWHERE/WHERE; "
+                "consider filtering on the primary-key prefix to reduce data read."
+            )
+        if "limit" not in plan_lower and "aggregating" not in plan_lower:
+            warnings.append(
+                "ClickHouse plan has no LIMIT and no aggregation; large result set may be returned."
+            )
+
+        return warnings
 
     def _analyze_mysql(self, result) -> list[str]:
         warnings: list[str] = []

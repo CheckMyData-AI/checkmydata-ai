@@ -76,58 +76,32 @@ class TestRepairHints:
         self.strategy = RetryStrategy()
         self.schema = _schema()
 
-    def test_column_not_found_hints(self):
+    def test_always_includes_error_type_and_message(self):
+        err = _error(QueryErrorType.SYNTAX_ERROR)
+        hints = self.strategy.get_repair_hints(err, self.schema)
+        assert "syntax_error" in hints
+        assert "test" in hints
+        assert "postgresql" in hints
+
+    def test_column_not_found_includes_similar_columns(self):
         err = _error(QueryErrorType.COLUMN_NOT_FOUND)
         err.suggested_columns = ["user_name"]
         hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "column" in hints.lower() or "username" in hints.lower()
+        assert "username" in hints.lower()
+        assert "similarity" in hints.lower()
 
-    def test_table_not_found_hints(self):
+    def test_table_not_found_includes_similar_tables(self):
         err = _error(QueryErrorType.TABLE_NOT_FOUND)
         err.suggested_tables = ["userz"]
         hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "users" in hints.lower() or "table" in hints.lower()
-
-    def test_syntax_error_hints(self):
-        err = _error(QueryErrorType.SYNTAX_ERROR)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "syntax" in hints.lower()
-
-    def test_timeout_hints(self):
-        err = _error(QueryErrorType.TIMEOUT)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "limit" in hints.lower()
-
-    def test_empty_result_hints(self):
-        err = _error(QueryErrorType.EMPTY_RESULT)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "where" in hints.lower() or "broaden" in hints.lower()
-
-    def test_ambiguous_column_hints(self):
-        err = _error(QueryErrorType.AMBIGUOUS_COLUMN)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "qualify" in hints.lower() or "table" in hints.lower()
-
-    def test_type_mismatch_hints(self):
-        err = _error(QueryErrorType.TYPE_MISMATCH)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "type" in hints.lower()
-
-    def test_explain_warning_hints(self):
-        err = _error(QueryErrorType.EXPLAIN_WARNING)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "performance" in hints.lower() or "index" in hints.lower()
-
-    def test_collation_mismatch_hints(self):
-        err = _error(QueryErrorType.COLLATION_MISMATCH)
-        hints = self.strategy.get_repair_hints(err, self.schema)
-        assert "collation" in hints.lower()
-        assert "collate" in hints.lower() or "convert" in hints.lower()
+        assert "users" in hints.lower()
 
     def test_collation_mismatch_retryable(self):
         assert self.strategy.should_retry(_error(QueryErrorType.COLLATION_MISMATCH), 1, 3)
 
-    def test_unknown_hints(self):
+    def test_generic_error_returns_raw_context(self):
         err = _error(QueryErrorType.UNKNOWN)
         hints = self.strategy.get_repair_hints(err, self.schema)
+        assert "unknown" in hints
+        assert "test" in hints
         assert len(hints) > 0

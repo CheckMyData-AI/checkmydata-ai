@@ -12,8 +12,6 @@ logger = logging.getLogger(__name__)
 
 _classifier = ErrorClassifier()
 
-SLOW_QUERY_MS = 30_000
-
 
 class PostValidator:
     """Validates query results after execution."""
