@@ -107,6 +107,7 @@ class KnowledgeAgent(BaseAgent):
                 "knowledge:llm_call",
                 f"Knowledge LLM call ({iteration + 1}/{max_kb_iters})",
                 step_data=_sd_kllm,
+                span_type="llm_call",
             ):
                 llm_resp: LLMResponse = await context.llm_router.complete(
                     messages=messages,
@@ -157,6 +158,7 @@ class KnowledgeAgent(BaseAgent):
                     f"knowledge:tool:{tc.name}",
                     f"Knowledge tool: {tc.name}",
                     step_data=_sd_ktool,
+                    span_type="rag",
                 ):
                     result_text = await self._dispatch_tool(tc, context, collected_sources)
                     _sd_ktool["output_preview"] = (result_text or "")[:500]

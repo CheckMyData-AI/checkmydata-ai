@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.base import async_session_factory
 
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -50,3 +51,17 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
     return {"user_id": user.id, "email": user.email}
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Only allow users whose email is in ``settings.admin_emails``.
+
+    Returns the same dict as :func:`get_current_user` on success. Raises
+    403 otherwise. Configure admins via ``ADMIN_EMAILS`` env var.
+    """
+    if not settings.is_admin_email(user.get("email")):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin privileges required for this endpoint.",
+        )
+    return user

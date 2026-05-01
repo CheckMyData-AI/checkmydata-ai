@@ -64,7 +64,9 @@ async def get_usage_stats(
     """
     if project_id:
         await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
-    data = await _usage_svc.get_period_comparison(db, user["user_id"], days=days)
+    data = await _usage_svc.get_period_comparison(
+        db, user["user_id"], days=days, project_id=project_id
+    )
     return UsageStatsResponse(
         current_period=UsagePeriod(**data["current_period"]),
         previous_period=UsagePeriod(**data["previous_period"]),

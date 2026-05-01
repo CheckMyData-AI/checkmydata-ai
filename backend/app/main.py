@@ -20,9 +20,11 @@ from app.api.routes import (
     backup,
     batch,
     chat,
+    connection_learnings,
     connections,
     dashboards,
     data_graph,
+    data_investigations,
     data_validation,
     demo,
     exploration,
@@ -303,6 +305,11 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(health_monitor.router, prefix="/api/connections", tags=["health-monitor"])
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
+app.include_router(
+    connection_learnings.router,
+    prefix="/api/connections",
+    tags=["connection-learnings"],
+)
 app.include_router(repos.router, prefix="/api/repos", tags=["repos"])
 app.include_router(ssh_keys.router, prefix="/api/ssh-keys", tags=["ssh-keys"])
 app.include_router(visualizations.router, prefix="/api/visualizations", tags=["visualizations"])
@@ -314,6 +321,11 @@ app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
+app.include_router(
+    data_investigations.router,
+    prefix="/api/data-validation",
+    tags=["data-investigations"],
+)
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
@@ -759,9 +771,6 @@ async def trigger_initial_backup() -> None:
         logger.exception("Initial sync backup failed")
 
 
-HEALTH_CHECK_INTERVAL_SECONDS = 300
-
-
 async def _health_check_loop() -> None:
     """Periodically check health of recently-used database connections."""
     from app.core.health_monitor import health_monitor
@@ -821,7 +830,7 @@ async def _health_check_loop() -> None:
         except Exception:
             logger.debug("SSH tunnel idle cleanup failed", exc_info=True)
 
-        await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
+        await asyncio.sleep(settings.health_check_interval_seconds)
 
 
 @app.get("/api/health")

@@ -6,13 +6,31 @@ business rules after each stage completes.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from app.agents.stage_context import PlanStage, StageContext, StageResult
 
+if TYPE_CHECKING:
+    from app.llm.router import LLMRouter
+
 logger = logging.getLogger(__name__)
+
+
+_BUSINESS_RULE_PROMPT = """You are a strict data-quality validator. Given a
+business rule and a sample of query result rows, return a JSON object:
+
+{"violated": true|false, "explanation": "…"}
+
+Rules of engagement:
+- Only emit "violated": true when you are highly confident the rule is
+  broken by the visible sample.
+- Keep explanations one sentence, referencing at most one column & value.
+- Respond ONLY with the JSON object, no prose around it.
+"""
 
 
 @dataclass
@@ -41,16 +59,47 @@ class StageValidationOutcome:
 
 
 class StageValidator:
-    """Validates a single stage result against its plan-defined criteria."""
+    """Validates a single stage result against its plan-defined criteria.
 
-    def __init__(self, *, strict_row_bounds: bool = False) -> None:
+    Business rules (free-form text like ``"no negative revenue"``) are
+    first evaluated by an LLM when ``llm_router`` is provided. This makes
+    the check AI-first and schema-agnostic. The legacy substring
+    ("no negative") heuristic stays as a zero-cost fallback so the
+    validator keeps working offline / in tests.
+    """
+
+    def __init__(
+        self,
+        *,
+        strict_row_bounds: bool = False,
+        llm_router: LLMRouter | None = None,
+    ) -> None:
         self._strict_row_bounds = strict_row_bounds
+        self._llm_router = llm_router
+
+    async def validate_async(
+        self,
+        stage: PlanStage,
+        result: StageResult,
+        stage_ctx: StageContext,
+    ) -> StageValidationOutcome:
+        """LLM-first async variant. Falls back to :meth:`validate`."""
+        outcome = self.validate(stage, result, stage_ctx, run_business_rules=False)
+
+        v = stage.validation
+        if v.business_rules and result.query_result:
+            for rule in v.business_rules:
+                await self._evaluate_business_rule_async(rule, result, outcome)
+
+        return outcome
 
     def validate(
         self,
         stage: PlanStage,
         result: StageResult,
         stage_ctx: StageContext,
+        *,
+        run_business_rules: bool = True,
     ) -> StageValidationOutcome:
         outcome = StageValidationOutcome()
 
@@ -85,11 +134,68 @@ class StageValidator:
             for check in v.cross_stage_checks:
                 self._evaluate_cross_check(check, result, stage_ctx, outcome)
 
-        if v.business_rules and qr:
+        if run_business_rules and v.business_rules and qr:
             for rule in v.business_rules:
                 self._evaluate_business_rule(rule, result, outcome)
 
         return outcome
+
+    async def _evaluate_business_rule_async(
+        self,
+        rule: str,
+        result: StageResult,
+        outcome: StageValidationOutcome,
+    ) -> None:
+        """LLM-driven rule evaluator. Falls back to heuristic on any failure."""
+        qr = result.query_result
+        if not qr or not qr.rows or self._llm_router is None:
+            self._evaluate_business_rule(rule, result, outcome)
+            return
+
+        try:
+            sample = [
+                dict(zip(qr.columns, r, strict=False)) for r in qr.rows[:25]
+            ]
+            from app.llm.base import Message
+
+            user_payload = json.dumps(
+                {"rule": rule, "columns": list(qr.columns), "sample_rows": sample},
+                default=str,
+            )
+            resp = await self._llm_router.complete(
+                messages=[
+                    Message(role="system", content=_BUSINESS_RULE_PROMPT),
+                    Message(role="user", content=user_payload),
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+            parsed = self._extract_json(resp.content if resp else "")
+            if isinstance(parsed, dict) and parsed.get("violated") is True:
+                explanation = str(parsed.get("explanation", "")).strip() or rule
+                outcome.warn(
+                    f"Business rule '{rule}' violated: {explanation}"
+                )
+                return
+        except Exception:
+            logger.debug(
+                "LLM business-rule evaluation failed; falling back to heuristic",
+                exc_info=True,
+            )
+        self._evaluate_business_rule(rule, result, outcome)
+
+    @staticmethod
+    def _extract_json(raw: str) -> Any:
+        if not raw:
+            return None
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+            stripped = re.sub(r"\s*```$", "", stripped)
+        try:
+            return json.loads(stripped)
+        except Exception:
+            return None
 
     @staticmethod
     def _evaluate_cross_check(

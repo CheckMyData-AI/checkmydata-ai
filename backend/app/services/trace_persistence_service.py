@@ -79,7 +79,20 @@ _SUB_AGENT_PREFIXES = (
 )
 
 
-def classify_span_type(step_name: str) -> str:
+_VALID_SPAN_TYPES = frozenset(
+    {"llm_call", "db_query", "rag", "tool_call", "sub_agent", "viz", "validation"}
+)
+
+
+def classify_span_type(step_name: str, explicit: str | None = None) -> str:
+    """Pick the canonical span type for an event.
+
+    T14: when a producer emits an explicit ``span_type`` we trust it and skip
+    the heuristic. The heuristic is kept as a fallback for legacy producers
+    and background pipelines that have not yet been migrated.
+    """
+    if explicit and explicit in _VALID_SPAN_TYPES:
+        return explicit
     if step_name in SPAN_TYPE_MAP:
         return SPAN_TYPE_MAP[step_name]
     for prefix in _SUB_AGENT_PREFIXES:
@@ -355,7 +368,9 @@ class TracePersistenceService:
                 if evt.step == "execute_query" and evt.elapsed_ms is None:
                     continue
 
-                span_type = classify_span_type(evt.step)
+                span_type = classify_span_type(
+                    evt.step, getattr(evt, "span_type", None)
+                )
 
                 if span_type == "llm_call":
                     llm_count += 1

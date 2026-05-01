@@ -48,7 +48,11 @@ async def test_degraded_latency() -> None:
         return await coro
 
     t1 = (DEGRADED_LATENCY_MS + 500) / 1000.0
-    mono_seq = [0.0, t1]
+    # T20: extra leading 0.0 accounts for the TTLCache.get() call inside
+    # ``check_connection`` that also reads ``time.monotonic``. The sentinel
+    # value after the sequence is exhausted matches t1 so any further calls
+    # still report the expected latency.
+    mono_seq = [0.0, 0.0, t1]
 
     def fake_monotonic() -> float:
         return mono_seq.pop(0) if mono_seq else t1

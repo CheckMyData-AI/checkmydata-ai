@@ -20,6 +20,8 @@ from app.services.agent_learning_service import SUBJECT_BLOCKLIST
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.llm.router import LLMRouter
+
 logger = logging.getLogger(__name__)
 
 _llm_analysis_timestamps: dict[str, datetime] = {}
@@ -100,7 +102,36 @@ def _is_covered_by_sync(lesson: ExtractedLesson, sync_warnings: dict[str, str]) 
 
 
 class LearningAnalyzer:
-    """Analyzes validation loop results and extracts lessons."""
+    """Analyzes validation loop results and extracts lessons.
+
+    Policy (T06): LLM-first. The ``learning_analyzer_mode`` setting gates
+    behaviour:
+
+    - ``"llm_first"`` (default) — ``LLMAnalyzer`` runs first; the legacy
+      ``_detect_*`` regex extractors only run when the LLM returned
+      nothing (e.g. quota exhausted, cooldown, parsing failure).
+    - ``"hybrid"`` — the old behaviour: heuristics first, LLM fallback.
+    - ``"heuristic"`` — LLM disabled entirely (emergencies / tests).
+
+    ``llm_router`` can be injected for tests; default is a shared
+    ``LLMRouter`` singleton to avoid spawning a fresh HTTP client per
+    analysis call.
+    """
+
+    # Shared router instance. The module-level singleton prevents repeated
+    # ``httpx.AsyncClient`` creation in the hot path (one per attempt batch).
+    _shared_llm_router: LLMRouter | None = None
+
+    def __init__(self, llm_router: LLMRouter | None = None) -> None:
+        self._llm_router = llm_router  # overrides shared for tests / wiring
+
+    @classmethod
+    def _get_shared_router(cls) -> LLMRouter:
+        if cls._shared_llm_router is None:
+            from app.llm.router import LLMRouter
+
+            cls._shared_llm_router = LLMRouter()
+        return cls._shared_llm_router
 
     async def analyze(
         self,
@@ -249,7 +280,8 @@ class LearningAnalyzer:
         if len(attempts) < 2:
             return []
         try:
-            llm_analyzer = LLMAnalyzer()
+            router = self._llm_router or self._get_shared_router()
+            llm_analyzer = LLMAnalyzer(router=router)
             if not llm_analyzer.should_run(connection_id):
                 return []
             from app.models.base import async_session_factory
@@ -600,6 +632,9 @@ class LLMAnalyzer:
 
     COOLDOWN_SECONDS = 3600
 
+    def __init__(self, router: LLMRouter | None = None) -> None:
+        self._router = router
+
     @classmethod
     def should_run(cls, connection_id: str) -> bool:
         last = _llm_analysis_timestamps.get(connection_id)
@@ -629,11 +664,10 @@ class LLMAnalyzer:
         self._mark_run(connection_id)
 
         from app.llm.base import Message
-        from app.llm.router import LLMRouter
 
         attempts_text = self._format_attempts(attempts)
 
-        llm = LLMRouter()
+        llm = self._router or LearningAnalyzer._get_shared_router()
         messages = [
             Message(role="system", content=_LLM_EXTRACTION_PROMPT),
             Message(role="user", content=attempts_text),

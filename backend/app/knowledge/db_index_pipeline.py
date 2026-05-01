@@ -478,6 +478,11 @@ class DbIndexPipeline:
                     if small_tables
                     else 0
                 )
+
+                # T16: small-table batches are independent LLM calls, so run
+                # them concurrently. Each batch produces a disjoint set of
+                # TableAnalysis records which we collect in original order.
+                batch_specs: list[tuple[list, list[tuple[TableInfo, QueryResult | None]], str]] = []
                 for batch_start in range(0, len(small_tables), self._batch_size):
                     batch = small_tables[batch_start : batch_start + self._batch_size]
                     batch_items: list[tuple[TableInfo, QueryResult | None]] = []
@@ -490,16 +495,25 @@ class DbIndexPipeline:
                         ctx = self._filter_code_context(code_context, table.name)
                         if ctx:
                             batch_code_ctx += f"\n{ctx}"
+                    batch_specs.append((batch, batch_items, batch_code_ctx))
 
-                    batch_results = await self._validator.analyze_table_batch(
-                        tables=batch_items,
-                        code_context=batch_code_ctx,
+                async def _run_batch(items, ctx_text):
+                    return await self._validator.analyze_table_batch(
+                        tables=items,
+                        code_context=ctx_text,
                         rules_context=rules_context,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
+
+                small_batch_results = await asyncio.gather(
+                    *(_run_batch(items, ctx_text) for _, items, ctx_text in batch_specs)
+                )
+                for batch_idx, ((batch, _items, _ctx), batch_results) in enumerate(
+                    zip(batch_specs, small_batch_results, strict=False), 1
+                ):
                     analyses.extend(batch_results)
-                    batch_num = batch_start // self._batch_size + 1
+                    batch_num = batch_idx
                     batch_names = ", ".join(t.name for t in batch)
                     await self._tracker.emit(
                         wf_id,

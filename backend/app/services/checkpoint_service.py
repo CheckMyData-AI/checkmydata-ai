@@ -1,4 +1,19 @@
-"""Service for managing indexing checkpoint state (resumable pipelines)."""
+"""Service for managing indexing checkpoint state (resumable pipelines).
+
+T22: per-step and per-doc progress is now stored in dedicated append-only
+tables (``indexing_checkpoint_step`` + ``indexing_checkpoint_doc``). The
+old JSON rewrite pattern — read text column, json.loads, append, json.dumps,
+commit — was O(n) per call and degraded into O(n²) across a full indexing
+run. The new pattern uses one SELECT + one bulk INSERT per batch and keeps
+the writes bounded regardless of history size.
+
+The legacy ``completed_steps`` and ``processed_doc_paths`` Text columns on
+``IndexingCheckpoint`` are retained for backwards compatibility with
+in-flight rows on already-running production instances but are no longer
+written by new code. ``get_completed_steps`` /
+``get_processed_doc_paths`` transparently fall back to them when the
+append-only rows are absent.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +22,14 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.indexing_checkpoint import IndexingCheckpoint
+from app.models.indexing_checkpoint import (
+    IndexingCheckpoint,
+    IndexingCheckpointDoc,
+    IndexingCheckpointStep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +104,7 @@ class CheckpointService:
         if not cp:
             return
 
-        steps: list[str] = _safe_json_loads_list(cp.completed_steps)
-        if step_name not in steps:
-            steps.append(step_name)
-        cp.completed_steps = json.dumps(steps)
+        await self._insert_step(session, checkpoint_id, step_name)
 
         if head_sha is not None:
             cp.head_sha = head_sha
@@ -106,19 +123,50 @@ class CheckpointService:
 
         await session.commit()
 
+    @staticmethod
+    async def _insert_step(
+        session: AsyncSession,
+        checkpoint_id: str,
+        step_name: str,
+    ) -> None:
+        """Insert a step row, swallowing the unique-constraint violation.
+
+        Implemented as a savepoint (nested transaction) so the outer commit
+        is still usable if we bounce off the unique constraint.
+        """
+        savepoint = await session.begin_nested()
+        try:
+            session.add(
+                IndexingCheckpointStep(
+                    checkpoint_id=checkpoint_id, step_name=step_name
+                )
+            )
+            await session.flush()
+        except IntegrityError:
+            await savepoint.rollback()
+            return
+        await savepoint.commit()
+
     async def mark_doc_processed(
         self,
         session: AsyncSession,
         checkpoint_id: str,
         source_path: str,
     ) -> None:
-        cp = await session.get(IndexingCheckpoint, checkpoint_id)
-        if not cp:
+        if not await self._checkpoint_exists(session, checkpoint_id):
             return
-        paths: list[str] = _safe_json_loads_list(cp.processed_doc_paths)
-        if source_path not in paths:
-            paths.append(source_path)
-        cp.processed_doc_paths = json.dumps(paths)
+        savepoint = await session.begin_nested()
+        try:
+            session.add(
+                IndexingCheckpointDoc(
+                    checkpoint_id=checkpoint_id, source_path=source_path
+                )
+            )
+            await session.flush()
+        except IntegrityError:
+            await savepoint.rollback()
+        else:
+            await savepoint.commit()
         await session.commit()
 
     async def mark_docs_batch_processed(
@@ -129,17 +177,33 @@ class CheckpointService:
     ) -> None:
         if not source_paths:
             return
-        cp = await session.get(IndexingCheckpoint, checkpoint_id)
-        if not cp:
+        if not await self._checkpoint_exists(session, checkpoint_id):
             return
-        existing: list[str] = _safe_json_loads_list(cp.processed_doc_paths)
-        existing_set = set(existing)
-        for path in source_paths:
-            if path not in existing_set:
-                existing.append(path)
-                existing_set.add(path)
-        cp.processed_doc_paths = json.dumps(existing)
+
+        deduped = list(dict.fromkeys(source_paths))
+        existing_stmt = select(IndexingCheckpointDoc.source_path).where(
+            IndexingCheckpointDoc.checkpoint_id == checkpoint_id,
+            IndexingCheckpointDoc.source_path.in_(deduped),
+        )
+        existing = await session.execute(existing_stmt)
+        existing_set = set(existing.scalars().all())
+
+        new_rows = [
+            IndexingCheckpointDoc(checkpoint_id=checkpoint_id, source_path=p)
+            for p in deduped
+            if p not in existing_set
+        ]
+        if not new_rows:
+            return
+        session.add_all(new_rows)
         await session.commit()
+
+    @staticmethod
+    async def _checkpoint_exists(
+        session: AsyncSession, checkpoint_id: str
+    ) -> bool:
+        cp = await session.get(IndexingCheckpoint, checkpoint_id)
+        return cp is not None
 
     async def mark_failed(
         self,
@@ -183,13 +247,9 @@ class CheckpointService:
             logger.info("Cleaned up %d stale indexing checkpoints", count)
         return count
 
-    @staticmethod
-    def get_completed_steps(cp: IndexingCheckpoint) -> set[str]:
-        return _safe_json_loads_set(cp.completed_steps)
-
-    @staticmethod
-    def get_processed_doc_paths(cp: IndexingCheckpoint) -> set[str]:
-        return _safe_json_loads_set(cp.processed_doc_paths)
+    # ------------------------------------------------------------------
+    # Readers — used by pipelines to resume from where they left off.
+    # ------------------------------------------------------------------
 
     @staticmethod
     def get_changed_files(cp: IndexingCheckpoint) -> list[str]:
@@ -198,3 +258,51 @@ class CheckpointService:
     @staticmethod
     def get_deleted_files(cp: IndexingCheckpoint) -> list[str]:
         return _safe_json_loads_list(cp.deleted_files_json)
+
+    @staticmethod
+    def get_completed_steps_legacy(cp: IndexingCheckpoint) -> set[str]:
+        """Legacy JSON reader — kept only as a fallback for old rows."""
+        return _safe_json_loads_set(cp.completed_steps)
+
+    @staticmethod
+    def get_processed_doc_paths_legacy(cp: IndexingCheckpoint) -> set[str]:
+        """Legacy JSON reader — kept only as a fallback for old rows."""
+        return _safe_json_loads_set(cp.processed_doc_paths)
+
+    async def get_completed_steps(
+        self,
+        session: AsyncSession,
+        checkpoint_id: str,
+    ) -> set[str]:
+        """Return the set of completed step names for a checkpoint (T22)."""
+        result = await session.execute(
+            select(IndexingCheckpointStep.step_name).where(
+                IndexingCheckpointStep.checkpoint_id == checkpoint_id,
+            )
+        )
+        steps = set(result.scalars().all())
+        if steps:
+            return steps
+        cp = await session.get(IndexingCheckpoint, checkpoint_id)
+        if cp is None:
+            return set()
+        return self.get_completed_steps_legacy(cp)
+
+    async def get_processed_doc_paths(
+        self,
+        session: AsyncSession,
+        checkpoint_id: str,
+    ) -> set[str]:
+        """Return the set of processed doc paths for a checkpoint (T22)."""
+        result = await session.execute(
+            select(IndexingCheckpointDoc.source_path).where(
+                IndexingCheckpointDoc.checkpoint_id == checkpoint_id,
+            )
+        )
+        paths = set(result.scalars().all())
+        if paths:
+            return paths
+        cp = await session.get(IndexingCheckpoint, checkpoint_id)
+        if cp is None:
+            return set()
+        return self.get_processed_doc_paths_legacy(cp)

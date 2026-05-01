@@ -6,6 +6,7 @@ import type { AppNotification } from "@/lib/api";
 import { Icon } from "./Icon";
 import { toast } from "@/stores/toast-store";
 import { PopoverPortal } from "./PopoverPortal";
+import { usePolling } from "@/hooks/usePolling";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -41,13 +42,14 @@ export function NotificationBell() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchCount();
-    const interval = setInterval(() => {
+  usePolling(
+    () => {
       if (mountedRef.current) fetchCount();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchCount]);
+    },
+    30_000,
+    [fetchCount],
+    { leading: true },
+  );
 
   const handleOpen = async () => {
     if (open) {

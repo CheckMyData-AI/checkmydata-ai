@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.10.0] - 2026-05-01
+
+### Changed — AI-First Refactor (T01–T32)
+- **Security & tenancy (P0)**: backup router admin/owner enforcement with 403 tests, project-scoped usage stats, SSE/workflow tenancy hardening, `project_service.update` mass-assignment whitelist, fixed `insight_feed` sample-size bug and `models` route OpenRouter fallback.
+- **AI-first reasoning (P1)**: replaced heuristics with LLM-driven flows in `learning_analyzer`, `data_gate`, `stage_validator`, `suggestion_engine`, `default_rule_template`, `feedback_pipeline`, `orchestrator`, `tool_dispatcher`, `viz_agent`. Added structured `span_type` to all trace producers and consolidated chart rules into `app/viz/chart_rules.py`.
+- **Performance (P2)**: parallelized sequential LLM/IO via `asyncio.gather`, eliminated N+1s (delete_stale_tables, list_projects roles, ClickHouse introspect), batched GeoIP/phone lookups, shared connector-per-batch in `batch_service`. Added `TTLCache` for `SESSION_LOCKS`, health state, SSH tunnels, and workflows. Replaced `SequenceMatcher` with embedding-based similarity (`text_similarity.semantic_similarity`/`semantic_best_match`). Moved bcrypt to `asyncio.to_thread`. Migrated `IndexingCheckpoint` from JSON-rewrite to append-only `indexing_checkpoint_step` / `indexing_checkpoint_doc` tables (Alembic `b6c7d8e9f0a1`).
+- **Architecture (P3)**: split `chat.py` into `cost_estimation_service` + `chat_response_builder`, split `connections.py` into `connection_learnings`, split `data_validation.py` into `data_investigations`. Centralized magic numbers in `app/config.py`. Standardized Pydantic `response_model` (`OkResponse`, `OkWithIdResponse`, `AckWithCountResponse`). LLM adapters now classify errors via structured codes/types instead of substring matching.
+- **Frontend (P4)**: split `lib/api.ts` (1794 lines) into `lib/api/{_client,types,auth,projects,connections,chat,workspace,analytics,index}.ts` while preserving the `@/lib/api` import surface. Extracted helpers from `ChatPanel` (`pipeline-event-handlers.ts`) and `ConnectionSelector` (`connection-form-helpers.ts`). Added unified `usePolling` hook with visibility-aware backoff and tightened `useGlobalEvents` reconnect lifecycle. Introduced zod (`lib/schemas/workflow-event.ts`) for runtime DTO validation. Design system pass: replaced raw palette classes with semantic tokens, added `--color-error-hover` and `--color-accent-strong`.
+
+### Added
+- `app/services/text_similarity.py` — embedding-first similarity helpers with `difflib` fallback.
+- `app/services/cost_estimation_service.py`, `app/services/chat_response_builder.py` — extracted chat helpers.
+- `app/api/schemas/common.py` — shared Pydantic response models.
+- `app/api/routes/connection_learnings.py`, `app/api/routes/data_investigations.py` — split routers.
+- `app/viz/chart_rules.py` — consolidated chart-validation rules.
+- Backend Alembic `b6c7d8e9f0a1_add_append_only_checkpoint_tables`.
+- Frontend `hooks/usePolling.ts`, `lib/schemas/workflow-event.ts`, `components/chat/pipeline-event-handlers.ts`, `components/connections/connection-form-helpers.ts`.
+
 ## [1.9.0] - 2026-04-13
 
 ### Changed

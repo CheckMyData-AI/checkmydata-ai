@@ -175,3 +175,23 @@ class TestGetAccessibleProjects:
         assert p1.id in pids
         assert p2.id in pids
         assert p3.id not in pids
+
+
+class TestGetRolesBulk:
+    @pytest.mark.asyncio
+    async def test_returns_roles_for_projects(self, db):
+        user = await _make_user(db)
+        p1 = await _make_project(db)
+        p2 = await _make_project(db)
+        p3 = await _make_project(db)
+        await svc.add_member(db, p1.id, user.id, "owner")
+        await svc.add_member(db, p2.id, user.id, "viewer")
+        roles = await svc.get_roles_bulk(db, [p1.id, p2.id, p3.id], user.id)
+        assert roles[p1.id] == "owner"
+        assert roles[p2.id] == "viewer"
+        assert p3.id not in roles  # not a member
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_empty(self, db):
+        user = await _make_user(db)
+        assert await svc.get_roles_bulk(db, [], user.id) == {}

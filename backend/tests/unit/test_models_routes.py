@@ -165,7 +165,9 @@ class TestModelsEndpoint:
             resp = client.get("/api/models")
             assert resp.status_code == 200
 
-    def test_openrouter_fetch_error_returns_empty(self, client):
+    def test_openrouter_fetch_error_falls_back_to_static_catalog(self, client):
+        """T05 — when the live API is down and cache is empty, we must
+        return a non-empty static catalog instead of an empty list."""
         instance = AsyncMock()
         instance.get.side_effect = Exception("Connection failed")
         instance.__aenter__ = AsyncMock(return_value=instance)
@@ -174,4 +176,10 @@ class TestModelsEndpoint:
         with patch("app.api.routes.models.httpx.AsyncClient", return_value=instance):
             resp = client.get("/api/models?provider=openrouter")
             assert resp.status_code == 200
-            assert resp.json() == []
+            data = resp.json()
+            assert isinstance(data, list)
+            assert len(data) > 0
+            ids = [m["id"] for m in data]
+            # Must contain both well-known anthropic and openai namespaces.
+            assert any(i.startswith("anthropic/") for i in ids)
+            assert any(i.startswith("openai/") for i in ids)

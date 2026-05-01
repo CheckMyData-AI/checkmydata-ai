@@ -340,23 +340,35 @@ class TestGetTableIndex:
 class TestDeleteStaleTables:
     @pytest.mark.asyncio
     async def test_deletes_stale(self, svc):
-        entries = [
-            _make_entry(table_name="keep"),
-            _make_entry(table_name="remove_me"),
-        ]
-        session = _mock_session(scalars_all=entries)
+        """T17: bulk DELETE reports rowcount from the execute() result."""
+        session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.rowcount = 1
+        session.execute.return_value = result_mock
         count = await svc.delete_stale_tables(session, "conn-1", {"keep"})
         assert count == 1
-        session.delete.assert_awaited_once()
+        session.execute.assert_awaited_once()
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_none_stale(self, svc):
-        entries = [_make_entry(table_name="keep")]
-        session = _mock_session(scalars_all=entries)
+        session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.rowcount = 0
+        session.execute.return_value = result_mock
         count = await svc.delete_stale_tables(session, "conn-1", {"keep"})
         assert count == 0
         session.flush.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_current_set_deletes_all(self, svc):
+        """Empty whitelist means 'delete everything for this connection'."""
+        session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.rowcount = 5
+        session.execute.return_value = result_mock
+        count = await svc.delete_stale_tables(session, "conn-1", set())
+        assert count == 5
 
 
 class TestDeleteAll:

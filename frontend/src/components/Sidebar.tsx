@@ -413,7 +413,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         >
           {/* Mobile drawer header with close button */}
           <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-strong flex items-center justify-center shrink-0">
               <Icon name="zap" size={16} className="text-white" />
             </div>
             <div className="flex-1 min-w-0">
@@ -591,7 +591,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     >
       {/* Header */}
       <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-blue-700 flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-strong flex items-center justify-center shrink-0">
           <Icon name="zap" size={16} className="text-white" />
         </div>
         {!collapsed && (

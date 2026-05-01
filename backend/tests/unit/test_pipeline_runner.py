@@ -32,20 +32,20 @@ def _make_checkpoint(**overrides) -> IndexingCheckpoint:
 class TestCheckpointStepSkipping:
     def test_empty_checkpoint_means_no_steps_done(self):
         cp = _make_checkpoint()
-        assert CheckpointService.get_completed_steps(cp) == set()
+        assert CheckpointService.get_completed_steps_legacy(cp) == set()
 
     def test_completed_steps_parsed_correctly(self):
         cp = _make_checkpoint(
             completed_steps='["detect_changes", "cleanup_deleted", "project_profile"]',
         )
-        done = CheckpointService.get_completed_steps(cp)
+        done = CheckpointService.get_completed_steps_legacy(cp)
         assert done == {"detect_changes", "cleanup_deleted", "project_profile"}
 
     def test_processed_doc_paths_parsed(self):
         cp = _make_checkpoint(
             processed_doc_paths='["models/user.py", "models/order.py"]',
         )
-        paths = CheckpointService.get_processed_doc_paths(cp)
+        paths = CheckpointService.get_processed_doc_paths_legacy(cp)
         assert paths == {"models/user.py", "models/order.py"}
 
     def test_changed_files_restored(self):
@@ -232,6 +232,8 @@ class TestEarlyExitNoChanges:
                 runner._doc_store.get_docs_for_project = AsyncMock(return_value=[])
                 runner._cp_svc.complete_step = AsyncMock()
                 runner._cp_svc.mark_docs_batch_processed = AsyncMock()
+                runner._cp_svc.get_completed_steps = AsyncMock(return_value=set())
+                runner._cp_svc.get_processed_doc_paths = AsyncMock(return_value=set())
                 runner._doc_generator.generate = AsyncMock(return_value="doc content")
                 runner._doc_store.upsert = AsyncMock(return_value=MagicMock(id="doc-1"))
                 runner._doc_store.get_doc_by_path = AsyncMock(return_value=None)

@@ -98,6 +98,23 @@ class TestDataProcessorIPToCountry:
         assert result.query_result.execution_time_ms == 42.0
         assert result.query_result.truncated is True
 
+    def test_dedup_lookups_for_repeated_ips(self):
+        """T18: duplicated IPs trigger a single GeoIP lookup per unique value."""
+        geoip = _mock_geoip()
+        tracked = MagicMock(side_effect=geoip.lookup)
+        geoip.lookup = tracked  # type: ignore[assignment]
+        proc = DataProcessor(geoip=geoip)
+
+        qr = QueryResult(
+            columns=["ip"],
+            rows=[["1.2.3.4"]] * 50 + [["5.6.7.8"]] * 50,
+            row_count=100,
+        )
+        result = proc.process(qr, "ip_to_country", {"column": "ip"})
+        # Only two distinct IPs → exactly two lookup calls.
+        assert tracked.call_count == 2
+        assert "(2 unique)" in result.summary
+
     def test_summary_contains_stats(self):
         geoip = _mock_geoip()
         proc = DataProcessor(geoip=geoip)

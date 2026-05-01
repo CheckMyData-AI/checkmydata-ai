@@ -22,6 +22,29 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "openai/gpt-4o"
 
 
+# OpenRouter JSON error codes (T27). See
+# https://openrouter.ai/docs#errors — provider responses are wrapped in
+# ``{"error": {"code": int, "message": str, ...}}`` at the JSON level.
+_OPENROUTER_TOKEN_LIMIT_MESSAGES: tuple[str, ...] = (
+    "context length",
+    "max_tokens",
+    "too many tokens",
+)
+
+
+def _parse_openrouter_body(response: httpx.Response) -> dict | None:
+    """Best-effort JSON body parse for structured error classification."""
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if isinstance(err, dict):
+            return err
+    return None
+
+
 def _classify_openrouter_error(exc: Exception) -> Exception:
     """Map httpx / OpenRouter errors to the unified LLM error hierarchy."""
     if isinstance(exc, httpx.HTTPStatusError):
@@ -34,11 +57,13 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
             except (ValueError, TypeError):
                 pass
 
-        body = ""
-        try:
-            body = exc.response.text.lower()
-        except Exception:
-            logger.debug("Could not read error response body", exc_info=True)
+        err_obj = _parse_openrouter_body(exc.response)
+        code_value = err_obj.get("code") if isinstance(err_obj, dict) else None
+        structured_message = ""
+        if isinstance(err_obj, dict):
+            raw_msg = err_obj.get("message")
+            if isinstance(raw_msg, str):
+                structured_message = raw_msg.lower()
 
         if status == 429:
             return LLMRateLimitError(str(exc), cause=exc, retry_after=retry_after)
@@ -47,8 +72,28 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
         if status == 402:
             return LLMBillingError(str(exc), cause=exc)
         if status == 400:
-            if "context length" in body or "max_tokens" in body or "too many tokens" in body:
+            if isinstance(code_value, int | str):
+                # OpenRouter uses ``code == 40000`` / ``"context_length_exceeded"``
+                # for token-limit errors when a structured error is available.
+                if code_value in (40000, "context_length_exceeded"):
+                    return LLMTokenLimitError(str(exc), cause=exc)
+            if any(
+                s in structured_message
+                for s in _OPENROUTER_TOKEN_LIMIT_MESSAGES
+            ):
                 return LLMTokenLimitError(str(exc), cause=exc)
+            # Last-resort fallback: sniff the raw response body only when
+            # we failed to parse a structured error.
+            if not err_obj:
+                try:
+                    body = exc.response.text.lower()
+                except Exception:
+                    body = ""
+                    logger.debug(
+                        "Could not read OpenRouter error body", exc_info=True
+                    )
+                if any(s in body for s in _OPENROUTER_TOKEN_LIMIT_MESSAGES):
+                    return LLMTokenLimitError(str(exc), cause=exc)
             return LLMServerError(str(exc), cause=exc)
         if 500 <= status < 600:
             return LLMServerError(str(exc), cause=exc)

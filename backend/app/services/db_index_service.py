@@ -82,15 +82,18 @@ class DbIndexService:
         connection_id: str,
         current_table_names: set[str],
     ) -> int:
-        result = await session.execute(
-            select(DbIndex).where(DbIndex.connection_id == connection_id)
-        )
-        all_entries = result.scalars().all()
-        deleted = 0
-        for entry in all_entries:
-            if entry.table_name not in current_table_names:
-                await session.delete(entry)
-                deleted += 1
+        """Remove DbIndex rows not in *current_table_names* (T17).
+
+        Uses a single parameterised DELETE + ``notin_`` filter instead of the
+        previous fetch-then-loop pattern so we don't issue N+1 queries.
+        Returns the number of rows deleted.
+        """
+        stmt = delete(DbIndex).where(DbIndex.connection_id == connection_id)
+        if current_table_names:
+            stmt = stmt.where(DbIndex.table_name.notin_(current_table_names))
+
+        result = await session.execute(stmt)
+        deleted = int(result.rowcount or 0)
         if deleted:
             await session.flush()
         return deleted

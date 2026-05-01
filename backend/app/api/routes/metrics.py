@@ -7,7 +7,7 @@ from threading import Lock
 
 from fastapi import APIRouter, Depends, Response
 
-from app.api.deps import get_current_user
+from app.api.deps import require_admin
 from app.core.metrics import get_metrics_collector
 
 router = APIRouter()
@@ -42,8 +42,8 @@ def record_request(path: str, latency_ms: float, is_error: bool = False) -> None
 
 
 @router.get("/metrics")
-async def get_metrics(_user: dict = Depends(get_current_user)):
-    """Return application metrics. Requires authentication."""
+async def get_metrics(_user: dict = Depends(require_admin)):
+    """Return application metrics. Admin-only."""
     from app.core.workflow_tracker import tracker
 
     active_workflows = tracker.get_active()
@@ -83,7 +83,7 @@ async def get_metrics(_user: dict = Depends(get_current_user)):
 
 
 @router.get("/metrics/prometheus", response_class=Response)
-async def get_prometheus(_user: dict = Depends(get_current_user)) -> Response:
-    """Render orchestrator counters in Prometheus text-exposition format."""
+async def get_prometheus(_user: dict = Depends(require_admin)) -> Response:
+    """Render orchestrator counters in Prometheus text-exposition format. Admin-only."""
     body = get_metrics_collector().render_prometheus()
     return Response(content=body, media_type="text/plain; version=0.0.4")

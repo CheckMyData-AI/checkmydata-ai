@@ -37,6 +37,11 @@ class WorkflowEvent:
     timestamp: float = field(default_factory=time.time)
     pipeline: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    # T14: structured span type emitted directly by the producer so downstream
+    # trace persistence does not depend on fragile string parsing of ``step``.
+    # One of: llm_call | db_query | rag | tool_call | sub_agent | viz |
+    # validation | other. ``None`` preserves the heuristic fallback.
+    span_type: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)
@@ -62,15 +67,30 @@ def _is_essential(event: "WorkflowEvent") -> bool:
     )
 
 
+@dataclass
+class _Subscriber:
+    """SSE subscriber entry with optional tenancy filter.
+
+    - ``user_id=None`` disables tenancy (admins / tests / internal use).
+    - Otherwise the caller sees events whose workflow owner's ``user_id``
+      matches or whose ``project_id`` is in ``accessible_project_ids``.
+    """
+
+    queue: asyncio.Queue["WorkflowEvent"]
+    user_id: str | None = None
+    accessible_project_ids: frozenset[str] = field(default_factory=frozenset)
+
+
 class WorkflowTracker:
     """In-memory event bus that broadcasts workflow step events to subscribers."""
 
     _ENDED_SET_MAX = 2000
 
     def __init__(self) -> None:
-        self._subscribers: list[asyncio.Queue[WorkflowEvent]] = []
+        self._subscribers: list[_Subscriber] = []
         self._lock = asyncio.Lock()
         self._active_workflows: dict[str, dict[str, Any]] = {}
+        self._workflow_owners: dict[str, dict[str, str]] = {}
         self._persistence_hooks: list[Any] = []
         self._ended_workflows: set[str] = set()
 
@@ -83,6 +103,10 @@ class WorkflowTracker:
         workflow_id_var.set(wf_id)
 
         extra = context or {}
+        uid = str(extra.get("user_id") or "")
+        pid = str(extra.get("project_id") or "")
+        if uid or pid:
+            self._workflow_owners[wf_id] = {"user_id": uid, "project_id": pid}
         if pipeline in BACKGROUND_PIPELINES:
             self._active_workflows[wf_id] = {
                 "workflow_id": wf_id,
@@ -110,6 +134,8 @@ class WorkflowTracker:
         if len(self._ended_workflows) > self._ENDED_SET_MAX:
             to_remove = list(self._ended_workflows)[: self._ENDED_SET_MAX // 2]
             self._ended_workflows -= set(to_remove)
+            for old in to_remove:
+                self._workflow_owners.pop(old, None)
 
         event = WorkflowEvent(
             workflow_id=workflow_id,
@@ -133,13 +159,58 @@ class WorkflowTracker:
         """Check whether ``end()`` was already called for *workflow_id*."""
         return workflow_id in self._ended_workflows
 
-    def get_active(self) -> list[dict[str, Any]]:
-        """Return a snapshot of currently running background workflows."""
-        return list(self._active_workflows.values())
+    def get_owner(self, workflow_id: str) -> dict[str, str]:
+        """Return ``{'user_id','project_id'}`` for the workflow (may be empty)."""
+        return self._workflow_owners.get(workflow_id, {})
+
+    def get_active(
+        self,
+        *,
+        user_id: str | None = None,
+        accessible_project_ids: set[str] | frozenset[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return a snapshot of currently running background workflows.
+
+        When ``user_id`` is provided, the list is filtered to workflows owned
+        by that user or belonging to one of ``accessible_project_ids`` (member
+        of the project). Pass ``user_id=None`` for unfiltered access (admins,
+        tests, internal use).
+        """
+        snapshot = list(self._active_workflows.values())
+        if user_id is None:
+            return snapshot
+        accessible = set(accessible_project_ids or ())
+        out: list[dict[str, Any]] = []
+        for entry in snapshot:
+            extra = entry.get("extra", {}) or {}
+            wf_uid = str(extra.get("user_id") or "")
+            wf_pid = str(extra.get("project_id") or "")
+            if wf_uid and wf_uid == user_id:
+                out.append(entry)
+                continue
+            if wf_pid and wf_pid in accessible:
+                out.append(entry)
+                continue
+        return out
 
     def _resolve_pipeline(self, workflow_id: str) -> str:
         entry = self._active_workflows.get(workflow_id)
         return entry["pipeline"] if entry else ""
+
+    def _event_matches_subscriber(
+        self, event: "WorkflowEvent", sub: _Subscriber
+    ) -> bool:
+        """True when ``sub`` is allowed to see ``event`` under tenancy rules."""
+        if sub.user_id is None:
+            return True
+        owner = self._workflow_owners.get(event.workflow_id, {})
+        wf_uid = owner.get("user_id") or str(event.extra.get("user_id") or "")
+        wf_pid = owner.get("project_id") or str(event.extra.get("project_id") or "")
+        if wf_uid and wf_uid == sub.user_id:
+            return True
+        if wf_pid and wf_pid in sub.accessible_project_ids:
+            return True
+        return False
 
     @asynccontextmanager
     async def step(
@@ -148,6 +219,8 @@ class WorkflowTracker:
         step_name: str,
         detail: str = "",
         step_data: dict[str, Any] | None = None,
+        *,
+        span_type: str | None = None,
     ):
         """Context manager that emits started/completed/failed events.
 
@@ -155,6 +228,10 @@ class WorkflowTracker:
         ``async with`` block.  Its contents are forwarded as ``extra`` on the
         completion (or failure) event so that TracePersistenceService can store
         input/output previews and token usage alongside the span.
+
+        ``span_type`` (T14): structured span type (``llm_call``, ``db_query``,
+        ``rag``, ``tool_call``, ``sub_agent``, ``viz``, ``validation``). Emit
+        this explicitly to remove the dependency on downstream string parsing.
         """
         pipeline = self._resolve_pipeline(workflow_id)
         start_event = WorkflowEvent(
@@ -163,6 +240,7 @@ class WorkflowTracker:
             status="started",
             detail=detail,
             pipeline=pipeline,
+            span_type=span_type,
         )
         await self._broadcast(start_event)
         t0 = time.monotonic()
@@ -177,6 +255,7 @@ class WorkflowTracker:
                 elapsed_ms=round(elapsed, 1),
                 pipeline=pipeline,
                 extra=dict(step_data) if step_data else {},
+                span_type=span_type,
             )
             await self._broadcast(end_event)
         except Exception as exc:
@@ -189,12 +268,20 @@ class WorkflowTracker:
                 elapsed_ms=round(elapsed, 1),
                 pipeline=pipeline,
                 extra=dict(step_data) if step_data else {},
+                span_type=span_type,
             )
             await self._broadcast(fail_event)
             raise
 
     async def emit(
-        self, workflow_id: str, step: str, status: str, detail: str = "", **extra: Any
+        self,
+        workflow_id: str,
+        step: str,
+        status: str,
+        detail: str = "",
+        *,
+        span_type: str | None = None,
+        **extra: Any,
     ) -> None:
         event = WorkflowEvent(
             workflow_id=workflow_id,
@@ -203,15 +290,32 @@ class WorkflowTracker:
             detail=detail,
             pipeline=self._resolve_pipeline(workflow_id),
             extra=extra,
+            span_type=span_type,
         )
         await self._broadcast(event)
 
     _QUEUE_MAXSIZE = 1024
 
-    async def subscribe(self) -> asyncio.Queue[WorkflowEvent]:
+    async def subscribe(
+        self,
+        *,
+        user_id: str | None = None,
+        accessible_project_ids: set[str] | frozenset[str] | None = None,
+    ) -> asyncio.Queue[WorkflowEvent]:
+        """Register a subscriber and return its event queue.
+
+        Pass ``user_id=None`` (default) to opt out of tenancy filtering. Pass
+        a concrete user id together with ``accessible_project_ids`` to filter
+        events down to workflows the user owns or is a member of.
+        """
         queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue(maxsize=self._QUEUE_MAXSIZE)
+        sub = _Subscriber(
+            queue=queue,
+            user_id=user_id,
+            accessible_project_ids=frozenset(accessible_project_ids or ()),
+        )
         async with self._lock:
-            self._subscribers.append(queue)
+            self._subscribers.append(sub)
         return queue
 
     @staticmethod
@@ -239,10 +343,7 @@ class WorkflowTracker:
 
     async def unsubscribe(self, queue: asyncio.Queue[WorkflowEvent]) -> None:
         async with self._lock:
-            try:
-                self._subscribers.remove(queue)
-            except ValueError:
-                pass
+            self._subscribers = [s for s in self._subscribers if s.queue is not queue]
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
         short = event.detail[:30] + "…" if len(event.detail) > 30 else event.detail
@@ -256,8 +357,11 @@ class WorkflowTracker:
         )
         essential = _is_essential(event)
         async with self._lock:
-            dead: list[asyncio.Queue[WorkflowEvent]] = []
-            for queue in self._subscribers:
+            dead: list[_Subscriber] = []
+            for sub in self._subscribers:
+                if not self._event_matches_subscriber(event, sub):
+                    continue
+                queue = sub.queue
                 try:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
@@ -275,7 +379,7 @@ class WorkflowTracker:
                                 continue
                             except asyncio.QueueFull:
                                 pass
-                        dead.append(queue)
+                        dead.append(sub)
                     else:
                         logger.debug(
                             "Backpressure: dropping non-essential event %s on full queue",
@@ -288,9 +392,9 @@ class WorkflowTracker:
                     len(dead),
                     self._QUEUE_MAXSIZE,
                 )
-                for q in dead:
+                for s in dead:
                     try:
-                        self._subscribers.remove(q)
+                        self._subscribers.remove(s)
                     except ValueError:
                         pass
         for hook in self._persistence_hooks:

@@ -120,7 +120,7 @@ class TestValidateVizResult:
         assert out.passed is False
         assert any("hologram" in e for e in out.errors)
 
-    @patch("app.agents.validation.settings")
+    @patch("app.viz.chart_rules.settings")
     def test_pie_chart_too_many_slices(self, mock_settings):
         mock_settings.max_pie_categories = 20
         res = _viz_result(viz_type="pie_chart")
@@ -128,7 +128,7 @@ class TestValidateVizResult:
         assert out.passed is True
         assert any("pie" in w.lower() for w in out.warnings)
 
-    @patch("app.agents.validation.settings")
+    @patch("app.viz.chart_rules.settings")
     def test_pie_chart_within_limit(self, mock_settings):
         mock_settings.max_pie_categories = 20
         res = _viz_result(viz_type="pie_chart")
@@ -152,7 +152,7 @@ class TestValidateVizResult:
         out = validator.validate_viz_result(res, column_count=0)
         assert any("2 columns" in w for w in out.warnings)
 
-    @patch("app.agents.validation.settings")
+    @patch("app.viz.chart_rules.settings")
     def test_success(self, mock_settings):
         mock_settings.max_pie_categories = 20
         res = _viz_result(viz_type="bar_chart")

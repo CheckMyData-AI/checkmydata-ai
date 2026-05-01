@@ -43,6 +43,7 @@ select:focus-visible {
 
   --color-accent: #3b82f6;
   --color-accent-hover: #60a5fa;
+  --color-accent-strong: #1d4ed8;
   --color-accent-muted: #3b82f620;
 
   --color-success: #34d399;
@@ -50,6 +51,7 @@ select:focus-visible {
   --color-warning: #fbbf24;
   --color-warning-muted: #fbbf2420;
   --color-error: #f87171;
+  --color-error-hover: #fca5a5;
   --color-error-muted: #f8717120;
   --color-info: #60a5fa;
   --color-info-muted: #60a5fa20;

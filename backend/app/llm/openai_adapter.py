@@ -23,8 +23,34 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-4o"
 
 
+# OpenAI error codes that map to our unified hierarchy (T27). Structured
+# codes beat string sniffing — we only fall back to message substrings
+# when the SDK didn't surface a ``code``.
+_OPENAI_CONTENT_FILTER_CODES: frozenset[str] = frozenset(
+    {"content_policy_violation", "content_filter"}
+)
+_OPENAI_TOKEN_LIMIT_CODES: frozenset[str] = frozenset(
+    {"context_length_exceeded", "tokens_limit_reached", "max_tokens_exceeded"}
+)
+_CONTENT_FILTER_FALLBACK_SUBSTRINGS: tuple[str, ...] = (
+    "content_policy",
+    "content management",
+    "content filter",
+)
+_TOKEN_LIMIT_FALLBACK_SUBSTRINGS: tuple[str, ...] = (
+    "maximum context length",
+    "max tokens",
+    "token limit",
+)
+
+
 def _classify_openai_error(exc: Exception) -> Exception:
-    """Map openai SDK exceptions to the unified LLM error hierarchy."""
+    """Map openai SDK exceptions to the unified LLM error hierarchy.
+
+    Prefers structured error codes (``exc.code`` / ``exc.body['error']['code']``)
+    over substring matching on the message — codes are stable across SDK
+    releases whereas error messages routinely change.
+    """
     if isinstance(exc, openai.RateLimitError):
         retry_after = None
         if hasattr(exc, "response") and exc.response is not None:
@@ -40,10 +66,21 @@ def _classify_openai_error(exc: Exception) -> Exception:
         return LLMAuthError(str(exc), cause=exc)
 
     if isinstance(exc, openai.BadRequestError):
-        msg = str(exc).lower()
-        if "content_policy" in msg or "content management" in msg or "content filter" in msg:
+        code = _extract_openai_error_code(exc)
+        if code in _OPENAI_CONTENT_FILTER_CODES:
             return LLMContentFilterError(str(exc), cause=exc)
-        if "maximum context length" in msg or "max tokens" in msg or "token" in msg:
+        if code in _OPENAI_TOKEN_LIMIT_CODES:
+            return LLMTokenLimitError(str(exc), cause=exc)
+        if code:
+            return LLMServerError(str(exc), cause=exc)
+
+        # Legacy fallback: OpenAI error codes are usually present but some
+        # proxies / older SDK versions strip them. Guard substring checks
+        # narrowly so ordinary validation errors don't get misclassified.
+        msg = str(exc).lower()
+        if any(s in msg for s in _CONTENT_FILTER_FALLBACK_SUBSTRINGS):
+            return LLMContentFilterError(str(exc), cause=exc)
+        if any(s in msg for s in _TOKEN_LIMIT_FALLBACK_SUBSTRINGS):
             return LLMTokenLimitError(str(exc), cause=exc)
         return LLMServerError(str(exc), cause=exc)
 
@@ -72,6 +109,21 @@ def _classify_openai_error(exc: Exception) -> Exception:
         return LLMConnectionError(str(exc), cause=exc)
 
     return exc
+
+
+def _extract_openai_error_code(exc: Exception) -> str | None:
+    """Pull a structured error code out of an OpenAI SDK exception."""
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            inner = err.get("code")
+            if isinstance(inner, str) and inner:
+                return inner
+    return None
 
 
 _REQUEST_TIMEOUT = 90.0

@@ -7,6 +7,7 @@ Insight Memory Layer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -71,9 +72,15 @@ class InsightFeedAgent:
             logger.info("No DB index for connection %s — skipping scan", connection_id)
             return result
 
-        for entry in tables[:10]:
+        # T16: analyse all tables concurrently. Each ``_analyze_table`` call
+        # is read-only (heuristic sweep + optional LLM) and uses its own
+        # connector/LLM client, so asyncio.gather is safe. DB writes
+        # (``store_insight``) stay serial because they share *session*.
+        scanned_tables = tables[:10]
+
+        async def _safe_analyze(entry: Any) -> tuple[Any, list[dict[str, Any]], Exception | None]:
             try:
-                insights = await self._analyze_table(
+                data = await self._analyze_table(
                     session,
                     project_id,
                     connection_id,
@@ -81,7 +88,23 @@ class InsightFeedAgent:
                     connector=connector,
                     llm=llm,
                 )
-                result.queries_run += 1
+                return entry, data, None
+            except Exception as exc:  # noqa: BLE001 — logged + surfaced
+                return entry, [], exc
+
+        analyses = await asyncio.gather(
+            *(_safe_analyze(e) for e in scanned_tables),
+            return_exceptions=False,
+        )
+
+        for entry, insights, exc in analyses:
+            if exc is not None:
+                tbl = getattr(entry, "table_name", "?")
+                logger.warning("Scan error for table %s: %s", tbl, exc)
+                result.errors.append(str(exc))
+                continue
+            result.queries_run += 1
+            try:
                 for ins_data in insights:
                     record = await self._memory.store_insight(
                         session,
@@ -103,7 +126,7 @@ class InsightFeedAgent:
                         result.insights_updated += 1
             except Exception as exc:
                 tbl = getattr(entry, "table_name", "?")
-                logger.warning("Scan error for table %s: %s", tbl, exc)
+                logger.warning("Insight persist error for table %s: %s", tbl, exc)
                 result.errors.append(str(exc))
 
         return result
@@ -217,6 +240,11 @@ class InsightFeedAgent:
                 if content.startswith("["):
                     parsed = json.loads(content)
                     if isinstance(parsed, list):
+                        # sample_size reflects how many rows the model actually
+                        # saw (not the character count of its response).
+                        sample_rows = (
+                            len(sample_data) if isinstance(sample_data, list) else 0
+                        )
                         valid = []
                         for item in parsed[:5]:
                             if isinstance(item, dict) and "title" in item:
@@ -229,7 +257,7 @@ class InsightFeedAgent:
                                         "confidence": min(0.7, float(item.get("confidence", 0.5))),
                                         "action": item.get("action", ""),
                                         "impact": item.get("impact", ""),
-                                        "sample_size": len(content),
+                                        "sample_size": sample_rows,
                                     }
                                 )
                         return valid

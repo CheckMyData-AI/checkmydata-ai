@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from app.models.data_validation import DataValidationFeedback
@@ -14,20 +16,44 @@ from app.services.session_notes_service import SessionNotesService
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.llm.router import LLMRouter
+
 logger = logging.getLogger(__name__)
 
 SMALL_DEVIATION_PCT = 5.0
 MEDIUM_DEVIATION_PCT = 20.0
 
 
-class FeedbackPipeline:
-    """Processes user data-accuracy feedback into persistent learning artifacts."""
+_LEARNING_PROMPT = """Classify a user rejection of an agent-generated
+metric into a structured learning entry.
 
-    def __init__(self) -> None:
+Return ONLY this JSON object:
+  {
+    "category": "data_format" | "schema_gotcha" | "table_preference"
+              | "column_usage" | "query_pattern" | "performance_hint",
+    "subject": "<table-or-metric-name>",
+    "lesson": "<one-sentence takeaway, <= 300 chars>"
+  }
+
+Inputs: metric description, agent SQL, agent value, user expected value,
+rejection reason. If nothing useful can be extracted, return
+``{"category":"","subject":"","lesson":""}``.
+"""
+
+
+class FeedbackPipeline:
+    """Processes user data-accuracy feedback into persistent learning artifacts.
+
+    Pass ``llm_router`` to enable LLM-driven learning extraction (T11).
+    The keyword classifier :func:`_derive_learning` stays as a fallback.
+    """
+
+    def __init__(self, llm_router: LLMRouter | None = None) -> None:
         self._learning_svc = AgentLearningService()
         self._notes_svc = SessionNotesService()
         self._benchmark_svc = BenchmarkService()
         self._validation_svc = DataValidationService()
+        self._llm_router = llm_router
 
     async def process(
         self,
@@ -147,14 +173,14 @@ class FeedbackPipeline:
         )
         result["notes_created"].append(note.id)
 
-        category, lesson = _derive_learning(fb, reason)
+        category, subject, lesson = await self._derive_learning_llm_first(fb, reason)
         if category and lesson:
             try:
                 learning = await self._learning_svc.create_learning(
                     session,
                     connection_id=fb.connection_id,
                     category=category,
-                    subject=_extract_subject(fb),
+                    subject=subject or _extract_subject(fb),
                     lesson=lesson,
                     confidence=0.7,
                     source_query=fb.query,
@@ -164,13 +190,63 @@ class FeedbackPipeline:
             except ValueError:
                 logger.warning(
                     "Skipped learning from rejected feedback (quality check): subj=%s",
-                    _extract_subject(fb),
+                    subject or _extract_subject(fb),
                 )
 
         metric_key = normalize_metric_key(fb.metric_description or fb.query[:100])
         await self._benchmark_svc.flag_stale(session, fb.connection_id, metric_key)
 
         result["resolution"] = f"User rejected result. Learning + note created. Reason: {reason}"
+
+    async def _derive_learning_llm_first(
+        self,
+        fb: DataValidationFeedback,
+        reason: str,
+    ) -> tuple[str | None, str | None, str | None]:
+        """LLM-first learning classifier. Returns (category, subject, lesson).
+
+        Falls back to :func:`_derive_learning` (keyword heuristic) on any
+        failure so the pipeline keeps learning even without the LLM.
+        """
+        if self._llm_router is not None:
+            try:
+                from app.llm.base import Message
+
+                payload = json.dumps(
+                    {
+                        "metric_description": fb.metric_description,
+                        "agent_value": fb.agent_value,
+                        "user_expected_value": fb.user_expected_value,
+                        "query": (fb.query or "")[:2000],
+                        "reason": reason,
+                    },
+                    default=str,
+                )
+                resp = await self._llm_router.complete(
+                    messages=[
+                        Message(role="system", content=_LEARNING_PROMPT),
+                        Message(role="user", content=payload),
+                    ],
+                    temperature=0.0,
+                    max_tokens=400,
+                )
+                parsed = _extract_json(resp.content if resp else "")
+                if isinstance(parsed, dict):
+                    category = str(parsed.get("category", "")).strip() or None
+                    subject = (
+                        str(parsed.get("subject", "")).strip() or None
+                    )
+                    lesson = str(parsed.get("lesson", "")).strip() or None
+                    if category and lesson:
+                        return category, subject, lesson
+            except Exception:
+                logger.debug(
+                    "LLM-based feedback classification failed; using fallback",
+                    exc_info=True,
+                )
+
+        category, lesson = _derive_learning(fb, reason)
+        return category, None, lesson
 
 
 # ------------------------------------------------------------------
@@ -221,6 +297,19 @@ def _derive_learning(
         f"Data accuracy issue with '{fb.metric_description}': {reason}. "
         f"Agent value: {fb.agent_value}, expected: {fb.user_expected_value or '?'}.",
     )
+
+
+def _extract_json(raw: str | None) -> object | None:
+    if not raw:
+        return None
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    try:
+        return json.loads(stripped)
+    except Exception:
+        return None
 
 
 def _try_float(val: str | None) -> float | None:

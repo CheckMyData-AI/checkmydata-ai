@@ -406,3 +406,86 @@ class TestAggregatePeriod:
         assert result["total_tokens"] == 0
         assert result["request_count"] == 0
         assert result["estimated_cost_usd"] is None
+
+
+class TestProjectScopedFiltering:
+    """T02 — usage endpoint must filter by project_id when provided."""
+
+    @pytest.mark.asyncio
+    async def test_period_comparison_filters_by_project_id(self, db):
+        user = await _make_user(db)
+        proj_a = await _make_project(db)
+        proj_b = await _make_project(db)
+
+        now = datetime.now(UTC)
+        await _insert_usage(
+            db,
+            user.id,
+            proj_a.id,
+            prompt_tokens=100,
+            completion_tokens=0,
+            created_at=now - timedelta(days=5),
+        )
+        await _insert_usage(
+            db,
+            user.id,
+            proj_b.id,
+            prompt_tokens=777,
+            completion_tokens=0,
+            created_at=now - timedelta(days=5),
+        )
+
+        scoped = await svc.get_period_comparison(
+            db, user.id, days=30, project_id=proj_a.id
+        )
+        unscoped = await svc.get_period_comparison(db, user.id, days=30)
+
+        assert scoped["current_period"]["prompt_tokens"] == 100
+        assert scoped["current_period"]["request_count"] == 1
+        assert unscoped["current_period"]["prompt_tokens"] == 877
+        assert unscoped["current_period"]["request_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_aggregate_period_filters_by_project_id(self, db):
+        user = await _make_user(db)
+        proj_a = await _make_project(db)
+        proj_b = await _make_project(db)
+
+        now = datetime.now(UTC)
+        await _insert_usage(
+            db, user.id, proj_a.id, prompt_tokens=50, completion_tokens=10,
+            created_at=now - timedelta(days=2),
+        )
+        await _insert_usage(
+            db, user.id, proj_b.id, prompt_tokens=5000, completion_tokens=1000,
+            created_at=now - timedelta(days=2),
+        )
+
+        out = await svc._aggregate_period(
+            db, user.id, now - timedelta(days=10), now, project_id=proj_a.id
+        )
+        assert out["prompt_tokens"] == 50
+        assert out["completion_tokens"] == 10
+        assert out["request_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_daily_breakdown_filters_by_project_id(self, db):
+        user = await _make_user(db)
+        proj_a = await _make_project(db)
+        proj_b = await _make_project(db)
+
+        now = datetime.now(UTC)
+        await _insert_usage(
+            db, user.id, proj_a.id, prompt_tokens=100, completion_tokens=0,
+            created_at=now - timedelta(days=2),
+        )
+        await _insert_usage(
+            db, user.id, proj_b.id, prompt_tokens=999, completion_tokens=0,
+            created_at=now - timedelta(days=2),
+        )
+
+        daily = await svc._daily_breakdown(
+            db, user.id, now - timedelta(days=10), now, project_id=proj_a.id
+        )
+        total = sum(row["prompt_tokens"] for row in daily)
+        assert total == 100

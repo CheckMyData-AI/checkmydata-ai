@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import logging
 
+from app.config import settings
 from app.llm.base import Message
 
 logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+def _tool_result_max_chars() -> int:
+    """Configurable tool-result condensation cap (T25)."""
+    return settings.tool_result_max_chars
+
+
+# Backwards-compat alias for callers that still import this constant.
 TOOL_RESULT_MAX_CHARS = 500
 
 
@@ -30,11 +39,12 @@ def condense_tool_results(messages: list[Message]) -> list[Message]:
     """Shorten tool-result messages so they don't blow up the context budget."""
     out: list[Message] = []
     for m in messages:
-        if m.role == "tool" and len(m.content) > TOOL_RESULT_MAX_CHARS:
+        cap = _tool_result_max_chars()
+        if m.role == "tool" and len(m.content) > cap:
             lines = m.content.splitlines()
             preview = "\n".join(lines[:8])
-            if len(preview) > TOOL_RESULT_MAX_CHARS:
-                preview = preview[:TOOL_RESULT_MAX_CHARS]
+            if len(preview) > cap:
+                preview = preview[:cap]
             condensed = f"{preview}\n... (truncated, {len(m.content)} chars total)"
             out.append(
                 Message(

@@ -93,17 +93,26 @@ class DataProcessor:
         cc_col = f"{column}_country_code"
         cn_col = f"{column}_country_name"
 
+        # T18: dedup lookups so an IP that appears 10,000 times is resolved
+        # once. Huge win on large datasets where a handful of IPs dominate.
+        unique_ips: set[str] = set()
+        for row in qr.rows:
+            unique_ips.add(str(row[col_idx]) if row[col_idx] is not None else "")
+
+        ip_cache: dict[str, tuple[str, str]] = {}
+        for ip_val in unique_ips:
+            geo = self._geoip.lookup(ip_val)
+            ip_cache[ip_val] = (geo.country_code, geo.country_name)
+
         new_columns = [*qr.columns, cc_col, cn_col]
         new_rows: list[list[Any]] = []
         country_stats: dict[str, int] = {}
 
         for row in qr.rows:
             ip_val = str(row[col_idx]) if row[col_idx] is not None else ""
-            geo = self._geoip.lookup(ip_val)
-            new_row = [*row, geo.country_code, geo.country_name]
-            new_rows.append(new_row)
-
-            label = geo.country_code or "Unknown"
+            cc, cn = ip_cache.get(ip_val, ("", ""))
+            new_rows.append([*row, cc, cn])
+            label = cc or "Unknown"
             country_stats[label] = country_stats.get(label, 0) + 1
 
         enriched = QueryResult(
@@ -119,7 +128,7 @@ class DataProcessor:
         stats_lines = [f"  {cc}: {cnt} rows" for cc, cnt in top]
         summary = (
             f"Added columns '{cc_col}' and '{cn_col}' from column '{column}'.\n"
-            f"Resolved {len(new_rows)} IP addresses.\n"
+            f"Resolved {len(new_rows)} IP addresses ({len(unique_ips)} unique).\n"
             f"Top countries:\n" + "\n".join(stats_lines)
         )
 
@@ -147,17 +156,25 @@ class DataProcessor:
         cc_col = f"{column}_country_code"
         cn_col = f"{column}_country_name"
 
+        # T18: dedup lookups — a customer list often has many duplicates.
+        unique_phones: set[str] = set()
+        for row in qr.rows:
+            unique_phones.add(str(row[col_idx]) if row[col_idx] is not None else "")
+
+        phone_cache: dict[str, tuple[str, str]] = {}
+        for phone_val in unique_phones:
+            res = self._phone.lookup(phone_val)
+            phone_cache[phone_val] = (res.country_code, res.country_name)
+
         new_columns = [*qr.columns, cc_col, cn_col]
         new_rows: list[list[Any]] = []
         country_stats: dict[str, int] = {}
 
         for row in qr.rows:
             phone_val = str(row[col_idx]) if row[col_idx] is not None else ""
-            result = self._phone.lookup(phone_val)
-            new_row = [*row, result.country_code, result.country_name]
-            new_rows.append(new_row)
-
-            label = result.country_code or "Unknown"
+            cc, cn = phone_cache.get(phone_val, ("", ""))
+            new_rows.append([*row, cc, cn])
+            label = cc or "Unknown"
             country_stats[label] = country_stats.get(label, 0) + 1
 
         enriched = QueryResult(
@@ -173,7 +190,8 @@ class DataProcessor:
         stats_lines = [f"  {cc}: {cnt} rows" for cc, cnt in top]
         summary = (
             f"Added columns '{cc_col}' and '{cn_col}' from column '{column}'.\n"
-            f"Resolved {len(new_rows)} phone numbers to countries.\n"
+            f"Resolved {len(new_rows)} phone numbers to countries "
+            f"({len(unique_phones)} unique).\n"
             f"Top countries:\n" + "\n".join(stats_lines)
         )
 

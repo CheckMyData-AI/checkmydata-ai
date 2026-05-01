@@ -272,6 +272,9 @@ class TestMaxIterations:
             mock_settings.max_parallel_tool_calls = 3
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             resp = await agent.run(
                 question="loop forever",
@@ -344,6 +347,9 @@ class TestMaxIterations:
             mock_settings.max_parallel_tool_calls = 3
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             resp = await agent.run(
                 question="complex analysis",
@@ -391,6 +397,9 @@ class TestMaxIterations:
             mock_settings.max_parallel_tool_calls = 3
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             resp = await agent.run(
                 question="loop forever",
@@ -438,6 +447,9 @@ class TestMaxIterations:
             mock_settings.max_parallel_tool_calls = 3
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             resp = await agent.run(
                 question="loop forever",

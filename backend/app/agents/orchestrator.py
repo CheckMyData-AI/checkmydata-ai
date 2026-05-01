@@ -266,7 +266,11 @@ class OrchestratorAgent(BaseAgent):
                             learning_subjects.append(subj)
             learning_subjects = learning_subjects[:10]
 
-        strategy = "pipeline" if len(tables) > 3 else "single_query"
+        strategy = (
+            "pipeline"
+            if len(tables) > settings.orchestrator_pipeline_table_threshold
+            else "single_query"
+        )
 
         await tracker.emit(
             wf_id,
@@ -477,6 +481,7 @@ class OrchestratorAgent(BaseAgent):
             "orchestrator:llm_call",
             "Direct response LLM",
             step_data=_sd,
+            span_type="llm_call",
         ):
             llm_resp = await self._llm_call_with_retry(
                 messages=messages,
@@ -819,6 +824,7 @@ class OrchestratorAgent(BaseAgent):
                     "orchestrator:llm_call",
                     f"Orchestrator LLM ({phase_label})",
                     step_data=_sd,
+                    span_type="llm_call",
                 ):
                     llm_resp = await self._llm_call_with_retry(
                         messages=messages,
@@ -845,6 +851,7 @@ class OrchestratorAgent(BaseAgent):
                             "orchestrator:llm_call",
                             "Orchestrator LLM (recovery)",
                             step_data=_sd_r,
+                            span_type="llm_call",
                         ):
                             llm_resp = await self._llm_call_with_retry(
                                 messages=messages,
@@ -1071,6 +1078,7 @@ class OrchestratorAgent(BaseAgent):
                         "orchestrator:llm_call",
                         "Orchestrator LLM (final synthesis)",
                         step_data=_sd_s,
+                        span_type="llm_call",
                     ):
                         synth_resp = await self._llm_call_with_retry(
                             messages=synthesis_messages,
@@ -1155,9 +1163,14 @@ class OrchestratorAgent(BaseAgent):
             n_viz = len(viable_sql)
             label = f"Choosing visualization{'s' if n_viz > 1 else ''}…"
             await self._tracker.emit(wf_id, "thinking", "in_progress", label)
-            for sr_idx, sr in enumerate(viable_sql):
+
+            async def _pick_one_viz(sr_idx: int, sr: SQLAgentResult) -> tuple[
+                int, str, dict[str, Any], Any
+            ]:
+                """Run a single viz.run with step tracking. Returns (idx, viz_type, cfg, result)."""
                 sr_viz_type = "table"
                 sr_viz_config: dict[str, Any] = {}
+                viz_result: Any = None
                 try:
                     _sd_viz: dict[str, Any] = {"input_preview": question[:_PREVIEW_MAX]}
                     step_label = (
@@ -1171,6 +1184,7 @@ class OrchestratorAgent(BaseAgent):
                         "orchestrator:viz",
                         step_label,
                         step_data=_sd_viz,
+                        span_type="viz",
                     ):
                         viz_result = await asyncio.wait_for(
                             self._viz.run(
@@ -1182,17 +1196,8 @@ class OrchestratorAgent(BaseAgent):
                             timeout=settings.viz_timeout_seconds,
                         )
                         _sd_viz["output_preview"] = f"type={viz_result.viz_type}"
-                    self.accum_usage(total_usage, viz_result.token_usage)
                     sr_viz_type = viz_result.viz_type
                     sr_viz_config = viz_result.viz_config
-
-                    vv = self._validator.validate_viz_result(
-                        viz_result,
-                        row_count=sr.results.row_count,
-                        column_count=len(sr.results.columns),
-                    )
-                    if vv.fallback_viz_type:
-                        sr_viz_type = vv.fallback_viz_type
                 except (Exception, asyncio.CancelledError):
                     logger.debug(
                         "Visualization %d/%d failed, falling back to table",
@@ -1201,6 +1206,27 @@ class OrchestratorAgent(BaseAgent):
                         exc_info=True,
                     )
                     sr_viz_type = "table"
+                return sr_idx, sr_viz_type, sr_viz_config, viz_result
+
+            # T16: run viz picks concurrently. They are independent LLM
+            # calls with no shared mutable state, so asyncio.gather is safe
+            # and turns an N-call wait into a 1-call wait.
+            viz_outcomes = await asyncio.gather(
+                *(_pick_one_viz(i, sr) for i, sr in enumerate(viable_sql)),
+                return_exceptions=False,
+            )
+
+            for sr_idx, sr_viz_type, sr_viz_config, viz_result in viz_outcomes:
+                sr = viable_sql[sr_idx]
+                if viz_result is not None:
+                    self.accum_usage(total_usage, viz_result.token_usage)
+                    vv = self._validator.validate_viz_result(
+                        viz_result,
+                        row_count=sr.results.row_count,
+                        column_count=len(sr.results.columns),
+                    )
+                    if vv.fallback_viz_type:
+                        sr_viz_type = vv.fallback_viz_type
 
                 sql_result_blocks.append(
                     SQLResultBlock(
@@ -1381,6 +1407,7 @@ class OrchestratorAgent(BaseAgent):
             "orchestrator:planning",
             "Creating execution plan",
             step_data=_sd_plan,
+            span_type="llm_call",
         ):
             plan = await adaptive._llm_plan(
                 context.user_question,
@@ -1967,8 +1994,9 @@ class OrchestratorAgent(BaseAgent):
         """
         if not final_text or not final_text.strip():
             return False
+        min_chars = settings.answer_validator_min_chars
         if not settings.answer_validator_enabled:
-            return len(final_text.strip()) > 80
+            return len(final_text.strip()) > min_chars
         try:
             from app.agents.answer_validator import AnswerValidator
 
@@ -1997,7 +2025,7 @@ class OrchestratorAgent(BaseAgent):
             return verdict.addresses_question
         except Exception:
             logger.debug("Answer validator failed (non-critical)", exc_info=True)
-            return len(final_text.strip()) > 80
+            return len(final_text.strip()) > min_chars
 
     async def _stream_tokens(
         self,
@@ -2014,12 +2042,51 @@ class OrchestratorAgent(BaseAgent):
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
-        """Convert arbitrary exceptions to user-friendly messages."""
+        """Convert arbitrary exceptions to user-friendly messages (T12).
+
+        Uses typed classifiers from :mod:`app.connectors.base` where
+        available, falling back to a very small set of textual cues only
+        for foreign exception types.
+        """
+        # Exception-type based classification (preferred).
+        exc_name = type(exc).__name__
+        connection_types = {
+            "OperationalError",
+            "InterfaceError",
+            "DBAPIError",
+            "DisconnectionError",
+            "TimeoutError",
+            "ConnectionError",
+            "ConnectionRefusedError",
+            "ConnectionResetError",
+        }
+        if exc_name in connection_types:
+            return (
+                "Database connection error. Please check your connection "
+                "settings and try again."
+            )
+        permission_types = {"PermissionError", "AuthenticationError"}
+        if exc_name in permission_types:
+            return (
+                "Permission error. Please check your database credentials "
+                "and permissions."
+            )
+
+        # String fallback only for opaque / wrapped exceptions (e.g. RuntimeError
+        # raised by connector shims). Kept minimal intentionally.
         msg = str(exc).lower()
-        if "connection" in msg and ("refused" in msg or "reset" in msg or "timeout" in msg):
-            return "Database connection error. Please check your connection settings and try again."
+        if "connection" in msg and (
+            "refused" in msg or "reset" in msg or "timeout" in msg
+        ):
+            return (
+                "Database connection error. Please check your connection "
+                "settings and try again."
+            )
         if "permission" in msg or "access denied" in msg:
-            return "Permission error. Please check your database credentials and permissions."
+            return (
+                "Permission error. Please check your database credentials "
+                "and permissions."
+            )
         return "An unexpected error occurred. Please try again shortly."
 
     # Backward-compatible aliases — delegate to ToolDispatcher

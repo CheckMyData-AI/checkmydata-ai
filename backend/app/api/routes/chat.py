@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 import time
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
@@ -27,7 +26,6 @@ from app.core.agent_limiter import agent_limiter
 from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
-from app.llm.errors import LLMError
 from app.services.chat_service import ChatService, SessionBusyError, session_processing_lock
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -54,7 +52,6 @@ _membership_svc = MembershipService()
 _suggestion_engine = SuggestionEngine()
 
 _SQL_EXPLAIN_CACHE: OrderedDict[str, dict] = OrderedDict()
-_SQL_EXPLAIN_CACHE_MAX = 100
 _SQL_EXPLAIN_CACHE_LOCK = asyncio.Lock()
 
 
@@ -73,48 +70,24 @@ async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
 
 
 def _compute_sql_complexity(sql: str) -> str:
-    upper = sql.upper()
-    has_recursive = bool(re.search(r"\bWITH\s+RECURSIVE\b", upper))
-    has_cte = bool(re.search(r"\bWITH\b\s+\w+\s+AS\s*\(", upper))
-    has_window = bool(re.search(r"\bOVER\s*\(", upper))
-    join_count = len(re.findall(r"\bJOIN\b", upper))
-    has_subquery = "SELECT" in upper[upper.find("FROM") + 1 :] if "FROM" in upper else False
+    """Thin wrapper — real logic lives in :mod:`cost_estimation_service`."""
+    from app.services.cost_estimation_service import compute_sql_complexity
 
-    if has_recursive:
-        return "expert"
-    if has_cte and (has_window or join_count > 2):
-        return "expert"
-    if has_cte or has_window or has_subquery or join_count > 2:
-        return "complex"
-    if join_count >= 1:
-        return "moderate"
-    return "simple"
+    return compute_sql_complexity(sql)
 
 
 def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Estimate USD cost using cached OpenRouter pricing data when available."""
-    if not model:
-        return None
-    try:
-        from app.api.routes.models import _cache
+    """Thin wrapper — see :mod:`cost_estimation_service`."""
+    from app.services.cost_estimation_service import estimate_cost
 
-        cached = _cache.get("openrouter")
-        if not cached:
-            return None
-        _, models_list = cached
-        for m in models_list:
-            if m["id"] == model:
-                pricing = m.get("pricing", {})
-                prompt_price = float(pricing.get("prompt", "0"))
-                completion_price = float(pricing.get("completion", "0"))
-                return round(prompt_tokens * prompt_price + completion_tokens * completion_price, 8)
-    except Exception:
-        logger.debug("Cost computation failed", exc_info=True)
-    return None
+    return estimate_cost(model, prompt_tokens, completion_tokens)
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(0, len(text) // CHARS_PER_TOKEN) if text else 0
+    """Thin wrapper — see :mod:`cost_estimation_service`."""
+    from app.services.cost_estimation_service import estimate_tokens
+
+    return estimate_tokens(text, chars_per_token=CHARS_PER_TOKEN)
 
 
 class CostEstimateBreakdown(BaseModel):
@@ -349,18 +322,10 @@ async def search_messages(
 
 
 def _build_snippet(text: str, query: str, max_len: int = 200) -> str:
-    lower = text.lower()
-    idx = lower.find(query.lower())
-    if idx == -1:
-        return text[:max_len] + ("..." if len(text) > max_len else "")
-    start = max(0, idx - max_len // 3)
-    end = min(len(text), idx + len(query) + max_len * 2 // 3)
-    snippet = text[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet = snippet + "..."
-    return snippet
+    """Thin wrapper — see :mod:`chat_response_builder`."""
+    from app.services.chat_response_builder import build_search_snippet
+
+    return build_search_snippet(text, query, max_len=max_len)
 
 
 class QuerySuggestion(BaseModel):
@@ -598,7 +563,9 @@ async def generate_session_title(
     _gt_error: str | None = None
     try:
         router = LLMRouter()
-        async with tracker.step(wf_id, "generate_title:llm_call", "Generate session title"):
+        async with tracker.step(
+            wf_id, "generate_title:llm_call", "Generate session title", span_type="llm_call"
+        ):
             resp = await router.complete(
                 messages=[
                     LLMMessage(
@@ -807,78 +774,41 @@ async def get_session_messages(
     ]
 
 
-_RAW_RESULT_ROW_CAP = 500
+def _raw_result_row_cap() -> int:
+    """Configurable row cap for raw-result payloads (T25)."""
+    from app.config import settings as _settings
+
+    return _settings.chat_raw_result_row_cap
 
 
 def _has_rules_changed(tool_call_log: list[dict] | None) -> bool:
-    """Return True if any tool call in the log modified rules."""
-    if not tool_call_log:
-        return False
-    return any(tc.get("tool") in ("manage_custom_rules", "manage_rules") for tc in tool_call_log)
+    """Thin wrapper — see :mod:`chat_response_builder`."""
+    from app.services.chat_response_builder import has_rules_changed
+
+    return has_rules_changed(tool_call_log)
 
 
 def _build_structured_error(exc: Exception) -> dict:
-    """Build a structured error payload for SSE error events."""
-    if isinstance(exc, LLMError):
-        return {
-            "error": str(exc),
-            "error_type": type(exc).__name__,
-            "is_retryable": exc.is_retryable,
-            "user_message": exc.user_message,
-        }
-    return {
-        "error": str(exc),
-        "error_type": "internal",
-        "is_retryable": True,
-        "user_message": "An unexpected error occurred. Please try again.",
-    }
+    """Thin wrapper — see :mod:`chat_response_builder`."""
+    from app.services.chat_response_builder import build_structured_error
+
+    return build_structured_error(exc)
 
 
 def _build_raw_result(results) -> dict | None:
-    """Extract raw tabular data from query results, capped at 500 rows."""
-    if not results:
-        return None
-    cols = getattr(results, "columns", None)
-    rows = getattr(results, "rows", None)
-    if not cols:
-        return None
-    from app.viz.utils import serialize_value
+    """Thin wrapper — see :mod:`chat_response_builder`."""
+    from app.services.chat_response_builder import build_raw_result
 
-    return {
-        "columns": list(cols),
-        "rows": [[serialize_value(v) for v in row] for row in (rows or [])[:_RAW_RESULT_ROW_CAP]],
-        "total_rows": getattr(results, "row_count", len(rows or [])),
-    }
+    return build_raw_result(results, row_cap=_raw_result_row_cap())
 
 
 def _build_sql_results_payload(sql_result_blocks: list, answer: str = "") -> list[dict] | None:
-    """Serialize a list of SQLResultBlock objects for the API response.
+    """Thin wrapper — see :mod:`chat_response_builder`."""
+    from app.services.chat_response_builder import build_sql_results_payload
 
-    Returns None when there are fewer than 2 blocks (single-result case
-    is handled by the legacy top-level fields for backward compatibility).
-    """
-    if len(sql_result_blocks) < 2:
-        return None
-    payload: list[dict] = []
-    for blk in sql_result_blocks:
-        blk_viz = None
-        if blk.results and blk.results.rows:
-            blk_viz = render(
-                result=blk.results,
-                viz_type=blk.viz_type,
-                config=blk.viz_config,
-                summary=answer,
-            )
-        payload.append(
-            {
-                "query": blk.query,
-                "query_explanation": blk.query_explanation,
-                "visualization": blk_viz,
-                "raw_result": _build_raw_result(blk.results),
-                "insights": blk.insights or [],
-            }
-        )
-    return payload
+    return build_sql_results_payload(
+        sql_result_blocks, row_cap=_raw_result_row_cap(), answer=answer
+    )
 
 
 @router.post("/ask", response_model=ChatResponse)
@@ -2275,7 +2205,9 @@ async def explain_sql(
     )
     _es_error: str | None = None
     try:
-        async with tracker.step(_es_wf_id, "explain_sql:llm_call", "Explain SQL"):
+        async with tracker.step(
+            _es_wf_id, "explain_sql:llm_call", "Explain SQL", span_type="llm_call"
+        ):
             resp = await llm_router.complete(
                 messages=[
                     LLMMessage(
@@ -2317,8 +2249,10 @@ async def explain_sql(
     result = {"explanation": explanation, "complexity": complexity}
 
     async with _SQL_EXPLAIN_CACHE_LOCK:
+        from app.config import settings as _settings
+
         _SQL_EXPLAIN_CACHE[cache_key] = result
-        if len(_SQL_EXPLAIN_CACHE) > _SQL_EXPLAIN_CACHE_MAX:
+        while len(_SQL_EXPLAIN_CACHE) > _settings.chat_sql_explain_cache_max:
             _SQL_EXPLAIN_CACHE.popitem(last=False)
 
     return result
@@ -2408,7 +2342,9 @@ async def summarize_message(
     )
     _sm_error: str | None = None
     try:
-        async with tracker.step(_sm_wf_id, "summarize:llm_call", "Summarize message"):
+        async with tracker.step(
+            _sm_wf_id, "summarize:llm_call", "Summarize message", span_type="llm_call"
+        ):
             resp = await llm_router.complete(
                 messages=[
                     LLMMessage(role="system", content="\n".join(prompt_parts)),

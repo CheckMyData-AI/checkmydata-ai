@@ -104,6 +104,15 @@ class TestClassifySpanType:
     def test_completely_unknown(self):
         assert classify_span_type("something_random") == "tool_call"
 
+    def test_explicit_span_type_takes_precedence(self):
+        """T14: explicit span_type from producer overrides the heuristic."""
+        assert classify_span_type("something_random", "llm_call") == "llm_call"
+        assert classify_span_type("execute_query", "validation") == "validation"
+
+    def test_explicit_invalid_span_type_falls_back(self):
+        """An unrecognised explicit value must fall back to the heuristic."""
+        assert classify_span_type("orchestrator:viz", "bogus") == "viz"
+
 
 class TestTruncate:
     def test_none(self):
@@ -405,9 +414,9 @@ class TestDataValidationSingletonTracker:
     def test_no_local_workflow_tracker_instantiation(self):
         import inspect
 
-        from app.api.routes import data_validation
+        from app.api.routes import data_investigations
 
-        source = inspect.getsource(data_validation._run_investigation_background)
+        source = inspect.getsource(data_investigations._run_investigation_background)
         assert "WorkflowTracker()" not in source
         assert "singleton_tracker" in source
 

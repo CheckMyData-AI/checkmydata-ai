@@ -36,6 +36,30 @@ STATIC_MODELS: dict[str, list[dict]] = {
         {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "context_length": 200000},
         {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "context_length": 200000},
     ],
+    # Minimal OpenRouter fallback when the live API is unreachable. Keep this
+    # list short and focused on reliable, widely-available models — the
+    # live endpoint returns the full catalogue normally.
+    "openrouter": [
+        {
+            "id": "anthropic/claude-sonnet-4",
+            "name": "Claude Sonnet 4",
+            "context_length": 200000,
+        },
+        {
+            "id": "anthropic/claude-3.5-sonnet",
+            "name": "Claude 3.5 Sonnet",
+            "context_length": 200000,
+        },
+        {
+            "id": "anthropic/claude-3.5-haiku",
+            "name": "Claude 3.5 Haiku",
+            "context_length": 200000,
+        },
+        {"id": "openai/gpt-4o", "name": "GPT-4o", "context_length": 128000},
+        {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "context_length": 128000},
+        {"id": "openai/o1", "name": "o1", "context_length": 200000},
+        {"id": "openai/o3-mini", "name": "o3 Mini", "context_length": 200000},
+    ],
 }
 
 

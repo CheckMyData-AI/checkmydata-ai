@@ -147,35 +147,56 @@ class ToolDispatcher:
     ) -> tuple[list[ToolCall], dict[str, str]]:
         """Remove semantically duplicate data-retrieval tool calls.
 
-        Uses normalized word-set comparison to catch paraphrased duplicates,
-        not just exact string matches.
+        Prefers sentence-transformer embeddings via :mod:`app.services.text_similarity`
+        when a model is configured; otherwise falls back to a word-set Jaccard
+        comparison. This is the T13 upgrade: catches paraphrased duplicates like
+        "top 5 customers by revenue" vs "five highest-revenue clients" that the
+        word-overlap path misses.
 
         Returns ``(deduped_calls, skipped_map)`` where *skipped_map* maps
         ``tool_call.id`` to a synthetic result string for skipped calls.
         """
+        from app.services import text_similarity
+
         skipped: dict[str, str] = {}
-        seen: list[tuple[str, set[str], str]] = []
-
         kept: list[ToolCall] = []
-        for tc in tool_calls:
-            if tc.name not in ToolDispatcher._DEDUP_TOOL_NAMES:
-                kept.append(tc)
-                continue
 
+        candidates: list[tuple[int, ToolCall, str]] = []
+        for idx, tc in enumerate(tool_calls):
+            if tc.name not in ToolDispatcher._DEDUP_TOOL_NAMES:
+                continue
             args = tc.arguments or {}
             q = (args.get("question") or "").strip()
-            q_words = set(q.lower().split())
+            if not q:
+                continue
+            candidates.append((idx, tc, q))
 
+        embeddings: list[list[float]] | None = None
+        if len(candidates) >= 2:
+            embeddings = text_similarity.encode_batch([q for _, _, q in candidates])
+
+        semantic_threshold = settings.tool_dedup_semantic_threshold
+        word_threshold = settings.tool_dedup_word_overlap_threshold
+
+        seen: list[tuple[int, str]] = []
+
+        for pos, (_, tc, q) in enumerate(candidates):
             is_dup = False
-            for prev_name, prev_words, _ in seen:
+            for prev_pos, prev_name in seen:
                 if prev_name != tc.name:
                     continue
-                if not q_words or not prev_words:
-                    continue
-                overlap = len(q_words & prev_words) / max(len(q_words | prev_words), 1)
-                if overlap > 0.8:
-                    is_dup = True
-                    break
+                if embeddings is not None:
+                    sim = text_similarity.cosine_similarity(
+                        embeddings[prev_pos], embeddings[pos]
+                    )
+                    if sim >= semantic_threshold:
+                        is_dup = True
+                        break
+                else:
+                    prev_q = candidates[prev_pos][2]
+                    if text_similarity.jaccard_overlap(q, prev_q) > word_threshold:
+                        is_dup = True
+                        break
 
             if is_dup:
                 skipped[tc.id] = (
@@ -184,9 +205,13 @@ class ToolDispatcher:
                     "the first call."
                 )
                 logger.info("Dedup: skipped similar %s call: %s", tc.name, q[:80])
-                continue
+            else:
+                seen.append((pos, tc.name))
 
-            seen.append((tc.name, q_words, tc.id))
+        skipped_ids = set(skipped.keys())
+        for tc in tool_calls:
+            if tc.id in skipped_ids:
+                continue
             kept.append(tc)
 
         if skipped:
@@ -260,6 +285,7 @@ class ToolDispatcher:
                     "orchestrator:sql_agent",
                     f"SQL Agent (attempt {attempt + 1})",
                     step_data=_sd_sql,
+                    span_type="sub_agent",
                 ):
                     sql_result = await self._sql.run(
                         sql_context,
@@ -432,6 +458,7 @@ class ToolDispatcher:
                     "orchestrator:knowledge_agent",
                     f"Knowledge Agent (attempt {attempt + 1})",
                     step_data=_sd_ka,
+                    span_type="sub_agent",
                 ):
                     kb_ctx = replace(
                         context,
@@ -526,6 +553,7 @@ class ToolDispatcher:
                 "orchestrator:manage_rules",
                 f"Managing rule ({action})",
                 step_data=_sd_rules,
+                span_type="tool_call",
             ):
                 async with async_session_factory() as session:
                     if ctx.user_id:
@@ -709,6 +737,7 @@ class ToolDispatcher:
                     "orchestrator:mcp_source_agent",
                     f"MCP Source Agent (attempt {attempt + 1})",
                     step_data=_sd_mcp,
+                    span_type="sub_agent",
                 ):
                     mcp_ctx = replace(
                         context,

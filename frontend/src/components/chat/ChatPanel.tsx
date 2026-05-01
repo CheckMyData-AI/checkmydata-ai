@@ -17,6 +17,8 @@ import { ThinkingLog } from "./ThinkingLog";
 import { PlanSummaryCard, type PlanSummaryData } from "./PlanSummaryCard";
 
 import { StageProgress, type PipelineStage } from "./StageProgress";
+import { pipelineEventToTransition } from "./pipeline-event-handlers";
+import { parseWorkflowEvent } from "@/lib/schemas/workflow-event";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { CostEstimator } from "./CostEstimator";
@@ -81,99 +83,21 @@ export function ChatPanel() {
 
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
-      const extra = (event.extra ?? {}) as Record<string, unknown>;
-      switch (eventType) {
-        case "plan_summary": {
-          const plan = {
-            tables: (extra.tables as string[]) ?? [],
-            strategy: (extra.strategy as string) ?? "single_query",
-            rules_applied: (extra.rules_applied as string[]) ?? [],
-            learnings_applied: (extra.learnings_applied as string[]) ?? [],
-            has_warnings: (extra.has_warnings as boolean) ?? false,
-          };
-          setPlanSummary(plan);
-          const mid = streamingMsgIdRef.current;
-          if (mid) reasoningSetPlan(mid, plan);
-          break;
-        }
-        case "plan": {
-          const rawStages = (extra.stages ?? []) as Array<{
-            id: string;
-            description: string;
-            tool: string;
-            checkpoint: boolean;
-          }>;
-          setPipelineStages(
-            rawStages.map((s) => ({
-              id: s.id,
-              description: s.description,
-              tool: s.tool,
-              checkpoint: s.checkpoint,
-              status: "pending" as const,
-            })),
-          );
-          break;
-        }
-        case "stage_start": {
-          const sid = extra.stage_id as string;
-          setPipelineStages((prev) =>
-            prev.map((s) => (s.id === sid ? { ...s, status: "running" } : s)),
-          );
-          break;
-        }
-        case "stage_result":
-        case "stage_complete": {
-          const sid = extra.stage_id as string;
-          const status = extra.status as string;
-          setPipelineStages((prev) =>
-            prev.map((s) =>
-              s.id === sid
-                ? {
-                    ...s,
-                    status: status === "error" ? "failed" : "passed",
-                    rowCount: (extra.row_count as number) ?? s.rowCount,
-                    columns: (extra.columns as string[]) ?? s.columns,
-                    error: (extra.error as string) ?? undefined,
-                  }
-                : s,
-            ),
-          );
-          break;
-        }
-        case "stage_validation": {
-          const sid = extra.stage_id as string;
-          const passed = extra.passed as boolean;
-          if (!passed) {
-            setPipelineStages((prev) =>
-              prev.map((s) =>
-                s.id === sid
-                  ? {
-                      ...s,
-                      status: "failed",
-                      warnings: (extra.warnings as string[]) ?? [],
-                      error: ((extra.errors as string[]) ?? []).join("; "),
-                    }
-                  : s,
-              ),
-            );
-          }
-          break;
-        }
-        case "checkpoint": {
-          const sid = extra.stage_id as string;
-          setCheckpointStageId(sid);
-          setPipelineStages((prev) =>
-            prev.map((s) => (s.id === sid ? { ...s, status: "checkpoint" } : s)),
-          );
-          break;
-        }
-        case "stage_retry": {
-          const sid = extra.stage_id as string;
-          setPipelineStages((prev) =>
-            prev.map((s) => (s.id === sid ? { ...s, status: "running" } : s)),
-          );
-          break;
-        }
+      const transition = pipelineEventToTransition(eventType, event);
+      if (!transition) return;
+      if (transition.planSummary) {
+        setPlanSummary(transition.planSummary);
+        const mid = streamingMsgIdRef.current;
+        if (mid) reasoningSetPlan(mid, transition.planSummary);
+      }
+      if (transition.setStages) {
+        setPipelineStages(transition.setStages);
+      }
+      if (transition.mapStages) {
+        setPipelineStages(transition.mapStages);
+      }
+      if (transition.checkpointStageId !== undefined) {
+        setCheckpointStageId(transition.checkpointStageId);
       }
     },
     [reasoningSetPlan],
@@ -218,7 +142,7 @@ export function ChatPanel() {
           modification,
         },
         (step) => setStreamSteps((prev) => {
-          const next = [...prev, step as unknown as WorkflowEvent];
+          const next = [...prev, parseWorkflowEvent(step) ?? (step as unknown as WorkflowEvent)];
           return next.length > 100 ? next.slice(-100) : next;
         }),
         (result: ChatResponse) => {
@@ -317,7 +241,7 @@ export function ChatPanel() {
           ...extra,
         },
         (step) => setStreamSteps((prev) => {
-          const next = [...prev, step as unknown as WorkflowEvent];
+          const next = [...prev, parseWorkflowEvent(step) ?? (step as unknown as WorkflowEvent)];
           return next.length > 100 ? next.slice(-100) : next;
         }),
         (result: ChatResponse) => {
@@ -522,7 +446,7 @@ export function ChatPanel() {
         },
         (step) => {
           setStreamSteps((prev) => {
-            const next = [...prev, step as unknown as WorkflowEvent];
+            const next = [...prev, parseWorkflowEvent(step) ?? (step as unknown as WorkflowEvent)];
             return next.length > 100 ? next.slice(-100) : next;
           });
           const mid = streamingMsgIdRef.current;

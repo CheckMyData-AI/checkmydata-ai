@@ -46,16 +46,20 @@ export function useGlobalEvents(enabled: boolean) {
     }
 
     function scheduleReconnect() {
+      if (!activeRef.current) return;
       useLogStore.getState().setConnected(false);
       const delay = Math.min(
         RECONNECT_BASE_MS * 2 ** attemptRef.current,
         RECONNECT_MAX_MS,
       );
       attemptRef.current++;
-      timerRef.current = setTimeout(connect, delay);
+      timerRef.current = setTimeout(() => {
+        if (activeRef.current) connect();
+      }, delay);
     }
 
     function connect() {
+      if (!activeRef.current) return;
       unsubRef.current?.();
 
       seedActiveTasks();

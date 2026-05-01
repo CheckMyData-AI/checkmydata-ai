@@ -384,6 +384,44 @@ class TestDedupToolCalls:
         assert kept == []
         assert skipped == {}
 
+    def test_embedding_path_detects_paraphrase(self, monkeypatch):
+        """When embeddings are available, paraphrases are caught (T13)."""
+        from app.services import text_similarity
+
+        def fake_encode(texts):
+            # Two near-identical vectors for paraphrased queries, one orthogonal
+            mapping = {
+                "top 5 customers by revenue": [1.0, 0.0, 0.0],
+                "five highest-revenue clients": [0.98, 0.199, 0.0],
+                "active users today": [0.0, 0.0, 1.0],
+            }
+            return [mapping.get(t, [0.0, 0.0, 0.0]) for t in texts]
+
+        monkeypatch.setattr(text_similarity, "encode_batch", fake_encode)
+
+        calls = [
+            self._tc("1", question="top 5 customers by revenue"),
+            self._tc("2", question="five highest-revenue clients"),
+            self._tc("3", question="active users today"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
+        assert {tc.id for tc in kept} == {"1", "3"}
+        assert "2" in skipped
+
+    def test_falls_back_to_word_overlap_when_no_embeddings(self, monkeypatch):
+        from app.services import text_similarity
+
+        monkeypatch.setattr(text_similarity, "encode_batch", lambda _texts: None)
+
+        calls = [
+            self._tc("1", question="revenue by country"),
+            self._tc("2", question="revenue by country"),
+            self._tc("3", question="totally different question"),
+        ]
+        kept, skipped = OrchestratorAgent._dedup_tool_calls(calls)
+        assert {tc.id for tc in kept} == {"1", "3"}
+        assert "2" in skipped
+
 
 class TestHistoryBoundaryInPrompt:
     """Verify the orchestrator prompt builder includes focus directives."""
@@ -860,6 +898,9 @@ class TestWallClockTimeout:
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
             mock_settings.orchestrator_final_synthesis = True
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             _tick = iter([0.0] + [35.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)
@@ -947,6 +988,9 @@ class TestWallClockTimeout:
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             _tick = iter([0.0] + [50.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)
@@ -1898,6 +1942,9 @@ class TestSynthesisPhaseToolStrip:
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
             mock_settings.orchestrator_final_synthesis = True
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = True
+            mock_settings.answer_validator_min_chars = 80
 
             _tick = iter([0.0] + [95.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)

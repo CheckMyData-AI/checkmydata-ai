@@ -196,7 +196,7 @@ describe("ConfirmModal component", () => {
     });
     render(<ConfirmModal />);
     const btn = screen.getByText("Confirm");
-    expect(btn.className).toContain("bg-red-600");
+    expect(btn.className).toContain("bg-error");
   });
 
   it("non-destructive mode shows accent confirm button", () => {

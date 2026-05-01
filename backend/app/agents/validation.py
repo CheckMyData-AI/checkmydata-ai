@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from app.config import settings
+from app.viz.chart_rules import VALID_VIZ_TYPES, apply_chart_rules
 
 if TYPE_CHECKING:
     from app.connectors.base import QueryResult
@@ -71,9 +71,7 @@ class AgentResultValidator:
     # Visualization result
     # ------------------------------------------------------------------
 
-    VALID_VIZ_TYPES = frozenset(
-        {"table", "bar_chart", "line_chart", "pie_chart", "scatter", "text", "number"}
-    )
+    VALID_VIZ_TYPES = VALID_VIZ_TYPES
 
     def validate_viz_result(
         self,
@@ -81,24 +79,26 @@ class AgentResultValidator:
         row_count: int = 0,
         column_count: int = 0,
     ) -> ValidationOutcome:
-        """Check that a visualisation result is valid for the data shape."""
+        """Check that a visualisation result is valid for the data shape.
+
+        Delegates to :mod:`app.viz.chart_rules` (T15) so the viz agent and
+        the orchestrator validator stay in lockstep.
+        """
         outcome = ValidationOutcome()
 
         viz_type = getattr(result, "viz_type", "table")
-        if viz_type not in self.VALID_VIZ_TYPES:
+        chart_outcome = apply_chart_rules(
+            viz_type, row_count=row_count, column_count=column_count
+        )
+
+        if chart_outcome.invalid_type:
             outcome.passed = False
-            outcome.errors.append(f"Invalid viz_type '{viz_type}'")
+            outcome.errors.extend(chart_outcome.warnings)
             return outcome
 
-        if viz_type == "pie_chart" and row_count > settings.max_pie_categories:
-            outcome.fallback_viz_type = "bar_chart"
-            outcome.warnings.append(
-                f"Pie chart with {row_count} slices — falling back to bar_chart"
-            )
-
-        if viz_type in ("line_chart", "bar_chart", "scatter") and column_count < 2:
-            outcome.fallback_viz_type = "table"
-            outcome.warnings.append(f"{viz_type} needs at least 2 columns — falling back to table")
+        if chart_outcome.adjusted_viz_type != viz_type:
+            outcome.fallback_viz_type = chart_outcome.adjusted_viz_type
+        outcome.warnings.extend(chart_outcome.warnings)
 
         return outcome
 

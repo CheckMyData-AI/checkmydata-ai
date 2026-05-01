@@ -118,6 +118,25 @@ class Settings(BaseSettings):
     db_index_batch_size: int = 5
     auto_index_db_on_test: bool = False
 
+    # Batch query execution (T19). ``batch_max_concurrency`` caps the
+    # number of concurrent queries inside one batch; ``batch_result_row_cap``
+    # is the per-query soft row cap we persist as part of the batch result.
+    batch_max_concurrency: int = 4
+    batch_result_row_cap: int = 500
+
+    # Chat router knobs (T25). ``chat_raw_result_row_cap`` bounds the raw
+    # tabular payload we serialise back to the client when a SQL block is
+    # attached to a chat response. ``chat_sql_explain_cache_max`` caps the
+    # in-process LRU cache for ``/explain-sql`` responses.
+    chat_raw_result_row_cap: int = 500
+    chat_sql_explain_cache_max: int = 100
+
+    # Miscellaneous magic-number knobs lifted from scattered modules (T25).
+    tool_preview_max_chars: int = 500
+    tool_result_max_chars: int = 500
+    max_lesson_length: int = 500
+    health_check_interval_seconds: int = 300
+
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://localhost:3100",
@@ -170,6 +189,26 @@ class Settings(BaseSettings):
     # Answer quality validator (LLM-based, optional). Falls back to length
     # heuristic when disabled or when the validator call fails.
     answer_validator_enabled: bool = True
+    # Minimum length for the legacy length-based fallback used when the
+    # LLM validator is disabled or errors (T12). Deliberately small — this
+    # is a *fallback*, not the primary signal.
+    answer_validator_min_chars: int = 80
+    # Threshold for auto-selecting pipeline vs. single_query strategy (T12).
+    # Kept as a tunable knob so environments with very wide schemas can
+    # adjust without code changes; future work will route this through the
+    # planner LLM instead of table count alone.
+    orchestrator_pipeline_table_threshold: int = 3
+
+    # Tool-call deduplication (T13). ``semantic_dedup_threshold`` is the
+    # cosine-similarity cutoff used by the embedding-based dedup path when a
+    # sentence-transformer model is available. ``semantic_dedup_word_overlap``
+    # is the Jaccard fallback when embeddings are unavailable.
+    tool_dedup_semantic_threshold: float = 0.85
+    tool_dedup_word_overlap_threshold: float = 0.8
+    # If empty, dedup falls back to word-overlap. Reuse of the ChromaDB
+    # embedding model is encouraged; keep this as a separate knob so it can
+    # be tuned (e.g. to a smaller model) without affecting RAG quality.
+    tool_dedup_embedding_model: str = ""
 
     # Knowledge / learnings
     learning_weight_confidence: float = 0.4
@@ -177,10 +216,13 @@ class Settings(BaseSettings):
     learning_weight_applied: float = 0.2
 
     # Learning analyzer mode (D10):
-    #   "heuristic"  — only the legacy `_detect_*` rules
+    #   "heuristic"  — only the legacy `_detect_*` rules (kept as fast fallback)
     #   "hybrid"     — run heuristics first; fall back to LLMAnalyzer when empty
     #   "llm_first"  — always run LLMAnalyzer first; heuristics fill any gaps
-    learning_analyzer_mode: str = "hybrid"
+    # Default is "llm_first" (T06): the product is AI-first by policy; the
+    # legacy `_detect_*` regex rules remain only as a zero-cost fallback when
+    # the LLM is unavailable or in cooldown.
+    learning_analyzer_mode: str = "llm_first"
 
     # Insight memory TTL (days). 0 = never expire.
     insight_ttl_days_low: int = 7
@@ -221,11 +263,40 @@ class Settings(BaseSettings):
     geoip_cache_dir: str = "./data"
     geoip_memory_cache_size: int = 100_000
 
+    # DataGate — data-quality gate thresholds (T07). Previously hard-coded
+    # in :mod:`app.agents.data_gate`; now centrally tunable.
+    data_gate_max_sample: int = 200
+    data_gate_high_null_ratio: float = 0.5
+    data_gate_high_duplicate_ratio: float = 0.9
+    data_gate_value_range_sample: int = 50
+    data_gate_percent_min: float = -1.0
+    data_gate_percent_max: float = 200.0
+    data_gate_year_min: int = 1900
+    data_gate_year_max: int = 2100
+    data_gate_common_limits: list[int] = [100, 500, 1000, 5000, 10000, 50000]
+    data_gate_cartesian_multiplier: int = 100
+    # When True, DataGate asks the LLM to classify column semantic type
+    # (percentage / date / amount / id) instead of the legacy keyword
+    # heuristic. Off by default to keep the gate cheap & predictable.
+    data_gate_llm_semantics: bool = False
+
     # External service settings
     model_cache_ttl_seconds: int = 3600
     health_degraded_latency_ms: int = 3000
     ssh_connect_timeout: int = 30
     ssh_command_timeout: int = 60
+
+    # Admin emails — users with these emails get access to admin-only endpoints
+    # (manual backup trigger, cluster-wide metrics, etc.). Use the
+    # ``ADMIN_EMAILS`` env var (JSON list, e.g. ``["alice@x.com","bob@x.com"]``).
+    admin_emails: list[str] = []
+
+    def is_admin_email(self, email: str | None) -> bool:
+        """Return True when the given email is configured as admin."""
+        if not email:
+            return False
+        target = email.strip().lower()
+        return any(e.strip().lower() == target for e in self.admin_emails if e)
 
     @property
     def agent(self) -> AgentSettingsView:

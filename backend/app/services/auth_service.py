@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -15,10 +16,26 @@ logger = logging.getLogger(__name__)
 
 class AuthService:
     def _hash_password(self, password: str) -> str:
+        """Synchronous bcrypt hash. Prefer :meth:`hash_password_async`."""
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     def _verify_password(self, plain: str, hashed: str) -> bool:
+        """Synchronous bcrypt verify. Prefer :meth:`verify_password_async`."""
         return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+    async def hash_password_async(self, password: str) -> str:
+        """Off-thread bcrypt hash (T21).
+
+        bcrypt hashing is CPU-bound (~100ms on modern hardware) and
+        previously blocked the event loop, serialising every concurrent
+        register/login request. ``asyncio.to_thread`` pushes it to the
+        default thread pool.
+        """
+        return await asyncio.to_thread(self._hash_password, password)
+
+    async def verify_password_async(self, plain: str, hashed: str) -> bool:
+        """Off-thread bcrypt verify (T21). See :meth:`hash_password_async`."""
+        return await asyncio.to_thread(self._verify_password, plain, hashed)
 
     def create_token(self, user_id: str, email: str) -> str:
         now = datetime.now(UTC)
@@ -47,7 +64,7 @@ class AuthService:
 
         user = User(
             email=email,
-            password_hash=self._hash_password(password),
+            password_hash=await self.hash_password_async(password),
             display_name=display_name or email.split("@")[0],
             auth_provider="email",
         )
@@ -74,7 +91,7 @@ class AuthService:
         if not user or not user.password_hash:
             logger.warning("Login failed for %s: user not found or no password", email)
             return None
-        if not self._verify_password(password, user.password_hash):
+        if not await self.verify_password_async(password, user.password_hash):
             logger.warning("Login failed for %s: invalid credentials", email)
             return None
         logger.info("User logged in: %s (provider=email)", email)

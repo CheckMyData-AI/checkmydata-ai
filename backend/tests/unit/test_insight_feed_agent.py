@@ -856,16 +856,33 @@ class TestLlmDeepAnalysis:
         )
         llm.complete.return_value = MagicMock(content=response_content)
 
+        sample = [{"amount": 100}, {"amount": 200}, {"amount": 300}]
         result = await agent._llm_deep_analysis(
             "orders",
             {"amount": "total"},
-            [{"amount": 100}],
+            sample,
             llm,
         )
 
         assert len(result) == 1
         assert result[0]["title"] == "[orders] High value segment"
         assert result[0]["confidence"] <= 0.7
+        # T05 — sample_size must count rows, NOT response-text length.
+        assert result[0]["sample_size"] == len(sample)
+
+    @pytest.mark.asyncio
+    async def test_sample_size_zero_when_no_rows(self):
+        agent = _make_agent()
+        llm = AsyncMock()
+        llm.complete.return_value = MagicMock(
+            content=json.dumps(
+                [{"type": "trend", "title": "t", "confidence": 0.5}]
+            )
+        )
+
+        result = await agent._llm_deep_analysis("t", {"c": "n"}, [], llm)
+        assert result and result[0]["sample_size"] == 0
+
 
     @pytest.mark.asyncio
     async def test_caps_confidence_at_07(self):

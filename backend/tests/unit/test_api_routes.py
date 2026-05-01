@@ -33,6 +33,7 @@ class TestProjectRoutes:
             patch("app.api.routes.projects._membership_svc") as mock_msvc,
         ):
             mock_msvc.get_accessible_projects = AsyncMock(return_value=[])
+            mock_msvc.get_roles_bulk = AsyncMock(return_value={})
             mock_svc.list_all = AsyncMock(return_value=[])
             resp = client.get("/api/projects")
             assert resp.status_code == 200
@@ -583,7 +584,13 @@ class TestVisualizationRoutes:
 
 class TestActiveTasksEndpoint:
     def test_active_tasks_empty(self, client):
-        resp = client.get("/api/tasks/active")
+        # Stub out the membership lookup so the tenant-scoped listing doesn't
+        # hit the (mocked) DB. Empty project list → empty visible workflows.
+        with patch(
+            "app.api.routes.tasks._membership_svc.get_accessible_projects",
+            new=AsyncMock(return_value=[]),
+        ):
+            resp = client.get("/api/tasks/active")
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -594,10 +601,14 @@ class TestActiveTasksEndpoint:
             "workflow_id": "wf-1",
             "pipeline": "index_repo",
             "started_at": 1710000000.0,
-            "extra": {"project_id": "p1"},
+            "extra": {"project_id": "p1", "user_id": "test-user-1"},
         }
         try:
-            resp = client.get("/api/tasks/active")
+            with patch(
+                "app.api.routes.tasks._membership_svc.get_accessible_projects",
+                new=AsyncMock(return_value=[]),
+            ):
+                resp = client.get("/api/tasks/active")
             assert resp.status_code == 200
             data = resp.json()
             assert len(data) == 1

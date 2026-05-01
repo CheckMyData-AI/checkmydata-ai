@@ -1,11 +1,18 @@
-"""Template-based query suggestion engine (no LLM calls)."""
+"""AI-first query suggestion engine with template fallback.
+
+When an :class:`LLMRouter` is wired, :meth:`get_suggestions` lets the LLM
+compose schema-aware prompts based on recent user history, grounded in
+the project's DB index. The template-based fallback below preserves
+fully offline behaviour (tests, self-hosted deployments without API
+keys).
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
@@ -15,7 +22,27 @@ from app.models.db_index import DbIndex
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.llm.router import LLMRouter
+
 logger = logging.getLogger(__name__)
+
+
+_SUGGESTIONS_SYSTEM_PROMPT = """You generate query-starter suggestions for
+a database assistant.
+
+Inputs you receive:
+  - ``tables``: list of {table, relevance, notable_columns}
+  - ``recent_questions``: up to 10 recent user questions, newest first
+
+Rules:
+  - Return ONLY a JSON array of {text, source: "schema"|"history"}.
+  - Generate up to ``limit`` suggestions.
+  - Every ``text`` is a short (< 100 char) natural-language question a
+    user would type; never SQL.
+  - Prefer novel angles on the data (trends, anomalies, top-N, joins).
+  - Reuse table / column names verbatim from the schema.
+  - Never repeat a question already in ``recent_questions``.
+"""
 
 TABLE_TEMPLATES = [
     "How many records are in {table}?",
@@ -45,6 +72,125 @@ FOLLOWUP_TEMPLATES_AGGREGATE = [
 
 
 class SuggestionEngine:
+    def __init__(self, llm_router: LLMRouter | None = None) -> None:
+        self._llm_router = llm_router
+
+    async def llm_suggestions(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        project_id: str,
+        connection_id: str,
+        limit: int = 5,
+    ) -> list[dict]:
+        """Ask the LLM for suggestions, grounded in db_index + recent chat.
+
+        Returns ``[]`` when no LLM router is wired or on any error so the
+        caller can fall back to the template engine.
+        """
+        if self._llm_router is None:
+            return []
+
+        from app.llm.base import Message
+
+        index_rows = await db.execute(
+            select(DbIndex)
+            .where(
+                DbIndex.connection_id == connection_id,
+                DbIndex.is_active.is_(True),
+                DbIndex.relevance_score >= 3,
+            )
+            .order_by(DbIndex.relevance_score.desc())
+            .limit(15)
+        )
+        tables: list[dict[str, Any]] = []
+        for entry in index_rows.scalars().all():
+            notable = self._pick_interesting_column(entry)
+            tables.append(
+                {
+                    "table": entry.table_name,
+                    "relevance": entry.relevance_score,
+                    "notable_columns": [notable] if notable else [],
+                }
+            )
+
+        hist_rows = (
+            await db.execute(
+                select(ChatMessage.content)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .where(
+                    ChatSession.project_id == project_id,
+                    ChatSession.user_id == user_id,
+                    ChatMessage.role == "user",
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+            )
+        ).all()
+        recent_questions = [r[0] for r in hist_rows if r[0]]
+
+        payload = json.dumps(
+            {
+                "tables": tables,
+                "recent_questions": recent_questions,
+                "limit": limit,
+            },
+            default=str,
+        )
+
+        try:
+            resp = await self._llm_router.complete(
+                messages=[
+                    Message(role="system", content=_SUGGESTIONS_SYSTEM_PROMPT),
+                    Message(role="user", content=payload),
+                ],
+                temperature=0.4,
+                max_tokens=500,
+            )
+        except Exception:
+            logger.debug("LLM suggestions call failed", exc_info=True)
+            return []
+
+        if not resp or not resp.content:
+            return []
+
+        raw = resp.content.strip()
+        if raw.startswith("```"):
+            import re
+
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            logger.debug("LLM suggestion JSON parse failed")
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        cleaned: list[dict] = []
+        seen: set[str] = set()
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text or text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            cleaned.append(
+                {
+                    "text": text[:200],
+                    "source": (
+                        "history" if str(item.get("source")) == "history" else "schema"
+                    ),
+                }
+            )
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
     async def schema_based_suggestions(
         self,
         db: AsyncSession,
@@ -158,6 +304,13 @@ class SuggestionEngine:
         connection_id: str,
         limit: int = 5,
     ) -> list[dict]:
+        if self._llm_router is not None:
+            llm = await self.llm_suggestions(
+                db, user_id, project_id, connection_id, limit
+            )
+            if llm:
+                return llm
+
         history_limit = min(2, limit)
         schema_limit = limit - history_limit + 2
 

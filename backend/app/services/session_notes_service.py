@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
 
 from app.models.session_note import VALID_NOTE_CATEGORIES, SessionNote, _note_hash
+from app.services.text_similarity import semantic_best_match
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,17 +122,15 @@ class SessionNotesService:
             .limit(100)
         )
         candidates = result.scalars().all()
+        if not candidates:
+            return None
         note_lower = note_text.strip().lower()
-        best_match: SessionNote | None = None
-        best_ratio = 0.0
-
-        for c in candidates:
-            ratio = SequenceMatcher(None, c.note.strip().lower(), note_lower).ratio()
-            if ratio >= SIMILARITY_THRESHOLD and ratio > best_ratio:
-                best_ratio = ratio
-                best_match = c
-
-        return best_match
+        texts = [c.note.strip().lower() for c in candidates]
+        match = semantic_best_match(note_lower, texts, threshold=SIMILARITY_THRESHOLD)
+        if match is None:
+            return None
+        idx, _score = match
+        return candidates[idx]
 
     # ------------------------------------------------------------------
     # Query

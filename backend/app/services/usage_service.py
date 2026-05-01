@@ -120,13 +120,26 @@ class UsageService:
         db: AsyncSession,
         user_id: str,
         days: int = 30,
+        *,
+        project_id: str | None = None,
     ) -> dict:
+        """Aggregate token usage for a user over the last ``days``.
+
+        When ``project_id`` is passed, aggregation is further scoped to that
+        project. This is what :mod:`app.api.routes.usage` passes when the
+        caller supplies a ``project_id`` query param (membership is enforced
+        upstream).
+        """
         now = datetime.now(UTC)
         current_start = now - timedelta(days=days)
         previous_start = current_start - timedelta(days=days)
 
-        current = await self._aggregate_period(db, user_id, current_start, now)
-        previous = await self._aggregate_period(db, user_id, previous_start, current_start)
+        current = await self._aggregate_period(
+            db, user_id, current_start, now, project_id=project_id
+        )
+        previous = await self._aggregate_period(
+            db, user_id, previous_start, current_start, project_id=project_id
+        )
 
         change: dict[str, float | None] = {}
         _keys = (
@@ -146,7 +159,9 @@ class UsageService:
             else:
                 change[key] = 0.0
 
-        daily = await self._daily_breakdown(db, user_id, current_start, now)
+        daily = await self._daily_breakdown(
+            db, user_id, current_start, now, project_id=project_id
+        )
 
         return {
             "current_period": current,
@@ -162,6 +177,8 @@ class UsageService:
         user_id: str,
         start: datetime,
         end: datetime,
+        *,
+        project_id: str | None = None,
     ) -> dict:
         stmt = select(
             func.coalesce(func.sum(TokenUsage.prompt_tokens), 0).label("prompt_tokens"),
@@ -174,6 +191,8 @@ class UsageService:
             TokenUsage.created_at >= start,
             TokenUsage.created_at < end,
         )
+        if project_id is not None:
+            stmt = stmt.where(TokenUsage.project_id == project_id)
         row = (await db.execute(stmt)).one()
         return {
             "prompt_tokens": int(row.prompt_tokens),
@@ -191,6 +210,8 @@ class UsageService:
         user_id: str,
         start: datetime,
         end: datetime,
+        *,
+        project_id: str | None = None,
     ) -> list[dict]:
         date_col = func.date(TokenUsage.created_at).label("date")
         stmt = (
@@ -210,6 +231,8 @@ class UsageService:
             .group_by(date_col)
             .order_by(date_col)
         )
+        if project_id is not None:
+            stmt = stmt.where(TokenUsage.project_id == project_id)
         rows = (await db.execute(stmt)).all()
         return [
             {

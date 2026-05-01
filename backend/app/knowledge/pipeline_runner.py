@@ -106,19 +106,20 @@ class IndexingPipelineRunner:
         live_table_names: list[str] | None = None,
     ) -> PipelineResult:
         cp_id = checkpoint.id
-        done = CheckpointService.get_completed_steps(checkpoint)
+        done = await self._cp_svc.get_completed_steps(db, cp_id)
         resuming = len(done) > 0
         result = PipelineResult(resumed=resuming)
         state = _PipelineState()
 
         if resuming:
             result.resumed_from_step = sorted(done)[-1] if done else None
+            already_processed = await self._cp_svc.get_processed_doc_paths(db, cp_id)
             await tracker.emit(
                 wf_id,
                 "pipeline_resume",
                 "started",
                 f"Resuming from checkpoint ({len(done)} steps done, "
-                f"{len(CheckpointService.get_processed_doc_paths(checkpoint))} docs processed)",
+                f"{len(already_processed)} docs processed)",
             )
 
         try:
@@ -517,7 +518,7 @@ class IndexingPipelineRunner:
             ).hexdigest()
 
         # --- Step 9: generate_docs (per-doc atomic with checkpoint) ---
-        processed_paths = CheckpointService.get_processed_doc_paths(checkpoint)
+        processed_paths = await self._cp_svc.get_processed_doc_paths(db, cp_id)
         changed_set = set(state.changed_files)
         is_incremental = state.last_sha is not None and not force_full
         total = len(state.enriched_docs)

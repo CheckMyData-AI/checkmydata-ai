@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
 from app.models.insight_record import InsightRecord, TrustScore
+from app.services.text_similarity import semantic_similarity
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -349,14 +349,11 @@ class InsightMemoryService:
             if not title or severity not in ("critical", "warning"):
                 continue
             best: tuple[float, InsightRecord | None] = (0.0, None)
+            title_l = title.lower()
             for ins in active:
                 if ins.id in matched_ids:
                     continue
-                ratio = SequenceMatcher(
-                    None,
-                    (ins.title or "").lower(),
-                    title.lower(),
-                ).ratio()
+                ratio = semantic_similarity((ins.title or "").lower(), title_l)
                 if ratio > best[0]:
                     best = (ratio, ins)
             if best[1] is not None and best[0] >= DEDUP_SIMILARITY_THRESHOLD:
@@ -432,16 +429,14 @@ class InsightMemoryService:
         desc_lower = (description or "").strip().lower()
 
         for candidate in candidates:
-            title_ratio = SequenceMatcher(
-                None, candidate.title.strip().lower(), title_lower
-            ).ratio()
+            title_ratio = semantic_similarity(candidate.title.strip().lower(), title_lower)
             if title_ratio < DEDUP_SIMILARITY_THRESHOLD:
                 continue
             cand_desc = (candidate.description or "").strip().lower()
             if not desc_lower or not cand_desc:
                 desc_ratio = 1.0
             else:
-                desc_ratio = SequenceMatcher(None, cand_desc, desc_lower).ratio()
+                desc_ratio = semantic_similarity(cand_desc, desc_lower)
             if desc_ratio >= 0.6:
                 return candidate
         return None

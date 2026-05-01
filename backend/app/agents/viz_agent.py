@@ -16,10 +16,10 @@ from app.agents.base import AgentContext, AgentResult, BaseAgent
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.viz_prompt import build_viz_system_prompt
 from app.agents.tools.viz_tools import RECOMMEND_VISUALIZATION_TOOL
-from app.config import settings
 from app.connectors.base import QueryResult
 from app.llm.base import Message
 from app.viz.chart import _auto_detect_columns, _resolve_col_idx
+from app.viz.chart_rules import apply_chart_rules
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +162,15 @@ class VizAgent(BaseAgent):
         results: QueryResult,
         viz_config: dict | None = None,  # noqa: ARG002
     ) -> str:
-        if viz_type == "pie_chart" and len(results.rows) > settings.max_pie_categories:
-            return "bar_chart"
-        if viz_type in ("line_chart", "bar_chart", "scatter") and len(results.columns) < 2:
-            return "table"
-        return viz_type
+        """Apply the consolidated chart safety rules (T15)."""
+        outcome = apply_chart_rules(
+            viz_type,
+            row_count=len(results.rows),
+            column_count=len(results.columns),
+        )
+        for w in outcome.warnings:
+            logger.debug("viz_agent: %s", w)
+        return outcome.adjusted_viz_type
 
     @staticmethod
     def _validate_and_fix_config(

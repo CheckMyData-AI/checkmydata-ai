@@ -142,3 +142,24 @@ class MembershipService:
             .where(ProjectMember.user_id == user_id)
         )
         return list(result.scalars().all())
+
+    async def get_roles_bulk(
+        self,
+        db: AsyncSession,
+        project_ids: list[str],
+        user_id: str,
+    ) -> dict[str, str]:
+        """Return ``{project_id: role}`` for every project in *project_ids*.
+
+        T17: single query that replaces the previous N+1 pattern of calling
+        :meth:`get_role` in a loop (e.g. in ``GET /api/projects``).
+        """
+        if not project_ids:
+            return {}
+        result = await db.execute(
+            select(ProjectMember.project_id, ProjectMember.role).where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.project_id.in_(project_ids),
+            )
+        )
+        return {row[0]: row[1] for row in result.all()}

@@ -2,14 +2,135 @@
 
 Auto-created for every new project so the AI agent understands
 how to calculate common business metrics from the user's database.
+
+The :func:`generate_default_rule_content` helper (T10) opportunistically
+produces a schema-aware version of the rule when an LLM router and a
+connection id are available. The hard-coded :data:`_TEMPLATE` below is
+the offline / cold-start fallback — it must always render.
 """
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.llm.router import LLMRouter
 
 DEFAULT_RULE_NAME = "Business Metrics & Guidelines"
 
+logger = logging.getLogger(__name__)
+
+
+_SCHEMA_AWARE_PROMPT = """You are a senior data analyst writing a
+living "Business Metrics & Query Guidelines" document that an AI agent
+will reference while answering questions about this database.
+
+Inputs:
+  - ``tables``: each with ``table``, ``relevance``, ``columns`` sample
+
+Produce markdown (not JSON) using this outline:
+  1. Revenue Metrics (GMV, Net Revenue, AOV, ARPU, MRR, LTV) — cite real
+     columns/tables where applicable.
+  2. Profitability (ROAS, CAC, margin, payback).
+  3. Traffic Sources (channel split, top referrers, attribution).
+  4. Payment Methods (breakdown, success rate, AOV by method).
+  5. User Engagement (DAU/MAU, session metrics).
+  6. Conversion Funnel (signup → purchase, cart abandonment).
+  7. Churn & Retention (monthly churn, cohort retention).
+  8. Date & Time conventions (default UTC; timezone notes).
+  9. General Query Guidelines (filters, LIMITs, NULL handling).
+
+Rules:
+  - When a metric maps onto real tables, call them by name in code blocks.
+  - When a metric can't be implemented from the schema, keep the
+    generic formula but add a short "Requires: …" note.
+  - Keep it under ~1500 words.
+  - Return ONLY the markdown document. No preface.
+"""
+
 
 def get_default_rule_content() -> str:
-    """Return the default rule markdown that teaches the agent standard metrics."""
+    """Return the offline default rule markdown."""
     return _TEMPLATE
+
+
+async def generate_default_rule_content(
+    db: AsyncSession,
+    connection_id: str | None,
+    llm_router: LLMRouter | None,
+) -> str:
+    """Schema-aware rule generator (T10).
+
+    Returns :data:`_TEMPLATE` when the LLM isn't available, the connection
+    has no indexed tables, or the call fails. Callers must never depend on
+    this succeeding.
+    """
+    if llm_router is None or not connection_id:
+        return _TEMPLATE
+
+    try:
+        from sqlalchemy import select
+
+        from app.llm.base import Message
+        from app.models.db_index import DbIndex
+
+        rows = (
+            await db.execute(
+                select(DbIndex)
+                .where(
+                    DbIndex.connection_id == connection_id,
+                    DbIndex.is_active.is_(True),
+                )
+                .order_by(DbIndex.relevance_score.desc())
+                .limit(25)
+            )
+        ).scalars().all()
+
+        if not rows:
+            return _TEMPLATE
+
+        tables_payload = []
+        for r in rows:
+            cols: list[str] = []
+            if r.column_notes_json:
+                try:
+                    cols = list(json.loads(r.column_notes_json).keys())[:20]
+                except Exception:
+                    cols = []
+            tables_payload.append(
+                {
+                    "table": r.table_name,
+                    "relevance": r.relevance_score,
+                    "columns": cols,
+                }
+            )
+
+        resp = await llm_router.complete(
+            messages=[
+                Message(role="system", content=_SCHEMA_AWARE_PROMPT),
+                Message(
+                    role="user",
+                    content=json.dumps({"tables": tables_payload}, default=str),
+                ),
+            ],
+            temperature=0.2,
+            max_tokens=4000,
+        )
+
+        content = (resp.content or "").strip() if resp else ""
+        if len(content) < 400 or "##" not in content:
+            logger.debug(
+                "Schema-aware rule content too short or malformed; using template"
+            )
+            return _TEMPLATE
+        return content
+    except Exception:
+        logger.debug("Schema-aware default rule generation failed", exc_info=True)
+        return _TEMPLATE
 
 
 _TEMPLATE = """\

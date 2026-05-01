@@ -7,12 +7,12 @@ import json
 import logging
 from collections import Counter
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select, update
 
 from app.models.agent_learning import AgentLearning, AgentLearningSummary, _lesson_hash
+from app.services.text_similarity import semantic_best_match, semantic_similarity
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,18 +213,16 @@ class AgentLearningService:
             )
         )
         candidates = result.scalars().all()
+        if not candidates:
+            return None
 
         lesson_lower = lesson_text.strip().lower()
-        best_match: AgentLearning | None = None
-        best_ratio = 0.0
-
-        for c in candidates:
-            ratio = SequenceMatcher(None, c.lesson.strip().lower(), lesson_lower).ratio()
-            if ratio >= SIMILARITY_THRESHOLD and ratio > best_ratio:
-                best_ratio = ratio
-                best_match = c
-
-        return best_match
+        texts = [c.lesson.strip().lower() for c in candidates]
+        match = semantic_best_match(lesson_lower, texts, threshold=SIMILARITY_THRESHOLD)
+        if match is None:
+            return None
+        idx, _score = match
+        return candidates[idx]
 
     # ------------------------------------------------------------------
     # Conflict detection
@@ -274,11 +272,7 @@ class AgentLearningService:
 
         for old in existing:
             old_lower = old.lesson.strip().lower()
-            similarity = SequenceMatcher(
-                None,
-                old_lower,
-                new_lower,
-            ).ratio()
+            similarity = semantic_similarity(old_lower, new_lower)
 
             if similarity >= SIMILARITY_THRESHOLD:
                 continue

@@ -91,6 +91,7 @@ class ValidationLoop:
                     workflow_id,
                     "pre_validate",
                     f"Schema validation (attempt {attempt_num}/{self._config.max_retries})",
+                    span_type="validation",
                 ):
                     pre_result = pre_validator.validate(current_query, schema.db_type)
 
@@ -127,7 +128,9 @@ class ValidationLoop:
                 all_warnings.extend(pre_result.warnings)
 
             # --- Safety check ---
-            async with self._tracker.step(workflow_id, "safety_check", "Validating query safety"):
+            async with self._tracker.step(
+                workflow_id, "safety_check", "Validating query safety", span_type="validation"
+            ):
                 safety_result = safety_guard.validate(current_query, connection_config.db_type)
 
             if not safety_result.is_safe:
@@ -153,6 +156,7 @@ class ValidationLoop:
                     workflow_id,
                     "explain_check",
                     f"EXPLAIN dry-run (attempt {attempt_num}/{self._config.max_retries})",
+                    span_type="validation",
                 ):
                     explain_result = await explain_validator.validate(
                         connector,
@@ -199,6 +203,7 @@ class ValidationLoop:
                 "execute_query",
                 f"Running query (attempt {attempt_num}/{self._config.max_retries})",
                 step_data=_sd_eq,
+                span_type="db_query",
             ):
                 try:
                     results = await connector.execute_query(current_query)
@@ -249,6 +254,7 @@ class ValidationLoop:
                 workflow_id,
                 "post_validate",
                 f"Result validation (attempt {attempt_num}/{self._config.max_retries})",
+                span_type="validation",
             ):
                 post_result = post_validator.validate(
                     results,
@@ -331,6 +337,7 @@ class ValidationLoop:
             workflow_id,
             "error_classify",
             f"Analyzing error: {error.error_type.value}",
+            span_type="validation",
         ):
             pass  # classification already done, step is for UI feedback
 
@@ -338,6 +345,7 @@ class ValidationLoop:
             workflow_id,
             "query_repair",
             f"Repairing query (attempt {current_attempt}/{self._config.max_retries})",
+            span_type="validation",
         ):
             repair_context = await self._enricher.build_repair_context(
                 error=error,

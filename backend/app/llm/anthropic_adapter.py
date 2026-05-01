@@ -39,8 +39,14 @@ def _classify_anthropic_error(exc: Exception) -> Exception:
         return LLMAuthError(str(exc), cause=exc)
 
     if isinstance(exc, anthropic.BadRequestError):
+        # T27: Anthropic returns token-overflow as ``invalid_request_error``
+        # — the distinguishing signal is the message, not the type. Use
+        # the structured type when present, fall back to message sniff.
+        err_type = _extract_anthropic_error_type(exc)
         msg = str(exc).lower()
-        if "prompt is too long" in msg or "max_tokens" in msg or "token" in msg:
+        if err_type in (None, "invalid_request_error") and (
+            "prompt is too long" in msg or "max_tokens" in msg
+        ):
             return LLMTokenLimitError(str(exc), cause=exc)
         return LLMServerError(str(exc), cause=exc)
 
@@ -69,6 +75,18 @@ def _classify_anthropic_error(exc: Exception) -> Exception:
         return LLMConnectionError(str(exc), cause=exc)
 
     return exc
+
+
+def _extract_anthropic_error_type(exc: Exception) -> str | None:
+    """Pull a structured ``error.type`` out of an Anthropic SDK exception."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            t = err.get("type")
+            if isinstance(t, str) and t:
+                return t
+    return None
 
 
 _REQUEST_TIMEOUT = 90.0

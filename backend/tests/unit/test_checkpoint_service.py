@@ -134,8 +134,7 @@ class TestCompleteStep:
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
 
         await svc.complete_step(db, cp.id, "fetch")
-        await db.refresh(cp)
-        steps = json.loads(cp.completed_steps)
+        steps = await svc.get_completed_steps(db, cp.id)
         assert "fetch" in steps
 
     @pytest.mark.asyncio
@@ -145,9 +144,8 @@ class TestCompleteStep:
 
         await svc.complete_step(db, cp.id, "fetch")
         await svc.complete_step(db, cp.id, "fetch")
-        await db.refresh(cp)
-        steps = json.loads(cp.completed_steps)
-        assert steps.count("fetch") == 1
+        steps = await svc.get_completed_steps(db, cp.id)
+        assert steps == {"fetch"}
 
     @pytest.mark.asyncio
     async def test_updates_head_sha(self, db):
@@ -220,8 +218,7 @@ class TestMarkDocProcessed:
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
 
         await svc.mark_doc_processed(db, cp.id, "docs/a.md")
-        await db.refresh(cp)
-        paths = json.loads(cp.processed_doc_paths)
+        paths = await svc.get_processed_doc_paths(db, cp.id)
         assert "docs/a.md" in paths
 
     @pytest.mark.asyncio
@@ -231,9 +228,8 @@ class TestMarkDocProcessed:
 
         await svc.mark_doc_processed(db, cp.id, "docs/a.md")
         await svc.mark_doc_processed(db, cp.id, "docs/a.md")
-        await db.refresh(cp)
-        paths = json.loads(cp.processed_doc_paths)
-        assert paths.count("docs/a.md") == 1
+        paths = await svc.get_processed_doc_paths(db, cp.id)
+        assert paths == {"docs/a.md"}
 
     @pytest.mark.asyncio
     async def test_missing_checkpoint_is_noop(self, db):
@@ -247,19 +243,17 @@ class TestMarkDocsBatchProcessed:
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
 
         await svc.mark_docs_batch_processed(db, cp.id, ["a.md", "b.md", "c.md"])
-        await db.refresh(cp)
-        paths = json.loads(cp.processed_doc_paths)
-        assert set(paths) == {"a.md", "b.md", "c.md"}
+        paths = await svc.get_processed_doc_paths(db, cp.id)
+        assert paths == {"a.md", "b.md", "c.md"}
 
     @pytest.mark.asyncio
     async def test_empty_list_is_noop(self, db):
         proj = await _make_project(db)
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
-        original = cp.processed_doc_paths
 
         await svc.mark_docs_batch_processed(db, cp.id, [])
-        await db.refresh(cp)
-        assert cp.processed_doc_paths == original
+        paths = await svc.get_processed_doc_paths(db, cp.id)
+        assert paths == set()
 
     @pytest.mark.asyncio
     async def test_deduplicates_with_existing(self, db):
@@ -268,10 +262,8 @@ class TestMarkDocsBatchProcessed:
 
         await svc.mark_doc_processed(db, cp.id, "a.md")
         await svc.mark_docs_batch_processed(db, cp.id, ["a.md", "b.md"])
-        await db.refresh(cp)
-        paths = json.loads(cp.processed_doc_paths)
-        assert paths.count("a.md") == 1
-        assert "b.md" in paths
+        paths = await svc.get_processed_doc_paths(db, cp.id)
+        assert paths == {"a.md", "b.md"}
 
     @pytest.mark.asyncio
     async def test_missing_checkpoint_is_noop(self, db):
@@ -319,16 +311,15 @@ class TestDelete:
         await svc.delete(db, "nonexistent-id")
 
 
-class TestStaticMethods:
+class TestReaderMethods:
     @pytest.mark.asyncio
     async def test_get_completed_steps(self, db):
         proj = await _make_project(db)
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
         await svc.complete_step(db, cp.id, "fetch")
         await svc.complete_step(db, cp.id, "profile")
-        await db.refresh(cp)
 
-        steps = CheckpointService.get_completed_steps(cp)
+        steps = await svc.get_completed_steps(db, cp.id)
         assert steps == {"fetch", "profile"}
 
     @pytest.mark.asyncio
@@ -337,9 +328,8 @@ class TestStaticMethods:
         cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
         await svc.mark_doc_processed(db, cp.id, "a.md")
         await svc.mark_doc_processed(db, cp.id, "b.md")
-        await db.refresh(cp)
 
-        paths = CheckpointService.get_processed_doc_paths(cp)
+        paths = await svc.get_processed_doc_paths(db, cp.id)
         assert paths == {"a.md", "b.md"}
 
     @pytest.mark.asyncio
@@ -362,9 +352,22 @@ class TestStaticMethods:
         files = CheckpointService.get_deleted_files(cp)
         assert files == ["old.py"]
 
-    def test_get_completed_steps_empty(self):
-        cp = IndexingCheckpoint(project_id="p", workflow_id="w", head_sha="s", completed_steps="[]")
-        assert CheckpointService.get_completed_steps(cp) == set()
+    @pytest.mark.asyncio
+    async def test_get_completed_steps_empty(self, db):
+        proj = await _make_project(db)
+        cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
+        assert await svc.get_completed_steps(db, cp.id) == set()
+
+    @pytest.mark.asyncio
+    async def test_get_completed_steps_falls_back_to_legacy_json(self, db):
+        proj = await _make_project(db)
+        cp = await svc.create(db, proj.id, "wf-1", "sha-abc")
+        # Simulate an in-flight pre-T22 checkpoint where the new tables are
+        # still empty but the legacy JSON column is populated.
+        cp.completed_steps = json.dumps(["legacy_step"])
+        await db.commit()
+
+        assert await svc.get_completed_steps(db, cp.id) == {"legacy_step"}
 
     def test_get_changed_files_empty(self):
         cp = IndexingCheckpoint(

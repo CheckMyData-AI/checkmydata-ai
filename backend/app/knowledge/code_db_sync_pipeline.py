@@ -163,14 +163,47 @@ class CodeDbSyncPipeline:
                     f"{len(small_tables)} in batches of {BATCH_SIZE}",
                 )
 
-                for i, mt in enumerate(large_tables, 1):
-                    analysis = await self._analyzer.analyze_table(
+                # T16: analyse large tables and small-table batches
+                # concurrently. Each ``analyze_table`` / ``analyze_table_batch``
+                # call is independent (different tables, different LLM
+                # requests). Gathering turns an O(N) wait into a single
+                # batched wait bounded by the slowest call.
+                import asyncio as _asyncio
+
+                async def _one_large(mt):
+                    return await self._analyzer.analyze_table(
                         table_name=mt.table_name,
                         db_context=mt.db_context,
                         code_context=mt.code_context,
                         preferred_provider=preferred_provider,
                         model=model,
                     )
+
+                total_small_batches = (
+                    (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE if small_tables else 0
+                )
+
+                small_batch_specs: list[list] = []
+                for batch_start in range(0, len(small_tables), BATCH_SIZE):
+                    batch = small_tables[batch_start : batch_start + BATCH_SIZE]
+                    small_batch_specs.append(batch)
+
+                async def _one_small_batch(batch_list):
+                    batch_items = [(m.table_name, m.db_context, m.code_context) for m in batch_list]
+                    return await self._analyzer.analyze_table_batch(
+                        tables=batch_items,
+                        preferred_provider=preferred_provider,
+                        model=model,
+                    )
+
+                large_task = _asyncio.gather(*(_one_large(mt) for mt in large_tables))
+                small_task = _asyncio.gather(
+                    *(_one_small_batch(b) for b in small_batch_specs)
+                )
+                large_results, small_results = await _asyncio.gather(large_task, small_task)
+
+                large_pairs = zip(large_tables, large_results, strict=False)
+                for i, (mt, analysis) in enumerate(large_pairs, 1):
                     analyses.append(analysis)
                     await self._tracker.emit(
                         wf_id,
@@ -179,26 +212,16 @@ class CodeDbSyncPipeline:
                         f"[{i}/{len(large_tables)}] {mt.table_name} -> "
                         f"{analysis.sync_status} (confidence={analysis.confidence_score})",
                     )
-
-                total_small_batches = (
-                    (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE if small_tables else 0
-                )
-                for batch_start in range(0, len(small_tables), BATCH_SIZE):
-                    batch = small_tables[batch_start : batch_start + BATCH_SIZE]
-                    batch_items = [(m.table_name, m.db_context, m.code_context) for m in batch]
-                    batch_results = await self._analyzer.analyze_table_batch(
-                        tables=batch_items,
-                        preferred_provider=preferred_provider,
-                        model=model,
-                    )
+                for batch_idx, (batch, batch_results) in enumerate(
+                    zip(small_batch_specs, small_results, strict=False), 1
+                ):
                     analyses.extend(batch_results)
-                    batch_num = batch_start // BATCH_SIZE + 1
                     batch_names = ", ".join(m.table_name for m in batch)
                     await self._tracker.emit(
                         wf_id,
                         "analyze_sync",
                         "started",
-                        f"Batch {batch_num}/{total_small_batches} done "
+                        f"Batch {batch_idx}/{total_small_batches} done "
                         f"({len(batch)} tables): {batch_names}",
                     )
 

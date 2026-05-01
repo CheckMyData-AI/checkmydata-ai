@@ -182,7 +182,7 @@ export function ConfirmModal() {
             disabled={!canConfirm}
             className={`px-4 py-1.5 text-xs text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${
               destructive
-                ? "bg-red-600 hover:bg-red-500"
+                ? "bg-error hover:bg-error-hover"
                 : "bg-accent hover:bg-accent-hover"
             }`}
           >

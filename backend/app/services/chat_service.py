@@ -7,13 +7,18 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.ttl_cache import TTLCache
 from app.llm.base import Message
 from app.models.chat_session import ChatMessage, ChatSession
 
 logger = logging.getLogger(__name__)
 
 
-_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+# T20: bound the lock table so abandoned sessions don't leak. Evicting an
+# unused lock is safe (a new Lock is created on the next request); the
+# only concern is evicting a *held* lock — hence the TTL is longer than
+# any reasonable chat request timeout.
+_SESSION_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(max_size=5000, ttl=3600.0)
 _SESSION_LOCKS_GUARD = asyncio.Lock()
 
 
@@ -22,7 +27,7 @@ async def _get_session_lock(session_id: str) -> asyncio.Lock:
         lock = _SESSION_LOCKS.get(session_id)
         if lock is None:
             lock = asyncio.Lock()
-            _SESSION_LOCKS[session_id] = lock
+            _SESSION_LOCKS.set(session_id, lock)
         return lock
 
 

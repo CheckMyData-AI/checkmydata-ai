@@ -117,61 +117,69 @@ class ClickHouseConnector(BaseConnector):
         client = self._client
 
         def _introspect():
-            tables: list[TableInfo] = []
+            """Introspect all tables / columns / indexes in three queries (T17).
 
+            Previously this issued 1 + 2 * N queries (one per table for
+            columns and one for indexes). We now pull everything at once
+            from ``system.columns`` / ``system.data_skipping_indices`` and
+            group in Python.
+            """
             tbl_result = client.query(
                 "SELECT name, comment, total_rows FROM system.tables WHERE database = %(db)s",
                 parameters={"db": db_name},
             )
+
+            col_result = client.query(
+                "SELECT table, name, type, default_kind, default_expression, comment "
+                "FROM system.columns WHERE database = %(db)s",
+                parameters={"db": db_name},
+            )
+            columns_by_table: dict[str, list[ColumnInfo]] = {}
+            for c in col_result.result_rows:
+                tbl = c[0]
+                columns_by_table.setdefault(tbl, []).append(
+                    ColumnInfo(
+                        name=c[1],
+                        data_type=c[2],
+                        is_nullable="Nullable" in c[2],
+                        default=c[4] if len(c) > 4 and c[4] else None,
+                        comment=c[5] if len(c) > 5 and c[5] else None,
+                    )
+                )
+
+            indexes_by_table: dict[str, list[IndexInfo]] = {}
+            try:
+                idx_result = client.query(
+                    "SELECT table, name, expr, type "
+                    "FROM system.data_skipping_indices "
+                    "WHERE database = %(db)s",
+                    parameters={"db": db_name},
+                )
+                for irow in idx_result.result_rows:
+                    tbl = irow[0]
+                    indexes_by_table.setdefault(tbl, []).append(
+                        IndexInfo(
+                            name=irow[1],
+                            columns=[irow[2]],
+                            is_unique=False,
+                        )
+                    )
+            except Exception:
+                logger.debug("ClickHouse bulk index query failed", exc_info=True)
+
+            tables: list[TableInfo] = []
             for trow in tbl_result.result_rows:
                 tname = trow[0]
                 tcomment = trow[1] if len(trow) > 1 else ""
                 trow_count = trow[2] if len(trow) > 2 else None
-
-                col_result = client.query(
-                    "SELECT name, type, default_kind, default_expression, comment "
-                    "FROM system.columns "
-                    "WHERE database = %(db)s AND table = %(tbl)s",
-                    parameters={"db": db_name, "tbl": tname},
-                )
-                columns = [
-                    ColumnInfo(
-                        name=c[0],
-                        data_type=c[1],
-                        is_nullable="Nullable" in c[1],
-                        default=c[3] if len(c) > 3 and c[3] else None,
-                        comment=c[4] if len(c) > 4 and c[4] else None,
-                    )
-                    for c in col_result.result_rows
-                ]
-
-                indexes: list[IndexInfo] = []
-                try:
-                    idx_result = client.query(
-                        "SELECT name, expr, type "
-                        "FROM system.data_skipping_indices "
-                        "WHERE database = %(db)s AND table = %(tbl)s",
-                        parameters={"db": db_name, "tbl": tname},
-                    )
-                    for irow in idx_result.result_rows:
-                        indexes.append(
-                            IndexInfo(
-                                name=irow[0],
-                                columns=[irow[1]],
-                                is_unique=False,
-                            )
-                        )
-                except Exception:
-                    logger.debug("ClickHouse index query failed for %s", tname, exc_info=True)
-
                 tables.append(
                     TableInfo(
                         name=tname,
                         schema=db_name,
-                        columns=columns,
+                        columns=columns_by_table.get(tname, []),
                         comment=tcomment if tcomment else None,
                         row_count=trow_count,
-                        indexes=indexes,
+                        indexes=indexes_by_table.get(tname, []),
                     )
                 )
             return tables

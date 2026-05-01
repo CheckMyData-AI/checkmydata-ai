@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,15 +124,23 @@ class RuleService:
         self,
         session: AsyncSession,
         project_id: str,
+        *,
+        connection_id: str | None = None,
+        llm_router: Any = None,
     ) -> CustomRule | None:
         """Create the default business-metrics rule for a project if not yet initialized.
 
         Returns the created rule, or None if the project was already initialized.
         Does NOT commit — caller is responsible for committing the transaction.
+
+        When ``llm_router`` and ``connection_id`` are provided, the rule
+        content is generated *schema-aware* via the LLM (T10). Falls back
+        to the static template on any failure.
         """
         from app.models.project import Project
         from app.services.default_rule_template import (
             DEFAULT_RULE_NAME,
+            generate_default_rule_content,
             get_default_rule_content,
         )
 
@@ -139,10 +148,18 @@ class RuleService:
         if not project or project.default_rule_initialized:
             return None
 
+        content: str
+        if llm_router is not None and connection_id:
+            content = await generate_default_rule_content(
+                session, connection_id, llm_router
+            )
+        else:
+            content = get_default_rule_content()
+
         rule = CustomRule(
             project_id=project_id,
             name=DEFAULT_RULE_NAME,
-            content=get_default_rule_content(),
+            content=content,
             format="markdown",
             is_default=True,
         )

@@ -10,6 +10,64 @@ from app.core.workflow_tracker import (
 )
 
 
+class TestTenancyFilter:
+    @pytest.mark.asyncio
+    async def test_subscriber_with_user_id_only_gets_own_events(self):
+        t = WorkflowTracker()
+        alice_queue = await t.subscribe(user_id="alice")
+        bob_queue = await t.subscribe(user_id="bob")
+
+        wf_alice = await t.begin("agent", {"user_id": "alice", "project_id": "p1"})
+        wf_bob = await t.begin("agent", {"user_id": "bob", "project_id": "p2"})
+
+        a_events = []
+        b_events = []
+        while not alice_queue.empty():
+            a_events.append(alice_queue.get_nowait())
+        while not bob_queue.empty():
+            b_events.append(bob_queue.get_nowait())
+
+        assert all(e.workflow_id == wf_alice for e in a_events)
+        assert all(e.workflow_id == wf_bob for e in b_events)
+
+    @pytest.mark.asyncio
+    async def test_subscriber_with_project_access_gets_events(self):
+        t = WorkflowTracker()
+        queue = await t.subscribe(
+            user_id="charlie", accessible_project_ids={"proj-shared"}
+        )
+        wf = await t.begin("agent", {"user_id": "alice", "project_id": "proj-shared"})
+        # charlie sees alice's work because he's a member of proj-shared
+        evt = queue.get_nowait()
+        assert evt.workflow_id == wf
+
+    @pytest.mark.asyncio
+    async def test_unscoped_subscriber_sees_everything(self):
+        t = WorkflowTracker()
+        queue = await t.subscribe()  # no user_id -> admin-like
+        await t.begin("agent", {"user_id": "alice"})
+        assert not queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_get_active_filters_by_user_id(self):
+        t = WorkflowTracker()
+        await t.begin("index_repo", {"user_id": "alice", "project_id": "p1"})
+        await t.begin("db_index", {"user_id": "bob", "project_id": "p2"})
+
+        assert len(t.get_active()) == 2
+        alice_only = t.get_active(user_id="alice", accessible_project_ids=set())
+        assert len(alice_only) == 1
+        assert alice_only[0]["extra"]["user_id"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_get_active_filters_by_project_access(self):
+        t = WorkflowTracker()
+        await t.begin("index_repo", {"user_id": "alice", "project_id": "shared"})
+        # bob not owner, but member of shared
+        visible = t.get_active(user_id="bob", accessible_project_ids={"shared"})
+        assert len(visible) == 1
+
+
 class TestWorkflowEvent:
     def test_to_json(self):
         event = WorkflowEvent(
@@ -122,7 +180,7 @@ class TestWorkflowTracker:
 
         # non-essential event: silently dropped, subscriber retained
         await t.emit("y", "s2", "started")
-        assert queue in t._subscribers
+        assert any(s.queue is queue for s in t._subscribers)
         assert queue.qsize() == WorkflowTracker._QUEUE_MAXSIZE
 
     @pytest.mark.asyncio
@@ -135,7 +193,7 @@ class TestWorkflowTracker:
             queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
 
         await t.emit("y", "pipeline_end", "completed")
-        assert queue in t._subscribers
+        assert any(s.queue is queue for s in t._subscribers)
         events = []
         while not queue.empty():
             events.append(queue.get_nowait())
@@ -153,7 +211,7 @@ class TestWorkflowTracker:
             )
 
         await t.emit("y", "pipeline_end", "completed")
-        assert queue not in t._subscribers
+        assert not any(s.queue is queue for s in t._subscribers)
 
     @pytest.mark.asyncio
     async def test_emit_custom_event(self):
@@ -290,11 +348,13 @@ class TestWorkflowTracker:
 
     @pytest.mark.asyncio
     async def test_broadcast_tolerates_already_removed_subscriber(self):
-        """Lines 199-200: dead subscriber already removed before cleanup."""
+        """Dead-subscriber cleanup must not raise if the entry was already gone."""
         t = WorkflowTracker()
         queue = await t.subscribe()
         for _ in range(WorkflowTracker._QUEUE_MAXSIZE):
-            queue.put_nowait(WorkflowEvent(workflow_id="x", step="s", status="started"))
+            queue.put_nowait(
+                WorkflowEvent(workflow_id="x", step="pipeline_end", status="completed")
+            )
 
         class _RemoveOnceList(list):
             """First remove succeeds, second raises ValueError."""
@@ -310,6 +370,6 @@ class TestWorkflowTracker:
                 super().remove(item)
 
         subs = _RemoveOnceList(t._subscribers)
-        subs.append(queue)
+        subs.append(t._subscribers[0])  # duplicate entry triggers the double-remove path
         t._subscribers = subs
-        await t.emit("wf", "step", "started")
+        await t.emit("wf", "pipeline_end", "completed")

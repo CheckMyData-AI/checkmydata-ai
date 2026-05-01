@@ -243,6 +243,7 @@ class SQLAgent(BaseAgent):
                 "sql:llm_call",
                 f"SQL LLM call ({iteration + 1}/{max_sql_iter})",
                 step_data=_sd_llm,
+                span_type="llm_call",
             ):
 
                 async def _on_retry(_attempt: int, _exc: Exception, _wait: float) -> None:
@@ -305,11 +306,16 @@ class SQLAgent(BaseAgent):
                     _sd_tool["input_preview"] = (_tc_args.get("query", ""))[:1000]
                 else:
                     _sd_tool["input_preview"] = str(_tc_args)[:500]
+                _tool_span_type = "db_query" if tc.name in (
+                    "execute_query",
+                    "get_schema_info",
+                ) else "tool_call"
                 async with tracker.step(
                     wf_id,
                     f"sql:tool:{tc.name}",
                     f"SQL tool: {tc.name}",
                     step_data=_sd_tool,
+                    span_type=_tool_span_type,
                 ):
                     result_text = await self._dispatch_tool(
                         tc,
@@ -520,7 +526,9 @@ class SQLAgent(BaseAgent):
         if cfg is None:
             raise RuntimeError("Expected 'connection_config' but got None")
 
-        async with ctx.tracker.step(wf_id, "sql:get_schema", f"Fetching schema ({scope})"):
+        async with ctx.tracker.step(
+            wf_id, "sql:get_schema", f"Fetching schema ({scope})", span_type="db_query"
+        ):
             schema = await self._get_cached_schema(cfg)
 
         n_tables = len(schema.tables) if schema and schema.tables else 0
@@ -542,7 +550,9 @@ class SQLAgent(BaseAgent):
     async def _handle_get_custom_rules(
         self, _args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
     ) -> str:
-        async with ctx.tracker.step(wf_id, "sql:load_rules", "Loading custom rules"):
+        async with ctx.tracker.step(
+            wf_id, "sql:load_rules", "Loading custom rules", span_type="rag"
+        ):
             file_rules = self._rules_engine.load_rules(
                 project_rules_dir=f"{settings.custom_rules_dir}/{ctx.project_id}",
             )
@@ -565,7 +575,9 @@ class SQLAgent(BaseAgent):
         from app.services.db_index_service import DbIndexService
 
         svc = DbIndexService()
-        async with ctx.tracker.step(wf_id, "sql:get_db_index", f"Loading DB index ({scope})"):
+        async with ctx.tracker.step(
+            wf_id, "sql:get_db_index", f"Loading DB index ({scope})", span_type="rag"
+        ):
             cid = cfg.connection_id
             if not cid:
                 return "Database index not available. Run 'Index DB' first."
@@ -611,7 +623,9 @@ class SQLAgent(BaseAgent):
         from app.services.code_db_sync_service import CodeDbSyncService
 
         svc = CodeDbSyncService()
-        async with ctx.tracker.step(wf_id, "sql:get_sync", f"Loading sync context ({scope})"):
+        async with ctx.tracker.step(
+            wf_id, "sql:get_sync", f"Loading sync context ({scope})", span_type="rag"
+        ):
             cid = cfg.connection_id
             if not cid:
                 return "Code-DB sync not available."
@@ -640,7 +654,9 @@ class SQLAgent(BaseAgent):
         cid = cfg.connection_id
         if not cid:
             return "Query context not available. Run 'Index DB' first."
-        async with ctx.tracker.step(wf_id, "sql:get_query_ctx", "Building unified query context"):
+        async with ctx.tracker.step(
+            wf_id, "sql:get_query_ctx", "Building unified query context", span_type="rag"
+        ):
             return await self._build_query_context(question, table_names_raw, cid, ctx)
 
     async def _handle_get_agent_learnings(
@@ -659,7 +675,9 @@ class SQLAgent(BaseAgent):
         from app.services.agent_learning_service import AgentLearningService
 
         svc = AgentLearningService()
-        async with ctx.tracker.step(wf_id, "sql:learnings", f"Loading learnings ({scope})"):
+        async with ctx.tracker.step(
+            wf_id, "sql:learnings", f"Loading learnings ({scope})", span_type="rag"
+        ):
             async with async_session_factory() as session:
                 if scope == "table" and table_name:
                     learnings = await svc.get_learnings_for_table(session, cid, table_name)
@@ -721,7 +739,9 @@ class SQLAgent(BaseAgent):
         from app.services.agent_learning_service import AgentLearningService
 
         svc = AgentLearningService()
-        async with ctx.tracker.step(wf_id, "sql:record_learn", f"Recording: {lesson[:60]}"):
+        async with ctx.tracker.step(
+            wf_id, "sql:record_learn", f"Recording: {lesson[:60]}", span_type="tool_call"
+        ):
             async with async_session_factory() as session:
                 try:
                     entry = await svc.create_learning(
@@ -782,7 +802,9 @@ class SQLAgent(BaseAgent):
         from app.services.session_notes_service import SessionNotesService
 
         svc = SessionNotesService()
-        async with ctx.tracker.step(wf_id, "sql:read_notes", "Reading session notes"):
+        async with ctx.tracker.step(
+            wf_id, "sql:read_notes", "Reading session notes", span_type="tool_call"
+        ):
             async with async_session_factory() as session:
                 notes = await svc.get_notes_for_context(
                     session,
@@ -827,7 +849,9 @@ class SQLAgent(BaseAgent):
         from app.services.session_notes_service import SessionNotesService
 
         svc = SessionNotesService()
-        async with ctx.tracker.step(wf_id, "sql:write_note", f"Recording note: {note_text[:60]}"):
+        async with ctx.tracker.step(
+            wf_id, "sql:write_note", f"Recording note: {note_text[:60]}", span_type="tool_call"
+        ):
             async with async_session_factory() as session:
                 try:
                     entry = await svc.create_note(

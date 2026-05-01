@@ -66,6 +66,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Auto-generated Alembic migrations: relax line-length and import ordering.
+"alembic/versions/*.py" = ["E501", "I001", "F401", "W291"]
+# Generic[T] is still valid Python; PEP 695 syntax is opt-in.
+"app/core/ttl_cache.py" = ["UP046"]
+
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true

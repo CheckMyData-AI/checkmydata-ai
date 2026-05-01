@@ -182,9 +182,12 @@ async def list_projects(
     user: dict = Depends(get_current_user),
 ):
     projects = await _membership_svc.get_accessible_projects(db, user["user_id"])
+    # T17: fetch all roles in one query instead of N+1.
+    roles = await _membership_svc.get_roles_bulk(
+        db, [p.id for p in projects], user["user_id"]
+    )
     result = []
     for p in projects:
-        role = await _membership_svc.get_role(db, p.id, user["user_id"])
         result.append(
             ProjectResponse(
                 id=p.id,
@@ -200,7 +203,7 @@ async def list_projects(
                 sql_llm_provider=p.sql_llm_provider,
                 sql_llm_model=p.sql_llm_model,
                 owner_id=p.owner_id,
-                user_role=role,
+                user_role=roles.get(p.id),
             )
         )
     return result

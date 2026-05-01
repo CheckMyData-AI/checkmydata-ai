@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.config import settings
+from app.core.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,16 @@ class HealthState:
 
 
 class ConnectionHealthMonitor:
+    # T20: cap the health state so abandoned / deleted connections don't
+    # leak memory. 1h TTL is plenty for the UI's polling cadence.
+    _HEALTH_STATE_MAX_SIZE = 1024
+    _HEALTH_STATE_TTL = 3600.0
+
     def __init__(self) -> None:
-        self._health_state: dict[str, HealthState] = {}
+        self._health_state: TTLCache[str, HealthState] = TTLCache(
+            max_size=self._HEALTH_STATE_MAX_SIZE,
+            ttl=self._HEALTH_STATE_TTL,
+        )
         self._lock = asyncio.Lock()
 
     async def check_connection(
@@ -53,7 +62,7 @@ class ConnectionHealthMonitor:
         connection_id: str,
         connector: Any,
     ) -> dict[str, Any]:
-        state = self._health_state.get(connection_id, HealthState())
+        state = self._health_state.get(connection_id) or HealthState()
         t0 = time.monotonic()
 
         try:
@@ -105,7 +114,7 @@ class ConnectionHealthMonitor:
                 )
 
         async with self._lock:
-            self._health_state[connection_id] = state
+            self._health_state.set(connection_id, state)
 
         return state.to_dict()
 
@@ -114,7 +123,8 @@ class ConnectionHealthMonitor:
         return state.to_dict() if state else None
 
     def get_all_health(self) -> dict[str, dict[str, Any]]:
-        return {cid: s.to_dict() for cid, s in self._health_state.items()}
+        snapshot = dict(self._health_state._store)  # type: ignore[attr-defined]
+        return {cid: entry[0].to_dict() for cid, entry in snapshot.items()}
 
     def clear(self, connection_id: str) -> None:
         self._health_state.pop(connection_id, None)

@@ -1,18 +1,49 @@
-"""REST routes for backup management (owner only)."""
+"""REST routes for backup management (admin-only).
+
+Access control: all endpoints require the caller's email to be listed in
+``settings.admin_emails`` (env var ``ADMIN_EMAILS``). Non-admin authenticated
+users receive ``403 Forbidden``.
+"""
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_admin
 from app.config import settings
 from app.core.backup_manager import BackupManager
 from app.core.rate_limit import limiter
 from app.models.backup_record import BackupRecord
+
+
+class BackupTriggerResponse(BaseModel):
+    ok: bool = True
+    timestamp: str
+    size_bytes: int
+    errors: list[str] = []
+
+
+class BackupListResponse(BaseModel):
+    backups: list[dict[str, Any]]
+
+
+class BackupHistoryRecord(BaseModel):
+    id: str
+    created_at: str | None = None
+    reason: str
+    status: str
+    size_bytes: int | None = None
+    error_message: str | None = None
+
+
+class BackupHistoryResponse(BaseModel):
+    records: list[BackupHistoryRecord]
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +51,14 @@ router = APIRouter()
 _mgr = BackupManager()
 
 
-@router.post("/trigger")
+@router.post("/trigger", response_model=BackupTriggerResponse)
 @limiter.limit("3/minute")
 async def trigger_backup(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ):
-    """Trigger a manual backup (any authenticated user who owns a project)."""
+    """Trigger a manual backup. Admin-only."""
     if not settings.backup_enabled:
         raise HTTPException(status_code=400, detail="Backups are disabled")
 
@@ -64,21 +95,21 @@ async def trigger_backup(
         ) from e
 
 
-@router.get("/list")
+@router.get("/list", response_model=BackupListResponse)
 async def list_backups(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ):
-    """List available backups from disk."""
+    """List available backups from disk. Admin-only."""
     backups = await _mgr.list_backups()
     return {"backups": backups}
 
 
-@router.get("/history")
+@router.get("/history", response_model=BackupHistoryResponse)
 async def backup_history(
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ):
-    """List backup records from the database."""
+    """List backup records from the database. Admin-only."""
     result = await db.execute(
         select(BackupRecord).order_by(BackupRecord.created_at.desc()).limit(50)
     )
