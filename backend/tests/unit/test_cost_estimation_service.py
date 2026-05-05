@@ -19,9 +19,7 @@ class TestComputeSqlComplexity:
         assert compute_sql_complexity("SELECT * FROM users") == "simple"
 
     def test_single_join_is_moderate(self):
-        assert compute_sql_complexity(
-            "SELECT * FROM a JOIN b ON a.id = b.a_id"
-        ) == "moderate"
+        assert compute_sql_complexity("SELECT * FROM a JOIN b ON a.id = b.a_id") == "moderate"
 
     def test_cte_is_complex(self):
         sql = "WITH x AS (SELECT 1) SELECT * FROM x"

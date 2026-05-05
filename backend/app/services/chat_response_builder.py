@@ -17,10 +17,7 @@ def has_rules_changed(tool_call_log: list[dict] | None) -> bool:
     """Return True if any tool call in the log modified rules."""
     if not tool_call_log:
         return False
-    return any(
-        tc.get("tool") in ("manage_custom_rules", "manage_rules")
-        for tc in tool_call_log
-    )
+    return any(tc.get("tool") in ("manage_custom_rules", "manage_rules") for tc in tool_call_log)
 
 
 def build_structured_error(exc: Exception) -> dict[str, Any]:

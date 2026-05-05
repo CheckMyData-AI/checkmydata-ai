@@ -368,9 +368,7 @@ class TracePersistenceService:
                 if evt.step == "execute_query" and evt.elapsed_ms is None:
                     continue
 
-                span_type = classify_span_type(
-                    evt.step, getattr(evt, "span_type", None)
-                )
+                span_type = classify_span_type(evt.step, getattr(evt, "span_type", None))
 
                 if span_type == "llm_call":
                     llm_count += 1

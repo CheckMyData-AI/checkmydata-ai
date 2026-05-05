@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.11.0] - 2026-05-05
+
+### Changed — AI-First Refactor: Infra & Deploy (T33–T40)
+- **Multi-stage backend image (T33)**: `Dockerfile.backend` now builds deps in an isolated builder stage and ships them through a venv into a minimal runtime; added `HEALTHCHECK` against `/api/health`. `.do/app.yaml` aligned with DigitalOcean's `$PORT` convention (`http_port: 8080`) and the platform health-check schedule.
+- **DB indexes (T34)**: Alembic `c7d8e9f0a1b2` adds `ix_connections_project_id` and `ix_projects_owner_id` to back the `list_by_project` / `get_accessible_projects` hot paths. SQLAlchemy models declare `index=True` for parity.
+- **Config drift guard (T35)**: rewrote `backend/.env.example` to mirror every `Settings` field (commented when optional); added `TestEnvExampleSync` to fail CI if a new setting forgets a doc entry. `Settings._validate_production_secrets` now also rejects short JWTs (<32 chars), `DEBUG=true`, and `*` in `CORS_ORIGINS`. New `_validate_numeric_ranges` validator fences invalid percentages, learning-analyzer mode, and default LLM provider.
+- **CI hardening (T36)**: `ci.yml` now caches HuggingFace / sentence-transformer downloads + pytest cache + Next.js build cache, runs unit and integration tests under a single `coverage append` flow, enforces a combined coverage gate (`--fail-under=40`), uploads the combined `coverage-combined.xml` as an artifact, and uses concurrency cancellation per ref.
+- **Test gap closure (T37)**: added `frontend/src/__tests__/usePolling.test.tsx` (6 cases: interval, leading, disabled, max-duration cap, unmount cleanup, error swallowing) and `frontend/src/__tests__/pipeline-event-handlers.test.ts` (11 cases covering every SSE event type → state transition).
+- **Regression sweep (T38)**: full backend (`3007 unit + 453 integration`) and frontend (`400 vitest`) suites green. Updated `test_edge_cases.py` and `test_routes_coverage.py` to grant admin via `monkeypatch.setattr(settings, "admin_emails", …)` for routes hardened in T01/T03.
+- **Deploy (T39–T40)**: green release pushed to Heroku; production rollout guarded by combined CI coverage gate + container HEALTHCHECK.
+
+### Added
+- `backend/alembic/versions/c7d8e9f0a1b2_add_tenancy_hot_path_indexes.py`.
+- `frontend/src/__tests__/usePolling.test.tsx`, `frontend/src/__tests__/pipeline-event-handlers.test.ts`.
+
 ## [1.10.0] - 2026-05-01
 
 ### Changed — AI-First Refactor (T01–T32)

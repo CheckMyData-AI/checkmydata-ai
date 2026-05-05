@@ -75,9 +75,7 @@ class TestBuildSqlResultsPayload:
             viz_config=None,
             insights=None,
         )
-        assert (
-            build_sql_results_payload([blk], row_cap=100, answer="hi") is None
-        )
+        assert build_sql_results_payload([blk], row_cap=100, answer="hi") is None
 
     def test_multiple_blocks_no_rows_skip_viz(self):
         blk = SimpleNamespace(

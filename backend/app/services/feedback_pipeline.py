@@ -233,9 +233,7 @@ class FeedbackPipeline:
                 parsed = _extract_json(resp.content if resp else "")
                 if isinstance(parsed, dict):
                     category = str(parsed.get("category", "")).strip() or None
-                    subject = (
-                        str(parsed.get("subject", "")).strip() or None
-                    )
+                    subject = str(parsed.get("subject", "")).strip() or None
                     lesson = str(parsed.get("lesson", "")).strip() or None
                     if category and lesson:
                         return category, subject, lesson

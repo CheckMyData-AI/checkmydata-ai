@@ -153,9 +153,7 @@ class StageValidator:
             return
 
         try:
-            sample = [
-                dict(zip(qr.columns, r, strict=False)) for r in qr.rows[:25]
-            ]
+            sample = [dict(zip(qr.columns, r, strict=False)) for r in qr.rows[:25]]
             from app.llm.base import Message
 
             user_payload = json.dumps(
@@ -173,9 +171,7 @@ class StageValidator:
             parsed = self._extract_json(resp.content if resp else "")
             if isinstance(parsed, dict) and parsed.get("violated") is True:
                 explanation = str(parsed.get("explanation", "")).strip() or rule
-                outcome.warn(
-                    f"Business rule '{rule}' violated: {explanation}"
-                )
+                outcome.warn(f"Business rule '{rule}' violated: {explanation}")
                 return
         except Exception:
             logger.debug(

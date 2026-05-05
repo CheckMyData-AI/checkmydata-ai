@@ -52,8 +52,7 @@ def _load_model() -> Any | None:
             return _model
         except Exception:
             logger.warning(
-                "text_similarity: failed to load embedding model %s; "
-                "falling back to word-overlap",
+                "text_similarity: failed to load embedding model %s; falling back to word-overlap",
                 model_name,
                 exc_info=True,
             )

@@ -150,9 +150,7 @@ class RuleService:
 
         content: str
         if llm_router is not None and connection_id:
-            content = await generate_default_rule_content(
-                session, connection_id, llm_router
-            )
+            content = await generate_default_rule_content(session, connection_id, llm_router)
         else:
             content = get_default_rule_content()
 

@@ -182,9 +182,7 @@ class SuggestionEngine:
             cleaned.append(
                 {
                     "text": text[:200],
-                    "source": (
-                        "history" if str(item.get("source")) == "history" else "schema"
-                    ),
+                    "source": ("history" if str(item.get("source")) == "history" else "schema"),
                 }
             )
             if len(cleaned) >= limit:
@@ -305,9 +303,7 @@ class SuggestionEngine:
         limit: int = 5,
     ) -> list[dict]:
         if self._llm_router is not None:
-            llm = await self.llm_suggestions(
-                db, user_id, project_id, connection_id, limit
-            )
+            llm = await self.llm_suggestions(db, user_id, project_id, connection_id, limit)
             if llm:
                 return llm
 

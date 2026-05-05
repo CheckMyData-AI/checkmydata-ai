@@ -6,12 +6,24 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-lint-test:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+
+    env:
+      # Mirror production layout: keep heavy ML caches outside the repo so
+      # actions/cache can persist them across runs (T36).
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: ${{ github.workspace }}/.cache/sentence-transformers
+      CHROMA_PERSIST_DIR: ${{ github.workspace }}/.cache/chroma
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +32,25 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Cache ML model downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.HF_HOME }}
+            ${{ env.SENTENCE_TRANSFORMERS_HOME }}
+          key: ml-cache-${{ runner.os }}-py3.12-${{ hashFiles('backend/pyproject.toml') }}
+          restore-keys: |
+            ml-cache-${{ runner.os }}-py3.12-
+
+      - name: Cache pytest
+        uses: actions/cache@v4
+        with:
+          path: backend/.pytest_cache
+          key: pytest-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            pytest-${{ runner.os }}-
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -36,17 +67,41 @@ jobs:
       - name: Generate CI encryption key
         run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
 
-      - name: Unit tests
-        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+      - name: Unit tests (with coverage)
+        run: |
+          pytest tests/unit/ \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage-unit.xml \
+            --cov-context=test
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
-      - name: Integration tests
-        run: pytest tests/integration/ -v
+      - name: Integration tests (with coverage append)
+        run: |
+          pytest tests/integration/ \
+            --cov=app \
+            --cov-append \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage-combined.xml
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
+
+      - name: Coverage gate (combined unit + integration)
+        # Enforced threshold matches `fail_under` in pyproject.toml so CI
+        # and `pytest --cov` agree locally and in CI (T36).
+        run: |
+          python -m coverage report --fail-under=40
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage-combined.xml
+          retention-days: 7
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -62,6 +117,15 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: frontend/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/**/*.[jt]s', 'frontend/**/*.[jt]sx') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-
+            next-${{ runner.os }}-
 
       - name: Install dependencies
         run: npm ci

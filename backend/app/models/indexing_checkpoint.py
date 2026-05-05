@@ -77,9 +77,7 @@ class IndexingCheckpointStep(Base):
 
     __tablename__ = "indexing_checkpoint_step"
     __table_args__ = (
-        UniqueConstraint(
-            "checkpoint_id", "step_name", name="uq_indexing_checkpoint_step"
-        ),
+        UniqueConstraint("checkpoint_id", "step_name", name="uq_indexing_checkpoint_step"),
         Index("ix_indexing_checkpoint_step_cp", "checkpoint_id"),
     )
 
@@ -111,9 +109,7 @@ class IndexingCheckpointDoc(Base):
 
     __tablename__ = "indexing_checkpoint_doc"
     __table_args__ = (
-        UniqueConstraint(
-            "checkpoint_id", "source_path", name="uq_indexing_checkpoint_doc"
-        ),
+        UniqueConstraint("checkpoint_id", "source_path", name="uq_indexing_checkpoint_doc"),
         Index("ix_indexing_checkpoint_doc_cp", "checkpoint_id"),
     )
 

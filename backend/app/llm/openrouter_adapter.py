@@ -77,10 +77,7 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
                 # for token-limit errors when a structured error is available.
                 if code_value in (40000, "context_length_exceeded"):
                     return LLMTokenLimitError(str(exc), cause=exc)
-            if any(
-                s in structured_message
-                for s in _OPENROUTER_TOKEN_LIMIT_MESSAGES
-            ):
+            if any(s in structured_message for s in _OPENROUTER_TOKEN_LIMIT_MESSAGES):
                 return LLMTokenLimitError(str(exc), cause=exc)
             # Last-resort fallback: sniff the raw response body only when
             # we failed to parse a structured error.
@@ -89,9 +86,7 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
                     body = exc.response.text.lower()
                 except Exception:
                     body = ""
-                    logger.debug(
-                        "Could not read OpenRouter error body", exc_info=True
-                    )
+                    logger.debug("Could not read OpenRouter error body", exc_info=True)
                 if any(s in body for s in _OPENROUTER_TOKEN_LIMIT_MESSAGES):
                     return LLMTokenLimitError(str(exc), cause=exc)
             return LLMServerError(str(exc), cause=exc)

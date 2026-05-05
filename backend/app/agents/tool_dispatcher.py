@@ -186,9 +186,7 @@ class ToolDispatcher:
                 if prev_name != tc.name:
                     continue
                 if embeddings is not None:
-                    sim = text_similarity.cosine_similarity(
-                        embeddings[prev_pos], embeddings[pos]
-                    )
+                    sim = text_similarity.cosine_similarity(embeddings[prev_pos], embeddings[pos])
                     if sim >= semantic_threshold:
                         is_dup = True
                         break

@@ -58,6 +58,7 @@ class ConfirmFixResponse(BaseModel):
     learnings_created: list[str] = []
     notes_created: list[str] = []
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -367,9 +368,7 @@ async def _run_investigation_background(
 
         conn_svc = ConnectionService()
         async with async_session_factory() as session:
-            result = await session.execute(
-                select(Connection).where(Connection.id == connection_id)
-            )
+            result = await session.execute(select(Connection).where(Connection.id == connection_id))
             conn = result.scalar_one_or_none()
             if not conn:
                 raise RuntimeError(f"Connection {connection_id} not found")
@@ -404,9 +403,7 @@ async def _run_investigation_background(
 
         if inv_result.status == "success" and inv_result.corrected_query:
             corrected_json = (
-                json.dumps(inv_result.corrected_result)
-                if inv_result.corrected_result
-                else None
+                json.dumps(inv_result.corrected_result) if inv_result.corrected_result else None
             )
             async with async_session_factory() as session:
                 await inv_svc.record_finding(
@@ -440,9 +437,7 @@ async def _run_investigation_background(
                 )
                 await session.commit()
         except Exception:
-            logger.exception(
-                "Failed to mark investigation %s as failed", investigation_id
-            )
+            logger.exception("Failed to mark investigation %s as failed", investigation_id)
 
 
 def _map_root_cause_to_learning_category(root_cause_category: str) -> str:

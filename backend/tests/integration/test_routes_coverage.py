@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.config import settings
 from tests.integration.conftest import auth_headers, register_user
+
+
+async def _make_admin(auth_client, monkeypatch) -> str:
+    """Promote the auth_client user to admin (post-T01/T03 admin gating)."""
+    me = (await auth_client.get("/api/auth/me")).json()
+    monkeypatch.setattr(settings, "admin_emails", [me["email"]])
+    return me["email"]
 
 
 async def _create_project(client, token: str) -> str:
@@ -39,12 +47,14 @@ async def _create_connection(client, token: str, project_id: str) -> str:
 
 @pytest.mark.asyncio
 class TestBackupRoutes:
-    async def test_trigger_disabled_returns_400(self, auth_client):
+    async def test_trigger_disabled_returns_400(self, auth_client, monkeypatch):
+        await _make_admin(auth_client, monkeypatch)
         with patch("app.config.settings.backup_enabled", False):
             resp = await auth_client.post("/api/backup/trigger")
         assert resp.status_code == 400
 
-    async def test_trigger_list_history(self, auth_client):
+    async def test_trigger_list_history(self, auth_client, monkeypatch):
+        await _make_admin(auth_client, monkeypatch)
         with patch("app.config.settings.backup_enabled", True):
             with patch("app.api.routes.backup._mgr") as mock_mgr:
                 mock_mgr.run_backup = AsyncMock(
@@ -83,7 +93,8 @@ class TestDemoRoutes:
 
 @pytest.mark.asyncio
 class TestMetricsRoute:
-    async def test_metrics_shape(self, auth_client):
+    async def test_metrics_shape(self, auth_client, monkeypatch):
+        await _make_admin(auth_client, monkeypatch)
         resp = await auth_client.get("/api/metrics")
         assert resp.status_code == 200
         data = resp.json()

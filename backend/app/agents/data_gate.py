@@ -97,22 +97,16 @@ class DataGate:
         column_semantic_classifier: Any = None,
     ) -> None:
         self._null_threshold = (
-            null_threshold
-            if null_threshold is not None
-            else settings.data_gate_high_null_ratio
+            null_threshold if null_threshold is not None else settings.data_gate_high_null_ratio
         )
         self._dup_threshold = (
             duplicate_threshold
             if duplicate_threshold is not None
             else settings.data_gate_high_duplicate_ratio
         )
-        self._max_sample = (
-            max_sample if max_sample is not None else settings.data_gate_max_sample
-        )
+        self._max_sample = max_sample if max_sample is not None else settings.data_gate_max_sample
         self._llm_semantics = (
-            llm_semantics
-            if llm_semantics is not None
-            else settings.data_gate_llm_semantics
+            llm_semantics if llm_semantics is not None else settings.data_gate_llm_semantics
         )
         # Optional callable: ``(columns, sample_rows) -> dict[col_name, kind]``
         # where ``kind`` ∈ {"percent", "date", "amount", "id", "other"}. When

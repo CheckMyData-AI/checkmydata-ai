@@ -79,16 +79,20 @@ async def generate_default_rule_content(
         from app.models.db_index import DbIndex
 
         rows = (
-            await db.execute(
-                select(DbIndex)
-                .where(
-                    DbIndex.connection_id == connection_id,
-                    DbIndex.is_active.is_(True),
+            (
+                await db.execute(
+                    select(DbIndex)
+                    .where(
+                        DbIndex.connection_id == connection_id,
+                        DbIndex.is_active.is_(True),
+                    )
+                    .order_by(DbIndex.relevance_score.desc())
+                    .limit(25)
                 )
-                .order_by(DbIndex.relevance_score.desc())
-                .limit(25)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         if not rows:
             return _TEMPLATE
@@ -123,9 +127,7 @@ async def generate_default_rule_content(
 
         content = (resp.content or "").strip() if resp else ""
         if len(content) < 400 or "##" not in content:
-            logger.debug(
-                "Schema-aware rule content too short or malformed; using template"
-            )
+            logger.debug("Schema-aware rule content too short or malformed; using template")
             return _TEMPLATE
         return content
     except Exception:

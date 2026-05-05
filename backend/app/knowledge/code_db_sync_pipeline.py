@@ -197,9 +197,7 @@ class CodeDbSyncPipeline:
                     )
 
                 large_task = _asyncio.gather(*(_one_large(mt) for mt in large_tables))
-                small_task = _asyncio.gather(
-                    *(_one_small_batch(b) for b in small_batch_specs)
-                )
+                small_task = _asyncio.gather(*(_one_small_batch(b) for b in small_batch_specs))
                 large_results, small_results = await _asyncio.gather(large_task, small_task)
 
                 large_pairs = zip(large_tables, large_results, strict=False)

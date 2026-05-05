@@ -5,6 +5,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from app.config import settings
 from tests.integration.conftest import auth_headers, register_user
 
 
@@ -119,7 +120,11 @@ class TestMetricsEdgeCases:
         resp = await client.get("/api/metrics")
         assert resp.status_code in (401, 403)
 
-    async def test_metrics_has_uptime(self, auth_client: AsyncClient):
+    async def test_metrics_has_uptime(self, auth_client: AsyncClient, monkeypatch):
+        # /api/metrics is admin-only after T03 tenancy hardening; promote the
+        # test user to admin so we can still exercise the response shape.
+        me = (await auth_client.get("/api/auth/me")).json()
+        monkeypatch.setattr(settings, "admin_emails", [me["email"]])
         resp = await auth_client.get("/api/metrics")
         assert resp.status_code == 200
         assert resp.json()["uptime_seconds"] > 0
@@ -131,7 +136,10 @@ class TestBackupEdgeCases:
         resp = await client.post("/api/backup/trigger")
         assert resp.status_code in (401, 403)
 
-    async def test_backup_history_empty_for_new_db(self, auth_client: AsyncClient):
+    async def test_backup_history_empty_for_new_db(self, auth_client: AsyncClient, monkeypatch):
+        # /api/backup/history is admin-only after T01 hardening.
+        me = (await auth_client.get("/api/auth/me")).json()
+        monkeypatch.setattr(settings, "admin_emails", [me["email"]])
         resp = await auth_client.get("/api/backup/history")
         assert resp.status_code == 200
         assert isinstance(resp.json()["records"], list)

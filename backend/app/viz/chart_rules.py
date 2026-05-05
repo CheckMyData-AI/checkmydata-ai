@@ -61,16 +61,12 @@ def apply_chart_rules(
 
     if viz_type == "pie_chart" and row_count > settings.max_pie_categories:
         outcome.adjusted_viz_type = "bar_chart"
-        outcome.warnings.append(
-            f"Pie chart with {row_count} slices — falling back to bar_chart"
-        )
+        outcome.warnings.append(f"Pie chart with {row_count} slices — falling back to bar_chart")
         return outcome
 
     if viz_type in ("line_chart", "bar_chart", "scatter") and column_count < 2:
         outcome.adjusted_viz_type = "table"
-        outcome.warnings.append(
-            f"{viz_type} needs at least 2 columns — falling back to table"
-        )
+        outcome.warnings.append(f"{viz_type} needs at least 2 columns — falling back to table")
         return outcome
 
     return outcome

@@ -67,9 +67,7 @@ class TTLCache(Generic[K, V]):
 
     def set(self, key: K, value: V) -> None:
         with self._lock:
-            expires_at = (
-                time.monotonic() + self._ttl if self._ttl > 0 else float("inf")
-            )
+            expires_at = time.monotonic() + self._ttl if self._ttl > 0 else float("inf")
             self._store[key] = (value, expires_at)
             self._store.move_to_end(key)
             while len(self._store) > self._max_size:

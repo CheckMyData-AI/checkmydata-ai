@@ -1,13 +1,51 @@
-FROM python:3.12-slim AS base
+# syntax=docker/dockerfile:1.7
+
+# ---------- builder ----------
+# Compiles native deps (asyncpg, cryptography, chromadb, etc.) into an isolated
+# virtualenv so the runtime image stays small and free of build tooling (T33).
+FROM python:3.12-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client gcc libpq-dev curl \
+        build-essential \
+        gcc \
+        libpq-dev \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv "$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+WORKDIR /build
+
+COPY backend/pyproject.toml .
+RUN pip install --upgrade pip && \
+    pip install "."
+
+# ---------- runtime ----------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        openssh-client \
+        libpq5 \
+        curl \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY backend/pyproject.toml .
-RUN pip install --no-cache-dir "."
+COPY --from=builder /opt/venv /opt/venv
 
 COPY backend/ .
 
@@ -20,4 +58,8 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "PYTHONPATH=/app uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Container-level healthcheck — independent of the platform's L4 probe.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/health" || exit 1
+
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

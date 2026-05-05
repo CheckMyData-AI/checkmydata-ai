@@ -341,6 +341,12 @@ class Settings(BaseSettings):
                 "JWT_SECRET must be set to a secure value in production. "
                 "Do not use the default 'change-me-in-production'."
             )
+        if len(self.jwt_secret) < 32:
+            raise ValueError(
+                "JWT_SECRET must be at least 32 chars in production. "
+                'Generate one with: python -c "import secrets; '
+                'print(secrets.token_urlsafe(32))"'
+            )
         if not self.master_encryption_key:
             raise ValueError(
                 "MASTER_ENCRYPTION_KEY must be set in production. "
@@ -348,6 +354,35 @@ class Settings(BaseSettings):
                 '"from cryptography.fernet import Fernet; '
                 'print(Fernet.generate_key().decode())"'
             )
+        if self.debug:
+            raise ValueError("DEBUG must be false in production.")
+        if "*" in self.cors_origins:
+            raise ValueError(
+                "CORS_ORIGINS may not contain '*' in production. List concrete origins instead."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_numeric_ranges(self) -> "Settings":
+        """Catch obvious mis-configurations early, regardless of environment."""
+        if self.jwt_expire_minutes <= 0:
+            raise ValueError("JWT_EXPIRE_MINUTES must be positive.")
+        if self.max_orchestrator_iterations <= 0:
+            raise ValueError("MAX_ORCHESTRATOR_ITERATIONS must be positive.")
+        if not 0.0 < self.agent_emergency_synthesis_pct <= 1.0:
+            raise ValueError("AGENT_EMERGENCY_SYNTHESIS_PCT must be in (0, 1].")
+        if not 0.0 < self.synthesis_data_token_budget_pct <= 1.0:
+            raise ValueError("SYNTHESIS_DATA_TOKEN_BUDGET_PCT must be in (0, 1].")
+        if self.session_rotation_threshold_pct <= 0 or self.session_rotation_threshold_pct > 100:
+            raise ValueError("SESSION_ROTATION_THRESHOLD_PCT must be in (0, 100].")
+        if not 0.0 <= self.tool_dedup_semantic_threshold <= 1.0:
+            raise ValueError("TOOL_DEDUP_SEMANTIC_THRESHOLD must be in [0, 1].")
+        if not 0.0 <= self.tool_dedup_word_overlap_threshold <= 1.0:
+            raise ValueError("TOOL_DEDUP_WORD_OVERLAP_THRESHOLD must be in [0, 1].")
+        if self.learning_analyzer_mode not in {"heuristic", "hybrid", "llm_first"}:
+            raise ValueError("LEARNING_ANALYZER_MODE must be one of: heuristic, hybrid, llm_first")
+        if self.default_llm_provider not in {"openai", "anthropic", "openrouter"}:
+            raise ValueError("DEFAULT_LLM_PROVIDER must be one of: openai, anthropic, openrouter")
         return self
 
 

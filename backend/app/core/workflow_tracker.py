@@ -197,9 +197,7 @@ class WorkflowTracker:
         entry = self._active_workflows.get(workflow_id)
         return entry["pipeline"] if entry else ""
 
-    def _event_matches_subscriber(
-        self, event: "WorkflowEvent", sub: _Subscriber
-    ) -> bool:
+    def _event_matches_subscriber(self, event: "WorkflowEvent", sub: _Subscriber) -> bool:
         """True when ``sub`` is allowed to see ``event`` under tenancy rules."""
         if sub.user_id is None:
             return True

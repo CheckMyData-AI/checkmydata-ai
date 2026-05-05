@@ -33,9 +33,7 @@ class TestTenancyFilter:
     @pytest.mark.asyncio
     async def test_subscriber_with_project_access_gets_events(self):
         t = WorkflowTracker()
-        queue = await t.subscribe(
-            user_id="charlie", accessible_project_ids={"proj-shared"}
-        )
+        queue = await t.subscribe(user_id="charlie", accessible_project_ids={"proj-shared"})
         wf = await t.begin("agent", {"user_id": "alice", "project_id": "proj-shared"})
         # charlie sees alice's work because he's a member of proj-shared
         evt = queue.get_nowait()

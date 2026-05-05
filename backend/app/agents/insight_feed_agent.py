@@ -242,9 +242,7 @@ class InsightFeedAgent:
                     if isinstance(parsed, list):
                         # sample_size reflects how many rows the model actually
                         # saw (not the character count of its response).
-                        sample_rows = (
-                            len(sample_data) if isinstance(sample_data, list) else 0
-                        )
+                        sample_rows = len(sample_data) if isinstance(sample_data, list) else 0
                         valid = []
                         for item in parsed[:5]:
                             if isinstance(item, dict) and "title" in item:

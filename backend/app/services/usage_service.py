@@ -159,9 +159,7 @@ class UsageService:
             else:
                 change[key] = 0.0
 
-        daily = await self._daily_breakdown(
-            db, user_id, current_start, now, project_id=project_id
-        )
+        daily = await self._daily_breakdown(db, user_id, current_start, now, project_id=project_id)
 
         return {
             "current_period": current,

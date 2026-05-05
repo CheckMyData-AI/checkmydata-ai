@@ -435,9 +435,7 @@ class TestProjectScopedFiltering:
             created_at=now - timedelta(days=5),
         )
 
-        scoped = await svc.get_period_comparison(
-            db, user.id, days=30, project_id=proj_a.id
-        )
+        scoped = await svc.get_period_comparison(db, user.id, days=30, project_id=proj_a.id)
         unscoped = await svc.get_period_comparison(db, user.id, days=30)
 
         assert scoped["current_period"]["prompt_tokens"] == 100
@@ -453,11 +451,19 @@ class TestProjectScopedFiltering:
 
         now = datetime.now(UTC)
         await _insert_usage(
-            db, user.id, proj_a.id, prompt_tokens=50, completion_tokens=10,
+            db,
+            user.id,
+            proj_a.id,
+            prompt_tokens=50,
+            completion_tokens=10,
             created_at=now - timedelta(days=2),
         )
         await _insert_usage(
-            db, user.id, proj_b.id, prompt_tokens=5000, completion_tokens=1000,
+            db,
+            user.id,
+            proj_b.id,
+            prompt_tokens=5000,
+            completion_tokens=1000,
             created_at=now - timedelta(days=2),
         )
 
@@ -476,11 +482,19 @@ class TestProjectScopedFiltering:
 
         now = datetime.now(UTC)
         await _insert_usage(
-            db, user.id, proj_a.id, prompt_tokens=100, completion_tokens=0,
+            db,
+            user.id,
+            proj_a.id,
+            prompt_tokens=100,
+            completion_tokens=0,
             created_at=now - timedelta(days=2),
         )
         await _insert_usage(
-            db, user.id, proj_b.id, prompt_tokens=999, completion_tokens=0,
+            db,
+            user.id,
+            proj_b.id,
+            prompt_tokens=999,
+            completion_tokens=0,
             created_at=now - timedelta(days=2),
         )
 

@@ -30,9 +30,7 @@ def compute_sql_complexity(sql: str) -> str:
     has_cte = bool(re.search(r"\bWITH\b\s+\w+\s+AS\s*\(", upper))
     has_window = bool(re.search(r"\bOVER\s*\(", upper))
     join_count = len(re.findall(r"\bJOIN\b", upper))
-    has_subquery = (
-        "SELECT" in upper[upper.find("FROM") + 1 :] if "FROM" in upper else False
-    )
+    has_subquery = "SELECT" in upper[upper.find("FROM") + 1 :] if "FROM" in upper else False
 
     if has_recursive:
         return "expert"

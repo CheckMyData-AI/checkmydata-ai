@@ -875,14 +875,11 @@ class TestLlmDeepAnalysis:
         agent = _make_agent()
         llm = AsyncMock()
         llm.complete.return_value = MagicMock(
-            content=json.dumps(
-                [{"type": "trend", "title": "t", "confidence": 0.5}]
-            )
+            content=json.dumps([{"type": "trend", "title": "t", "confidence": 0.5}])
         )
 
         result = await agent._llm_deep_analysis("t", {"c": "n"}, [], llm)
         assert result and result[0]["sample_size"] == 0
-
 
     @pytest.mark.asyncio
     async def test_caps_confidence_at_07(self):

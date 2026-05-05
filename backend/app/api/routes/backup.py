@@ -45,6 +45,7 @@ class BackupHistoryRecord(BaseModel):
 class BackupHistoryResponse(BaseModel):
     records: list[BackupHistoryRecord]
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()

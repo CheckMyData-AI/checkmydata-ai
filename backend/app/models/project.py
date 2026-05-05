@@ -37,6 +37,7 @@ class Project(Base):
         String(36),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     indexing_llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     indexing_llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)

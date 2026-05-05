@@ -1164,9 +1164,9 @@ class OrchestratorAgent(BaseAgent):
             label = f"Choosing visualization{'s' if n_viz > 1 else ''}…"
             await self._tracker.emit(wf_id, "thinking", "in_progress", label)
 
-            async def _pick_one_viz(sr_idx: int, sr: SQLAgentResult) -> tuple[
-                int, str, dict[str, Any], Any
-            ]:
+            async def _pick_one_viz(
+                sr_idx: int, sr: SQLAgentResult
+            ) -> tuple[int, str, dict[str, Any], Any]:
                 """Run a single viz.run with step tracking. Returns (idx, viz_type, cfg, result)."""
                 sr_viz_type = "table"
                 sr_viz_config: dict[str, Any] = {}
@@ -2061,32 +2061,18 @@ class OrchestratorAgent(BaseAgent):
             "ConnectionResetError",
         }
         if exc_name in connection_types:
-            return (
-                "Database connection error. Please check your connection "
-                "settings and try again."
-            )
+            return "Database connection error. Please check your connection settings and try again."
         permission_types = {"PermissionError", "AuthenticationError"}
         if exc_name in permission_types:
-            return (
-                "Permission error. Please check your database credentials "
-                "and permissions."
-            )
+            return "Permission error. Please check your database credentials and permissions."
 
         # String fallback only for opaque / wrapped exceptions (e.g. RuntimeError
         # raised by connector shims). Kept minimal intentionally.
         msg = str(exc).lower()
-        if "connection" in msg and (
-            "refused" in msg or "reset" in msg or "timeout" in msg
-        ):
-            return (
-                "Database connection error. Please check your connection "
-                "settings and try again."
-            )
+        if "connection" in msg and ("refused" in msg or "reset" in msg or "timeout" in msg):
+            return "Database connection error. Please check your connection settings and try again."
         if "permission" in msg or "access denied" in msg:
-            return (
-                "Permission error. Please check your database credentials "
-                "and permissions."
-            )
+            return "Permission error. Please check your database credentials and permissions."
         return "An unexpected error occurred. Please try again shortly."
 
     # Backward-compatible aliases — delegate to ToolDispatcher

@@ -183,22 +183,21 @@ class TestProjectUpdate:
         )
         assert updated is not None
         assert updated.name == "Safe"
-        assert updated.owner_id == orig_owner, (
-            "owner_id must not be changed via mass-assignment"
-        )
+        assert updated.owner_id == orig_owner, "owner_id must not be changed via mass-assignment"
 
     @pytest.mark.asyncio
     async def test_update_rejects_unknown_fields(self, db):
         project = await svc.create(db, name="Ignore")
         updated = await svc.update(db, project.id, no_such_field="x")
         assert updated is not None
-        assert not hasattr(updated, "no_such_field") or getattr(
-            updated, "no_such_field", None
-        ) != "x"
+        assert (
+            not hasattr(updated, "no_such_field") or getattr(updated, "no_such_field", None) != "x"
+        )
 
     @pytest.mark.asyncio
     async def test_update_rejects_protected_timestamp_fields(self, db):
         from datetime import UTC, datetime
+
         project = await svc.create(db, name="TS")
         hijack = datetime(1999, 1, 1, tzinfo=UTC)
         orig_created = project.created_at

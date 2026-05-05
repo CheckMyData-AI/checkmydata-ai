@@ -136,11 +136,7 @@ class CheckpointService:
         """
         savepoint = await session.begin_nested()
         try:
-            session.add(
-                IndexingCheckpointStep(
-                    checkpoint_id=checkpoint_id, step_name=step_name
-                )
-            )
+            session.add(IndexingCheckpointStep(checkpoint_id=checkpoint_id, step_name=step_name))
             await session.flush()
         except IntegrityError:
             await savepoint.rollback()
@@ -157,11 +153,7 @@ class CheckpointService:
             return
         savepoint = await session.begin_nested()
         try:
-            session.add(
-                IndexingCheckpointDoc(
-                    checkpoint_id=checkpoint_id, source_path=source_path
-                )
-            )
+            session.add(IndexingCheckpointDoc(checkpoint_id=checkpoint_id, source_path=source_path))
             await session.flush()
         except IntegrityError:
             await savepoint.rollback()
@@ -199,9 +191,7 @@ class CheckpointService:
         await session.commit()
 
     @staticmethod
-    async def _checkpoint_exists(
-        session: AsyncSession, checkpoint_id: str
-    ) -> bool:
+    async def _checkpoint_exists(session: AsyncSession, checkpoint_id: str) -> bool:
         cp = await session.get(IndexingCheckpoint, checkpoint_id)
         return cp is not None
 

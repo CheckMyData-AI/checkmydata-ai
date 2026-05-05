@@ -306,10 +306,15 @@ class SQLAgent(BaseAgent):
                     _sd_tool["input_preview"] = (_tc_args.get("query", ""))[:1000]
                 else:
                     _sd_tool["input_preview"] = str(_tc_args)[:500]
-                _tool_span_type = "db_query" if tc.name in (
-                    "execute_query",
-                    "get_schema_info",
-                ) else "tool_call"
+                _tool_span_type = (
+                    "db_query"
+                    if tc.name
+                    in (
+                        "execute_query",
+                        "get_schema_info",
+                    )
+                    else "tool_call"
+                )
                 async with tracker.step(
                     wf_id,
                     f"sql:tool:{tc.name}",

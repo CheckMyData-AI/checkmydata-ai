@@ -23,9 +23,7 @@ async def test_active_hides_other_users_workflows(auth_client):
         resp = await auth_client.get("/api/tasks/active")
         assert resp.status_code == 200
         ids = [w["workflow_id"] for w in resp.json()]
-        assert other_wf not in ids, (
-            f"User {me['email']} should NOT see other users' workflows"
-        )
+        assert other_wf not in ids, f"User {me['email']} should NOT see other users' workflows"
     finally:
         await tracker.end(other_wf, "index_repo")
 

@@ -183,9 +183,7 @@ async def list_projects(
 ):
     projects = await _membership_svc.get_accessible_projects(db, user["user_id"])
     # T17: fetch all roles in one query instead of N+1.
-    roles = await _membership_svc.get_roles_bulk(
-        db, [p.id for p in projects], user["user_id"]
-    )
+    roles = await _membership_svc.get_roles_bulk(db, [p.id for p in projects], user["user_id"])
     result = []
     for p in projects:
         result.append(

@@ -87,9 +87,7 @@ class AgentResultValidator:
         outcome = ValidationOutcome()
 
         viz_type = getattr(result, "viz_type", "table")
-        chart_outcome = apply_chart_rules(
-            viz_type, row_count=row_count, column_count=column_count
-        )
+        chart_outcome = apply_chart_rules(viz_type, row_count=row_count, column_count=column_count)
 
         if chart_outcome.invalid_type:
             outcome.passed = False

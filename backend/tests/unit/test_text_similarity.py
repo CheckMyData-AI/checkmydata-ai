@@ -36,12 +36,8 @@ class TestCosine:
 class TestEncodeBatch:
     def test_returns_none_when_no_model_configured(self, monkeypatch):
         text_similarity.reset_for_tests()
-        monkeypatch.setattr(
-            text_similarity.settings, "tool_dedup_embedding_model", ""
-        )
-        monkeypatch.setattr(
-            text_similarity.settings, "chroma_embedding_model", ""
-        )
+        monkeypatch.setattr(text_similarity.settings, "tool_dedup_embedding_model", "")
+        monkeypatch.setattr(text_similarity.settings, "chroma_embedding_model", "")
         assert text_similarity.encode_batch(["hello"]) is None
 
     def test_returns_none_when_model_load_fails(self, monkeypatch):
@@ -64,9 +60,7 @@ class TestEncodeBatch:
 
     def test_uses_model_when_available(self, monkeypatch):
         text_similarity.reset_for_tests()
-        monkeypatch.setattr(
-            text_similarity.settings, "tool_dedup_embedding_model", "fake-model"
-        )
+        monkeypatch.setattr(text_similarity.settings, "tool_dedup_embedding_model", "fake-model")
 
         stub_model = MagicMock()
         stub_model.encode.return_value = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
@@ -118,7 +112,4 @@ class TestSemanticBestMatch:
         text_similarity.reset_for_tests()
         monkeypatch.setattr(text_similarity.settings, "tool_dedup_embedding_model", "")
         monkeypatch.setattr(text_similarity.settings, "chroma_embedding_model", "")
-        assert (
-            text_similarity.semantic_best_match("xyz", ["abc", "def"], threshold=0.9)
-            is None
-        )
+        assert text_similarity.semantic_best_match("xyz", ["abc", "def"], threshold=0.9) is None
