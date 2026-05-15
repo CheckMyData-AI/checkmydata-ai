@@ -144,6 +144,20 @@ class ConnectionService:
 
         await session.delete(conn)
         await session.commit()
+
+        # Wipe the per-connection schema BM25 snapshot so future re-creates
+        # don't accidentally serve stale tables. Postgres rows are removed by
+        # FK cascade; the .pkl is not.
+        try:
+            from app.services.indexing_artifacts import cleanup_connection_artifacts
+
+            cleanup_connection_artifacts(connection_id)
+        except Exception:
+            logger.debug(
+                "ConnectionService.delete: schema BM25 cleanup failed for %s",
+                connection_id,
+                exc_info=True,
+            )
         return True
 
     @staticmethod

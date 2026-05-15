@@ -84,7 +84,14 @@ backend/app/
 │   ├── vector_store.py     # ChromaDB wrapper
 │   ├── repo_analyzer.py    # Git repo indexing
 │   ├── learning_analyzer.py# Heuristic + LLM lesson extraction
-│   ├── entity_extractor.py # Code entity extraction
+│   ├── entity_extractor.py # Code entity extraction (regex baseline)
+│   ├── ast_parser.py       # M1: tree-sitter AST extraction
+│   ├── code_graph.py       # M2: NetworkX code knowledge graph builder
+│   ├── bm25_index.py       # M3: code-aware lexical index (rank_bm25)
+│   ├── hybrid_retriever.py # M3: BM25 ⊕ Chroma with RRF
+│   ├── schema_retriever.py # M4: per-connection schema BM25 retriever
+│   ├── graph_db_bridge.py  # M5: code → DB lineage bridge
+│   ├── code_clustering.py  # M6: Louvain communities + LLM labeling
 │   └── custom_rules.py     # Project-specific rules engine
 ├── services/               # Business logic
 │   ├── chat_service.py     # Session + message CRUD
@@ -102,6 +109,7 @@ backend/app/
 │   ├── pipeline_run.py     # PipelineRun (multi-stage state)
 │   ├── data_validation.py  # DataValidationFeedback
 │   ├── rag_feedback.py     # RAGFeedback
+│   ├── code_graph.py       # CodeGraphSymbol, CodeGraphEdge, CodeCluster
 │   └── ...
 ├── api/routes/             # REST API endpoints
 │   ├── chat.py             # Chat, streaming, feedback

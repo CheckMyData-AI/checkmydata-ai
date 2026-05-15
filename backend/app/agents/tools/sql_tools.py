@@ -122,6 +122,14 @@ GET_QUERY_CONTEXT_TOOL = Tool(
         "distinct enum/status values, data format warnings (money in cents, "
         "date formats), applicable business rules, and code-level query patterns "
         "— all merged into a single compact response. "
+        "Table selection is question-aware: when the schema retrieval index "
+        "is available, tables are ranked by BM25 against the user's wording "
+        "blended with code-derived usage frequency, so passing a focused "
+        "natural-language question typically beats listing tables manually. "
+        "When code lineage is available, a 'Lineage (top callers)' block is "
+        "appended per table — those callers (file, endpoint kind, op kind) "
+        "are authoritative for who reads/writes the table and should drive "
+        "filter / join choices. "
         "Use this as the FIRST and PRIMARY tool before writing any SQL query."
     ),
     parameters=[
@@ -237,6 +245,27 @@ READ_NOTES_TOOL = Tool(
     ],
 )
 
+GET_TABLES_IN_CLUSTER_TOOL = Tool(
+    name="get_tables_in_cluster",
+    description=(
+        "Look up which tables belong to a functional cluster of the codebase "
+        "(e.g. 'auth', 'billing', 'fulfillment'). Returns the list of tables "
+        "touched by the cluster's code. Accepts either an exact cluster_id "
+        "(numeric string) or a substring match against the cluster's label."
+    ),
+    parameters=[
+        ToolParameter(
+            name="cluster",
+            type="string",
+            description=(
+                "Either the exact cluster_id (e.g. '3') or a substring of the "
+                "cluster's label (e.g. 'auth', 'stripe')."
+            ),
+        ),
+    ],
+)
+
+
 WRITE_NOTE_TOOL = Tool(
     name="write_note",
     description=(
@@ -280,6 +309,7 @@ def get_sql_agent_tools(
     has_learnings: bool = False,
     learnings_preloaded: bool = False,
     notes_preloaded: bool = False,
+    has_code_clusters: bool = False,
 ) -> list[Tool]:
     """Return the subset of SQL tools available given current context.
 
@@ -302,4 +332,6 @@ def get_sql_agent_tools(
         tools.append(GET_AGENT_LEARNINGS_TOOL)
     if has_code_db_sync:
         tools.append(GET_SYNC_CONTEXT_TOOL)
+    if has_code_clusters:
+        tools.append(GET_TABLES_IN_CLUSTER_TOOL)
     return tools

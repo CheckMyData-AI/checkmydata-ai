@@ -14,8 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 from git import Repo
 
+from app.config import settings
 from app.core.workflow_tracker import tracker
+from app.knowledge.ast_parser import ASTParser, ParsedFile
+from app.knowledge.bm25_index import BM25Index
 from app.knowledge.chunker import chunk_document
+from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
 from app.knowledge.doc_generator import _is_binary_content
 from app.knowledge.indexing_pipeline import (
     generate_summary_doc,
@@ -25,6 +29,7 @@ from app.knowledge.indexing_pipeline import (
 )
 from app.knowledge.repo_analyzer import is_binary_file
 from app.services.checkpoint_service import CheckpointService
+from app.services.code_graph_service import CodeGraphService
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +77,13 @@ class _PipelineState:
     schemas: list = field(default_factory=list)
     knowledge: ProjectKnowledge | None = None
     enriched_docs: list[EnrichedDoc] = field(default_factory=list)
+    # M1: tree-sitter parsed files keyed by repo-relative path. Populated
+    # only when ``settings.code_graph_enabled`` is True.
+    parsed_files: dict[str, ParsedFile] = field(default_factory=dict)
+    ast_unsupported_count: int = 0
+    ast_skipped_count: int = 0
+    # M2: code knowledge graph built from parsed files.
+    code_graph: CodeGraph | None = None
 
 
 class IndexingPipelineRunner:
@@ -387,6 +399,35 @@ class IndexingPipelineRunner:
                 profile_json=state.profile.to_json(),
             )
 
+        # --- Step 5b: ast_parse (M1) ---
+        # Tree-sitter AST extraction. Always re-runs because parsed files
+        # are kept in-memory only and feed the graph_build step (M2).
+        # Gated by code_graph_enabled; the step is a fast no-op when off.
+        if settings.code_graph_enabled and state.repo_dir is not None:
+            # For graph building we need every file, not just changes. The
+            # graph is a full replace per run.
+            files_to_parse = await self._collect_files_for_ast(
+                state.repo_dir,
+                state.changed_files,
+                force_full=force_full or state.last_sha is None,
+            )
+            async with tracker.step(
+                wf_id,
+                "ast_parse",
+                f"Parsing AST for {len(files_to_parse)} file(s)",
+            ):
+                await self._run_ast_parse(state, wf_id, files_to_parse)
+            await self._cp_svc.complete_step(db, cp_id, "ast_parse")
+
+            # --- Step 5c: graph_build (M2) ---
+            async with tracker.step(
+                wf_id,
+                "graph_build",
+                f"Building code graph from {len(state.parsed_files)} parsed file(s)",
+            ):
+                await self._run_graph_build(state, wf_id, db, project_id)
+            await self._cp_svc.complete_step(db, cp_id, "graph_build")
+
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
         async with tracker.step(
             wf_id,
@@ -494,6 +535,188 @@ class IndexingPipelineRunner:
                 "cross_file_analysis",
                 knowledge_json=state.knowledge.to_json(),
             )
+
+        # --- Pre-M5/M6: rehydrate code graph from DB when in-memory state is
+        # empty. Two paths hit this branch:
+        #   1) Incremental indexing where no files changed touched ast_parse,
+        #      so ``state.parsed_files`` is empty and ``_run_graph_build``
+        #      no-ops.
+        #   2) graph_build raised; ``state.code_graph`` stays None, but the
+        #      previous successful run still has a valid graph in Postgres.
+        # Without this, M5/M6 silently skip on every resume.
+        if (
+            settings.code_graph_enabled
+            and state.code_graph is None
+            and (settings.lineage_enabled or settings.clustering_enabled)
+        ):
+            try:
+                hydrated = await CodeGraphService().load_graph(db, project_id)
+                if hydrated is not None:
+                    state.code_graph = hydrated
+                    logger.info(
+                        "graph_rehydrate: loaded %d symbols from DB for project=%s",
+                        len(hydrated.symbols),
+                        project_id[:8],
+                    )
+            except Exception:
+                logger.debug(
+                    "graph_rehydrate failed for project %s",
+                    project_id[:8],
+                    exc_info=True,
+                )
+
+        # --- Step 7b: graph_db_bridge (M5) ---
+        # Stitch the code graph's CALLS edges onto ORM entities so downstream
+        # consumers (CodeDbSyncAnalyzer, SQLAgent) can answer "which endpoint
+        # touches this table?". Cheap, in-memory; gated by lineage_enabled.
+        if (
+            settings.lineage_enabled
+            and state.knowledge is not None
+            and state.code_graph is not None
+        ):
+            async with tracker.step(
+                wf_id,
+                "graph_db_bridge",
+                "Linking code graph callers to ORM entities",
+            ):
+                try:
+                    from app.knowledge.graph_db_bridge import GraphDBBridge
+
+                    bridge = GraphDBBridge(
+                        max_depth=settings.lineage_max_depth,
+                    )
+                    attached = await asyncio.to_thread(
+                        bridge.enrich,
+                        state.knowledge,
+                        state.code_graph,
+                    )
+                    try:
+                        from app.core.metrics import get_metrics_collector
+
+                        m = get_metrics_collector()
+                        m.inc(
+                            "code_graph_lineage_refs_total",
+                            attached,
+                            project=project_id[:8],
+                        )
+                    except Exception:
+                        logger.debug("metrics emit failed for bridge", exc_info=True)
+                    await tracker.emit(
+                        wf_id,
+                        "graph_db_bridge",
+                        "completed",
+                        f"Attached {attached} caller refs across "
+                        f"{len(state.knowledge.entities)} entities",
+                    )
+                    # Re-persist knowledge so the lineage survives restarts.
+                    await self._cp_svc.complete_step(
+                        db,
+                        cp_id,
+                        "graph_db_bridge",
+                        knowledge_json=state.knowledge.to_json(),
+                    )
+                except Exception:
+                    logger.exception(
+                        "graph_db_bridge failed for project %s; lineage skipped",
+                        project_id[:8],
+                    )
+                    await tracker.emit(
+                        wf_id,
+                        "graph_db_bridge",
+                        "failed",
+                        "Bridge errored; continuing without lineage",
+                    )
+
+        # --- Step 7c: graph_clustering (M6) ---
+        # Compute Louvain communities + (optionally) LLM-label them so the
+        # SQL agent can answer "show me the auth tables" via one call.
+        # Cheap in CPU but expensive in LLM tokens, so we gate label_clusters
+        # behind a separate flag.
+        if (
+            settings.clustering_enabled
+            and state.code_graph is not None
+            and state.knowledge is not None
+        ):
+            async with tracker.step(
+                wf_id,
+                "graph_clustering",
+                "Running Louvain community detection",
+            ):
+                clustering_ok = False
+                cluster_count = 0
+                try:
+                    from app.knowledge.code_clustering import (
+                        cluster_code_graph,
+                        label_clusters,
+                    )
+
+                    clusters = await asyncio.to_thread(
+                        cluster_code_graph,
+                        state.code_graph,
+                        state.knowledge,
+                    )
+                    if clusters and settings.cluster_llm_label_enabled:
+                        # The runner doesn't carry an LLM router today; reach
+                        # into the global router lazily so labeling stays a
+                        # soft dependency (graceful default = "Cluster N").
+                        try:
+                            from app.llm.router import LLMRouter
+
+                            llm_router = LLMRouter()
+                        except Exception:
+                            logger.debug(
+                                "LLMRouter unavailable; skipping cluster labeling",
+                                exc_info=True,
+                            )
+                            llm_router = None
+                        if llm_router is not None:
+                            await label_clusters(
+                                clusters,
+                                state.code_graph,
+                                llm_router,
+                                batch_size=10,
+                            )
+                    if clusters:
+                        svc = CodeGraphService()
+                        await svc.save_clusters(db, project_id, clusters)
+                        await db.commit()
+                    cluster_count = len(clusters)
+                    clustering_ok = True
+                    try:
+                        from app.core.metrics import get_metrics_collector
+
+                        m = get_metrics_collector()
+                        m.inc(
+                            "code_graph_clusters_total",
+                            cluster_count,
+                            project=project_id[:8],
+                        )
+                    except Exception:
+                        logger.debug(
+                            "metrics emit failed for clustering", exc_info=True
+                        )
+                    await tracker.emit(
+                        wf_id,
+                        "graph_clustering",
+                        "completed",
+                        f"{cluster_count} clusters",
+                    )
+                except Exception:
+                    logger.exception(
+                        "graph_clustering failed for project %s", project_id[:8]
+                    )
+                    await tracker.emit(
+                        wf_id,
+                        "graph_clustering",
+                        "failed",
+                        "Clustering errored; continuing without clusters",
+                    )
+                # Only mark the step complete when we actually finished —
+                # otherwise a later resume would treat the failure as "done"
+                # and the model would consult a cluster table that may be
+                # stale or empty.
+                if clustering_ok:
+                    await self._cp_svc.complete_step(db, cp_id, "graph_clustering")
 
         # --- Step 8: enrich + summary (always re-run; fast, in-memory) ---
         assert state.knowledge is not None
@@ -726,6 +949,25 @@ class IndexingPipelineRunner:
 
         result.docs_skipped = skipped
 
+        # --- Step 10: bm25_build (M3) ---
+        # Rebuild the BM25 lexical index from the just-persisted KnowledgeDoc
+        # rows. Full replace per indexing run -- cheap (in-process tokenization)
+        # and avoids drift between Chroma and BM25.
+        if settings.hybrid_retrieval_enabled:
+            async with tracker.step(
+                wf_id,
+                "bm25_build",
+                "Rebuilding BM25 lexical index",
+            ):
+                bm25_ok = await self._run_bm25_build(
+                    db, project_id, state.head_sha, wf_id
+                )
+            # A failed BM25 build must NOT mark the step complete — otherwise a
+            # resume would skip the rebuild and the hybrid retriever would
+            # degrade silently to dense-only against a missing/stale snapshot.
+            if bm25_ok:
+                await self._cp_svc.complete_step(db, cp_id, "bm25_build")
+
         return await self._record_and_finish(
             project_id=project_id,
             project=project,
@@ -737,6 +979,243 @@ class IndexingPipelineRunner:
             resuming=resuming,
             live_table_names=live_table_names,
         )
+
+    async def _run_bm25_build(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        head_sha: str,
+        wf_id: str,
+    ) -> bool:
+        """Rebuild the project's BM25 snapshot from current KnowledgeDoc rows.
+
+        Tokenization uses the same code-aware tokenizer the retriever does, so
+        ranking is consistent across build and query time. Failures here are
+        non-fatal at the pipeline level (we still return), but the caller
+        must NOT checkpoint the step on a ``False`` return -- that's how we
+        keep the resume path honest about whether a fresh snapshot exists.
+        """
+        try:
+            docs = await self._doc_store.get_docs_for_project(db, project_id)
+            bm25_docs: list[tuple[str, str, dict]] = []
+            for doc in docs:
+                chunks = chunk_document(
+                    content=doc.content,
+                    file_path=doc.source_path,
+                    doc_type=doc.doc_type,
+                )
+                if not chunks:
+                    chunks = []
+                for chunk in chunks:
+                    chunk_id = (
+                        f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}"
+                    )
+                    meta = dict(chunk.metadata)
+                    meta.setdefault("source_path", doc.source_path)
+                    meta.setdefault("doc_type", doc.doc_type)
+                    bm25_docs.append((chunk_id, chunk.content, meta))
+            bm25 = BM25Index(settings.bm25_data_dir)
+            await asyncio.to_thread(bm25.build, project_id, head_sha, bm25_docs)
+            logger.info(
+                "bm25_build: project=%s docs=%d chunks=%d",
+                project_id[:8],
+                len(docs),
+                len(bm25_docs),
+            )
+            await tracker.emit(
+                wf_id,
+                "bm25_build",
+                "completed",
+                f"Indexed {len(bm25_docs)} chunks from {len(docs)} docs",
+            )
+            return True
+        except Exception as exc:
+            logger.exception("bm25_build failed for project %s", project_id[:8])
+            await tracker.emit(
+                wf_id,
+                "bm25_build",
+                "failed",
+                f"BM25 build failed: {exc!s}",
+            )
+            return False
+
+    @staticmethod
+    async def _collect_files_for_ast(
+        repo_dir: Path,
+        changed_files: list[str],
+        force_full: bool,
+    ) -> list[str]:
+        """Pick the file list for the AST parse + graph build steps.
+
+        On a full re-index we walk every supported source file so the graph
+        has the full picture. On incremental runs we limit ourselves to the
+        changed set; this keeps cost proportional to user activity but means
+        the graph is locally accurate, not globally complete -- a tradeoff
+        documented in the M2 plan.
+        """
+        from app.knowledge.ast_parser import detect_language
+
+        if not force_full:
+            return [
+                f
+                for f in changed_files
+                if f and not f.endswith("/") and not is_binary_file(repo_dir / f)
+            ]
+
+        def _walk() -> list[str]:
+            out: list[str] = []
+            for path in repo_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                if any(
+                    part.startswith(".") and part not in (".",)
+                    for part in path.relative_to(repo_dir).parts
+                ):
+                    continue
+                if any(p == "node_modules" for p in path.parts):
+                    continue
+                if detect_language(path) is None:
+                    continue
+                rel = str(path.relative_to(repo_dir)).replace("\\", "/")
+                out.append(rel)
+            return out
+
+        return await asyncio.to_thread(_walk)
+
+    async def _run_ast_parse(
+        self,
+        state: _PipelineState,
+        wf_id: str,
+        files: list[str] | None = None,
+    ) -> None:
+        """M1: parse the given files with tree-sitter, populating state.parsed_files.
+
+        This step is best-effort and never raises; per-file failures are caught
+        and counted so the rest of the pipeline always proceeds.
+        """
+        if state.repo_dir is None:
+            return
+        parser = ASTParser(
+            max_file_bytes=settings.ast_max_file_bytes,
+            parse_error_ratio=settings.ast_parse_error_ratio,
+        )
+        sem = asyncio.Semaphore(max(1, settings.ast_parse_concurrency))
+        repo_root = state.repo_dir
+        target_files = files if files is not None else state.changed_files
+
+        parsed_count = 0
+        unsupported = 0
+        skipped = 0
+        errors = 0
+        total_symbols = 0
+        total_imports = 0
+
+        async def _parse_one(rel_path: str) -> None:
+            nonlocal parsed_count, unsupported, skipped, errors
+            nonlocal total_symbols, total_imports
+            async with sem:
+                try:
+                    parsed = await asyncio.to_thread(parser.parse_file, repo_root, rel_path)
+                except Exception as exc:
+                    errors += 1
+                    logger.debug("ast_parse: %s raised %s", rel_path, exc, exc_info=True)
+                    return
+            if parsed is None:
+                unsupported += 1
+                return
+            if parsed.parse_errors:
+                skipped += 1
+                # Keep the record so the graph builder can see attempted files;
+                # downstream consumers gate on symbols/imports presence.
+            state.parsed_files[rel_path] = parsed
+            parsed_count += 1
+            total_symbols += len(parsed.symbols)
+            total_imports += len(parsed.imports)
+
+        tasks = [
+            asyncio.create_task(_parse_one(rp))
+            for rp in target_files
+            if rp and not rp.endswith("/")
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        state.ast_unsupported_count = unsupported
+        state.ast_skipped_count = skipped
+
+        logger.info(
+            "ast_parse: parsed=%d unsupported=%d skipped=%d errors=%d symbols=%d imports=%d",
+            parsed_count,
+            unsupported,
+            skipped,
+            errors,
+            total_symbols,
+            total_imports,
+        )
+        await tracker.emit(
+            wf_id,
+            "ast_parse",
+            "completed",
+            f"Parsed {parsed_count} file(s): {total_symbols} symbols, "
+            f"{total_imports} imports ({unsupported} unsupported, {skipped} skipped)",
+        )
+
+    async def _run_graph_build(
+        self,
+        state: _PipelineState,
+        wf_id: str,
+        db: AsyncSession,
+        project_id: str,
+    ) -> None:
+        """M2: build the code knowledge graph from parsed files and persist it.
+
+        Failures here are non-fatal: the graph is an additive signal, and the
+        legacy regex pipeline still produces the canonical EntityInfo data.
+        """
+        if not state.parsed_files:
+            logger.info("graph_build: no parsed files, skipping")
+            return
+        try:
+            builder = CodeGraphBuilder(
+                max_symbols=settings.code_graph_max_symbols,
+                min_call_confidence=settings.code_graph_call_confidence_threshold,
+            )
+            graph = await asyncio.to_thread(builder.build, state.parsed_files)
+            state.code_graph = graph
+            svc = CodeGraphService()
+            sym_count, edge_count = await svc.save(db, project_id, graph)
+            # M6: observability counters.
+            try:
+                from app.core.metrics import get_metrics_collector
+
+                m = get_metrics_collector()
+                m.inc(
+                    "code_graph_symbols_total",
+                    sym_count,
+                    project=project_id[:8],
+                )
+                m.inc(
+                    "code_graph_edges_total",
+                    edge_count,
+                    project=project_id[:8],
+                )
+                m.inc("code_graph_builds_total", project=project_id[:8])
+            except Exception:
+                logger.debug("metrics emit failed for graph_build", exc_info=True)
+            await tracker.emit(
+                wf_id,
+                "graph_build",
+                "completed",
+                f"Persisted {sym_count} symbols, {edge_count} edges",
+            )
+        except Exception as exc:
+            logger.exception("graph_build failed for project %s: %s", project_id[:8], exc)
+            await tracker.emit(
+                wf_id,
+                "graph_build",
+                "failed",
+                f"Graph build failed: {exc!s}",
+            )
 
     @staticmethod
     async def _git_show(repo_dir: Path, sha: str | None, file_path: str) -> str | None:

@@ -6,6 +6,7 @@ from app.models.batch_query import BatchQuery  # noqa: F401
 from app.models.benchmark import DataBenchmark  # noqa: F401
 from app.models.chat_session import ChatMessage, ChatSession  # noqa: F401
 from app.models.code_db_sync import CodeDbSync  # noqa: F401
+from app.models.code_graph import CodeCluster, CodeGraphEdge, CodeGraphSymbol  # noqa: F401
 from app.models.commit_index import CommitIndex  # noqa: F401
 from app.models.connection import Connection  # noqa: F401
 from app.models.custom_rule import CustomRule  # noqa: F401

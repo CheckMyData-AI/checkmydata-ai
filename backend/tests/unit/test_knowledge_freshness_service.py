@@ -98,3 +98,60 @@ class TestEvaluate:
             )
         # Failure is swallowed; returns whatever warnings accumulated.
         assert isinstance(snap, KnowledgeFreshness)
+
+    @pytest.mark.asyncio
+    async def test_code_graph_empty_warns_when_flag_on(self, monkeypatch):
+        """M6: empty code graph emits a warning when code_graph_enabled is set."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
+        svc = KnowledgeFreshnessService()
+        with patch(
+            "app.services.code_graph_service.CodeGraphService"
+        ) as mock_cg_cls:
+            mock_cg = mock_cg_cls.return_value
+            mock_cg.count = AsyncMock(return_value=(0, 0))
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+            )
+
+        assert snap.code_graph_symbol_count == 0
+        assert snap.code_graph_stale is True
+        assert any("Code graph is empty" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_code_graph_silent_when_flag_off(self, monkeypatch):
+        """No warning emitted when code_graph_enabled is False."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", False)
+        svc = KnowledgeFreshnessService()
+        snap = await svc.evaluate(
+            session=AsyncMock(),
+            project_id="p1",
+            connection_id=None,
+        )
+        assert snap.code_graph_stale is False
+        assert not any("Code graph" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_code_graph_populated_no_warning(self, monkeypatch):
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
+        svc = KnowledgeFreshnessService()
+        with patch(
+            "app.services.code_graph_service.CodeGraphService"
+        ) as mock_cg_cls:
+            mock_cg = mock_cg_cls.return_value
+            mock_cg.count = AsyncMock(return_value=(123, 456))
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+            )
+
+        assert snap.code_graph_symbol_count == 123
+        assert snap.code_graph_stale is False

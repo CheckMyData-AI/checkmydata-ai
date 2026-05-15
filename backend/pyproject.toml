@@ -37,6 +37,13 @@ dependencies = [
     "geoip2fast>=1.0.0",
     "resend>=2.0.0",
     "tiktoken>=0.7.0",
+    # Tree-sitter pinned to 0.23.x; tree-sitter-language-pack 0.7.x bundles
+    # grammars compatible with that ABI. Newer versions of language-pack
+    # (1.x) ship their own incompatible bindings that break Parser.parse().
+    "tree-sitter>=0.23.0,<0.24",
+    "tree-sitter-language-pack>=0.7.3,<1.0",
+    "networkx>=3.2",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

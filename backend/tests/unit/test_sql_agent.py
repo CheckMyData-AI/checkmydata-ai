@@ -849,3 +849,393 @@ class TestSQLAgentALMIntegration:
 
         assert mock_svc.apply_learning.call_count == 2
         mock_session.commit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# M4: question-aware table resolution in _build_query_context
+# ---------------------------------------------------------------------------
+
+
+def _make_db_index_entry(
+    table_name: str,
+    relevance_score: int = 3,
+    is_active: bool = True,
+) -> MagicMock:
+    """Build a lightweight DbIndex-shaped MagicMock for context tests."""
+    e = MagicMock()
+    e.table_name = table_name
+    e.table_schema = "public"
+    e.relevance_score = relevance_score
+    e.is_active = is_active
+    e.row_count = 0
+    e.business_description = f"{table_name} table"
+    e.data_patterns = ""
+    e.query_hints = ""
+    e.column_notes_json = "{}"
+    e.column_distinct_values_json = "{}"
+    e.numeric_format_notes = "{}"
+    return e
+
+
+class TestSQLAgentSchemaRetrieval:
+    """M4: schema retrieval feeds ``_build_query_context``."""
+
+    @pytest.fixture
+    def agent(self, mock_llm, mock_vector_store, mock_custom_rules):
+        a = SQLAgent(
+            llm_router=mock_llm,
+            vector_store=mock_vector_store,
+            rules_engine=mock_custom_rules,
+        )
+        # Stub schema/knowledge loaders that hit the network.
+        a._get_cached_schema = AsyncMock(
+            return_value=SchemaInfo(tables=[], db_type="postgres")
+        )
+        a._load_knowledge = AsyncMock(return_value=None)
+        return a
+
+    @pytest.mark.asyncio
+    async def test_retrieve_tables_for_question_returns_ordered_entries(self, agent):
+        entries_by_name = {
+            "orders": _make_db_index_entry("orders"),
+            "users": _make_db_index_entry("users"),
+            "payments": _make_db_index_entry("payments"),
+        }
+
+        with patch(
+            "app.knowledge.schema_retriever.SchemaRetriever"
+        ) as mock_cls:
+            instance = MagicMock()
+            instance.has_index.return_value = True
+            instance.query.return_value = [
+                {"id": "orders", "metadata": {"table_name": "orders"}},
+                {"id": "payments", "metadata": {"table_name": "payments"}},
+            ]
+            mock_cls.return_value = instance
+
+            result = await agent._retrieve_tables_for_question(
+                connection_id="conn-1",
+                question="show me all customer orders",
+                entries_by_name=entries_by_name,
+                k=10,
+            )
+
+        names = [e.table_name for e in result]
+        assert names == ["orders", "payments"]
+
+    @pytest.mark.asyncio
+    async def test_retrieve_tables_returns_empty_when_no_index(self, agent):
+        with patch(
+            "app.knowledge.schema_retriever.SchemaRetriever"
+        ) as mock_cls:
+            instance = MagicMock()
+            instance.has_index.return_value = False
+            mock_cls.return_value = instance
+
+            result = await agent._retrieve_tables_for_question(
+                connection_id="conn-1",
+                question="anything",
+                entries_by_name={"users": _make_db_index_entry("users")},
+                k=10,
+            )
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_retrieve_tables_swallows_exceptions(self, agent):
+        with patch(
+            "app.knowledge.schema_retriever.SchemaRetriever",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = await agent._retrieve_tables_for_question(
+                connection_id="conn-1",
+                question="anything",
+                entries_by_name={},
+                k=10,
+            )
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_build_query_context_unions_retrieved_and_safety_net(
+        self, agent, context, monkeypatch
+    ):
+        """Retrieved tables come first, safety net fills remaining slots."""
+        from app import config as cfg_mod
+
+        # Enable retrieval, cap context at 5 tables.
+        monkeypatch.setattr(cfg_mod.settings, "schema_retrieval_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "sql_agent_max_context_tables", 5)
+
+        all_entries = [
+            _make_db_index_entry("users", relevance_score=4),
+            _make_db_index_entry("orders", relevance_score=3),
+            _make_db_index_entry("payments", relevance_score=3),
+            _make_db_index_entry("invoices", relevance_score=2),
+            _make_db_index_entry("audit_log", relevance_score=1, is_active=False),
+            # legacy table — out of safety net because relevance < 2
+            _make_db_index_entry("legacy", relevance_score=1),
+        ]
+
+        # Stub the retriever to return one specific, non-top-relevance hit.
+        agent._retrieve_tables_for_question = AsyncMock(
+            return_value=[_make_db_index_entry("invoices", relevance_score=2)]
+        )
+        # Patch out the DB-bound helpers used by _build_query_context.
+        agent._format_table_context = MagicMock(
+            side_effect=lambda e, *_: f"## {e.table_name}"
+        )
+        agent._format_rules = MagicMock(return_value="")
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
+            patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService"
+            ) as mock_lrn_cls,
+        ):
+            session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            idx_svc = MagicMock()
+            idx_svc.get_index = AsyncMock(return_value=all_entries)
+            mock_idx_cls.return_value = idx_svc
+
+            sync_svc = MagicMock()
+            sync_svc.get_sync = AsyncMock(return_value=[])
+            sync_svc.get_summary = AsyncMock(return_value=None)
+            mock_sync_cls.return_value = sync_svc
+
+            lrn_svc = MagicMock()
+            lrn_svc.get_learnings = AsyncMock(return_value=[])
+            mock_lrn_cls.return_value = lrn_svc
+
+            text = await agent._build_query_context(
+                question="show me unpaid invoices",
+                table_names_raw=None,
+                connection_id="conn-1",
+                ctx=context,
+            )
+
+        # Retrieved 'invoices' must lead, safety net (users/orders/payments)
+        # follows. legacy/audit_log are excluded.
+        assert text.index("## invoices") < text.index("## users")
+        assert "## audit_log" not in text  # is_active=False
+        assert "## legacy" not in text  # relevance < 2
+        # Cap respected (max 5).
+        assert text.count("## ") <= 5
+
+    @pytest.mark.asyncio
+    async def test_build_query_context_falls_back_when_retrieval_disabled(
+        self, agent, context, monkeypatch
+    ):
+        """When the flag is off, behaviour matches the legacy safety net."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "schema_retrieval_enabled", False)
+        monkeypatch.setattr(cfg_mod.settings, "sql_agent_max_context_tables", 15)
+
+        all_entries = [
+            _make_db_index_entry("users", relevance_score=4),
+            _make_db_index_entry("orders", relevance_score=3),
+            _make_db_index_entry("low_signal", relevance_score=1),
+        ]
+
+        # Retriever should not be touched when the flag is off.
+        retriever_spy = AsyncMock(return_value=[])
+        agent._retrieve_tables_for_question = retriever_spy
+        agent._format_table_context = MagicMock(
+            side_effect=lambda e, *_: f"## {e.table_name}"
+        )
+        agent._format_rules = MagicMock(return_value="")
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
+            patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService"
+            ) as mock_lrn_cls,
+        ):
+            session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            idx_svc = MagicMock()
+            idx_svc.get_index = AsyncMock(return_value=all_entries)
+            mock_idx_cls.return_value = idx_svc
+
+            sync_svc = MagicMock()
+            sync_svc.get_sync = AsyncMock(return_value=[])
+            sync_svc.get_summary = AsyncMock(return_value=None)
+            mock_sync_cls.return_value = sync_svc
+
+            lrn_svc = MagicMock()
+            lrn_svc.get_learnings = AsyncMock(return_value=[])
+            mock_lrn_cls.return_value = lrn_svc
+
+            text = await agent._build_query_context(
+                question="anything",
+                table_names_raw=None,
+                connection_id="conn-1",
+                ctx=context,
+            )
+
+        retriever_spy.assert_not_called()
+        assert "## users" in text
+        assert "## orders" in text
+        assert "## low_signal" not in text  # relevance < 2
+
+    @pytest.mark.asyncio
+    async def test_build_query_context_respects_explicit_table_names(
+        self, agent, context, monkeypatch
+    ):
+        """Explicit ``table_names_raw`` bypasses retrieval entirely."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "schema_retrieval_enabled", True)
+
+        all_entries = [
+            _make_db_index_entry("users"),
+            _make_db_index_entry("orders"),
+            _make_db_index_entry("payments"),
+        ]
+
+        retriever_spy = AsyncMock(return_value=[])
+        agent._retrieve_tables_for_question = retriever_spy
+        agent._format_table_context = MagicMock(
+            side_effect=lambda e, *_: f"## {e.table_name}"
+        )
+        agent._format_rules = MagicMock(return_value="")
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
+            patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService"
+            ) as mock_lrn_cls,
+        ):
+            session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            idx_svc = MagicMock()
+            idx_svc.get_index = AsyncMock(return_value=all_entries)
+            mock_idx_cls.return_value = idx_svc
+
+            sync_svc = MagicMock()
+            sync_svc.get_sync = AsyncMock(return_value=[])
+            sync_svc.get_summary = AsyncMock(return_value=None)
+            mock_sync_cls.return_value = sync_svc
+
+            lrn_svc = MagicMock()
+            lrn_svc.get_learnings = AsyncMock(return_value=[])
+            mock_lrn_cls.return_value = lrn_svc
+
+            text = await agent._build_query_context(
+                question="anything",
+                table_names_raw="payments",
+                connection_id="conn-1",
+                ctx=context,
+            )
+
+        retriever_spy.assert_not_called()
+        assert "## payments" in text
+        assert "## users" not in text
+        assert "## orders" not in text
+
+
+# ---------------------------------------------------------------------------
+# M5: lineage rendering in _format_table_context
+# ---------------------------------------------------------------------------
+
+
+class TestSQLAgentLineageFormatting:
+    """``_format_table_context`` should surface graph_callers when enabled."""
+
+    def _db_entry(self, table_name: str = "users"):
+        e = MagicMock()
+        e.table_name = table_name
+        e.business_description = ""
+        e.row_count = None
+        e.column_distinct_values_json = "{}"
+        e.column_notes_json = "{}"
+        e.numeric_format_notes = "{}"
+        e.query_hints = ""
+        return e
+
+    def _knowledge(self, callers):
+        from app.knowledge.entity_extractor import EntityInfo, ProjectKnowledge
+
+        k = ProjectKnowledge()
+        k.entities["User"] = EntityInfo(
+            name="User",
+            table_name="users",
+            file_path="app/models/user.py",
+            graph_callers=callers,
+        )
+        return k
+
+    def test_renders_lineage_when_flag_on(self, monkeypatch):
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", True)
+        callers = [
+            {
+                "caller_name": "create_user",
+                "caller_file": "app/api/users.py",
+                "caller_kind": "function",
+                "endpoint_kind": "http",
+                "op_kind": "write",
+                "depth": 1,
+                "confidence": 0.85,
+                "decorators": ["router.post"],
+            }
+        ]
+        text = SQLAgent._format_table_context(
+            db_entry=self._db_entry("users"),
+            schema_table=None,
+            sync_entry=None,
+            knowledge=self._knowledge(callers),
+        )
+        assert "Lineage (top callers):" in text
+        assert "create_user" in text
+        assert "[http/write]" in text
+
+    def test_skips_lineage_when_flag_off(self, monkeypatch):
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", False)
+        callers = [
+            {
+                "caller_name": "create_user",
+                "caller_file": "app/api/users.py",
+                "caller_kind": "function",
+                "endpoint_kind": "http",
+                "op_kind": "write",
+                "depth": 1,
+                "confidence": 0.85,
+            }
+        ]
+        text = SQLAgent._format_table_context(
+            db_entry=self._db_entry("users"),
+            schema_table=None,
+            sync_entry=None,
+            knowledge=self._knowledge(callers),
+        )
+        assert "Lineage" not in text
+
+    def test_no_lineage_section_when_empty(self, monkeypatch):
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", True)
+        text = SQLAgent._format_table_context(
+            db_entry=self._db_entry("users"),
+            schema_table=None,
+            sync_entry=None,
+            knowledge=self._knowledge([]),
+        )
+        assert "Lineage" not in text

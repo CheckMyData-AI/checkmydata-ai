@@ -232,6 +232,40 @@ class Settings(BaseSettings):
     # Subject blocklist (extends built-in list)
     learning_subject_blocklist_extra: list[str] = []
 
+    # ----- Code intelligence pipeline (M1–M6) ---------------------------------
+    # Master flag: enables tree-sitter AST parsing + code knowledge graph.
+    # When False, the legacy regex-based entity_extractor path runs.
+    code_graph_enabled: bool = False
+    # Concurrency for AST parsing (CPU-bound, bounded by semaphore).
+    ast_parse_concurrency: int = 4
+    # Files larger than this are skipped (binary/minified/generated).
+    ast_max_file_bytes: int = 2_097_152  # 2 MB
+    # Tolerated ratio of ERROR nodes per file before we drop the parse result.
+    ast_parse_error_ratio: float = 0.3
+    # Hard cap on graph size; above this, private/underscore symbols are pruned.
+    code_graph_max_symbols: int = 50_000
+    # Minimum confidence for keeping a CALLS edge in the graph.
+    code_graph_call_confidence_threshold: float = 0.3
+
+    # M3: hybrid retrieval (BM25 + Chroma fused via RRF).
+    hybrid_retrieval_enabled: bool = False
+    bm25_data_dir: str = "./data/bm25"
+    hybrid_rrf_k: int = 60
+    hybrid_min_score: float = 0.01
+    hybrid_k: int = 20
+
+    # M4: question-aware schema retrieval (BM25 + embeddings over DbIndex).
+    schema_retrieval_enabled: bool = False
+    sql_agent_max_context_tables: int = 15
+
+    # M5: graph-driven code→DB lineage (replaces regex `used_in_files`).
+    lineage_enabled: bool = False
+    lineage_max_depth: int = 5
+
+    # M6: functional clustering (Louvain) + LLM-labeled cluster names.
+    clustering_enabled: bool = False
+    cluster_llm_label_enabled: bool = True
+
     # Streaming settings
     stream_timeout_seconds: int = 360
     stream_safety_margin_seconds: int = 120

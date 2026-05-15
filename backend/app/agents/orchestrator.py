@@ -371,12 +371,29 @@ class OrchestratorAgent(BaseAgent):
             # --- Complex pipeline for multi-stage analysis ---
             if route_result.use_complex_pipeline and has_connection:
                 table_map = await self._load_table_map(context, wf_id)
+                # Even on the complex (multi-stage planner) path we owe the
+                # planner the same freshness signal as the unified loop —
+                # otherwise the planner stages can confidently run against a
+                # stale DB index / empty code graph without flagging it.
+                cfg_complex = context.connection_config
+                conn_id_complex = (
+                    cfg_complex.connection_id if cfg_complex else None
+                )
+                staleness_complex = (
+                    await self._ctx_loader.check_staleness(
+                        context.project_id,
+                        wf_id,
+                        connection_id=conn_id_complex,
+                    )
+                    if (has_kb or conn_id_complex)
+                    else None
+                )
                 return await self._run_complex_pipeline(
                     context,
                     wf_id,
                     table_map,
                     db_type,
-                    staleness_warning=None,
+                    staleness_warning=staleness_complex,
                 )
 
             # --- Unified tool loop for everything else ---
@@ -676,6 +693,20 @@ class OrchestratorAgent(BaseAgent):
             system_prompt += (
                 f"\n\nROUTER ANALYSIS (complexity={route_result.complexity}):\n"
                 f"{route_result.approach}"
+            )
+
+        # Surface freshness warnings (DB index stale, code graph empty, git
+        # behind, code-DB sync drift, …) directly to the model so it can
+        # caveat answers or trigger a re-index instead of silently serving
+        # stale context. Built by ``ContextLoader.check_staleness`` /
+        # ``KnowledgeFreshnessService.evaluate``.
+        if staleness_warning:
+            system_prompt += (
+                "\n\nKNOWLEDGE FRESHNESS WARNINGS:\n"
+                f"{staleness_warning}\n"
+                "Cite the affected source when answering, and consider asking "
+                "the user whether they want a re-index before drawing strong "
+                "conclusions from stale data."
             )
 
         await self._emit_plan_summary(

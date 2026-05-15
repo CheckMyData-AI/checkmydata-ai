@@ -19,7 +19,9 @@ from app.config import settings
 from app.core.history_trimmer import trim_loop_messages
 from app.core.ttl_cache import TTLCache
 from app.core.types import RAGSource
+from app.knowledge.bm25_index import BM25Index
 from app.knowledge.entity_extractor import ProjectKnowledge
+from app.knowledge.hybrid_retriever import HybridRetriever
 from app.knowledge.vector_store import VectorStore
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.services.project_cache_service import ProjectCacheService
@@ -42,10 +44,27 @@ class KnowledgeAgent(BaseAgent):
     def __init__(
         self,
         vector_store: VectorStore | None = None,
+        hybrid_retriever: HybridRetriever | None = None,
     ) -> None:
         self._vector_store = vector_store or VectorStore()
+        # The hybrid retriever (M3) is constructed lazily so that disabling the
+        # feature flag carries zero startup cost. When the flag flips on, a
+        # single instance is shared across requests.
+        self._hybrid_retriever = hybrid_retriever
         self._cache_svc = ProjectCacheService()
         self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
+
+    def _get_hybrid_retriever(self) -> HybridRetriever:
+        """Return the cached :class:`HybridRetriever`, building it on first use."""
+        if self._hybrid_retriever is None:
+            bm25 = BM25Index(settings.bm25_data_dir)
+            self._hybrid_retriever = HybridRetriever(
+                bm25=bm25,
+                vector_store=self._vector_store,
+                rrf_k=settings.hybrid_rrf_k,
+                min_score=settings.hybrid_min_score,
+            )
+        return self._hybrid_retriever
 
     @property
     def name(self) -> str:
@@ -72,6 +91,8 @@ class KnowledgeAgent(BaseAgent):
         tools = get_knowledge_tools()
         system_prompt = build_knowledge_system_prompt(
             current_datetime=get_current_datetime_str(),
+            hybrid_retrieval_enabled=settings.hybrid_retrieval_enabled,
+            lineage_enabled=settings.lineage_enabled,
         )
         messages: list[Message] = [
             Message(role="system", content=system_prompt),
@@ -237,23 +258,24 @@ class KnowledgeAgent(BaseAgent):
         except (ValueError, TypeError):
             max_results = 5
 
-        results = await asyncio.to_thread(
-            self._vector_store.query,
-            project_id=ctx.project_id,
-            query_text=query,
-            n_results=max_results,
-        )
-
-        if not results:
-            return "No relevant documents found in the knowledge base."
-
-        filtered = [
-            r
-            for r in results
-            if r.get("distance") is None or r["distance"] <= settings.rag_relevance_threshold
-        ]
+        raw_counter: list[int] = []
+        if settings.hybrid_retrieval_enabled:
+            filtered = await self._hybrid_search(ctx.project_id, query, max_results)
+        else:
+            filtered = await self._dense_only_search(
+                ctx.project_id,
+                query,
+                max_results,
+                attach_raw_count=raw_counter,
+            )
 
         if not filtered:
+            # Preserve the original wording: "No relevant" when the retriever
+            # returned zero hits, "No sufficiently relevant" when hits existed
+            # but failed the similarity threshold.
+            raw_count = raw_counter[0] if raw_counter else len(filtered)
+            if raw_count == 0:
+                return "No relevant documents found in the knowledge base."
             return "No sufficiently relevant documents found in the knowledge base."
 
         doc_cap = 2000
@@ -267,7 +289,11 @@ class KnowledgeAgent(BaseAgent):
             if len(doc) > doc_cap:
                 doc = doc[:doc_cap] + "… (truncated)"
             distance = r.get("distance")
-            sim = f" (similarity: {1 - distance:.2f})" if distance is not None else ""
+            sim = ""
+            if distance is not None:
+                sim = f" (similarity: {1 - distance:.2f})"
+            elif r.get("rrf_score") is not None:
+                sim = f" (rrf: {r['rrf_score']:.3f})"
             chunk = f"### {source}{sim}\n{doc}"
             if total_len + len(chunk) > total_cap:
                 parts.append("... (remaining documents omitted to save context)")
@@ -291,6 +317,70 @@ class KnowledgeAgent(BaseAgent):
             f"Found {len(filtered)} relevant document(s)",
         )
         return f"Found {len(filtered)} relevant document(s):\n\n" + "\n\n".join(parts)
+
+    async def _dense_only_search(
+        self,
+        project_id: str,
+        query: str,
+        max_results: int,
+        *,
+        attach_raw_count: list[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Legacy Chroma-only path (used when hybrid_retrieval_enabled=False).
+
+        ``attach_raw_count`` is an out-parameter for the wrapper to distinguish
+        "Chroma returned 0 hits" from "Chroma returned hits but all were
+        below the similarity threshold". Used to preserve the legacy
+        "No relevant documents" vs "No sufficiently relevant documents" texts.
+        """
+        results = await asyncio.to_thread(
+            self._vector_store.query,
+            project_id=project_id,
+            query_text=query,
+            n_results=max_results,
+        )
+        if attach_raw_count is not None:
+            attach_raw_count.append(len(results))
+        if not results:
+            return []
+        return [
+            r
+            for r in results
+            if r.get("distance") is None or r["distance"] <= settings.rag_relevance_threshold
+        ]
+
+    async def _hybrid_search(
+        self,
+        project_id: str,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, Any]]:
+        """BM25 + Chroma + RRF retrieval (M3).
+
+        Falls back to dense-only if the BM25 snapshot is missing -- this keeps
+        the rollout safe across projects that haven't been re-indexed since
+        the feature was enabled.
+        """
+        retriever = self._get_hybrid_retriever()
+        results = await retriever.query(
+            project_id=project_id,
+            query_text=query,
+            k=max_results,
+        )
+        if not results:
+            # Graceful fallback: maybe the BM25 index hasn't been built yet.
+            return await self._dense_only_search(project_id, query, max_results)
+        return [
+            {
+                "id": r.doc_id,
+                "document": r.document,
+                "metadata": r.metadata,
+                "rrf_score": r.rrf_score,
+                "bm25_rank": r.bm25_rank,
+                "chroma_rank": r.chroma_rank,
+            }
+            for r in results
+        ]
 
     async def _handle_get_entity_info(self, args: dict, ctx: AgentContext) -> str:
         scope: str = args.get("scope", "list")
@@ -389,6 +479,24 @@ class KnowledgeAgent(BaseAgent):
                 f"\nUsed in {len(entity.used_in_files)} file(s): "
                 + ", ".join(f"`{f}`" for f in entity.used_in_files[:10])
             )
+
+        # M5: graph-derived lineage — surface in the entity detail view so
+        # users asking "who touches the users table?" via the knowledge agent
+        # get the same call-chain context the SQL agent sees. Gated by
+        # ``lineage_enabled`` so disabled installs render the legacy view.
+        graph_callers = getattr(entity, "graph_callers", None) or []
+        if graph_callers and settings.lineage_enabled:
+            lines.append("\n### Code lineage (top callers)")
+            for ref in graph_callers[:8]:
+                name = ref.get("caller_name", "?")
+                kind = ref.get("endpoint_kind", "unknown")
+                op = ref.get("op_kind", "unknown")
+                file_ = ref.get("caller_file", "?")
+                conf = float(ref.get("confidence", 0.0))
+                lines.append(
+                    f"- `{name}` [{kind}/{op}] in `{file_}` (conf={conf:.2f})"
+                )
+
         return "\n".join(lines)
 
     @staticmethod

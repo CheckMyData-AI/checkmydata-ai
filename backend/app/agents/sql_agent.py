@@ -152,6 +152,11 @@ class SQLAgent(BaseAgent):
         db_idx_stale = await self._is_db_index_stale(cfg) if has_db_idx else False
         has_sync = await self._has_code_db_sync(cfg) if has_db_idx else False
         has_learnings = await self._has_learnings(cfg)
+        has_clusters = (
+            await self._has_code_clusters(context.project_id)
+            if settings.clustering_enabled
+            else False
+        )
 
         table_map = ""
         if has_db_idx and cfg.connection_id:
@@ -188,6 +193,9 @@ class SQLAgent(BaseAgent):
             db_index_stale=db_idx_stale,
             has_code_db_sync=has_sync,
             has_learnings=has_learnings,
+            has_code_clusters=has_clusters,
+            lineage_enabled=settings.lineage_enabled,
+            schema_retrieval_enabled=settings.schema_retrieval_enabled,
             table_map=table_map,
             learnings_prompt=learnings_prompt,
             sync_conventions=sync_conventions,
@@ -205,6 +213,7 @@ class SQLAgent(BaseAgent):
             has_learnings=has_learnings,
             learnings_preloaded=bool(learnings_prompt),
             notes_preloaded=bool(notes_prompt),
+            has_code_clusters=has_clusters,
         )
 
         messages: list[Message] = [
@@ -404,6 +413,7 @@ class SQLAgent(BaseAgent):
             "record_learning": self._handle_record_learning,
             "read_notes": self._handle_read_notes,
             "write_note": self._handle_write_note,
+            "get_tables_in_cluster": self._handle_get_tables_in_cluster,
         }
         handler = handlers.get(tool_call.name)
 
@@ -663,6 +673,36 @@ class SQLAgent(BaseAgent):
             wf_id, "sql:get_query_ctx", "Building unified query context", span_type="rag"
         ):
             return await self._build_query_context(question, table_names_raw, cid, ctx)
+
+    async def _handle_get_tables_in_cluster(
+        self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
+    ) -> str:
+        """M6: resolve a cluster handle to the set of tables it touches."""
+        cluster = (args.get("cluster") or "").strip()
+        if not cluster:
+            return (
+                "No cluster specified. Provide a cluster_id (e.g. '3') or "
+                "label substring (e.g. 'auth')."
+            )
+
+        from app.models.base import async_session_factory
+        from app.services.code_graph_service import CodeGraphService
+
+        svc = CodeGraphService()
+        async with ctx.tracker.step(
+            wf_id,
+            "sql:cluster_lookup",
+            f"Resolving cluster '{cluster}'",
+            span_type="rag",
+        ):
+            async with async_session_factory() as session:
+                tables = await svc.get_tables_in_cluster(session, ctx.project_id, cluster)
+
+        if not tables:
+            return f"No tables found for cluster '{cluster}'."
+        return "Tables in cluster '" + cluster + "':\n" + "\n".join(
+            f"- {t}" for t in tables
+        )
 
     async def _handle_get_agent_learnings(
         self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
@@ -1076,7 +1116,40 @@ class SQLAgent(BaseAgent):
             if not relevant:
                 relevant = all_entries[:10]
         else:
-            relevant = [e for e in all_entries if e.is_active and e.relevance_score >= 2][:12]
+            # M4: question-aware retrieval. We *union* BM25-ranked tables with
+            # the legacy relevance_score safety net so a missed BM25 hit can
+            # never make a critical table disappear from context. Order is
+            # stable: retrieved tables first (most question-specific),
+            # safety-net tables after.
+            max_tables = settings.sql_agent_max_context_tables
+            safety_net = [
+                e for e in all_entries if e.is_active and e.relevance_score >= 2
+            ]
+            entries_by_name = {e.table_name.lower(): e for e in all_entries}
+
+            retrieved: list[Any] = []
+            if settings.schema_retrieval_enabled:
+                retrieved = await self._retrieve_tables_for_question(
+                    connection_id=connection_id,
+                    question=question,
+                    entries_by_name=entries_by_name,
+                    k=max_tables,
+                )
+
+            seen: set[str] = set()
+            relevant = []
+            for entry in retrieved + safety_net:
+                key = entry.table_name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                relevant.append(entry)
+                if len(relevant) >= max_tables:
+                    break
+            # Hard fallback: if both retriever and safety net miss (e.g. no
+            # active tables with relevance_score >= 2), keep prior behaviour.
+            if not relevant:
+                relevant = all_entries[:max_tables]
 
         if ctx.connection_config is None:
             raise RuntimeError("Expected 'connection_config' but got None")
@@ -1129,6 +1202,51 @@ class SQLAgent(BaseAgent):
             parts.append(f"### Applicable Rules\n{rules_text}\n")
 
         return "\n".join(parts)
+
+    async def _retrieve_tables_for_question(
+        self,
+        *,
+        connection_id: str,
+        question: str,
+        entries_by_name: dict[str, Any],
+        k: int,
+    ) -> list[Any]:
+        """Run the M4 schema retriever; return ranked DbIndex entries.
+
+        Returns an empty list (and logs a debug breadcrumb) on any failure so
+        ``_build_query_context`` can fall through to the safety net unharmed.
+        """
+        try:
+            from app.knowledge.schema_retriever import SchemaRetriever
+
+            retriever = SchemaRetriever(data_dir=settings.bm25_data_dir)
+            if not retriever.has_index(connection_id):
+                logger.debug(
+                    "Schema retriever has no index for connection %s; "
+                    "falling back to relevance_score safety net",
+                    connection_id[:8],
+                )
+                return []
+
+            # BM25 query is CPU-bound; offload off the event loop.
+            hits = await asyncio.to_thread(
+                retriever.query,
+                connection_id,
+                question,
+                k=k,
+                only_active=True,
+            )
+        except Exception:
+            logger.debug("Schema retriever query failed", exc_info=True)
+            return []
+
+        ordered: list[Any] = []
+        for hit in hits:
+            table_name = hit.get("metadata", {}).get("table_name", hit.get("id", ""))
+            entry = entries_by_name.get(table_name.lower())
+            if entry is not None:
+                ordered.append(entry)
+        return ordered
 
     # ------------------------------------------------------------------
     # Helpers — connector / schema cache
@@ -1254,6 +1372,22 @@ class SQLAgent(BaseAgent):
                 return await svc.has_learnings(session, cfg.connection_id)
         except Exception:
             logger.debug("_has_learnings failed", exc_info=True)
+            return False
+
+    async def _has_code_clusters(self, project_id: str) -> bool:
+        """M6: cheap existence check used to gate the cluster-lookup tool."""
+        if not project_id:
+            return False
+        try:
+            from app.models.base import async_session_factory
+            from app.services.code_graph_service import CodeGraphService
+
+            svc = CodeGraphService()
+            async with async_session_factory() as session:
+                clusters = await svc.get_clusters(session, project_id)
+                return len(clusters) > 0
+        except Exception:
+            logger.debug("_has_code_clusters failed", exc_info=True)
             return False
 
     async def _build_table_map(self, connection_id: str, has_sync: bool = False) -> str:
@@ -1745,6 +1879,24 @@ class SQLAgent(BaseAgent):
                             f"Code usage: {entity.read_queries} reads, "
                             f"{entity.write_queries} writes"
                         )
+                    # M5: graph-derived lineage helps the SQL agent reason
+                    # about required filters (e.g. ``status != 'archived'``
+                    # for a customer-facing list endpoint) and which call
+                    # paths are read vs write surfaces.
+                    graph_callers = getattr(entity, "graph_callers", None) or []
+                    if graph_callers and settings.lineage_enabled:
+                        # Top 5 by descending confidence — graph_callers is
+                        # already sorted by GraphDBBridge.
+                        top = graph_callers[:5]
+                        parts.append("Lineage (top callers):")
+                        for ref in top:
+                            kind = ref.get("endpoint_kind", "unknown")
+                            op = ref.get("op_kind", "unknown")
+                            name = ref.get("caller_name", "?")
+                            conf = float(ref.get("confidence", 0.0))
+                            parts.append(
+                                f"  - {name} [{kind}/{op}] (conf={conf:.2f})"
+                            )
                     break
         parts.append("")
         return "\n".join(parts)

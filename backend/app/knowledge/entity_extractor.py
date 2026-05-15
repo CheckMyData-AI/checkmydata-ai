@@ -46,6 +46,13 @@ class EntityInfo:
     used_in_files: list[str] = field(default_factory=list)
     read_queries: int = 0
     write_queries: int = 0
+    # M5: code→DB lineage derived from the code knowledge graph.
+    # Each entry is a serialized :class:`CallerRef` dict with keys:
+    #     caller_name, caller_file, caller_kind, endpoint_kind, op_kind,
+    #     depth, confidence.
+    # Stored as plain dicts rather than dataclasses so the JSON round-trip
+    # remains lossless without a custom decoder.
+    graph_callers: list[dict] = field(default_factory=list)
 
 
 @dataclass

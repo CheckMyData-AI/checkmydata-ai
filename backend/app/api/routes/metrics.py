@@ -59,6 +59,7 @@ async def get_metrics(_user: dict = Depends(require_admin)):
                 "avg_latency_ms": round(avg_latency, 1),
             }
 
+    collector = get_metrics_collector()
     orchestrator_recent = [
         {
             "route": m.route,
@@ -71,14 +72,20 @@ async def get_metrics(_user: dict = Depends(require_admin)):
             "retry_count": m.retry_count,
             "error": m.error,
         }
-        for m in get_metrics_collector().snapshot_recent(50)
+        for m in collector.snapshot_recent(50)
     ]
+
+    # M1-M6 counters. Exposing them on the JSON endpoint (in addition to the
+    # Prometheus one) lets the operator dashboard chart "graph rebuilt N
+    # times, K symbols, J clusters" without scraping text format.
+    code_graph_counters = collector.snapshot_counters(prefix="code_graph_")
 
     return {
         "active_workflows": len(active_workflows),
         "request_stats": path_stats,
         "uptime_seconds": round(time.monotonic(), 1),
         "orchestrator_recent": orchestrator_recent,
+        "code_graph": code_graph_counters,
     }
 
 

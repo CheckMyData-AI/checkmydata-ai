@@ -20,6 +20,7 @@ from app.models import (  # noqa: F401
     benchmark,
     chat_session,
     code_db_sync,
+    code_graph,
     commit_index,
     connection,
     custom_rule,

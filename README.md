@@ -123,7 +123,14 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 - **Structured tool responses** -- `record_learning` and `write_note` return JSON outcomes (`status: ok|rejected`) so the LLM can parse rejection reasons and retry with corrections.
 - **LLM-first learning analyzer** -- `learning_analyzer_mode` (`heuristic | hybrid | llm_first`) controls how lessons are extracted from query attempts; the legacy `_detect_*` rules remain as a fast pre-filter.
 - **ClickHouse EXPLAIN warnings** -- the EXPLAIN validator now flags unbounded MergeTree scans without `PREWHERE`/`WHERE`.
-- **Per-request observability** -- `MetricsCollector` records route, complexity, response_type, replans, retries, SQL calls, and wall-clock time per request. Exposed via `/metrics` (recent rows) and `/metrics/prometheus` (text exposition format).
+- **Per-request observability** -- `MetricsCollector` records route, complexity, response_type, replans, retries, SQL calls, and wall-clock time per request. Exposed via `/metrics` (recent rows) and `/metrics/prometheus` (text exposition format). Also surfaces M2/M5/M6 code-graph counters (`code_graph_symbols_total`, `code_graph_edges_total`, `code_graph_lineage_refs_total`, `code_graph_clusters_total`).
+- **Code intelligence pipeline (M1–M6, feature-flagged)** — an in-house GitNexus-inspired layer that augments the existing 5-pass ORM/SQL pipeline:
+  - **AST parsing** (`code_graph_enabled`): tree-sitter-based extraction of symbols/imports/calls for Python, JS/TS, Go, Java, Ruby, PHP, C#.
+  - **Code knowledge graph**: NetworkX graph (CALLS/IMPORTS/EXTENDS) persisted to `code_graph_symbols` + `code_graph_edges` with confidence scores.
+  - **Hybrid retrieval** (`hybrid_retrieval_enabled`): BM25 (rank_bm25) ⊕ ChromaDB merged via Reciprocal Rank Fusion in `KnowledgeAgent`; soft timeouts and single-leg degradation.
+  - **Question-aware schema retrieval** (`schema_retrieval_enabled`): BM25 over LLM-enriched schema docs picks the right tables for the SQL agent instead of the legacy top-12-by-`relevance_score`.
+  - **Code→DB lineage** (`lineage_enabled`): walks the call graph from each ORM entity to discover HTTP endpoints / CLI commands / migrations that read or write the table; the SQL agent gets a "Lineage (top callers)" section per table.
+  - **Functional clustering** (`clustering_enabled`): Louvain communities on the graph; optional LLM labeling (`cluster_llm_label_enabled`) powers the new `get_tables_in_cluster` SQL agent tool ("show me the auth tables" → one call).
 - **Progressive Web App** -- installable, responsive design with mobile sidebar drawer
 
 ## Website Structure
@@ -177,7 +184,7 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **3,303 total tests** (2,501 backend unit + 410 integration + 383 frontend + 9 performance smoke)
+- **3,309 total tests** (2,501 backend unit + 416 integration + 383 frontend + 9 performance smoke)
 - **72%+ backend coverage** (CI-enforced minimum)
 - Zero flaky tests, zero skipped tests
 

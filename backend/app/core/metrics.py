@@ -92,6 +92,53 @@ class MetricsCollector:
         with self._lock:
             return list(self._history)[-limit:]
 
+    # ------------------------------------------------------------------
+    # M6: generic counter/gauge API for the code-intelligence pipeline.
+    # Keeps the public surface small — callers don't pass label dicts,
+    # they pass plain (name, **labels) and the collector tuples them.
+    # ------------------------------------------------------------------
+
+    def inc(self, name: str, amount: int = 1, **labels: str) -> None:
+        """Increment a counter by ``amount``. Safe to call from any thread."""
+        if not name:
+            return
+        try:
+            label_tuple = tuple(sorted(labels.items()))
+            with self._lock:
+                self._counters[(name, label_tuple)] += int(amount)
+        except Exception:
+            logger.debug("MetricsCollector.inc failed", exc_info=True)
+
+    def add(self, name: str, value: float, **labels: str) -> None:
+        """Record a float observation (used for durations, sizes, etc.)."""
+        if not name:
+            return
+        try:
+            label_tuple = tuple(sorted(labels.items()))
+            with self._lock:
+                self._sums[(name, label_tuple)] += float(value)
+                self._counters[(f"{name}_count", label_tuple)] += 1
+        except Exception:
+            logger.debug("MetricsCollector.add failed", exc_info=True)
+
+    def snapshot_counters(self, prefix: str | None = None) -> dict[str, int]:
+        """Return a name -> summed-value snapshot of integer counters.
+
+        Labels are flattened by summing across them. Used by the JSON
+        ``/api/metrics`` endpoint so consumers don't have to parse the
+        Prometheus exposition just to read a top-level count. Pass a
+        ``prefix`` (e.g. ``"code_graph_"``) to filter; otherwise returns
+        every counter. Non-mutating.
+        """
+        out: dict[str, int] = {}
+        with self._lock:
+            counters = dict(self._counters)
+        for (name, _labels), value in counters.items():
+            if prefix and not name.startswith(prefix):
+                continue
+            out[name] = out.get(name, 0) + int(value)
+        return out
+
     def render_prometheus(self) -> str:
         """Format current counters as Prometheus text exposition."""
         lines: list[str] = []

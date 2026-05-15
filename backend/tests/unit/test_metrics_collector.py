@@ -48,3 +48,24 @@ class TestMetricsCollector:
         c.record_request(RequestMetrics(error=True))
         body = c.render_prometheus()
         assert 'error="true"' in body
+
+    def test_inc_records_counter_with_labels(self):
+        """M6: generic ``inc`` API tuples kwargs into Prometheus labels."""
+        c = MetricsCollector()
+        c.inc("code_graph_symbols_total", 42, project="abc12345")
+        c.inc("code_graph_symbols_total", 8, project="abc12345")
+        body = c.render_prometheus()
+        assert 'code_graph_symbols_total{project="abc12345"} 50' in body
+
+    def test_inc_ignores_empty_name(self):
+        c = MetricsCollector()
+        c.inc("", 1)  # should not raise
+        assert "code_graph_symbols_total" not in c.render_prometheus()
+
+    def test_add_records_sum_and_count(self):
+        c = MetricsCollector()
+        c.add("code_graph_build_duration_seconds", 1.5, project="p1")
+        c.add("code_graph_build_duration_seconds", 2.5, project="p1")
+        body = c.render_prometheus()
+        assert 'code_graph_build_duration_seconds{project="p1"} 4.0' in body
+        assert 'code_graph_build_duration_seconds_count{project="p1"} 2' in body

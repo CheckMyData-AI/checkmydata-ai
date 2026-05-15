@@ -213,3 +213,51 @@ class TestBuildCodeContext:
         knowledge = _make_knowledge()
         result = self.pipeline._build_code_context(None, None, knowledge, "orders")
         assert result == ""
+
+    def test_includes_graph_callers_section(self):
+        """M5: graph_callers lineage is rendered, grouped by endpoint_kind."""
+        entity = EntityInfo(
+            name="Order",
+            table_name="orders",
+            file_path="models/order.py",
+            graph_callers=[
+                {
+                    "caller_name": "create_order",
+                    "caller_file": "app/api/orders.py",
+                    "caller_kind": "function",
+                    "endpoint_kind": "http",
+                    "op_kind": "write",
+                    "depth": 1,
+                    "confidence": 0.9,
+                    "decorators": ["router.post"],
+                },
+                {
+                    "caller_name": "list_orders",
+                    "caller_file": "app/api/orders.py",
+                    "caller_kind": "function",
+                    "endpoint_kind": "http",
+                    "op_kind": "read",
+                    "depth": 1,
+                    "confidence": 0.85,
+                },
+                {
+                    "caller_name": "process_order",
+                    "caller_file": "app/services/order_service.py",
+                    "caller_kind": "function",
+                    "endpoint_kind": "service",
+                    "op_kind": "write",
+                    "depth": 2,
+                    "confidence": 0.6,
+                },
+            ],
+        )
+        knowledge = _make_knowledge()
+        result = self.pipeline._build_code_context(entity, None, knowledge, "orders")
+        assert "Code callers (http):" in result
+        assert "Code callers (service):" in result
+        assert "create_order" in result
+        assert "list_orders" in result
+        assert "process_order" in result
+        # Confidence + depth surfaced.
+        assert "depth=1" in result
+        assert "depth=2" in result

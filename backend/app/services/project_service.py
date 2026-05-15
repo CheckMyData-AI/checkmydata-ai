@@ -87,6 +87,9 @@ class ProjectService:
         project = await self.get(session, project_id)
         if not project:
             return False
+        # Collect connection ids before cascade fires so we can wipe per-connection
+        # schema BM25 snapshots after the row is gone.
+        connection_ids = [c.id for c in (project.connections or [])]
         try:
             await session.delete(project)
             await session.commit()
@@ -94,4 +97,22 @@ class ProjectService:
             await session.rollback()
             logger.error("Cannot delete project %s: still referenced by child rows", project_id)
             raise
+        # Best-effort cleanup of on-disk + Chroma artifacts. The DB cascade has
+        # already wiped tables (FK ON DELETE CASCADE); the artifacts below are
+        # not cascaded by Postgres and would otherwise leak across re-creates.
+        try:
+            from app.services.indexing_artifacts import (
+                cleanup_connection_artifacts,
+                cleanup_project_artifacts,
+            )
+
+            cleanup_project_artifacts(project_id)
+            for cid in connection_ids:
+                cleanup_connection_artifacts(cid)
+        except Exception:
+            logger.warning(
+                "ProjectService.delete: artifact cleanup failed for project %s",
+                project_id,
+                exc_info=True,
+            )
         return True

@@ -100,11 +100,25 @@ User connects Git repo
   → POST /api/repos/{project_id}/index
     → RepoAnalyzer clones/pulls repo
       → ProjectProfiler: high-level project scan
-      → EntityExtractor: function/class extraction
+      → EntityExtractor: function/class extraction (regex)
+      → ast_parse:      tree-sitter symbols/imports/calls (M1)
+      → graph_build:    NetworkX CodeGraph + persistence (M2)
+      → cross_file_analysis: name-substring `used_in_files`
+      → graph_db_bridge: code → DB lineage onto EntityInfo (M5)
+      → graph_clustering: Louvain communities + LLM labels (M6)
       → LLM doc generation: enriched documentation
-    → Chunks stored in ChromaDB
-  → Available for RAG retrieval in chat
+      → Chunks stored in ChromaDB
+      → bm25_build:     code-aware lexical snapshot on disk (M3)
+    → DbIndex pipeline (separate per-connection run):
+      → table profiling + LLM enrichment
+      → schema_embed:   BM25 snapshot per connection (M4)
+  → Available for hybrid RAG retrieval in chat
 ```
+
+All M1–M6 stages are gated by feature flags (`code_graph_enabled`,
+`hybrid_retrieval_enabled`, `schema_retrieval_enabled`, `lineage_enabled`,
+`clustering_enabled`) and degrade gracefully when disabled — the legacy
+regex + dense-only path remains the canonical fallback.
 
 ### Trace Persistence Flow
 
@@ -155,6 +169,9 @@ Traced request paths:
 - **ChromaDB** — vector store for RAG
 - **httpx** — async HTTP client (LLM APIs)
 - **Pydantic** — data validation and settings
+- **tree-sitter** + **tree-sitter-language-pack** — AST parsing for the code graph (M1)
+- **NetworkX** — in-memory code graph + Louvain community detection (M2/M6)
+- **rank_bm25** — lexical retrieval leg of the hybrid retriever (M3/M4)
 
 ### Frontend
 - **Next.js 15** — React framework (App Router)
@@ -182,6 +199,8 @@ Key models:
 - `InsightRecord` / `TrustScore` — proactive insights with confidence scores
 - `MetricDefinition` / `MetricRelationship` — semantic layer metric catalog
 - `CodeDbSync` — code-database sync results
+- `CodeGraphSymbol` / `CodeGraphEdge` — persisted code knowledge graph (M2)
+- `CodeCluster` — Louvain community metadata + table/file aggregates (M6)
 
 ## Security Boundaries
 

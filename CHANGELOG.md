@@ -4,6 +4,151 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.12.1] - 2026-05-15
+
+### Fixed — M1–M6 integration audit
+
+Concrete bugs + wiring gaps surfaced by an end-to-end audit of the
+M1–M6 code-intelligence pipeline against the consumer-facing surfaces
+(orchestrator, SQL agent, knowledge agent, CodeDbSyncAnalyzer). Each
+flag now flips cleanly to `True` without leaking artifacts or silently
+serving stale data.
+
+- **Broken `get_settings` import** in `db_index_pipeline.py` schema-embed
+  step would have silently aborted M4 the moment `schema_retrieval_enabled`
+  flipped to `True`. Replaced with the canonical `settings` singleton.
+- **Orphan artifact lifecycle**: `ProjectService.delete`,
+  `ConnectionService.delete`, and `DbIndexService.delete_all` now invoke a
+  new `app/services/indexing_artifacts.py` helper to wipe the BM25 `.pkl`
+  snapshots (code corpus + schema) and the ChromaDB collection that used to
+  outlive their parent Postgres rows.
+- **Checkpoint integrity**: `bm25_build` and `graph_clustering` now only
+  call `complete_step` on actual success. A failed step no longer fools a
+  later resume into thinking the artifact is fresh.
+- **Code graph rehydration on resume**: when `ast_parse` collects no files
+  (incremental run) or `graph_build` raises, `state.code_graph` was `None`
+  and M5/M6 silently skipped. `CodeGraphService.load_graph` now reconstructs
+  the in-memory `CodeGraph` from persisted rows so lineage + clustering can
+  still run from existing data.
+- **Staleness warning now reaches the LLM**: the orchestrator's unified
+  tool loop appends a `KNOWLEDGE FRESHNESS WARNINGS` section to the system
+  prompt, and the complex pipeline path now computes the same signal
+  instead of passing `None`.
+- **`graph_callers` rendered in `KnowledgeAgent`**: `_format_entity_detail`
+  surfaces the M5 lineage block (caller name / file / endpoint kind / op
+  kind / confidence) when `lineage_enabled=True`.
+- **Prompts taught the new capabilities** so the model actually uses them:
+  - `sql_prompt.py` documents question-aware ranking (M4), the
+    `Lineage (top callers)` block (M5), and the `get_tables_in_cluster`
+    tool (M6).
+  - `knowledge_prompt.py` explains hybrid retrieval (BM25 ⊕ vectors fused
+    via RRF) and the entity lineage section.
+  - `code_db_sync_analyzer.py` system prompt instructs the LLM to derive
+    `required_filters` / `column_value_mappings` from the new "Code
+    callers" section.
+  - `get_query_context` tool description now describes question-aware
+    table ranking and the inline lineage block.
+- **`MetricsCollector.snapshot_counters(prefix=...)`** + JSON `/api/metrics`
+  now exposes `code_graph_*` counters without scraping Prometheus.
+- **Tests**: 6 new integration assertions in `test_indexing_e2e.py` cover
+  prompt rendering, entity-detail lineage, code-graph rehydrate, cleanup
+  idempotency, and metrics prefix filtering. Suite total: 3,309.
+
+## [1.12.0] - 2026-05-11
+
+### Added — In-house code intelligence pipeline (M1–M6)
+
+A GitNexus-inspired layer that augments (does not replace) our existing 5-pass
+ORM/SQL pipeline. All milestones ship behind feature flags and degrade
+gracefully to legacy behavior when disabled.
+
+- **M1 — AST parser**: `app/knowledge/ast_parser.py` wraps `tree-sitter` +
+  `tree-sitter-language-pack` to extract `Symbol` / `ImportRef` / `CallSite` /
+  `ParsedFile` records for Python, JS/TS, Go, Java, Ruby, PHP, C#. File-size
+  guard, binary/minified detection, parse-error ratio threshold, async
+  semaphore in the pipeline. Flag: `code_graph_enabled`.
+- **M2 — Code knowledge graph**: `app/knowledge/code_graph.py` two-pass
+  builder produces a NetworkX `CodeGraph` (CALLS/IMPORTS/EXTENDS edges with
+  confidence scores). Persisted via `app/services/code_graph_service.py` to
+  new `code_graph_symbols` + `code_graph_edges` tables (Alembic
+  `d8e9f0a1b2c3`).
+- **M3 — Hybrid retrieval**: `app/knowledge/bm25_index.py` (rank_bm25 with
+  code-aware tokenizer + atomic snapshots on disk) and
+  `app/knowledge/hybrid_retriever.py` (BM25 ⊕ Chroma fused with Reciprocal
+  Rank Fusion, soft timeouts, graceful single-leg degradation).
+  `KnowledgeAgent._handle_search_knowledge` now uses the hybrid path when
+  `hybrid_retrieval_enabled=true`. Flag: `hybrid_retrieval_enabled`.
+- **M4 — Question-aware table resolution**:
+  `app/knowledge/schema_retriever.py` builds a per-connection BM25 snapshot of
+  LLM-enriched schema docs. `SQLAgent._build_query_context` unions retrieved
+  tables with the legacy `relevance_score >= 2` safety net, bounded by
+  `sql_agent_max_context_tables`. Flag: `schema_retrieval_enabled`.
+- **M5 — Code→DB lineage**: `app/knowledge/graph_db_bridge.py` walks the code
+  graph outward from each entity, classifies callers as
+  `http`/`cli`/`migration`/`service` and ops as `read`/`write`, decays
+  confidence with depth, and writes the top-N refs onto
+  `EntityInfo.graph_callers`. Consumed by `CodeDbSyncAnalyzer` and rendered
+  by `SQLAgent._format_table_context`. Flag: `lineage_enabled`.
+- **M6 — Functional clustering**: `app/knowledge/code_clustering.py` runs
+  Louvain community detection on the weighted CALLS+IMPORTS graph,
+  optionally LLM-labels clusters in batches of 10, and persists to a new
+  `code_clusters` table (Alembic `e9f0a1b2c3d4`). SQL agent exposes a new
+  `get_tables_in_cluster` tool. Flags: `clustering_enabled`,
+  `cluster_llm_label_enabled`.
+- **Observability**: `KnowledgeFreshnessService` now surfaces a
+  `code_graph_symbol_count` signal (warns when the graph is empty).
+  `MetricsCollector` grew a generic `inc()` / `add()` API; new counters:
+  `code_graph_symbols_total`, `code_graph_edges_total`,
+  `code_graph_lineage_refs_total`, `code_graph_clusters_total`,
+  `code_graph_builds_total`. Visible via `/api/metrics` and
+  `/api/metrics/prometheus`.
+
+### Added (files)
+- `backend/app/knowledge/ast_parser.py`, `code_graph.py`, `bm25_index.py`,
+  `hybrid_retriever.py`, `schema_retriever.py`, `graph_db_bridge.py`,
+  `code_clustering.py`.
+- `backend/app/models/code_graph.py` (extended with `CodeCluster`).
+- `backend/app/services/code_graph_service.py` (extended with cluster ops).
+- Alembic migrations `d8e9f0a1b2c3_add_code_graph_tables.py`,
+  `e9f0a1b2c3d4_add_code_clusters_table.py`.
+- Tests: `tests/unit/test_ast_parser.py`, `test_code_graph.py`,
+  `test_bm25_index.py`, `test_hybrid_retriever.py`, `test_schema_retriever.py`,
+  `test_graph_db_bridge.py`, `test_code_clustering.py`,
+  `test_entity_info_graph_callers.py`; integration:
+  `tests/integration/test_code_graph_service.py`,
+  `test_schema_retriever_integration.py`,
+  `test_graph_db_bridge_integration.py`, **`test_indexing_e2e.py`** (full
+  M1→M6 chain).
+
+### Changed
+- `backend/pyproject.toml`: pinned `tree-sitter>=0.23.0,<0.24` +
+  `tree-sitter-language-pack>=0.7.3,<1.0`, added `networkx`, `rank-bm25`.
+- `backend/app/agents/knowledge_agent.py`: hybrid retrieval branch
+  preserving the legacy "no relevant" / "no sufficiently relevant" message
+  distinction.
+- `backend/app/agents/sql_agent.py`: schema-retriever union, lineage
+  formatting, cluster lookup tool wiring.
+- `backend/app/agents/tools/sql_tools.py`: new
+  `GET_TABLES_IN_CLUSTER_TOOL` (gated by `has_code_clusters`).
+- `backend/app/knowledge/entity_extractor.py`: `EntityInfo.graph_callers`.
+- `backend/app/knowledge/code_db_sync_pipeline.py`: caller groups in the
+  code-context prompt.
+- `backend/app/services/knowledge_freshness_service.py`: empty-graph signal.
+- `backend/app/core/metrics.py`: generic `inc`/`add` API.
+- `backend/.env.example` & `app/config.py`: new flags
+  `code_graph_enabled`, `ast_parse_concurrency`, `ast_max_file_bytes`,
+  `ast_parse_error_ratio`, `code_graph_max_symbols`,
+  `code_graph_call_confidence_threshold`, `hybrid_retrieval_enabled`,
+  `bm25_data_dir`, `hybrid_rrf_k`, `hybrid_min_score`, `hybrid_k`,
+  `schema_retrieval_enabled`, `sql_agent_max_context_tables`,
+  `lineage_enabled`, `lineage_max_depth`, `clustering_enabled`,
+  `cluster_llm_label_enabled`.
+
+### Notes
+- All flags default `false` for a 2-week soak. Per-feature rollout planned;
+  legacy paths will be deleted in a separate cleanup PR once the new
+  pipeline holds in production.
+
 ## [1.11.0] - 2026-05-05
 
 ### Changed — AI-First Refactor: Infra & Deploy (T33–T40)

@@ -43,6 +43,9 @@ def build_sql_system_prompt(
     db_index_stale: bool = False,
     has_code_db_sync: bool = False,
     has_learnings: bool = False,
+    has_code_clusters: bool = False,
+    lineage_enabled: bool = False,
+    schema_retrieval_enabled: bool = False,
     table_map: str = "",
     learnings_prompt: str = "",
     sync_conventions: str = "",
@@ -103,9 +106,32 @@ def build_sql_system_prompt(
         if db_index_stale:
             stale_note = " (WARNING: DB index may be stale — verify with `get_schema_info`)"
         sections.append(f"- DB Index available via `get_db_index`.{stale_note}")
+        if schema_retrieval_enabled:
+            sections.append(
+                "- `get_query_context` performs question-aware table ranking: it "
+                "blends the user's wording against a BM25 schema index plus "
+                "code-derived usage, so it usually returns the most relevant "
+                "table without you needing to scan the full table_map."
+            )
 
     if has_code_db_sync:
         sections.append("- Code-DB sync available via `get_sync_context`.")
+        if lineage_enabled:
+            sections.append(
+                "- When `get_query_context` includes a 'Lineage (top callers):' "
+                "block for a table, those rows come from the code knowledge "
+                "graph (M5). Treat them as authoritative for who writes / reads "
+                "the table — they're more reliable than table-name guesses and "
+                "should drive your filter / join choices."
+            )
+
+    if has_code_clusters:
+        sections.append(
+            "- `get_tables_in_cluster(name)` returns tables grouped by "
+            "functional area derived from the code graph (M6). Use it for "
+            "questions like 'show me the auth tables' or 'list everything in "
+            "the billing module' before falling back to the global table map."
+        )
 
     if has_learnings:
         sections.append("- Agent learnings available via `get_agent_learnings`.")

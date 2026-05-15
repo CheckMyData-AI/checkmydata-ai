@@ -519,6 +519,30 @@ class CodeDbSyncPipeline:
             if usage.writers:
                 parts.append(f"Written by: {', '.join(usage.writers[:10])}")
 
+        # M5 graph-derived lineage: HTTP routes / services / CLI / migrations
+        # that ultimately call into this entity. We surface the top callers
+        # for the LLM to reason about ``required_filters`` and conversion
+        # warnings without forcing it to grep for usages itself.
+        if entity and entity.graph_callers:
+            grouped: dict[str, list[dict]] = {}
+            for ref in entity.graph_callers[:15]:
+                grouped.setdefault(ref.get("endpoint_kind", "unknown"), []).append(ref)
+            for kind in ("http", "cli", "service", "migration", "unknown"):
+                refs = grouped.get(kind)
+                if not refs:
+                    continue
+                parts.append(f"Code callers ({kind}):")
+                for r in refs[:5]:
+                    op = r.get("op_kind", "unknown")
+                    conf = float(r.get("confidence", 0.0))
+                    depth = int(r.get("depth", 1))
+                    name = r.get("caller_name", "?")
+                    file_ = r.get("caller_file", "?")
+                    parts.append(
+                        f"  - {name} ({op}, depth={depth}, conf={conf:.2f}) "
+                        f"in {file_}"
+                    )
+
         relevant_enums = [
             e
             for e in knowledge.enums

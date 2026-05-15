@@ -633,6 +633,27 @@ class DbIndexPipeline:
                     )
                     await session.commit()
 
+            # Step 7 (M4): build BM25 schema retriever for question-aware
+            # table resolution. Gated behind ``schema_retrieval_enabled`` so
+            # we can ship the index path without flipping the read path.
+            try:
+                from app.config import settings as _settings
+
+                if _settings.schema_retrieval_enabled:
+                    async with self._tracker.step(
+                        wf_id,
+                        "schema_embed",
+                        "Building schema retriever index",
+                    ):
+                        await self._build_schema_retriever(
+                            wf_id=wf_id,
+                            connection_id=connection_id,
+                            bm25_data_dir=_settings.bm25_data_dir,
+                        )
+            except Exception:
+                # Never let retriever issues fail the indexing run.
+                logger.exception("schema_embed step failed; retriever may be stale")
+
             try:
                 from app.services.code_db_sync_service import CodeDbSyncService
 
@@ -669,6 +690,54 @@ class DbIndexPipeline:
                     await connector.disconnect()
                 except Exception:
                     logger.debug("Connector disconnect failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Schema retriever (M4)
+    # ------------------------------------------------------------------
+
+    async def _build_schema_retriever(
+        self,
+        *,
+        wf_id: str,
+        connection_id: str,
+        bm25_data_dir: str,
+    ) -> None:
+        """Build a BM25 snapshot of LLM-enriched schema docs for *connection_id*.
+
+        Failures are logged but don't propagate — the retriever is a soft
+        dependency for ``SQLAgent`` and the system degrades gracefully to the
+        legacy ``relevance_score >= 2`` fallback.
+        """
+        from app.knowledge.schema_retriever import SchemaRetriever
+
+        async with async_session_factory() as session:
+            entries = await self._svc.get_index(session, connection_id)
+
+        if not entries:
+            await self._tracker.emit(
+                wf_id,
+                "schema_embed",
+                "started",
+                "No db_index entries — skipping schema retriever",
+            )
+            return
+
+        # Freshness key: max indexed_at across all entries. Stringify for
+        # parity with the codebase BM25 ``indexed_sha`` contract (we never
+        # crack this open, we only check for equality).
+        latest_ts = max((e.indexed_at for e in entries if e.indexed_at), default=None)
+        sha = latest_ts.isoformat() if latest_ts else "empty"
+
+        retriever = SchemaRetriever(data_dir=bm25_data_dir)
+        # rank_bm25 is pure-Python and CPU-bound; offload off the event loop.
+        await asyncio.to_thread(retriever.build, connection_id, sha, entries)
+
+        await self._tracker.emit(
+            wf_id,
+            "schema_embed",
+            "started",
+            f"Schema retriever built ({len(entries)} tables, sha={sha[:12]})",
+        )
 
     # ------------------------------------------------------------------
     # Context helpers

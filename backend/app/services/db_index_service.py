@@ -108,6 +108,16 @@ class DbIndexService:
             delete(DbIndexSummary).where(DbIndexSummary.connection_id == connection_id)
         )
         await session.commit()
+        # M4: stale schema BM25 must go with its source rows; otherwise the
+        # SQL agent's question-aware retrieval would still serve the dropped
+        # tables.
+        try:
+            from app.services.indexing_artifacts import cleanup_connection_artifacts
+
+            cleanup_connection_artifacts(connection_id)
+        except Exception:
+            # Never let cleanup break the public contract of delete_all.
+            pass
 
     # ------------------------------------------------------------------
     # Summary CRUD

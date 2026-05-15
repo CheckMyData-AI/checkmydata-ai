@@ -37,6 +37,11 @@ class KnowledgeFreshness:
     sync_stale: bool = False
     git_behind_commits: int | None = None
     git_unindexed: bool = False
+    # M6: code-graph signal. ``code_graph_symbol_count`` is the canonical
+    # "did we run M2/M5/M6?" answer; the SHA equality check is folded into
+    # ``git_behind_commits`` since both come from the same indexer run.
+    code_graph_symbol_count: int = 0
+    code_graph_stale: bool = False
     warnings: list[str] = None  # type: ignore[assignment]
 
     def to_summary(self) -> str | None:
@@ -99,6 +104,27 @@ class KnowledgeFreshnessService:
                     )
             except Exception:
                 logger.debug("freshness: sync status check failed", exc_info=True)
+
+        # M6: code-graph freshness — empty graph means M2 either never ran
+        # or was wiped. We only check when code_graph_enabled is set so
+        # disabled installs don't see a noisy warning.
+        try:
+            from app.config import settings
+
+            if settings.code_graph_enabled:
+                from app.services.code_graph_service import CodeGraphService
+
+                cg_svc = CodeGraphService()
+                sym_count, _ = await cg_svc.count(session, project_id)
+                snapshot.code_graph_symbol_count = sym_count
+                if sym_count == 0:
+                    snapshot.code_graph_stale = True
+                    warnings.append(
+                        "Code graph is empty — lineage and clustering features "
+                        "will fall back to legacy heuristics."
+                    )
+        except Exception:
+            logger.debug("freshness: code graph check failed", exc_info=True)
 
         if repo_clone_dir is not None:
             try:
