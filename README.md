@@ -131,6 +131,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
   - **Question-aware schema retrieval** (`schema_retrieval_enabled`): BM25 over LLM-enriched schema docs picks the right tables for the SQL agent instead of the legacy top-12-by-`relevance_score`.
   - **Code→DB lineage** (`lineage_enabled`): walks the call graph from each ORM entity to discover HTTP endpoints / CLI commands / migrations that read or write the table; the SQL agent gets a "Lineage (top callers)" section per table.
   - **Functional clustering** (`clustering_enabled`): Louvain communities on the graph; optional LLM labeling (`cluster_llm_label_enabled`) powers the new `get_tables_in_cluster` SQL agent tool ("show me the auth tables" → one call).
+  - **Rollout playbook**: per-flag canary criteria, smoke tests, soak duration, rollback, and the exact scope of the post-soak cleanup PR are documented in [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md). The operator drives the rollout with `make rollout-check`.
 - **Progressive Web App** -- installable, responsive design with mobile sidebar drawer
 
 ## Website Structure

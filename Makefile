@@ -105,6 +105,35 @@ lint:
 
 check: lint test-all
 
+# ── M1-M6 rollout helpers (see docs/ROLLOUT_M1_M6.md) ────────────
+# Reads ADMIN_TOKEN + HEROKU_APP from env (or defaults to production).
+# Use `make rollout-check` after flipping any flag to verify the dyno
+# is healthy and the new code path is firing.
+
+HEROKU_APP    ?= checkmydata-api
+PROD_BASE_URL ?= https://checkmydata-api-990b0bcf28ab.herokuapp.com
+
+rollout-check:
+	@echo "=== Heroku flag state ($(HEROKU_APP)) ==="
+	@heroku config -a $(HEROKU_APP) | \
+		grep -E "CODE_GRAPH_ENABLED|HYBRID_RETRIEVAL_ENABLED|SCHEMA_RETRIEVAL_ENABLED|LINEAGE_ENABLED|CLUSTERING_ENABLED|CLUSTER_LLM_LABEL_ENABLED" \
+		|| echo "(no M1-M6 flags set; all default to false)"
+	@echo
+	@echo "=== Dyno state ==="
+	@heroku ps -a $(HEROKU_APP)
+	@echo
+	@echo "=== Health endpoint ==="
+	@curl -fsS $(PROD_BASE_URL)/api/health || echo "FAILED"
+	@echo
+	@if [ -n "$$ADMIN_TOKEN" ]; then \
+		echo "=== Code-graph counters (admin JSON metrics) ==="; \
+		curl -fsSH "Authorization: Bearer $$ADMIN_TOKEN" $(PROD_BASE_URL)/api/metrics \
+			| python -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('code_graph',{}), indent=2))" \
+			|| echo "metrics fetch failed (token expired?)"; \
+	else \
+		echo "(set ADMIN_TOKEN=... to fetch live code_graph metrics)"; \
+	fi
+
 # ── Docker (OrbStack / Docker Desktop) ────────────────────────────
 
 docker-up:

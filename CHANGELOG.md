@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.12.2] - 2026-05-17
+
+### Added — M1-M6 rollout playbook
+
+Closes the final M1-M6 plan item (`rollout`). Every milestone has shipped
+to production (v129, commit `b13f530`); all five feature flags still
+default to `False`. This release ships the operator-facing artifacts to
+safely flip them.
+
+- **`docs/ROLLOUT_M1_M6.md`** — per-flag canary criteria, smoke tests,
+  daily soak metrics with healthy/alarm bands, rollback commands, and a
+  precise file:line inventory of the legacy branches the post-soak
+  cleanup PR will delete (plus an explicit "do not delete" list for the
+  load-bearing fallbacks like `_dense_only_search` and the
+  `relevance_score` safety net).
+- **`make rollout-check`** — one-command production health snapshot
+  (flag state, dyno state, `/api/health`, and `code_graph_*` counters
+  via JSON `/api/metrics`). Accepts `ADMIN_TOKEN` and `HEROKU_APP`
+  overrides for staging.
+- **README** — links to the playbook from the M1-M6 feature section.
+
+The rollout itself (`code_graph_enabled` → `hybrid_retrieval_enabled` →
+`schema_retrieval_enabled` → `lineage_enabled` → `clustering_enabled`,
+each with a 2-week soak) is the operator's job from here. The status
+table at the bottom of `ROLLOUT_M1_M6.md` is the canonical record.
+
 ## [1.12.1] - 2026-05-15
 
 ### Fixed — M1–M6 integration audit
