@@ -4,6 +4,113 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.12.3] - 2026-05-18
+
+### Changed — Documentation actualization (no code, no schema, no flag flips)
+
+A docs-only pass that closes every doc-vs-code gap surfaced during the
+post-1.12.2 Heroku audit, plus consolidates the M1-M6 follow-ups into the
+strategic backlog so they stop living only inside the rollout playbook.
+
+**Doc-vs-code accuracy fixes**
+
+- **`docs/SYSTEM_ARCHITECTURE.md` §2.4** rewritten — the old narrative
+  pointed at `app/agents/intent_classifier.py::classify_intent()` and
+  `prompts/orchestrator_prompt.py::build_classification_prompt()`, none of
+  which exist. Routing now goes through the unified LLM router in
+  `backend/app/agents/router.py` (`_build_router_prompt()`,
+  `route_request()`, `RouteResult` dataclass with `route` + `complexity`
+  in a single call). Section reflects the actual route list (`direct` /
+  `query` / `knowledge` / `mcp` / `explore`) and complexity tag.
+- **`ARCHITECTURE.md` Knowledge Indexing Flow** reordered to match
+  `pipeline_runner.py`: `ast_parse` and `graph_build` (M1+M2) now precede
+  `analyze_files` / EntityExtractor instead of being listed after. Added
+  `record_index` final step, the `CodeGraphService.load_graph()`
+  rehydration path that fires on M5/M6 resume, and the
+  `services/indexing_artifacts.py` cleanup contract on project/connection
+  delete.
+- **`ARCHITECTURE.md` module table** — extended the `knowledge/` and
+  `services/` rows with the modules that shipped during M1-M6
+  (`pipeline_runner.py`, `db_index_pipeline.py`, `ast_parser.py`,
+  `code_graph.py`, `bm25_index.py`, `hybrid_retriever.py`,
+  `schema_retriever.py`, `code_db_sync_analyzer.py`,
+  `code_graph_service.py`, `knowledge_freshness_service.py`,
+  `indexing_artifacts.py`).
+- **`docs/ROLLOUT_M1_M6.md` §2.1** — replaced an invalid + unsafe SQL
+  smoke command (`xargs -I{} psql {} -c "… COUNT(*) FROM a, COUNT(*) FROM
+  b …"`, which both leaked `DATABASE_URL` into `ps` and was malformed
+  SQL) with `heroku pg:psql -a checkmydata-api -c "SELECT (SELECT
+  COUNT(*) FROM …) …"` using subqueries.
+- **`docs/ROLLOUT_M1_M6.md` §2.5** — renamed prose `has_clusters` →
+  `has_code_clusters` to match the actual identifier in
+  `sql_agent.py` / `sql_prompt.py` / `sql_tools.py`.
+- **`docs/ROLLOUT_M1_M6.md` §4.2** — converted the brittle line-anchored
+  cleanup-PR table (`pipeline_runner.py:406`, `sql_agent.py:1887`, …) to
+  stable `grep -n "<predicate>"` markers so the inventory survives normal
+  line drift.
+- **`docs/MASTER_TEST_PLAN.md`** — fixed `POST /api/chat/stream` →
+  `POST /api/chat/ask/stream` (the actual route in
+  `backend/app/api/routes/chat.py`).
+- **`README.md`** — `LEARNING_ANALYZER_MODE` default `hybrid` →
+  `llm_first` (matches `backend/app/config.py:225`); test count `3,309
+  total` → `3,999 total (3,129 backend unit + 470 backend integration +
+  400 frontend)` (verified via `pytest --collect-only`); added the
+  `make rollout-check` row to the Development Commands table; added a
+  paragraph each on `indexing_artifacts.py`, the `staleness_warning`
+  injection, and the `graph_callers` lineage rendering in the M1-M6
+  summary section.
+- **`CHANGELOG.md` 1.x historical entry** — corrected
+  `learning_analyzer_mode` default note from `"hybrid"` to `"llm_first"`
+  for consistency with code.
+
+**New documentation (shipped behavior that previously had no docs)**
+
+- **`docs/SYSTEM_ARCHITECTURE.md` §2.6.1 — Knowledge Freshness Warning
+  Injection** — describes how `KnowledgeFreshnessService.check_staleness()`
+  feeds a `KNOWLEDGE FRESHNESS WARNINGS` block into both the simple
+  tool-calling loop and the multi-stage pipeline orchestrator messages,
+  with the code-graph-conditional behavior gated by
+  `settings.code_graph_enabled`.
+
+**Backlog consolidation (BACKLOG.md, ROADMAP.md)**
+
+- **`BACKLOG.md` Sprint 8 — M1-M6 rollout completion** (P0, blocked by
+  2-week per-flag soak): seven tasks covering the five default flips and
+  the post-soak cleanup PR (flag-gate removal + prompt-builder kwarg
+  removal), with an explicit non-removal list (preserve
+  `_dense_only_search`, ABC stubs, per-request flag overrides).
+- **`BACKLOG.md` Sprint 9 — Test coverage gaps** (P2): eight tasks
+  covering the full-pipeline E2E with a real fixture repo, incremental
+  indexing, binary-file filtering, hybrid-retrieval relevance smoke,
+  `KnowledgeDocs` / `WorkflowProgress` component tests, a11y matrix
+  execution + fixes, and the 72% → 80% coverage threshold flip.
+- **`BACKLOG.md` Sprint 10 — Documented "for now" debts** (P2/P3): seven
+  tasks covering the planner-LLM table-routing replacement, optional
+  Chroma extension for `SchemaRetriever`, incremental per-file
+  code-graph updates, multi-language receiver-type resolution,
+  multi-repo cross-repo code graph, and the
+  `query_empty_result_retry` / `data_gate_llm_semantics` opt-in flags.
+- **`ROADMAP.md`** — new "Architectural Debt & Rollout-Gated Cleanups"
+  subsection pointing at the rollout playbook and Sprints 8/9/10 so a
+  casual roadmap reader finds the M1-M6 story.
+
+**Heroku audit snapshot (informational, no action)**
+
+- Release **v129** (`b13f530`), web dyno up 10h+, `/api/health` = 200.
+- 38h of production logs (1500 lines): **0** app-level WARNING / ERROR /
+  CRITICAL / exception lines from `app[web.1]`.
+- Router warnings limited to expected SSE client disconnects (`H27`) on
+  `/api/workflows/events`; 1 × `H18` over 38h (single 1133s SSE backend
+  interruption — not a defect).
+- No production fix needed; documentation was the only out-of-sync piece.
+
+### Notes
+
+- **No** source edits under `backend/app/**` or `frontend/src/**`.
+- **No** Alembic migrations, **no** schema changes.
+- **No** `heroku config:set`, **no** flag flips, **no** dyno restart.
+- The M1-M6 feature flags still default to `False` per [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md); the operator drives the rollout (see Sprint 8).
+
 ## [1.12.2] - 2026-05-17
 
 ### Added — M1-M6 rollout playbook
@@ -251,7 +358,7 @@ gracefully to legacy behavior when disabled.
 ### Added
 - `pipeline_max_parallel_stages` config (default `3`).
 - `answer_validator_enabled` config (default `True`).
-- `learning_analyzer_mode` config (default `"hybrid"`).
+- `learning_analyzer_mode` config (default `"llm_first"`).
 - `KnowledgeFreshnessService`, `AnswerValidator`, `MetricsCollector`, `AgentSettingsView` modules.
 - `/metrics/prometheus` endpoint.
 - Alembic migration `a5b6c7d8e9f0_add_deactivated_at_to_session_notes`.

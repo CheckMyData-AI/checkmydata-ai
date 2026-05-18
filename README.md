@@ -131,6 +131,9 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
   - **Question-aware schema retrieval** (`schema_retrieval_enabled`): BM25 over LLM-enriched schema docs picks the right tables for the SQL agent instead of the legacy top-12-by-`relevance_score`.
   - **Code→DB lineage** (`lineage_enabled`): walks the call graph from each ORM entity to discover HTTP endpoints / CLI commands / migrations that read or write the table; the SQL agent gets a "Lineage (top callers)" section per table.
   - **Functional clustering** (`clustering_enabled`): Louvain communities on the graph; optional LLM labeling (`cluster_llm_label_enabled`) powers the new `get_tables_in_cluster` SQL agent tool ("show me the auth tables" → one call).
+  - **Resume safety + cleanup**: on pipeline resume, `state.code_graph` is rehydrated from Postgres via `CodeGraphService.load_graph()` before M5/M6 run (no silent skips). On project / connection delete, `backend/app/services/indexing_artifacts.py` performs best-effort, non-throwing cleanup of the on-disk BM25 snapshots and the project's ChromaDB collection (Postgres FK cascades handle the structured rows).
+  - **Knowledge freshness warning**: `KnowledgeFreshnessService.check_staleness()` is injected as a `KNOWLEDGE FRESHNESS WARNINGS` block into both the simple tool-calling loop and the multi-stage pipeline orchestrator messages, so the LLM is told *why* answers may be stale.
+  - **Code lineage rendering**: `KnowledgeAgent._format_entity_detail()` renders the top callers from `EntityInfo.graph_callers` as a "Code lineage (top callers)" section in entity detail responses when `lineage_enabled` is on.
   - **Rollout playbook**: per-flag canary criteria, smoke tests, soak duration, rollback, and the exact scope of the post-soak cleanup PR are documented in [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md). The operator drives the rollout with `make rollout-check`.
 - **Progressive Web App** -- installable, responsive design with mobile sidebar drawer
 
@@ -160,7 +163,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `JWT_SECRET` | Secret for signing JWT tokens (change from default in production) |
 | One LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
 
-**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 180s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2), `PIPELINE_MAX_PARALLEL_STAGES` (concurrent pipeline stages, default 3), `MAX_PIPELINE_REPLANS` (replan attempts, default 2), `ANSWER_VALIDATOR_ENABLED` (LLM quality gate on partial answers, default true), `LEARNING_ANALYZER_MODE` (`heuristic | hybrid | llm_first`, default `hybrid`). See `backend/.env.example` for all options.
+**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 180s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2), `PIPELINE_MAX_PARALLEL_STAGES` (concurrent pipeline stages, default 3), `MAX_PIPELINE_REPLANS` (replan attempts, default 2), `ANSWER_VALIDATOR_ENABLED` (LLM quality gate on partial answers, default true), `LEARNING_ANALYZER_MODE` (`heuristic | hybrid | llm_first`, default `llm_first`). See `backend/.env.example` for all options.
 
 ## Development Commands
 
@@ -174,6 +177,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `make lint` | Run ruff linter |
 | `make check` | Lint + all tests |
 | `make docker-up` | Build and start Docker containers |
+| `make rollout-check` | Heroku health snapshot for the M1–M6 flag rollout (config, dyno, `/api/health`, `code_graph_*` metrics) |
 
 ## Deployment
 
@@ -185,8 +189,8 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **3,309 total tests** (2,501 backend unit + 416 integration + 383 frontend + 9 performance smoke)
-- **72%+ backend coverage** (CI-enforced minimum)
+- **3,999 total tests** (3,129 backend unit + 470 backend integration + 400 frontend)
+- **72%+ backend coverage** (CI-enforced minimum; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
 - Zero flaky tests, zero skipped tests
 
 ```bash

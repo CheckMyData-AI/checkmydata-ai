@@ -80,6 +80,15 @@
 - [ ] Natural language data transformation
 - [ ] AI-powered data documentation generation
 
+## Architectural Debt & Rollout-Gated Cleanups
+
+The in-house **M1–M6 code intelligence pipeline** (AST parsing, code knowledge graph, hybrid retrieval, question-aware schema retrieval, code↔DB lineage, functional clustering) is shipped behind five feature flags and currently in soak. Operational details live in two canonical docs:
+
+- **Rollout playbook**: per-flag canary criteria, smoke tests, soak duration, rollback procedures, and the exact scope of the post-soak cleanup PR — see [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md).
+- **Sprint backlog**: the flips themselves, the cleanup PR, the coverage gaps that block the 80% target, and the documented "for now" debts (planner-LLM routing, optional Chroma in `SchemaRetriever`, incremental per-file graph updates, multi-language receiver resolution, multi-repo cross-repo graph) — see [BACKLOG.md](BACKLOG.md) **Sprint 8** (rollout completion), **Sprint 9** (test coverage gaps), and **Sprint 10** (documented "for now" debts).
+
+Until those soaks complete and the cleanup PR ships, the legacy regex/dense-only paths remain the canonical fallback in production — every M1–M6 stage degrades gracefully when its flag is off.
+
 ## Contributing to the Roadmap
 
 We welcome input on priorities. If you'd like to work on a roadmap item:

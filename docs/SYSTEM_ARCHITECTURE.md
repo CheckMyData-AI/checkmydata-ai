@@ -208,28 +208,30 @@ Every sub-agent receives the same `AgentContext` (defined in `backend/app/agents
 | `project_name` | `str \| None` | Human-readable project name |
 | `extra` | `dict` | Pipeline action, session ID, flags |
 
-### 2.4 Intent Classification
+### 2.4 Unified Router
 
-Before loading any heavy context (table maps, learnings, staleness checks), the orchestrator runs a lightweight LLM-based intent classification step (~500 tokens, ~0.5s). This determines the minimal execution chain needed for the request.
+Before loading any heavy context (table maps, learnings, staleness checks), the orchestrator runs a single LLM-driven router call (~200 max tokens, ~0.5s). The router replaces the older separate intent classifier + `_is_complex` heuristic with one structured response that picks both **route** and **complexity** in the same step.
 
-**Classification intents:**
+**Route options** (dynamically pruned to capabilities actually available):
 
-| Intent | Description | Context Loaded | Tools Exposed |
-|--------|-------------|----------------|---------------|
-| `direct_response` | Greetings, meta-questions, casual conversation | None | None |
-| `data_query` | Questions requiring database queries | Table map, learnings, overview | `query_database`, `process_data`, `manage_rules`, `ask_user` |
-| `knowledge_query` | Questions about code, architecture, docs | KB staleness | `search_codebase`, `ask_user` |
-| `mcp_query` | Questions requiring external MCP sources | MCP sources | `query_mcp_source`, `ask_user` |
-| `mixed` | Ambiguous or multi-capability queries | Everything | All available |
+| Route | Description | Context Loaded | Tools Exposed |
+|-------|-------------|----------------|---------------|
+| `direct` | Greetings, thanks, meta-questions, follow-ups about already-displayed results | None | None |
+| `query` | Questions requiring database queries for numbers, stats, records, analytics | Table map, learnings, overview | `query_database`, `process_data`, `manage_rules`, `ask_user` |
+| `knowledge` | Questions about project code, architecture, or documentation | KB staleness | `search_codebase`, `ask_user` |
+| `mcp` | Questions requiring external MCP-connected service data | MCP sources | `query_mcp_source`, `ask_user` |
+| `explore` | Spans multiple capabilities or the router is unsure | Everything | All available |
+
+**Complexity tag** (`simple` / `moderate` / `complex`) drives whether the orchestrator runs the simple tool-calling loop or the multi-stage pipeline. The router also returns an estimated query count and a `needs_multiple_data_sources` flag.
 
 **Key behaviours:**
-- The classification prompt is dynamic: only intents whose capabilities are available (e.g., DB connection exists) are presented to the LLM.
-- On any classification failure, falls back to `mixed` (full pipeline) — no request is ever dropped.
-- `direct_response` path uses a single LLM call with a minimal prompt (~100 tokens), zero DB queries, and no tools. For a greeting like "hello", this reduces the pipeline from ~174K tokens / 15s to ~2K tokens / 1-2s.
-- `data_query` path loads only DB-relevant context and runs complexity detection for the multi-stage pipeline.
-- `knowledge_query` path loads only KB staleness and exposes only `search_codebase`.
+- The router prompt is dynamic: only routes whose capabilities exist (e.g., DB connection present) are offered to the LLM.
+- On any router failure or unparseable JSON, falls back to `RouteResult(route="explore", complexity="moderate")` — no request is ever dropped.
+- `direct` path uses a single LLM call with a minimal prompt, zero DB queries, and no tools. For a greeting like "hello", this collapses the pipeline from ~174K tokens / 15s to ~2K tokens / 1-2s.
+- `query` path loads only DB-relevant context; if the router returned `complexity=complex`, the multi-stage pipeline runs instead of the simple loop.
+- `knowledge` path loads only KB staleness and exposes only `search_codebase`.
 
-Implementation: `backend/app/agents/intent_classifier.py` (`classify_intent()`), prompt builders in `backend/app/agents/prompts/orchestrator_prompt.py` (`build_classification_prompt()`, `build_direct_response_prompt()`).
+Implementation: [backend/app/agents/router.py](../backend/app/agents/router.py) — `_build_router_prompt()`, `route_request()`, and the `RouteResult` dataclass. The direct-answer prompt is `build_direct_response_prompt()` in [backend/app/agents/prompts/orchestrator_prompt.py](../backend/app/agents/prompts/orchestrator_prompt.py). The orchestrator entry point is `OrchestratorAgent._run` (see [backend/app/agents/orchestrator.py](../backend/app/agents/orchestrator.py) lines 330-340), which calls `route_request()` once per request and branches on `RouteResult.is_direct` / `RouteResult.use_complex_pipeline`.
 
 ### 2.5 Simple Query Flow (Tool-Calling Loop)
 
@@ -360,6 +362,32 @@ flowchart LR
 **Checkpoint mechanism**: Stages can be flagged as checkpoints. When a checkpoint stage completes, the orchestrator pauses and presents intermediate results to the user with options to **continue**, **modify**, or **retry**. The user's response is processed via `_resume_pipeline()` which reconstitutes `StageContext` from the DB and continues execution.
 
 **Fallback**: If the planner fails to produce a valid plan, the orchestrator falls back to the simple tool-calling loop with a `_skip_complexity` flag to prevent infinite recursion.
+
+### 2.6.1 Knowledge Freshness Warning Injection
+
+Both flows (simple loop in §2.5 and multi-stage pipeline in §2.6) ask
+[`KnowledgeFreshnessService.check_staleness()`](../backend/app/services/knowledge_freshness_service.py)
+during context loading. If anything is stale — DB index age, code↔DB sync
+drift, or Git HEAD ahead of the indexed SHA when `code_graph_enabled` is on —
+the service returns a `staleness_warning` string.
+
+When non-empty, the orchestrator prepends a block to its system prompt:
+
+```
+KNOWLEDGE FRESHNESS WARNINGS:
+<staleness_warning content>
+```
+
+This is wired in [`OrchestratorAgent._run_tool_loop`](../backend/app/agents/orchestrator.py)
+(simple path) **and** `_run_complex_pipeline` (the planner path explicitly
+re-fetches the warning so it isn't lost when the simple-loop context is
+skipped). The block is purely informational — the LLM is told *why*
+answers may be out of date, but nothing is auto-blocked: the user can still
+get the best-effort answer and decide whether to re-index.
+
+Code-graph staleness specifically is evaluated only when
+`settings.code_graph_enabled` is true; with the flag off, the service
+collapses to its legacy DB-index + code-DB-sync signals.
 
 ### 2.7 Meta-Tools
 

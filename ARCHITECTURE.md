@@ -41,8 +41,8 @@ language questions into database queries with rich visualizations.
 | `agents/` | Multi-agent orchestration | `orchestrator.py`, `sql_agent.py`, `knowledge_agent.py`, `viz_agent.py`, `mcp_source_agent.py`, `query_planner.py`, `stage_executor.py`, `stage_validator.py` |
 | `llm/` | LLM provider abstraction | `router.py`, `base.py`, `openai_adapter.py`, `anthropic_adapter.py`, `openrouter_adapter.py` |
 | `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py`, `ssh_tunnel.py`, `mcp_client.py` |
-| `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py`, `learning_analyzer.py` |
-| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py`, `schedule_service.py`, `notification_service.py`, `insight_memory_service.py`, `action_engine.py`, ... |
+| `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py`, `learning_analyzer.py`, `pipeline_runner.py`, `db_index_pipeline.py`, `ast_parser.py`, `code_graph.py`, `bm25_index.py`, `hybrid_retriever.py`, `schema_retriever.py`, `code_db_sync_analyzer.py` |
+| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py`, `schedule_service.py`, `notification_service.py`, `insight_memory_service.py`, `action_engine.py`, `code_graph_service.py`, `knowledge_freshness_service.py`, `indexing_artifacts.py`, ... |
 | `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py`, `insight.py`, `schedule.py`, `notification.py`, `agent_learning.py`, ... |
 | `core/` | Cross-cutting concerns | `agent.py`, `context_budget.py`, `history_trimmer.py`, `insight_memory.py`, `validation_loop.py`, `workflow_tracker.py`, `health_monitor.py`, `rate_limit.py`, `audit.py` |
 | `pipelines/` | Long-running workflows | `mcp_pipeline.py` |
@@ -99,20 +99,33 @@ User types question
 User connects Git repo
   → POST /api/repos/{project_id}/index
     → RepoAnalyzer clones/pulls repo
-      → ProjectProfiler: high-level project scan
-      → EntityExtractor: function/class extraction (regex)
-      → ast_parse:      tree-sitter symbols/imports/calls (M1)
-      → graph_build:    NetworkX CodeGraph + persistence (M2)
-      → cross_file_analysis: name-substring `used_in_files`
-      → graph_db_bridge: code → DB lineage onto EntityInfo (M5)
-      → graph_clustering: Louvain communities + LLM labels (M6)
-      → LLM doc generation: enriched documentation
-      → Chunks stored in ChromaDB
-      → bm25_build:     code-aware lexical snapshot on disk (M3)
+      → project_profile:    high-level project scan
+      → ast_parse:          tree-sitter symbols/imports/calls (M1)
+      → graph_build:        NetworkX CodeGraph + persistence (M2)
+      → analyze_files:      EntityExtractor function/class extraction (regex)
+      → cross_file_analysis: entity map + name-substring `used_in_files`
+      → graph_db_bridge:    code → DB lineage onto EntityInfo (M5)
+      → graph_clustering:   Louvain communities + LLM labels (M6)
+      → generate_docs:      LLM doc generation: enriched documentation
+      → embed_and_store:    chunks stored in ChromaDB
+      → bm25_build:         code-aware lexical snapshot on disk (M3)
+      → record_index:       persists head SHA + checkpoint state
     → DbIndex pipeline (separate per-connection run):
       → table profiling + LLM enrichment
-      → schema_embed:   BM25 snapshot per connection (M4)
+      → schema_embed:       BM25 snapshot per connection (M4)
   → Available for hybrid RAG retrieval in chat
+
+  On resume after interruption, the runner reloads `state.code_graph` from
+  `code_graph_symbols` / `code_graph_edges` via
+  `CodeGraphService.load_graph()` before running M5 + M6 so the
+  graph-dependent steps never silently skip on partial failures.
+
+  When a project or connection is deleted, `services/indexing_artifacts.py`
+  performs best-effort, non-throwing cleanup of the on-disk BM25
+  snapshots (`data/bm25/{project_id}.pkl`,
+  `data/bm25/schema_{connection_id}.pkl`) and the
+  `project_{project_id}` ChromaDB collection (Postgres FK cascades handle
+  the structured rows).
 ```
 
 All M1–M6 stages are gated by feature flags (`code_graph_enabled`,

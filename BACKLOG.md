@@ -300,6 +300,63 @@
 
 ---
 
+## Sprint 8 — M1–M6 rollout completion (queued)
+
+**Status:** P0, blocked by 2-week per-flag soak (see [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md) §3 for canary criteria and §4 for the cleanup-PR inventory).
+
+| #  | Task | Status | Priority | Dependencies | Est. Complexity |
+|----|------|--------|----------|--------------|-----------------|
+| 8.1 | Flip `code_graph_enabled` default `False → True` after 2-week soak | `pending` | P0 | Soak v129+ on canary project | Low |
+| 8.2 | Flip `hybrid_retrieval_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.1 soak passes | Low |
+| 8.3 | Flip `schema_retrieval_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.2 soak passes | Low |
+| 8.4 | Flip `lineage_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.3 soak passes | Low |
+| 8.5 | Flip `clustering_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.4 soak passes | Low |
+| 8.6 | Cleanup PR: remove `if settings.<flag>:` gates per [docs/ROLLOUT_M1_M6.md §4.2](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | All five soaks passed | Medium |
+| 8.7 | Cleanup PR: remove prompt-builder kwargs (`hybrid_retrieval_enabled`, `lineage_enabled`, `schema_retrieval_enabled`, `has_code_clusters`) per [§4.3](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | 8.6 | Low |
+
+**Explicit non-removal list** (preserve these even after defaults flip):
+
+- `KnowledgeAgent._dense_only_search()` — BM25-missing safety net, not legacy. Stays unconditionally.
+- `LLM.stream()` and other `@abstractmethod` ABCs in `backend/app/llm/base.py` — standard ABC pattern, not stubs.
+- Per-request override of every flag via `extra` (operator escape hatch for projects that need different behavior).
+
+**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md) (`_pending_` for all five flags as of 1.12.3).
+
+---
+
+## Sprint 9 — Test coverage gaps (queued)
+
+**Status:** P2, drives the 72% → 80% backend coverage target documented in [docs/agent-backlog.md](docs/agent-backlog.md).
+
+| #  | Task | Status | Priority | Dependencies | Est. Complexity |
+|----|------|--------|----------|--------------|-----------------|
+| 9.1 | Full-pipeline E2E with a real fixture repo (clone → ast_parse → graph_build → analyze_files → embed_and_store → bm25_build) | `pending` | P2 | None | Medium |
+| 9.2 | Incremental indexing path: only changed files reprocessed (covers the `detect_changes` short-circuit + `cleanup_deleted` step) | `pending` | P2 | 9.1 | Medium |
+| 9.3 | Binary / large-file filtering at ingestion (current guards in `ast_parse_concurrency` + `ast_max_file_bytes` are untested at the pipeline level) | `pending` | P2 | None | Low |
+| 9.4 | Relevance-quality smoke tests for hybrid retriever (golden set; assert top-k recall ≥ baseline) | `pending` | P2 | None | Medium |
+| 9.5 | Component tests for `KnowledgeDocs.tsx` and `WorkflowProgress.tsx` (currently uncovered per [docs/MASTER_TEST_PLAN.md](docs/MASTER_TEST_PLAN.md)) | `pending` | P2 | None | Low |
+| 9.6 | Manual a11y matrix execution from [docs/agent-test-matrix.md](docs/agent-test-matrix.md) lines 64-73 (onboarding → mobile → error states) | `pending` | P2 | None | Low |
+| 9.7 | Address P2/P3 a11y gaps in [docs/agent-findings.md](docs/agent-findings.md): mobile notes drawer focus management, suggestion-chip aria-pressed, insight-card aria-expanded, layout-flash on resize | `pending` | P2 | 9.6 | Medium |
+| 9.8 | Raise CI backend-coverage threshold from 72% to 80% | `pending` | P2 | 9.1–9.4 close measurable gaps | Low |
+
+---
+
+## Sprint 10 — Documented "for now" debts (queued)
+
+**Status:** P2 product/architectural debt — each item is a comment in the codebase saying "this is a heuristic, replace later".
+
+| #  | Task | Status | Priority | Source comment | Est. Complexity |
+|----|------|--------|----------|----------------|-----------------|
+| 10.1 | Replace `orchestrator_pipeline_table_threshold` table-count routing heuristic with a planner-LLM step (router already returns `estimated_queries` + `needs_multiple_data_sources` — wire those into routing instead) | `pending` | P2 | [backend/app/config.py](backend/app/config.py) lines ~196-200 — "future work will route this through the planner LLM instead of table count alone" | Medium |
+| 10.2 | Optional Chroma extension for `SchemaRetriever` (currently BM25-only by design; documented as a future extension point) | `pending` | P3 | [backend/app/knowledge/schema_retriever.py](backend/app/knowledge/schema_retriever.py) lines 11-18 — "do not wire Chroma into this path for now … If we later want semantic recall" | Medium |
+| 10.3 | Incremental per-file code-graph updates (today the M2 step rebuilds the full graph on every index run; per-file deltas + edge surgery would cut indexing cost on large repos) | `pending` | P3 | Implied by the "full rebuild" shape of `CodeGraphBuilder.build` | High |
+| 10.4 | Multi-language receiver-type resolution for cross-class CALL edges (current tree-sitter walker resolves callee names but not the receiver's class in dynamic languages) | `pending` | P3 | M1 plan scope cut: "single-language receiver typing only" | High |
+| 10.5 | Multi-repo / monorepo cross-repo code graph (today the graph is scoped to a single project; teams with split frontend/backend repos can't see lineage across the seam) | `pending` | P3 | M2 plan scope cut: "single-repo only" | High |
+| 10.6 | Promote the `query_empty_result_retry` knob from `False`-by-default to an opt-in workflow (currently a feature flag with no UI) | `pending` | P3 | [backend/app/config.py:109](backend/app/config.py) | Low |
+| 10.7 | Decide on `data_gate_llm_semantics` (LLM vs keyword heuristic) — currently a `False`-by-default flag with no rollout plan | `pending` | P3 | [backend/app/config.py:315](backend/app/config.py) | Low |
+
+---
+
 ## Completed
 
 | # | Task | Completed Date | Notes |

@@ -42,9 +42,11 @@ to `code_graph_symbols` and `code_graph_edges`.
 **Pre-flip:**
 
 ```bash
-heroku config:get DATABASE_URL -a checkmydata-api | \
-  xargs -I{} psql {} -c "SELECT COUNT(*) FROM code_graph_symbols, COUNT(*) FROM code_graph_edges;"
-# Expect: 0 rows (or rows from prior tests). Migration is already applied.
+heroku pg:psql -a checkmydata-api -c \
+  "SELECT (SELECT COUNT(*) FROM code_graph_symbols) AS symbols,
+          (SELECT COUNT(*) FROM code_graph_edges)   AS edges;"
+# Expect: 0 / 0 on a clean cluster (or rows from prior tests).
+# The migration is already applied.
 ```
 
 **Flip:**
@@ -234,8 +236,8 @@ SQL agent should call `get_tables_in_cluster`.
 | `get_tables_in_cluster` tool invocations | > 0 / week after operator-led demo | 0 (LLM never picks the tool) |
 
 **Rollback:** flip flag off → `graph_clustering` pipeline step skips and
-the SQL agent's `has_clusters` flag drops the tool from the available
-list.
+the SQL agent's `has_code_clusters` flag drops the `get_tables_in_cluster`
+tool from the available list.
 
 ---
 
@@ -288,19 +290,22 @@ deletes the now-unreachable legacy branches. Below is the precise list.
 
 ### 4.2 Flag-gate removals (the actual cleanup)
 
-| File | Site | What collapses |
-|------|------|----------------|
-| `pipeline_runner.py:406` | `if settings.code_graph_enabled and state.repo_dir is not None:` | Drop the flag conjunct; still gated by `repo_dir is not None`. |
-| `pipeline_runner.py:548–551` | Pre-M5/M6 rehydrate guard | Drop flag conjuncts; keep the `state.code_graph is None` guard. |
-| `pipeline_runner.py:573` | `if settings.lineage_enabled and …` | Drop flag conjunct. |
-| `pipeline_runner.py:636` | `if settings.clustering_enabled …` | Drop flag conjunct. |
-| `pipeline_runner.py:956` | `if settings.hybrid_retrieval_enabled:` | Drop the whole `if`; bm25_build always runs. |
-| `db_index_pipeline.py:642` | `if _settings.schema_retrieval_enabled:` | Drop the `if`; schema_embed always runs. |
-| `sql_agent.py:1131` | `if settings.schema_retrieval_enabled:` | Drop the `if`; always call `_retrieve_tables_for_question`. |
-| `sql_agent.py:1887` | `if graph_callers and settings.lineage_enabled:` | Drop `settings.lineage_enabled` conjunct; keep `graph_callers` truthiness check. |
-| `knowledge_agent.py:262–270` | `if settings.hybrid_retrieval_enabled: … else: _dense_only_search(…)` | Drop the legacy `else` branch only; **keep** the `_dense_only_search` fallback at line 372 (it's the BM25-missing safety net, not legacy). |
-| `knowledge_agent.py:488` | `if graph_callers and settings.lineage_enabled:` | Drop the flag conjunct. |
-| `knowledge_freshness_service.py:114` | `if settings.code_graph_enabled:` | Drop the `if`; always evaluate code-graph freshness. |
+Use `grep -n` against each marker before editing — line numbers drift but
+the predicate text is stable.
+
+| File | Grep marker | What collapses |
+|------|-------------|----------------|
+| `backend/app/knowledge/pipeline_runner.py` | `grep -n "if settings.code_graph_enabled and state.repo_dir" backend/app/knowledge/pipeline_runner.py` | Drop the flag conjunct; still gated by `repo_dir is not None`. |
+| `backend/app/knowledge/pipeline_runner.py` | `grep -nB2 "state.code_graph is None" backend/app/knowledge/pipeline_runner.py` (pre-M5/M6 rehydrate guard) | Drop flag conjuncts; keep the `state.code_graph is None` guard. |
+| `backend/app/knowledge/pipeline_runner.py` | `grep -n "if settings.lineage_enabled" backend/app/knowledge/pipeline_runner.py` | Drop flag conjunct. |
+| `backend/app/knowledge/pipeline_runner.py` | `grep -n "if settings.clustering_enabled" backend/app/knowledge/pipeline_runner.py` | Drop flag conjunct. |
+| `backend/app/knowledge/pipeline_runner.py` | `grep -n "if settings.hybrid_retrieval_enabled" backend/app/knowledge/pipeline_runner.py` | Drop the whole `if`; bm25_build always runs. |
+| `backend/app/knowledge/db_index_pipeline.py` | `grep -n "_settings.schema_retrieval_enabled" backend/app/knowledge/db_index_pipeline.py` | Drop the `if`; schema_embed always runs. |
+| `backend/app/agents/sql_agent.py` | `grep -n "if settings.schema_retrieval_enabled" backend/app/agents/sql_agent.py` | Drop the `if`; always call `_retrieve_tables_for_question`. |
+| `backend/app/agents/sql_agent.py` | `grep -n "if graph_callers and settings.lineage_enabled" backend/app/agents/sql_agent.py` | Drop `settings.lineage_enabled` conjunct; keep `graph_callers` truthiness check. |
+| `backend/app/agents/knowledge_agent.py` | `grep -n "if settings.hybrid_retrieval_enabled" backend/app/agents/knowledge_agent.py` | Drop the legacy `else` branch only; **keep** the `_dense_only_search` fallback (BM25-missing safety net — find it with `grep -n "_dense_only_search" backend/app/agents/knowledge_agent.py`). |
+| `backend/app/agents/knowledge_agent.py` | `grep -n "if graph_callers and settings.lineage_enabled" backend/app/agents/knowledge_agent.py` | Drop the flag conjunct. |
+| `backend/app/services/knowledge_freshness_service.py` | `grep -n "if settings.code_graph_enabled" backend/app/services/knowledge_freshness_service.py` | Drop the `if`; always evaluate code-graph freshness. |
 
 ### 4.3 Prompt-builder kwargs to remove
 

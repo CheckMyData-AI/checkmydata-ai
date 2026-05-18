@@ -167,7 +167,7 @@ Comprehensive testing plan covering every module, expected behavior, and verific
 | `ChatService.get_history_as_messages` | Returns messages formatted for LLM context | ✅ | |
 | **Route: POST /api/chat/sessions** | Creates chat session | Int: ✅ | |
 | **Route: POST /api/chat/ask** | Synchronous ask (returns full response) | Int: ✅ | |
-| **Route: POST /api/chat/stream** | SSE streaming response with chunks | Int: ✅ | |
+| **Route: POST /api/chat/ask/stream** | SSE streaming response with chunks | Int: ✅ | |
 | **Route: POST /api/chat/feedback** | Records thumbs up/down | Int: ✅ | |
 | **Route: GET /api/chat/search** | Searches across messages | Int: ✅ | |
 | **Route: POST /api/chat/explain-sql** | SQL explanation | Int: ✅ | |
