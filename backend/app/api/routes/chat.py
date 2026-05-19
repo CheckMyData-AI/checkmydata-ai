@@ -671,8 +671,18 @@ async def submit_feedback(
             meta = _json.loads(msg.metadata_json)
             query = meta.get("query")
             question = meta.get("question", "")
+            exposed_ids_raw = meta.get("exposed_learning_ids") or []
+            exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
             session_row = msg.session
             connection_id = getattr(session_row, "connection_id", None) if session_row else None
+
+            if exposed_ids and connection_id:
+                async with async_session_factory() as learn_session:
+                    await contradict_exposed_learnings_on_negative_feedback(
+                        learn_session,
+                        connection_id=connection_id,
+                        exposed_learning_ids=exposed_ids,
+                    )
 
             if connection_id and query:
                 analyzer = LearningAnalyzer()
@@ -688,6 +698,56 @@ async def submit_feedback(
             logger.debug("Feedback-triggered learning extraction failed", exc_info=True)
 
     return {"ok": True, "message_id": body.message_id, "rating": msg.user_rating}
+
+
+async def contradict_exposed_learnings_on_negative_feedback(
+    session: AsyncSession,
+    *,
+    connection_id: str,
+    exposed_learning_ids: list[str],
+    cap: int = 3,
+) -> int:
+    """V4 — vision §7 #6: user feedback overrides prior learnings.
+
+    On thumbs-down for a query, contradict up to ``cap`` of the learnings
+    that were exposed to the LLM for that query, ranked by
+    ``confidence × max(1, times_applied)`` so the most-influential lessons
+    are contradicted first. The cap (default 3) prevents a single bad answer
+    from nuking an entire connection's learning corpus.
+
+    Returns the number of learnings actually contradicted.
+    """
+    if not exposed_learning_ids or not connection_id:
+        return 0
+
+    from sqlalchemy import select as _select
+
+    from app.models.agent_learning import AgentLearning as _AgentLearning
+    from app.services.agent_learning_service import AgentLearningService
+
+    try:
+        rows = await session.execute(
+            _select(_AgentLearning).where(
+                _AgentLearning.id.in_(exposed_learning_ids),
+                _AgentLearning.connection_id == connection_id,
+                _AgentLearning.is_active.is_(True),
+            )
+        )
+        candidates = list(rows.scalars().all())
+        candidates.sort(
+            key=lambda lrn: lrn.confidence * max(1, lrn.times_applied),
+            reverse=True,
+        )
+        svc = AgentLearningService()
+        contradicted = 0
+        for lrn in candidates[:cap]:
+            await svc.contradict_learning(session, lrn.id)
+            contradicted += 1
+        await session.commit()
+        return contradicted
+    except Exception:
+        logger.debug("V4 contradiction pass failed (non-critical)", exc_info=True)
+        return 0
 
 
 @router.get("/analytics/feedback/{project_id}")
@@ -995,6 +1055,7 @@ async def ask(
             "clarification_data": result.clarification_data,
             "sql_results": http_sql_results_payload,
             "continuation_context": result.continuation_context,
+            "exposed_learning_ids": result.exposed_learning_ids,
         },
         tool_calls_json=tool_calls_str,
     )
@@ -1359,6 +1420,7 @@ async def ask_stream(
                         "clarification_data": bg_result.clarification_data,
                         "sql_results": bg_sql_results,
                         "continuation_context": bg_result.continuation_context,
+                        "exposed_learning_ids": bg_result.exposed_learning_ids,
                     },
                     tool_calls_json=bg_tool_calls_str,
                 )
@@ -1684,6 +1746,7 @@ async def ask_stream(
                         "clarification_data": result.clarification_data,
                         "sql_results": stream_sql_results,
                         "continuation_context": result.continuation_context,
+                        "exposed_learning_ids": result.exposed_learning_ids,
                     },
                     tool_calls_json=tool_calls_str,
                 )
@@ -2055,6 +2118,7 @@ async def chat_websocket(
                             "clarification_data": result.clarification_data,
                             "sql_results": ws_sql_results,
                             "continuation_context": result.continuation_context,
+                            "exposed_learning_ids": result.exposed_learning_ids,
                         },
                         tool_calls_json=ws_tool_calls_str,
                     )

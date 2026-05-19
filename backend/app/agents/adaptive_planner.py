@@ -48,8 +48,14 @@ class AdaptivePlanner:
         project_overview: str | None = None,
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
+        staleness_warning: str | None = None,
     ) -> ExecutionPlan:
-        """Generate an LLM-based execution plan for the question."""
+        """Generate an LLM-based execution plan for the question.
+
+        ``staleness_warning`` (V3, vision §7 #7) — when non-empty, prepended to
+        the planner's system prompt so the LLM is aware that some context is
+        stale before producing a plan.
+        """
         plan = await self._llm_plan(
             question,
             table_map=table_map,
@@ -59,6 +65,7 @@ class AdaptivePlanner:
             project_overview=project_overview,
             current_datetime=current_datetime,
             recent_learnings=recent_learnings,
+            staleness_warning=staleness_warning,
         )
         if plan is None:
             logger.warning("LLM planning failed, falling back to quick data plan")
@@ -79,6 +86,7 @@ class AdaptivePlanner:
         preferred_provider: str | None = None,
         model: str | None = None,
         replan_history: list[dict[str, str]] | None = None,
+        staleness_warning: str | None = None,
     ) -> ExecutionPlan | None:
         """Generate a new plan after a stage failure, keeping completed stages."""
         completed_summaries = []
@@ -107,11 +115,17 @@ class AdaptivePlanner:
             replan_history=replan_history,
         )
 
+        system_content = PLANNER_SYSTEM_PROMPT
+        if staleness_warning:
+            system_content = (
+                f"KNOWLEDGE FRESHNESS WARNINGS:\n{staleness_warning}\n\n" + system_content
+            )
+
         for attempt in range(2):
             try:
                 resp = await self._llm.complete(
                     messages=[
-                        Message(role="system", content=PLANNER_SYSTEM_PROMPT),
+                        Message(role="system", content=system_content),
                         Message(role="user", content=prompt),
                     ],
                     tools=[_CREATE_PLAN_TOOL],  # type: ignore[list-item]
@@ -192,6 +206,7 @@ class AdaptivePlanner:
         project_overview: str | None = None,
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
+        staleness_warning: str | None = None,
     ) -> ExecutionPlan | None:
         for attempt in range(2):
             raw = await self._call_planner_llm(
@@ -203,6 +218,7 @@ class AdaptivePlanner:
                 project_overview=project_overview,
                 current_datetime=current_datetime,
                 recent_learnings=recent_learnings,
+                staleness_warning=staleness_warning,
             )
             if raw is None:
                 continue
@@ -235,9 +251,15 @@ class AdaptivePlanner:
         project_overview: str | None = None,
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
+        staleness_warning: str | None = None,
     ) -> dict[str, Any] | None:
+        system_content = PLANNER_SYSTEM_PROMPT
+        if staleness_warning:
+            system_content = (
+                f"KNOWLEDGE FRESHNESS WARNINGS:\n{staleness_warning}\n\n" + system_content
+            )
         messages = [
-            Message(role="system", content=PLANNER_SYSTEM_PROMPT),
+            Message(role="system", content=system_content),
             Message(
                 role="user",
                 content=build_planner_user_prompt(

@@ -86,6 +86,7 @@ class StageExecutor:
         self._validator = validator or StageValidator()
         self._data_gate = data_gate or DataGate()
         self._mcp_source = mcp_source_agent
+        self._staleness_warning: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -98,6 +99,7 @@ class StageExecutor:
         *,
         resume_from: int = 0,
         stage_ctx: StageContext | None = None,
+        staleness_warning: str | None = None,
     ) -> _StageExecutorResult:
         """Run stages topologically — parallel where dependencies allow.
 
@@ -107,6 +109,10 @@ class StageExecutor:
         ``settings.pipeline_max_parallel_stages``). The first failure in a
         batch short-circuits the pipeline. Checkpoints pause execution after
         the batch in which they appear completes.
+
+        ``staleness_warning`` (V3, vision §7 #7) — when non-empty, prepended to
+        each stage's enriched-question and to the synthesis system prompt so
+        every LLM-touching surface in the complex path is freshness-aware.
         """
         import asyncio as _asyncio
 
@@ -114,6 +120,8 @@ class StageExecutor:
 
         if stage_ctx is None:
             stage_ctx = StageContext(plan=plan, pipeline_run_id="")
+
+        self._staleness_warning = staleness_warning
 
         await self._emit_plan(wf_id, plan)
 
@@ -425,6 +433,9 @@ class StageExecutor:
         error_context: str | None = None,
     ) -> str:
         parts: list[str] = []
+
+        if self._staleness_warning:
+            parts.append(f"KNOWLEDGE FRESHNESS WARNINGS:\n{self._staleness_warning}")
 
         prev_context = stage_ctx.build_context_for_stage(stage.stage_id)
         if prev_context:
@@ -767,15 +778,18 @@ class StageExecutor:
             fb_text = fb.get("feedback_text", "")
             parts.append(f"User feedback (stage {fb_stage}): {fb_text}")
 
+        synthesis_system = (
+            "You are a data analyst. Synthesise the stage results below into "
+            "a clear, complete answer. Include a summary table if the user "
+            "requested one. Provide analytical commentary where appropriate."
+        )
+        if self._staleness_warning:
+            synthesis_system = (
+                f"KNOWLEDGE FRESHNESS WARNINGS:\n{self._staleness_warning}\n\n" + synthesis_system
+            )
+
         messages = [
-            Message(
-                role="system",
-                content=(
-                    "You are a data analyst. Synthesise the stage results below into "
-                    "a clear, complete answer. Include a summary table if the user "
-                    "requested one. Provide analytical commentary where appropriate."
-                ),
-            ),
+            Message(role="system", content=synthesis_system),
             Message(role="user", content="\n".join(parts)),
         ]
         try:

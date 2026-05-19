@@ -4,6 +4,146 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.13.0] - 2026-05-19
+
+### Vision Invariants & Correctness Restoration
+
+This release closes four vision invariant violations and six critical
+correctness bugs identified during the post-1.12.x cross-subsystem audit.
+Every change is paired with focused unit tests; full suite remains green
+(3,648 backend / 400 frontend, up from 3,599 / 400 baseline). The release
+is single-feature in spirit: it makes the system actually behave the way
+vision.md, SYSTEM_ARCHITECTURE.md, and the README have been claiming it
+behaves.
+
+### Vision invariants restored
+
+- **V1 — Per-connection learning isolation by default.** A lesson learned
+  on connection A is no longer silently injected into prompts for
+  connection B. `AgentLearningService.compile_prompt()` now gates
+  `_get_cross_connection_learnings()` and `promote_global_patterns()`
+  behind the new `CROSS_CONNECTION_LEARNINGS_ENABLED` flag (default
+  `False`). The old behavior, where two unrelated databases in the same
+  project could poison each other's learnings, is now opt-in for
+  homogeneous-schema customers. (`backend/app/services/agent_learning_service.py`,
+  `backend/app/config.py`, `backend/.env.example`,
+  `backend/tests/unit/test_agent_learning_service.py::TestCompilePromptCrossConnection`)
+- **V2 — Continuous learning on every outcome, not just every retry.** The
+  `len(attempts) < 2` gate that suppressed learning extraction on
+  first-shot successes and first-shot failures is removed from both
+  `SQLAgent._extract_learnings` and `ToolExecutor._extract_learnings`. The
+  `LearningAnalyzer` cooldown is reduced from 1 h to 5 min, a lightweight
+  heuristic `_extract_first_shot_success_signal` captures
+  "what worked the first time" patterns (e.g., soft-delete filters, key
+  joins), and lesson persistence is unified through `_persist_lessons`.
+  The system now learns from every attempt, not only from messy ones.
+  (`backend/app/agents/sql_agent.py`, `backend/app/core/tool_executor.py`,
+  `backend/app/knowledge/learning_analyzer.py`,
+  `backend/tests/unit/test_learning_analyzer_extended.py`,
+  `backend/tests/unit/test_sql_agent.py`)
+- **V3 — Staleness warning threaded through the complex pipeline.** The
+  freshness banner used to die at the orchestrator boundary: planner LLM
+  calls and stage-executor sub-agents never saw it. Both
+  `AdaptivePlanner._llm_plan` / `replan` and `StageExecutor.execute` now
+  accept a `staleness_warning` argument and prepend it to their own
+  system / stage prompts, so every LLM call in the complex pipeline —
+  initial plan, re-plan, every stage, final synthesis — sees the
+  freshness block, not just `_run_tool_loop`. (`backend/app/agents/orchestrator.py`,
+  `backend/app/agents/adaptive_planner.py`,
+  `backend/app/agents/stage_executor.py`,
+  `backend/tests/unit/test_adaptive_planner_staleness.py`,
+  `backend/tests/unit/test_stage_executor.py::TestStalenessInjection`)
+- **V4 — Negative feedback overrides prior learnings.** Assistant
+  responses now record which learnings were exposed in their system
+  prompt via `AgentResponse.exposed_learning_ids`, the chat route writes
+  the list into message metadata on both the synchronous and SSE paths,
+  and the `/feedback` endpoint reads it back. On a thumbs-down, the new
+  helper `contradict_exposed_learnings_on_negative_feedback` calls
+  `contradict_learning(...)` on each ID (capped to avoid cascades), so
+  the very next turn no longer trusts the lessons that produced the bad
+  answer. (`backend/app/agents/orchestrator.py`,
+  `backend/app/core/agent.py`, `backend/app/api/routes/chat.py`,
+  `backend/tests/unit/test_negative_feedback_contradiction.py`)
+
+### Critical correctness fixes
+
+- **C1 — Git rename handling.** `GitTracker.get_changed_files` switched
+  from `R=True` to `M=True` on `repo.commit(...).diff()` so renames are
+  detected with the correct `--find-renames` semantics; old paths are
+  classified as `deleted` and new paths as `changed`, fixing a class of
+  silent drift between the indexed graph and the working tree.
+  (`backend/app/knowledge/git_tracker.py`,
+  `backend/tests/unit/test_git_tracker.py`)
+- **C2 — `generate_docs` resilience.** Per-doc LLM failures used to
+  abort the indexing pipeline. `pipeline_runner.generate_docs` now uses
+  `asyncio.gather(..., return_exceptions=True)` with per-doc retry, and
+  only fails the whole step when the failure ratio exceeds the new
+  `GENERATE_DOCS_MAX_FAILURE_RATIO` setting (default `0.3`). One bad
+  file no longer takes the whole index down. (`backend/app/knowledge/pipeline_runner.py`,
+  `backend/app/config.py`, `backend/.env.example`,
+  `backend/tests/unit/test_generate_docs_resilience.py`)
+- **C3 — Chroma failure policy.** The vector-store health check used to
+  treat "Chroma collection is empty" and "Chroma is unreachable"
+  identically, causing partial re-indexes on transient network blips.
+  The check now distinguishes the two: an empty-but-reachable collection
+  forces a full re-index, while an unreachable Chroma warns and
+  preserves the previous `last_sha` so the next pipeline run resumes
+  cleanly when the service comes back. (`backend/app/knowledge/pipeline_runner.py`,
+  `backend/tests/unit/test_pipeline_chroma_failure_policy.py`)
+- **C4 — `DataGate.fail()` path.** Out-of-range percentages and dates
+  were classified as warnings, so plainly impossible numbers reached the
+  final synthesis. `_check_value_ranges` now calls `outcome.fail()` on
+  hard violations when `DATA_GATE_HARD_CHECKS_ENABLED` (default `True`)
+  is on, blocking obviously wrong results before they're rendered.
+  (`backend/app/agents/data_gate.py`, `backend/app/config.py`,
+  `backend/.env.example`, `backend/tests/unit/test_data_gate.py`)
+- **C5 — Read-only `get_agent_learnings`.** Loading learnings for a
+  prompt used to mutate `times_applied`, conflating "the LLM saw it"
+  with "the LLM used it." A new `times_exposed` column (Alembic
+  migration `f0a1b2c3d4e5_add_times_exposed_to_agent_learning`) tracks
+  exposure separately, `SQLAgent._track_exposed_learnings` calls the new
+  `expose_learning` service method, and the exposed IDs are stashed into
+  `ctx.extra["exposed_learning_ids"]` for V4 to pick up. `times_applied`
+  is now reserved for confirmed application by the learning analyzer.
+  (`backend/app/models/agent_learning.py`,
+  `backend/app/services/agent_learning_service.py`,
+  `backend/app/agents/sql_agent.py`,
+  `backend/app/alembic/versions/f0a1b2c3d4e5_add_times_exposed_to_agent_learning.py`)
+- **C6 — Insight expiry + decay actually run.** `InsightRecord.expires_at`
+  and the `decay_stale_insights` job existed but nothing called them.
+  The new `_periodic_insight_maintenance` task runs on every backup-cron
+  tick (~24 h) and once on startup, calling `expire_old_insights` and
+  `decay_stale_insights`. Insight TTL+confirmation semantics now
+  actually happen. (`backend/app/main.py`,
+  `backend/tests/unit/test_periodic_insight_maintenance.py`)
+
+### Config additions
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CROSS_CONNECTION_LEARNINGS_ENABLED` | `False` | Opt-in for cross-connection learning transfer + global pattern promotion (V1). |
+| `GENERATE_DOCS_MAX_FAILURE_RATIO` | `0.3` | Per-doc LLM failure ratio at which `generate_docs` aborts (C2). |
+| `DATA_GATE_HARD_CHECKS_ENABLED` | `True` | When true, out-of-range percent/date checks call `outcome.fail()` instead of `warn()` (C4). |
+
+### Schema
+
+- `agent_learnings.times_exposed INTEGER NOT NULL DEFAULT 0` — added via
+  Alembic revision `f0a1b2c3d4e5`.
+
+### Tests
+
+- **Backend**: 3,648 passing (up from 3,599 baseline). 49 new tests added
+  across `test_adaptive_planner_staleness.py`,
+  `test_stage_executor.py::TestStalenessInjection`,
+  `test_negative_feedback_contradiction.py`,
+  `test_generate_docs_resilience.py`,
+  `test_pipeline_chroma_failure_policy.py`, `test_data_gate.py`,
+  `test_periodic_insight_maintenance.py`, plus updates to
+  `test_agent_learning_service.py`, `test_sql_agent.py`,
+  `test_learning_analyzer_extended.py`, `test_git_tracker.py`,
+  `test_orchestrator.py`.
+- **Frontend**: 400 passing (unchanged — release is backend-only).
+
 ## [1.12.3] - 2026-05-18
 
 ### Changed — Documentation actualization (no code, no schema, no flag flips)

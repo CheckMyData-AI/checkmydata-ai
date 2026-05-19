@@ -261,18 +261,49 @@ class DataGate:
                     continue
                 if kind == "percent" and isinstance(val, (int, float)):
                     if val < pct_min or val > pct_max:
-                        outcome.warn(
-                            f"Column '{col_name}' has value {val} "
-                            "which looks out of range for a percentage.",
-                        )
+                        # C4 (v1.13.0): out-of-range percent is unambiguously
+                        # wrong data — fail() so the stage retries with a
+                        # different approach instead of returning bogus values.
+                        if settings.data_gate_hard_checks_enabled:
+                            outcome.fail(
+                                f"Column '{col_name}' has value {val} "
+                                "which is out of range for a percentage "
+                                f"({pct_min}..{pct_max}).",
+                                suggestion=(
+                                    f"Cast '{col_name}' to a ratio (0..1) or "
+                                    "filter the source so impossible values "
+                                    "don't appear."
+                                ),
+                            )
+                        else:
+                            outcome.warn(
+                                f"Column '{col_name}' has value {val} "
+                                "which looks out of range for a percentage.",
+                            )
                         break
                 elif kind == "date" and isinstance(val, str):
                     try:
                         dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
                         if dt.year < year_min or dt.year > year_max:
-                            outcome.warn(
-                                f"Column '{col_name}' has suspicious date: {val}",
-                            )
+                            # C4 (v1.13.0): wildly out-of-range dates
+                            # (year<1900 or >2100 by default) almost always
+                            # indicate a unit error (epoch seconds vs ms) or
+                            # a string parse glitch — fail() forces a retry.
+                            if settings.data_gate_hard_checks_enabled:
+                                outcome.fail(
+                                    f"Column '{col_name}' has suspicious "
+                                    f"date {val}: year {dt.year} outside "
+                                    f"[{year_min}, {year_max}].",
+                                    suggestion=(
+                                        "Confirm the column is actually a "
+                                        "date and not epoch seconds/ms. "
+                                        "Adjust the SELECT cast accordingly."
+                                    ),
+                                )
+                            else:
+                                outcome.warn(
+                                    f"Column '{col_name}' has suspicious date: {val}",
+                                )
                             break
                     except (ValueError, TypeError):
                         pass

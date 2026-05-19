@@ -146,8 +146,18 @@ class LearningAnalyzer:
 
         from app.config import settings as _settings
 
-        mode = (_settings.learning_analyzer_mode or "hybrid").lower()
+        # V2 (vision §5 #2): first-shot successes were previously discarded.
+        # Capture them as a lightweight signal (no LLM call) so the system
+        # accumulates "what worked" alongside "what failed". Heuristic-only —
+        # if the heuristics surface nothing, we accept the single-attempt
+        # success without firing an LLM call to save cost.
         lessons: list[ExtractedLesson] = []
+
+        if success and len(attempts) == 1:
+            lessons = self._extract_first_shot_success_signal(attempts[0], question)
+            return await self._persist_lessons(session, connection_id, lessons)
+
+        mode = (_settings.learning_analyzer_mode or "hybrid").lower()
 
         if mode == "llm_first":
             lessons = await self._llm_extract(connection_id, attempts)
@@ -158,6 +168,14 @@ class LearningAnalyzer:
             if mode == "hybrid" and not lessons and len(attempts) >= 2:
                 lessons = await self._llm_extract(connection_id, attempts)
 
+        return await self._persist_lessons(session, connection_id, lessons)
+
+    async def _persist_lessons(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        lessons: list[ExtractedLesson],
+    ) -> list[ExtractedLesson]:
         if not lessons:
             return []
 
@@ -191,6 +209,58 @@ class LearningAnalyzer:
             logger.info("Extracted %d learnings for connection %s", len(stored), connection_id)
 
         return stored
+
+    def _extract_first_shot_success_signal(
+        self,
+        attempt: QueryAttempt,
+        question: str,
+    ) -> list[ExtractedLesson]:
+        """V2 (vision §5 #2) — lightweight heuristic capture of what worked
+        on a single-attempt successful query.
+
+        Records low-confidence signals (0.4) tagged ``first_shot_signal``
+        category so they decay quickly unless confirmed by repeated success.
+        No LLM call. Looks for verifiable, narrow patterns: soft-delete
+        filters, ``LIMIT`` clauses, and table usage."""
+        query = (attempt.query or "").strip()
+        if not query:
+            return []
+
+        lessons: list[ExtractedLesson] = []
+        tables = _extract_tables(query)
+        primary = tables[0] if tables and _is_valid_subject(tables[0]) else None
+        if not primary:
+            return []
+
+        q_lower = query.lower()
+        if "deleted_at" in q_lower and "is null" in q_lower:
+            lessons.append(
+                ExtractedLesson(
+                    category="query_pattern",
+                    subject=primary,
+                    lesson=(
+                        f"Filtering `{primary}` by `deleted_at IS NULL` returned "
+                        "non-empty results on first attempt — likely the correct "
+                        "soft-delete predicate for this table."
+                    ),
+                    confidence=0.4,
+                    source_query=query,
+                )
+            )
+        if " limit " in q_lower or q_lower.rstrip(";").endswith(" limit 1"):
+            lessons.append(
+                ExtractedLesson(
+                    category="query_pattern",
+                    subject=primary,
+                    lesson=(
+                        f"A LIMIT clause on `{primary}` produced results on "
+                        "first attempt — pagination is a viable strategy here."
+                    ),
+                    confidence=0.4,
+                    source_query=query,
+                )
+            )
+        return lessons
 
     async def analyze_negative_feedback(
         self,
@@ -625,12 +695,14 @@ Respond with ONLY the JSON array, no markdown fences, no explanation.
 class LLMAnalyzer:
     """Batch LLM-based analysis for complex cross-query pattern extraction.
 
-    Triggered less frequently than heuristic extractors to control cost:
-    - Max one analysis per connection per hour
-    - Only when there are 3+ query attempts in a session, or on negative feedback
+    Triggered with a per-connection cooldown to control cost. V2 (vision §5 #2)
+    lowered the cooldown from 1h to 5min because extraction now fires on every
+    outcome (including single-attempt failures) — 1h was too coarse and meant
+    intra-session signal was being discarded. The bound stays low enough to
+    catch repeated patterns within a single user session without runaway cost.
     """
 
-    COOLDOWN_SECONDS = 3600
+    COOLDOWN_SECONDS = 300
 
     def __init__(self, router: LLMRouter | None = None) -> None:
         self._router = router

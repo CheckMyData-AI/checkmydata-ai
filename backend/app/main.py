@@ -89,6 +89,7 @@ async def lifespan(app: FastAPI):
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
     await _decay_stale_learnings()
+    await _periodic_insight_maintenance()
     await _cleanup_pipeline_runs()
 
     from app.core.cache import shared_cache
@@ -480,6 +481,31 @@ async def _decay_stale_learnings() -> None:
         logger.warning("Failed to decay stale learnings at startup", exc_info=True)
 
 
+async def _periodic_insight_maintenance() -> None:
+    """C6 (v1.13.0) — daily insight maintenance: expire insights past their
+    ``expires_at`` and decay confidence on stale unverified insights.
+
+    Vision §5 #4: insights live with TTL+confirmation semantics; this loop
+    is what makes those semantics actually happen. Without it, ``expires_at``
+    is just a timestamp nobody reads."""
+    try:
+        from app.core.insight_memory import InsightMemoryService
+
+        mem = InsightMemoryService()
+        async with async_session_factory() as session:
+            expired = await mem.expire_old_insights(session)
+            decayed = await mem.decay_stale_insights(session)
+            await session.commit()
+            if expired or decayed:
+                logger.info(
+                    "Cron: insight maintenance — expired=%d decayed=%d",
+                    expired,
+                    decayed,
+                )
+    except Exception:
+        logger.warning("Periodic insight maintenance failed", exc_info=True)
+
+
 async def _periodic_learning_decay() -> None:
     """Daily decay of stale learnings and unverified session notes."""
     try:
@@ -736,6 +762,7 @@ async def _backup_cron_loop() -> None:
                 )
                 await session.commit()
             await _periodic_learning_decay()
+            await _periodic_insight_maintenance()
         except asyncio.CancelledError:
             break
         except Exception:

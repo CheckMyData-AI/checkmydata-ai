@@ -65,7 +65,10 @@ class TestAnalyzeFullPipeline:
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_analyze_single_attempt_no_lessons(self):
+    async def test_analyze_single_attempt_success_no_patterns(self):
+        """V2 (vision §5 #2): single-attempt success WITHOUT matching
+        heuristic patterns still returns [] but goes through the lightweight
+        first-shot signal path (no LLM call)."""
         attempts = [
             QueryAttempt(
                 attempt_number=1,
@@ -84,6 +87,76 @@ class TestAnalyzeFullPipeline:
             success=True,
         )
         assert lessons == []
+
+    @pytest.mark.asyncio
+    async def test_analyze_first_shot_success_with_soft_delete_pattern(self):
+        """V2 (vision §5 #2): first-shot success with `deleted_at IS NULL`
+        produces a low-confidence signal lesson, no LLM call."""
+        attempts = [
+            QueryAttempt(
+                attempt_number=1,
+                query="SELECT * FROM users WHERE deleted_at IS NULL LIMIT 10",
+                explanation="",
+                error=None,
+                results=_mock_result(),
+            ),
+        ]
+
+        mock_svc = MagicMock()
+        mock_svc.create_learning = AsyncMock(return_value=MagicMock())
+        session = AsyncMock()
+
+        with patch(
+            "app.services.agent_learning_service.AgentLearningService",
+            return_value=mock_svc,
+        ):
+            analyzer = LearningAnalyzer()
+            lessons = await analyzer.analyze(
+                session=session,
+                connection_id="conn-1",
+                question="active users",
+                attempts=attempts,
+                success=True,
+            )
+
+        # At least one signal lesson; all are first_shot signal-level confidence
+        assert len(lessons) >= 1
+        assert all(lesson.confidence == 0.4 for lesson in lessons)
+        assert mock_svc.create_learning.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_analyze_first_shot_failure_runs_extractors(self):
+        """V2 (vision §5 #2): first-shot failure (single attempt with error)
+        used to be silently discarded by the orchestrator/sql_agent ≥2-attempt
+        gate. With V2, the analyzer's full extractor path is invoked. This
+        test confirms the LLM extractor is called (the previous gate would
+        have returned early before this call)."""
+        attempts = [
+            QueryAttempt(
+                attempt_number=1,
+                query="SELECT * FROM nonexistent_table",
+                explanation="",
+                error=QueryError(
+                    error_type=QueryErrorType.TABLE_NOT_FOUND,
+                    message="Table not found",
+                    raw_error="",
+                ),
+            ),
+        ]
+
+        analyzer = LearningAnalyzer()
+        with patch.object(
+            analyzer, "_llm_extract", new_callable=AsyncMock, return_value=[]
+        ) as mock_llm:
+            await analyzer.analyze(
+                session=AsyncMock(),
+                connection_id="conn-1",
+                question="test",
+                attempts=attempts,
+                success=False,
+            )
+
+        mock_llm.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_analyze_all_failed_attempts(self):

@@ -371,6 +371,13 @@
 | 8 | Semantic Layer Auto-Build | 2026-03-22 | SemanticLayerService, MetricCatalogPanel |
 | 9 | Query-less Exploration | 2026-03-22 | ExplorationEngine, ExplorationReport |
 | 10 | Temporal Intelligence Engine | 2026-03-22 | TemporalIntelligenceService, TemporalReport |
+| 11 | Vision Invariants restored (v1.13.0) | 2026-05-19 | V1 per-connection learning isolation, V2 continuous learning, V3 staleness in complex pipeline, V4 negative feedback contradiction |
+| 12 | Correctness Restoration (v1.13.0) | 2026-05-19 | C1 git renames, C2 generate_docs resilience, C3 chroma failure policy, C4 DataGate fail(), C5 read-only get_agent_learnings (times_exposed), C6 insight expiry+decay cron |
+
+> **Queued (Sprints 13-15)** remain as documented in §"Backlog Queue —
+> Ideas" and Sprints 8-10 above: M1-M6 rollout completion (8), test
+> coverage gaps (9), and "for now" architectural debts (10). v1.13.0 did
+> not touch any of those.
 
 ---
 

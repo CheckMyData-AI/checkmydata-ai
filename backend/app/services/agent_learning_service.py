@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select, update
 
+from app.config import settings
 from app.models.agent_learning import AgentLearning, AgentLearningSummary, _lesson_hash
 from app.services.text_similarity import semantic_best_match, semantic_similarity
 
@@ -321,10 +322,31 @@ class AgentLearningService:
         session: AsyncSession,
         learning_id: str,
     ) -> None:
+        """Bump ``times_applied`` — fires only when the LLM provably uses a
+        learning (e.g. after successful validation). Distinct from
+        :meth:`expose_learning`, which records mere exposure. Together they
+        let the decay-score (V1.13.0 C5) reflect actual influence on outputs
+        rather than raw read traffic."""
         await session.execute(
             update(AgentLearning)
             .where(AgentLearning.id == learning_id)
             .values(times_applied=AgentLearning.times_applied + 1)
+        )
+
+    async def expose_learning(
+        self,
+        session: AsyncSession,
+        learning_id: str,
+    ) -> None:
+        """Bump ``times_exposed`` — fires whenever the SQL agent reads this
+        learning into its prompt context, regardless of whether the LLM
+        actually cites it. C5, v1.13.0: separates read-side traffic from
+        citation so ``times_applied`` (and the decay score derived from it)
+        remains a meaningful signal."""
+        await session.execute(
+            update(AgentLearning)
+            .where(AgentLearning.id == learning_id)
+            .values(times_exposed=AgentLearning.times_exposed + 1)
         )
 
     async def deactivate_learning(
@@ -666,25 +688,26 @@ class AgentLearningService:
 
         existing_hashes = {lrn.lesson_hash for lrn in learnings}
 
-        cross_section = await self._get_cross_connection_learnings(
-            session,
-            connection_id,
-            existing_hashes,
-        )
-        if cross_section:
-            parts.append("### From Similar Connections (same project)")
-            parts.extend(cross_section)
-            parts.append("")
+        if settings.cross_connection_learnings_enabled:
+            cross_section = await self._get_cross_connection_learnings(
+                session,
+                connection_id,
+                existing_hashes,
+            )
+            if cross_section:
+                parts.append("### From Similar Connections (same project)")
+                parts.extend(cross_section)
+                parts.append("")
 
-        global_section = await self.promote_global_patterns(
-            session,
-            connection_id,
-            exclude_hashes=existing_hashes,
-        )
-        if global_section:
-            parts.append("### Global Patterns (observed across multiple databases)")
-            parts.extend(global_section)
-            parts.append("")
+            global_section = await self.promote_global_patterns(
+                session,
+                connection_id,
+                exclude_hashes=existing_hashes,
+            )
+            if global_section:
+                parts.append("### Global Patterns (observed across multiple databases)")
+                parts.extend(global_section)
+                parts.append("")
 
         prompt = "\n".join(parts)
 

@@ -862,10 +862,19 @@ class ToolExecutor:
         success: bool,
         question: str,
     ) -> None:
-        """Fire-and-forget learning extraction after validation loop."""
+        """Fire-and-forget learning extraction after validation loop.
+
+        V2 (vision §5 #2): every outcome enriches the system. We no longer
+        require ``len(attempts) >= 2``; single-attempt failures are the
+        highest-signal cases for a brand-new connection and were being
+        silently discarded by the old gate. ``LearningAnalyzer.analyze``
+        branches on ``success`` and handles both single-attempt failures
+        (LLM-based extraction) and first-shot successes (lightweight signal
+        record, no LLM call).
+        """
         if not self._connection_config or not self._connection_config.connection_id:
             return
-        if not attempts or len(attempts) < 2:
+        if not attempts:
             return
 
         try:

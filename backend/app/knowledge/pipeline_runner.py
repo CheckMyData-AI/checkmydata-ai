@@ -271,7 +271,19 @@ class IndexingPipelineRunner:
                     f"{len(state.changed_files)} files remaining",
                 )
 
-        # --- Guard: force full re-index when vector store lost data ---
+        # --- Guard: vector store health (C3, v1.13.0) ---
+        # Three distinct cases:
+        #   1. Chroma reachable, collection legitimately empty AND no docs in
+        #      DB — normal initial state, do nothing.
+        #   2. Chroma reachable, collection empty BUT docs in DB — data
+        #      corruption (Chroma volume lost). Emit a ``repair_embeddings``
+        #      sub-step and force a full re-index so the embeddings are
+        #      rebuilt from the existing KnowledgeDoc rows.
+        #   3. Chroma unreachable — do NOT force_full and do NOT null
+        #      ``last_sha``. We surface a warning so an operator sees it, but
+        #      the indexing run continues with what we have. Force-re-indexing
+        #      against an unreachable embedding backend would only burn LLM
+        #      calls and produce no vectors.
         if (
             not force_full
             and state.last_sha is not None
@@ -280,24 +292,38 @@ class IndexingPipelineRunner:
         ):
             try:
                 col = self._vector_store.get_or_create_collection(project_id)
-                if col.count() == 0:
-                    existing_docs = await self._doc_store.get_docs_for_project(db, project_id)
-                    if existing_docs:
-                        logger.warning(
-                            "Vector store empty but %d docs exist in DB — forcing full re-index",
-                            len(existing_docs),
-                        )
-                        await tracker.emit(
-                            wf_id,
-                            "detect_changes",
-                            "started",
-                            f"Vector store empty but {len(existing_docs)} docs in DB, "
-                            "forcing full re-index",
-                        )
-                        force_full = True
+                col_count = col.count()
             except Exception:
-                logger.warning("Failed to check vector store, forcing full re-index", exc_info=True)
-                force_full = True
+                logger.warning(
+                    "Vector store unreachable — preserving last_sha and skipping "
+                    "embedding-health guard (C3 v1.13.0)",
+                    exc_info=True,
+                )
+                await tracker.emit(
+                    wf_id,
+                    "detect_changes",
+                    "warning",
+                    "Vector store unreachable; preserving last_sha and skipping "
+                    "embedding-health guard. Re-run indexing once Chroma is back online.",
+                )
+                col_count = None  # unknown — do nothing
+
+            if col_count == 0:
+                existing_docs = await self._doc_store.get_docs_for_project(db, project_id)
+                if existing_docs:
+                    logger.warning(
+                        "Vector store empty but %d docs exist in DB — "
+                        "running repair_embeddings (C3 v1.13.0)",
+                        len(existing_docs),
+                    )
+                    await tracker.emit(
+                        wf_id,
+                        "repair_embeddings",
+                        "started",
+                        f"Vector store empty but {len(existing_docs)} docs in DB. "
+                        "Forcing a full re-index to rebuild embeddings.",
+                    )
+                    force_full = True
 
         # --- Early exit: nothing changed since last index ---
         if (
@@ -692,9 +718,7 @@ class IndexingPipelineRunner:
                             project=project_id[:8],
                         )
                     except Exception:
-                        logger.debug(
-                            "metrics emit failed for clustering", exc_info=True
-                        )
+                        logger.debug("metrics emit failed for clustering", exc_info=True)
                     await tracker.emit(
                         wf_id,
                         "graph_clustering",
@@ -702,9 +726,7 @@ class IndexingPipelineRunner:
                         f"{cluster_count} clusters",
                     )
                 except Exception:
-                    logger.exception(
-                        "graph_clustering failed for project %s", project_id[:8]
-                    )
+                    logger.exception("graph_clustering failed for project %s", project_id[:8])
                     await tracker.emit(
                         wf_id,
                         "graph_clustering",
@@ -862,8 +884,15 @@ class IndexingPipelineRunner:
             )
 
             # Phase 2: run LLM calls in parallel batches, then persist sequentially
+            # C2 (v1.13.0): per-doc failures must NOT abort the entire batch.
+            # ``return_exceptions=True`` lets a single 5xx affect one doc only;
+            # the rest of the batch persists. Failed docs are retried once
+            # (capped) at the end of the loop, and if the cumulative failure
+            # ratio exceeds ``settings.generate_docs_max_failure_ratio`` the
+            # whole step fails so an operator sees the symptom.
             total_llm_tasks = len(llm_tasks)
             llm_batch_size = 5
+            failed_doc_tasks: list[tuple[int, Any, str | None, str | None, str]] = []
             for batch_start in range(0, len(llm_tasks), llm_batch_size):
                 batch = llm_tasks[batch_start : batch_start + llm_batch_size]
 
@@ -879,10 +908,32 @@ class IndexingPipelineRunner:
                     *[
                         _generate_one_doc(edoc, existing_doc_content, prev_content)
                         for _, edoc, existing_doc_content, prev_content in batch
-                    ]
+                    ],
+                    return_exceptions=True,
                 )
 
-                for (_, edoc, _, _), generated_content in zip(batch, generated_results):
+                for (i_task, edoc, existing_doc_content, prev_content), generated in zip(
+                    batch, generated_results
+                ):
+                    if isinstance(generated, BaseException):
+                        err_msg = f"{type(generated).__name__}: {generated}"[:200]
+                        logger.warning(
+                            "generate_docs LLM failure for %s: %s",
+                            edoc.file_path,
+                            err_msg,
+                        )
+                        await tracker.emit(
+                            wf_id,
+                            "generate_docs.doc_failed",
+                            "warning",
+                            f"{edoc.file_path}: {err_msg}",
+                        )
+                        failed_doc_tasks.append(
+                            (i_task, edoc, existing_doc_content, prev_content, err_msg)
+                        )
+                        continue
+
+                    generated_content = generated
                     doc = await self._doc_store.upsert(
                         session=db,
                         project_id=project_id,
@@ -947,6 +998,105 @@ class IndexingPipelineRunner:
             if pending_paths:
                 await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
 
+            # C2 (v1.13.0): bounded retry for docs that failed in their batch
+            # (cap = 1 retry per doc). Final, unrecoverable failures bubble
+            # into the failure-ratio gate below.
+            still_failed: list[tuple[Any, str]] = []
+            if failed_doc_tasks:
+                await tracker.emit(
+                    wf_id,
+                    "generate_docs",
+                    "started",
+                    f"Retrying {len(failed_doc_tasks)} failed doc(s) (cap=1 each)",
+                )
+                await asyncio.sleep(1.0)
+                retry_results = await asyncio.gather(
+                    *[
+                        _generate_one_doc(edoc, existing_doc_content, prev_content)
+                        for _, edoc, existing_doc_content, prev_content, _ in failed_doc_tasks
+                    ],
+                    return_exceptions=True,
+                )
+                for (_, edoc, _, _, prev_err), retry_out in zip(failed_doc_tasks, retry_results):
+                    if isinstance(retry_out, BaseException):
+                        msg = f"{type(retry_out).__name__}: {retry_out}"[:200]
+                        still_failed.append((edoc, msg))
+                        await tracker.emit(
+                            wf_id,
+                            "generate_docs.doc_failed",
+                            "warning",
+                            f"{edoc.file_path} (retry): {msg}",
+                        )
+                    else:
+                        try:
+                            doc = await self._doc_store.upsert(
+                                session=db,
+                                project_id=project_id,
+                                doc_type=edoc.doc_type,
+                                source_path=edoc.file_path,
+                                content=retry_out,
+                                commit_sha=state.head_sha,
+                            )
+                            await asyncio.to_thread(
+                                self._vector_store.delete_by_source_path,
+                                project_id,
+                                edoc.file_path,
+                            )
+                            chunks = chunk_document(
+                                content=retry_out,
+                                file_path=edoc.file_path,
+                                doc_type=edoc.doc_type,
+                                extra_metadata={"commit_sha": state.head_sha},
+                            )
+                            if chunks:
+                                chunk_ids = [
+                                    f"{doc.id}:{c.metadata.get('chunk_index', '0')}" for c in chunks
+                                ]
+                                await asyncio.to_thread(
+                                    self._vector_store.add_documents,
+                                    project_id=project_id,
+                                    doc_ids=chunk_ids,
+                                    documents=[c.content for c in chunks],
+                                    metadatas=[c.metadata for c in chunks],
+                                )
+                            docs_generated += 1
+                            await self._cp_svc.mark_docs_batch_processed(
+                                db, cp_id, [edoc.file_path]
+                            )
+                        except Exception as exc:
+                            still_failed.append((edoc, str(exc)[:200]))
+                            logger.warning(
+                                "generate_docs retry persist failed for %s",
+                                edoc.file_path,
+                                exc_info=True,
+                            )
+
+            if total_llm_tasks > 0 and still_failed:
+                failure_ratio = len(still_failed) / total_llm_tasks
+                threshold = settings.generate_docs_max_failure_ratio
+                if failure_ratio > threshold:
+                    fail_msg = (
+                        f"generate_docs failure ratio "
+                        f"{failure_ratio:.0%} exceeded threshold {threshold:.0%}: "
+                        f"{len(still_failed)} of {total_llm_tasks} docs failed"
+                    )
+                    logger.error(fail_msg)
+                    await tracker.emit(
+                        wf_id,
+                        "generate_docs",
+                        "failed",
+                        fail_msg,
+                    )
+                    raise RuntimeError(fail_msg)
+                else:
+                    await tracker.emit(
+                        wf_id,
+                        "generate_docs.partial_completion",
+                        "warning",
+                        f"Completed with {len(still_failed)} doc failure(s) "
+                        f"({failure_ratio:.0%}, under {threshold:.0%} threshold)",
+                    )
+
         result.docs_skipped = skipped
 
         # --- Step 10: bm25_build (M3) ---
@@ -959,9 +1109,7 @@ class IndexingPipelineRunner:
                 "bm25_build",
                 "Rebuilding BM25 lexical index",
             ):
-                bm25_ok = await self._run_bm25_build(
-                    db, project_id, state.head_sha, wf_id
-                )
+                bm25_ok = await self._run_bm25_build(db, project_id, state.head_sha, wf_id)
             # A failed BM25 build must NOT mark the step complete — otherwise a
             # resume would skip the rebuild and the hybrid retriever would
             # degrade silently to dense-only against a missing/stale snapshot.
@@ -1007,9 +1155,7 @@ class IndexingPipelineRunner:
                 if not chunks:
                     chunks = []
                 for chunk in chunks:
-                    chunk_id = (
-                        f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}"
-                    )
+                    chunk_id = f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}"
                     meta = dict(chunk.metadata)
                     meta.setdefault("source_path", doc.source_path)
                     meta.setdefault("doc_type", doc.doc_type)

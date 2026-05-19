@@ -1264,8 +1264,57 @@ class TestGetCrossConnectionLearnings:
 
 
 class TestCompilePromptCrossConnection:
+    """V1 — vision §7 #4: cross-connection injection is opt-in (default off)."""
+
     @pytest.mark.asyncio
-    async def test_prompt_includes_cross_connection(self, svc):
+    async def test_prompt_isolates_per_connection_by_default(self, svc):
+        """Default install: compile_prompt must NOT call cross-connection helpers."""
+        session = AsyncMock()
+
+        learning = _make_learning()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [learning]
+
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        empty_result.all.return_value = []
+        empty_result.scalars.return_value.all.return_value = []
+
+        session.execute = AsyncMock(
+            side_effect=[mock_result, empty_result, empty_result, empty_result, empty_result]
+        )
+
+        with (
+            patch.object(
+                svc,
+                "_get_cross_connection_learnings",
+                new_callable=AsyncMock,
+                return_value=["- [from sibling] Use ISO dates [80% confidence]"],
+            ) as mock_cross,
+            patch.object(
+                svc,
+                "promote_global_patterns",
+                new_callable=AsyncMock,
+                return_value=["- [global] Use UTC timestamps"],
+            ) as mock_global,
+        ):
+            prompt = await svc.compile_prompt(session, "conn-1")
+
+        mock_cross.assert_not_called()
+        mock_global.assert_not_called()
+        assert "From Similar Connections" not in prompt
+        assert "Global Patterns" not in prompt
+        assert "[from sibling]" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_prompt_includes_cross_connection_when_flag_enabled(self, svc, monkeypatch):
+        """Opt-in: when CROSS_CONNECTION_LEARNINGS_ENABLED=true, sibling
+        promotion is honored (preserves existing behavior for teams that
+        explicitly want it)."""
+        from app.services import agent_learning_service as als_mod
+
+        monkeypatch.setattr(als_mod.settings, "cross_connection_learnings_enabled", True)
+
         session = AsyncMock()
 
         learning = _make_learning()

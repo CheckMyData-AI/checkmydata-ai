@@ -232,6 +232,22 @@ class Settings(BaseSettings):
     # Subject blocklist (extends built-in list)
     learning_subject_blocklist_extra: list[str] = []
 
+    # C2 (v1.13.0) — generate_docs failure tolerance. When ``generate_docs``
+    # is processing many files per indexing run, a single transient LLM error
+    # should not abort the entire run. We tolerate up to this ratio of failed
+    # docs per run (default 30%); above that the step fails so an operator
+    # sees the problem before it becomes silent KB drift.
+    generate_docs_max_failure_ratio: float = 0.3
+
+    # Cross-connection learning injection (V1, vision §7 #4).
+    # When False (default), `compile_prompt` skips sibling-connection and
+    # promoted-global-pattern sections — every connection's prompt contains only
+    # its own learnings. This restores vision invariant "learning is per-connection,
+    # not global; knowledge about one database never leaks into or corrupts
+    # queries against another." Opt-in to `True` only if you explicitly want
+    # cross-pollination across sibling connections in the same project.
+    cross_connection_learnings_enabled: bool = False
+
     # ----- Code intelligence pipeline (M1–M6) ---------------------------------
     # Master flag: enables tree-sitter AST parsing + code knowledge graph.
     # When False, the legacy regex-based entity_extractor path runs.
@@ -302,6 +318,13 @@ class Settings(BaseSettings):
     data_gate_max_sample: int = 200
     data_gate_high_null_ratio: float = 0.5
     data_gate_high_duplicate_ratio: float = 0.9
+    # C4 (v1.13.0). When True (default), the gate's unambiguous "data is
+    # wrong" checks (out-of-range percent, out-of-range date) call
+    # ``outcome.fail()`` instead of ``warn()``. This triggers a stage retry
+    # via ``StageExecutor._retry_failed_data_gate`` so the LLM has a chance
+    # to fix the query before returning bogus values to the user. Set to
+    # False to revert to the v1.12.x warn-only behavior.
+    data_gate_hard_checks_enabled: bool = True
     data_gate_value_range_sample: int = 50
     data_gate_percent_min: float = -1.0
     data_gate_percent_max: float = 200.0

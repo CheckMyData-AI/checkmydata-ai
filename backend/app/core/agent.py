@@ -88,7 +88,11 @@ class ConversationalAgent:
         )
 
         try:
-            return await self._orchestrator.run(context)
+            response = await self._orchestrator.run(context)
+            exposed = context.extra.get("exposed_learning_ids") or []
+            if isinstance(exposed, list) and exposed:
+                response.exposed_learning_ids = [str(x) for x in exposed]
+            return response
         except Exception as exc:
             if not self._tracker.has_ended(wf_id):
                 try:

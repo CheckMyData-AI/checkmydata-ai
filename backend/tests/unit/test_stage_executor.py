@@ -535,3 +535,92 @@ class TestHistoryScoping:
 
         call_ctx = mock_sql_agent.run.call_args[0][0]
         assert call_ctx.chat_history == []
+
+
+class TestStalenessInjection:
+    """V3 — vision §7 #7: complex pipeline must inject freshness warning into
+    every LLM-touching surface (planner, stage prompts, synthesis)."""
+
+    @pytest.mark.asyncio
+    async def test_stage_question_includes_staleness_when_set(self, executor):
+        executor._staleness_warning = "Connection schema not refreshed in 14 days."
+
+        stage = _sql_stage("s1")
+        plan = _make_plan(stage)
+        stage_ctx = StageContext(plan=plan)
+
+        q = executor._build_stage_question(stage, stage_ctx)
+
+        assert "KNOWLEDGE FRESHNESS WARNINGS:" in q
+        assert "14 days" in q
+        assert "Task: SQL stage s1" in q
+
+    @pytest.mark.asyncio
+    async def test_stage_question_omits_staleness_when_none(self, executor):
+        executor._staleness_warning = None
+
+        stage = _sql_stage("s1")
+        plan = _make_plan(stage)
+        stage_ctx = StageContext(plan=plan)
+
+        q = executor._build_stage_question(stage, stage_ctx)
+
+        assert "KNOWLEDGE FRESHNESS WARNINGS" not in q
+
+    @pytest.mark.asyncio
+    async def test_synthesis_system_prompt_includes_staleness(self, executor, context, mock_llm):
+        executor._staleness_warning = "Codebase last indexed 30 days ago."
+
+        plan = _make_plan(_sql_stage("s1"))
+        stage_ctx = StageContext(plan=plan)
+        stage_ctx.set_result(
+            "s1",
+            StageResult(
+                stage_id="s1",
+                status="success",
+                summary="42 rows fetched",
+            ),
+        )
+
+        mock_llm.complete.return_value = LLMResponse(content="Final answer")
+
+        with patch(
+            "app.agents.stage_executor.llm_call_with_retry",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = LLMResponse(content="Final answer")
+            answer, degraded = await executor._synthesize(stage_ctx, context)
+
+        assert answer == "Final answer"
+        assert degraded is None
+        msgs = mock_call.call_args.kwargs["messages"]
+        system_msg = next(m for m in msgs if m.role == "system")
+        assert "KNOWLEDGE FRESHNESS WARNINGS:" in system_msg.content
+        assert "30 days" in system_msg.content
+
+    @pytest.mark.asyncio
+    async def test_execute_threads_staleness_into_executor(
+        self, executor, context, mock_sql_agent, mock_llm
+    ):
+        qr = QueryResult(columns=["id"], rows=[[1]], row_count=1)
+        sql_result = MagicMock(spec=AgentResult)
+        sql_result.status = "success"
+        sql_result.results = qr
+        sql_result.query = "SELECT 1"
+        sql_result.token_usage = {}
+        mock_sql_agent.run.return_value = sql_result
+
+        plan = _make_plan(_sql_stage("s1"))
+
+        with patch(
+            "app.agents.stage_executor.llm_call_with_retry",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = LLMResponse(content="Final answer")
+            await executor.execute(
+                plan,
+                context,
+                staleness_warning="KB stale (7 days).",
+            )
+
+        assert executor._staleness_warning == "KB stale (7 days)."

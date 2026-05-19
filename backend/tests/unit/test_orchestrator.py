@@ -605,7 +605,14 @@ class TestPipelineScopedContext:
 
         captured_ctx = {}
 
-        async def _capture_execute(_plan, context, *, resume_from=0, stage_ctx=None):
+        async def _capture_execute(
+            _plan,
+            context,
+            *,
+            resume_from=0,
+            stage_ctx=None,
+            staleness_warning=None,
+        ):
             captured_ctx["ctx"] = context
             return _FakeExecResult(
                 stage_ctx=stage_ctx or StageContext(plan=plan),

@@ -732,7 +732,7 @@ class SQLAgent(BaseAgent):
         if not learnings:
             return "No learnings recorded yet for this database."
 
-        await self._track_applied_learnings(learnings)
+        await self._track_exposed_learnings(learnings, ctx)
 
         from app.services.agent_learning_service import CATEGORY_LABELS
 
@@ -1660,8 +1660,17 @@ class SQLAgent(BaseAgent):
             self._knowledge_cache.put(project_id, knowledge)
         return knowledge
 
-    async def _track_applied_learnings(self, learnings: list) -> None:
-        """Fire-and-forget: bump times_applied for each learning the LLM consumed."""
+    async def _track_exposed_learnings(
+        self, learnings: list, ctx: AgentContext | None = None
+    ) -> None:
+        """Fire-and-forget: bump ``times_exposed`` for each learning surfaced
+        to the LLM, and stash the IDs on ``ctx.extra`` so the chat route can
+        persist them with the assistant message metadata (V4 dependency).
+
+        C5, v1.13.0 — split from ``_track_applied_learnings``: exposure is a
+        read-side signal (the LLM saw the learning), application is a
+        write-side signal (the LLM provably used it). Bumping
+        ``times_applied`` on every read corrupted the decay-score signal."""
         try:
             from app.models.base import async_session_factory
             from app.services.agent_learning_service import AgentLearningService
@@ -1669,10 +1678,23 @@ class SQLAgent(BaseAgent):
             svc = AgentLearningService()
             async with async_session_factory() as session:
                 for lrn in learnings:
-                    await svc.apply_learning(session, lrn.id)
+                    await svc.expose_learning(session, lrn.id)
                 await session.commit()
         except Exception:
-            logger.debug("apply_learning tracking failed (non-critical)", exc_info=True)
+            logger.debug("expose_learning tracking failed (non-critical)", exc_info=True)
+
+        if ctx is not None:
+            try:
+                existing = ctx.extra.get("exposed_learning_ids") or []
+                if not isinstance(existing, list):
+                    existing = []
+                ctx.extra["exposed_learning_ids"] = list(
+                    {*(str(lid) for lid in existing), *(str(lrn.id) for lrn in learnings)}
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to stash exposed_learning_ids on context", exc_info=True
+                )
 
     async def _extract_learnings(
         self,
@@ -1681,7 +1703,11 @@ class SQLAgent(BaseAgent):
         question: str,
         cfg: ConnectionConfig,
     ) -> None:
-        if not cfg.connection_id or not attempts or len(attempts) < 2:
+        # V2 (vision §5 #2): drop the ≥2-attempt gate so every outcome
+        # produces a learning. ``LearningAnalyzer.analyze`` branches on
+        # ``success`` and handles both single-attempt failures and first-shot
+        # successes.
+        if not cfg.connection_id or not attempts:
             return
         try:
             from app.knowledge.learning_analyzer import LearningAnalyzer

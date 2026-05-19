@@ -379,11 +379,15 @@ KNOWLEDGE FRESHNESS WARNINGS:
 ```
 
 This is wired in [`OrchestratorAgent._run_tool_loop`](../backend/app/agents/orchestrator.py)
-(simple path) **and** `_run_complex_pipeline` (the planner path explicitly
-re-fetches the warning so it isn't lost when the simple-loop context is
-skipped). The block is purely informational — the LLM is told *why*
-answers may be out of date, but nothing is auto-blocked: the user can still
-get the best-effort answer and decide whether to re-index.
+(simple path) **and** `_run_complex_pipeline`. As of **v1.13.0 (V3)** the
+warning is threaded all the way down into the planner and stage executor:
+`AdaptivePlanner._llm_plan` / `replan` and `StageExecutor.execute` both
+accept a `staleness_warning` argument and prepend it to their own system /
+stage prompts. This means every LLM call in the complex pipeline — initial
+plan, re-plan, every stage's sub-agent, and the final synthesis — sees the
+freshness banner, not just the orchestrator's top-level loop. The block is
+purely informational: the LLM is told *why* answers may be out of date, but
+nothing is auto-blocked.
 
 Code-graph staleness specifically is evaluated only when
 `settings.code_graph_enabled` is true; with the flag off, the service
@@ -565,7 +569,7 @@ Agent learnings are structured lessons extracted from query validation outcomes 
 
 **Models** (`backend/app/models/agent_learning.py`):
 
-- `AgentLearning`: connection_id, category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, is_active
+- `AgentLearning`: connection_id, category, subject, lesson, lesson_hash, confidence, source_query, source_error, times_confirmed, times_applied, **times_exposed** (added in v1.13.0 / C5), is_active
 - `AgentLearningSummary`: connection_id, total_lessons, lessons_by_category_json, compiled_prompt, last_compiled_at
 
 **Categories** (9 total):
@@ -603,20 +607,27 @@ Agent learnings are structured lessons extracted from query validation outcomes 
   ```
   Create: 0.6 (default)
     ↓ confirmed by user or repeated: +0.1 (cap at 1.0)
-    ↓ applied in query: tracked (times_applied counter)
-    ↓ contradicted: -0.3
+    ↓ exposed in prompt: tracked (times_exposed counter — read-only signal)
+    ↓ applied in query (LLM actually used it): tracked (times_applied counter)
+    ↓ contradicted by user or by V4 negative-feedback override: -0.3
     ↓ stale (30+ days, never applied): -0.05/month
     ↓ stale (30+ days, previously applied): -0.02/month
     ↓ below 0.2: deactivated
   ```
 
+- **Exposure vs application** (v1.13.0 / C5): Older versions falsely incremented `times_applied` every time a learning was *included* in the prompt, conflating "the LLM saw it" with "the LLM used it." As of v1.13.0, exposure is tracked separately via `times_exposed` and `times_applied` is reserved for confirmed application (set only by the LLM analyzer or explicit feedback signal). This keeps the read-time path side-effect-free.
+
 - **User voting**: REST endpoints for confirm (upvote) and contradict (downvote) allow users to directly influence learning confidence via the LearningsPanel UI. Both operations invalidate the compiled summary cache immediately so the next agent prompt reflects the updated confidence.
+
+- **Negative feedback override** (v1.13.0 / V4): When a user sends a thumbs-down on an assistant message, the system reads `exposed_learning_ids` from that message's metadata and calls `contradict_learning(...)` on each (capped to avoid cascade), so the very next turn no longer trusts the lessons that produced the bad answer. The exposed IDs are written into chat-message metadata at synthesis time and round-tripped through the streaming endpoint.
 
 - **Prompt compilation** (`compile_prompt()`): Priority-ranked by composite score (confidence * 0.4 + log(confirmations) * 0.4 + log(applications) * 0.2). Top 30 learnings organized by category, with confidence percentages and critical flags (5+ confirmations).
 
-- **Cross-connection transfer**: Learnings from sibling connections in the same project are included if they are in transferable categories (`schema_gotcha`, `performance_hint`) and have confidence >= 0.6.
+- **Per-connection isolation** (v1.13.0 / V1 — vision invariant): Compile is **strictly per-connection by default**. Cross-connection transfer and global-pattern promotion are gated behind `CROSS_CONNECTION_LEARNINGS_ENABLED` (default `False`), because a lesson learned on connection A is not, in the general case, semantically valid on connection B (different schemas, different soft-delete conventions, different naming). The old §3.3 caveat — "learnings can leak between sibling connections" — no longer applies in the default configuration. To opt in for a customer with a known-homogeneous schema family, set the flag in `.env`.
 
-- **Global pattern promotion**: Learnings that appear independently on 2+ different connections are identified as "global patterns" and promoted to connections that don't have them yet. This allows knowledge to spread across databases.
+- **Cross-connection transfer** (opt-in, flag-gated): When enabled, learnings from sibling connections in the same project are included if they are in transferable categories (`schema_gotcha`, `performance_hint`) and have confidence >= 0.6.
+
+- **Global pattern promotion** (opt-in, flag-gated): When enabled, learnings that appear independently on 2+ different connections are promoted to connections that don't have them yet.
 
 - **How learnings are used**: The orchestrator loads the top 15 high-confidence learnings via `_load_recent_learnings()` and injects them into the system prompt under "RECENT AGENT LEARNINGS (verified insights)".
 

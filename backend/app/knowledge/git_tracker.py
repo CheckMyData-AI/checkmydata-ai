@@ -58,7 +58,12 @@ class GitTracker:
             return ChangedFilesResult(changed=all_files)
 
         try:
-            diff = repo.commit(from_sha).diff(repo.commit(to_sha))
+            # ``M=True`` (or ``--find-renames``) enables rename detection so
+            # renamed files surface as change_type "R" with a_path=old /
+            # b_path=new — C1 (v1.13.0) depends on this so the orphan-cleanup
+            # step drops the old path. (``R=True`` is REVERSE diff in
+            # GitPython, not rename detection — easy to confuse.)
+            diff = repo.commit(from_sha).diff(repo.commit(to_sha), M=True)
         except Exception:
             logger.warning(
                 "Could not diff %s..%s, falling back to full index",
@@ -75,14 +80,26 @@ class GitTracker:
         changed: set[str] = set()
         deleted: set[str] = set()
         for d in diff:
-            if d.deleted_file:
+            change_type = getattr(d, "change_type", None)
+
+            if change_type == "R":
+                # C1 (v1.13.0) — rename: old path is gone, new path is changed
+                if d.a_path:
+                    deleted.add(d.a_path)
+                if d.b_path:
+                    changed.add(d.b_path)
+            elif d.deleted_file or change_type == "D":
                 if d.a_path:
                     deleted.add(d.a_path)
             else:
-                if d.a_path:
-                    changed.add(d.a_path)
+                # Add, modify, copy: only the post-image path matters; for
+                # plain modifications a_path == b_path so the result is the
+                # same. (a_path was previously added too, which produced
+                # ghost entries for renames before C1 was understood.)
                 if d.b_path:
                     changed.add(d.b_path)
+                elif d.a_path:
+                    changed.add(d.a_path)
 
         return ChangedFilesResult(
             changed=list(changed),

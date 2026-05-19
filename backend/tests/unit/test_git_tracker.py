@@ -59,18 +59,25 @@ class TestGetChangedFiles:
         assert result.deleted == []
 
     def test_diff_returns_changed_and_deleted(self, tracker):
+        """C1 (v1.13.0): modifications, deletions, renames classified
+        correctly. Renamed files have their OLD path in ``deleted`` and NEW
+        path in ``changed`` — previously both went to ``changed`` which left
+        orphan vectors at the old path."""
         diff_entry_modified = MagicMock()
         diff_entry_modified.deleted_file = False
+        diff_entry_modified.change_type = "M"
         diff_entry_modified.a_path = "src/mod.py"
         diff_entry_modified.b_path = "src/mod.py"
 
         diff_entry_deleted = MagicMock()
         diff_entry_deleted.deleted_file = True
+        diff_entry_deleted.change_type = "D"
         diff_entry_deleted.a_path = "src/old.py"
         diff_entry_deleted.b_path = None
 
         diff_entry_renamed = MagicMock()
         diff_entry_renamed.deleted_file = False
+        diff_entry_renamed.change_type = "R"
         diff_entry_renamed.a_path = "src/before.py"
         diff_entry_renamed.b_path = "src/after.py"
 
@@ -88,9 +95,43 @@ class TestGetChangedFiles:
             result = tracker.get_changed_files(Path("/repo"), "aaa", "bbb")
 
         assert "src/mod.py" in result.changed
-        assert "src/before.py" in result.changed
         assert "src/after.py" in result.changed
         assert "src/old.py" in result.deleted
+        # Renamed OLD path is in deleted (no longer in changed)
+        assert "src/before.py" in result.deleted
+        assert "src/before.py" not in result.changed
+
+    def test_rename_in_real_repo(self, tracker, tmp_path):
+        """End-to-end with a tiny fixture repo: git mv must surface old path
+        in ``deleted`` and new path in ``changed``."""
+        import shutil
+
+        if shutil.which("git") is None:
+            pytest.skip("git binary not available")
+
+        from git import Repo
+
+        repo_dir = tmp_path / "rename_repo"
+        repo_dir.mkdir()
+        repo = Repo.init(str(repo_dir))
+        with repo.config_writer() as cw:
+            cw.set_value("user", "email", "test@example.com")
+            cw.set_value("user", "name", "Test")
+
+        original = repo_dir / "foo.py"
+        original.write_text("print('hello')\n")
+        repo.index.add(["foo.py"])
+        first_commit = repo.index.commit("initial")
+
+        repo.git.mv("foo.py", "bar.py")
+        second_commit = repo.index.commit("rename")
+
+        result = tracker.get_changed_files(repo_dir, first_commit.hexsha, second_commit.hexsha)
+
+        assert "foo.py" in result.deleted
+        assert "bar.py" in result.changed
+        assert "foo.py" not in result.changed
+        assert "bar.py" not in result.deleted
 
     def test_diff_exception_falls_back_to_full_index(self, tracker):
         blob = MagicMock()

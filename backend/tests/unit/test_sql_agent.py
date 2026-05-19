@@ -800,16 +800,30 @@ class TestSQLAgentALMIntegration:
         mock_analyzer.analyze.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_extract_learnings_skips_single_attempt(self, agent, config):
-        """Single successful attempt should not trigger extraction."""
-        with patch("app.knowledge.learning_analyzer.LearningAnalyzer") as mock_cls:
+    async def test_extract_learnings_fires_for_single_attempt(self, agent, config):
+        """V2 (vision §5 #2): every outcome enriches the system.
+        Single-attempt outcomes (success or failure) now trigger extraction;
+        the analyzer's success-branch decides whether to call the LLM."""
+        mock_analyzer = MagicMock()
+        mock_analyzer.analyze = AsyncMock(return_value=[])
+        with (
+            patch(
+                "app.knowledge.learning_analyzer.LearningAnalyzer",
+                return_value=mock_analyzer,
+            ) as mock_cls,
+            patch("app.models.base.async_session_factory") as mock_sf,
+        ):
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
             await agent._extract_learnings(
                 attempts=[MagicMock()],
                 success=True,
                 question="test",
                 cfg=config,
             )
-            mock_cls.assert_not_called()
+            mock_cls.assert_called_once()
+            mock_analyzer.analyze.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_extract_learnings_skips_no_connection_id(self, agent):
@@ -824,9 +838,11 @@ class TestSQLAgentALMIntegration:
             mock_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_track_applied_learnings(self, agent):
-        """_track_applied_learnings should call apply_learning for each."""
+    async def test_track_exposed_learnings_increments_exposure_only(self, agent):
+        """C5 — read path must increment ``times_exposed`` (NOT
+        ``times_applied``). The decay-score signal depends on this split."""
         mock_svc = MagicMock()
+        mock_svc.expose_learning = AsyncMock()
         mock_svc.apply_learning = AsyncMock()
 
         mock_session = AsyncMock()
@@ -845,10 +861,52 @@ class TestSQLAgentALMIntegration:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            await agent._track_applied_learnings([learning1, learning2])
+            await agent._track_exposed_learnings([learning1, learning2])
 
-        assert mock_svc.apply_learning.call_count == 2
+        assert mock_svc.expose_learning.call_count == 2
+        mock_svc.apply_learning.assert_not_called()
         mock_session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_track_exposed_learnings_stashes_ids_on_context(self, agent):
+        """V4 dependency: exposed learning IDs must land in ``ctx.extra``
+        so the chat route can persist them with the assistant message
+        metadata for negative-feedback contradiction."""
+        from app.agents.base import AgentContext
+        from app.connectors.base import ConnectionConfig
+
+        mock_svc = MagicMock()
+        mock_svc.expose_learning = AsyncMock()
+        mock_session = AsyncMock()
+
+        learning1 = MagicMock()
+        learning1.id = "l1"
+        learning2 = MagicMock()
+        learning2.id = "l2"
+
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=ConnectionConfig(db_type="postgres"),
+            user_question="q",
+            chat_history=[],
+            llm_router=MagicMock(),
+            tracker=MagicMock(),
+            workflow_id="wf-1",
+        )
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService",
+                return_value=mock_svc,
+            ),
+        ):
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            await agent._track_exposed_learnings([learning1, learning2], ctx)
+
+        assert set(ctx.extra["exposed_learning_ids"]) == {"l1", "l2"}
 
 
 # ---------------------------------------------------------------------------
@@ -888,9 +946,7 @@ class TestSQLAgentSchemaRetrieval:
             rules_engine=mock_custom_rules,
         )
         # Stub schema/knowledge loaders that hit the network.
-        a._get_cached_schema = AsyncMock(
-            return_value=SchemaInfo(tables=[], db_type="postgres")
-        )
+        a._get_cached_schema = AsyncMock(return_value=SchemaInfo(tables=[], db_type="postgres"))
         a._load_knowledge = AsyncMock(return_value=None)
         return a
 
@@ -902,9 +958,7 @@ class TestSQLAgentSchemaRetrieval:
             "payments": _make_db_index_entry("payments"),
         }
 
-        with patch(
-            "app.knowledge.schema_retriever.SchemaRetriever"
-        ) as mock_cls:
+        with patch("app.knowledge.schema_retriever.SchemaRetriever") as mock_cls:
             instance = MagicMock()
             instance.has_index.return_value = True
             instance.query.return_value = [
@@ -925,9 +979,7 @@ class TestSQLAgentSchemaRetrieval:
 
     @pytest.mark.asyncio
     async def test_retrieve_tables_returns_empty_when_no_index(self, agent):
-        with patch(
-            "app.knowledge.schema_retriever.SchemaRetriever"
-        ) as mock_cls:
+        with patch("app.knowledge.schema_retriever.SchemaRetriever") as mock_cls:
             instance = MagicMock()
             instance.has_index.return_value = False
             mock_cls.return_value = instance
@@ -982,18 +1034,14 @@ class TestSQLAgentSchemaRetrieval:
             return_value=[_make_db_index_entry("invoices", relevance_score=2)]
         )
         # Patch out the DB-bound helpers used by _build_query_context.
-        agent._format_table_context = MagicMock(
-            side_effect=lambda e, *_: f"## {e.table_name}"
-        )
+        agent._format_table_context = MagicMock(side_effect=lambda e, *_: f"## {e.table_name}")
         agent._format_rules = MagicMock(return_value="")
 
         with (
             patch("app.models.base.async_session_factory") as mock_sf,
             patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
             patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
-            patch(
-                "app.services.agent_learning_service.AgentLearningService"
-            ) as mock_lrn_cls,
+            patch("app.services.agent_learning_service.AgentLearningService") as mock_lrn_cls,
         ):
             session = AsyncMock()
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)
@@ -1046,18 +1094,14 @@ class TestSQLAgentSchemaRetrieval:
         # Retriever should not be touched when the flag is off.
         retriever_spy = AsyncMock(return_value=[])
         agent._retrieve_tables_for_question = retriever_spy
-        agent._format_table_context = MagicMock(
-            side_effect=lambda e, *_: f"## {e.table_name}"
-        )
+        agent._format_table_context = MagicMock(side_effect=lambda e, *_: f"## {e.table_name}")
         agent._format_rules = MagicMock(return_value="")
 
         with (
             patch("app.models.base.async_session_factory") as mock_sf,
             patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
             patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
-            patch(
-                "app.services.agent_learning_service.AgentLearningService"
-            ) as mock_lrn_cls,
+            patch("app.services.agent_learning_service.AgentLearningService") as mock_lrn_cls,
         ):
             session = AsyncMock()
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)
@@ -1105,18 +1149,14 @@ class TestSQLAgentSchemaRetrieval:
 
         retriever_spy = AsyncMock(return_value=[])
         agent._retrieve_tables_for_question = retriever_spy
-        agent._format_table_context = MagicMock(
-            side_effect=lambda e, *_: f"## {e.table_name}"
-        )
+        agent._format_table_context = MagicMock(side_effect=lambda e, *_: f"## {e.table_name}")
         agent._format_rules = MagicMock(return_value="")
 
         with (
             patch("app.models.base.async_session_factory") as mock_sf,
             patch("app.services.db_index_service.DbIndexService") as mock_idx_cls,
             patch("app.services.code_db_sync_service.CodeDbSyncService") as mock_sync_cls,
-            patch(
-                "app.services.agent_learning_service.AgentLearningService"
-            ) as mock_lrn_cls,
+            patch("app.services.agent_learning_service.AgentLearningService") as mock_lrn_cls,
         ):
             session = AsyncMock()
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=session)

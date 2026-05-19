@@ -148,6 +148,7 @@ class AgentResponse:
     continuation_context: str | None = None
     clarification_data: dict[str, Any] | None = None
     sql_results: list[SQLResultBlock] = field(default_factory=list)
+    exposed_learning_ids: list[str] = field(default_factory=list)
 
 
 class OrchestratorAgent(BaseAgent):
@@ -1449,6 +1450,7 @@ class OrchestratorAgent(BaseAgent):
                 project_overview=context.extra.get("project_overview"),
                 current_datetime=get_current_datetime_str(),
                 recent_learnings=recent_learnings,
+                staleness_warning=staleness_warning,
             )
             if plan:
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
@@ -1517,7 +1519,12 @@ class OrchestratorAgent(BaseAgent):
 
         try:
             stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
-            exec_result = await executor.execute(plan, pipeline_ctx, stage_ctx=stage_ctx)
+            exec_result = await executor.execute(
+                plan,
+                pipeline_ctx,
+                stage_ctx=stage_ctx,
+                staleness_warning=staleness_warning,
+            )
 
             replan_count = 0
             max_replans = settings.max_pipeline_replans
@@ -1570,6 +1577,7 @@ class OrchestratorAgent(BaseAgent):
                     preferred_provider=context.preferred_provider,
                     model=context.model,
                     replan_history=replan_history,
+                    staleness_warning=staleness_warning,
                 )
                 if not new_plan:
                     logger.warning("Replanning returned no plan — giving up")
@@ -1600,6 +1608,7 @@ class OrchestratorAgent(BaseAgent):
                     new_plan,
                     pipeline_ctx,
                     stage_ctx=new_stage_ctx,
+                    staleness_warning=staleness_warning,
                 )
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
