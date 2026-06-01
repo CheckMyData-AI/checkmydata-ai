@@ -48,6 +48,13 @@ and the downstream `Type check`/tests never even ran (fail-fast). Because
   (`checkout@v5`, `setup-python@v6`, `setup-node@v6`, `cache@v5`,
   `upload-artifact@v7`) ahead of the June 2 2026 Node 20 deprecation.
   (`.github/workflows/ci.yml`, `.github/workflows/deploy.yml`)
+- **Stabilized flaky `RulesManager` frontend tests.** The `Save` button is
+  rendered inside a `FormModal` gated on `editingId`; under CI load the
+  default real-timer `userEvent` typing interleaved with the modal's focus
+  effects and intermittently closed the editor mid-test. Switched the
+  interactive tests to the recommended `userEvent.setup({ delay: null })`
+  pattern so interactions flush synchronously inside `act()`.
+  (`frontend/src/__tests__/components/RulesManager.test.tsx`)
 
 Full suite remains green (3,178 backend unit + 470 backend integration +
 400 frontend); combined backend coverage 73%.
