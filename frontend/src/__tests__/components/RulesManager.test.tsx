@@ -132,14 +132,15 @@ describe("RulesManager", () => {
   it("clicking edit opens form and cancel returns to list", async () => {
     const rule = makeRule({ id: "r1", name: "My Rule", content: "contents" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("My Rule")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByTitle("Edit rule"));
+    await user.click(screen.getByTitle("Edit rule"));
     expect(screen.getByDisplayValue("My Rule")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText("Cancel"));
+    await user.click(screen.getByText("Cancel"));
     expect(screen.queryByDisplayValue("My Rule")).not.toBeInTheDocument();
   });
 
@@ -154,10 +155,11 @@ describe("RulesManager", () => {
   it("clicking a rule row opens the edit form", async () => {
     const rule = makeRule({ id: "r1", name: "Row Click Rule", content: "row content" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("Row Click Rule")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByText("Row Click Rule"));
+    await user.click(screen.getByText("Row Click Rule"));
     await waitFor(() => {
       expect(screen.getByDisplayValue("Row Click Rule")).toBeInTheDocument();
       expect(screen.getByDisplayValue("row content")).toBeInTheDocument();
@@ -168,40 +170,43 @@ describe("RulesManager", () => {
   it("Save button is disabled when no changes have been made", async () => {
     const rule = makeRule({ id: "r1", name: "Unchanged", content: "original" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("Unchanged")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByText("Unchanged"));
+    await user.click(screen.getByText("Unchanged"));
     await waitFor(() => expect(screen.getByText("Save")).toBeDisabled());
   });
 
   it("Save button becomes enabled after modifying content", async () => {
     const rule = makeRule({ id: "r1", name: "Editable", content: "old text" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("Editable")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByText("Editable"));
+    await user.click(screen.getByText("Editable"));
     await waitFor(() => expect(screen.getByText("Save")).toBeDisabled());
 
     const textarea = screen.getByLabelText("Rule content");
-    await userEvent.clear(textarea);
-    await userEvent.type(textarea, "new text");
+    await user.clear(textarea);
+    await user.type(textarea, "new text");
     await waitFor(() => expect(screen.getByText("Save")).toBeEnabled());
   });
 
   it("Save button becomes enabled after modifying name", async () => {
     const rule = makeRule({ id: "r1", name: "OldName", content: "content" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("OldName")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByText("OldName"));
+    await user.click(screen.getByText("OldName"));
     await waitFor(() => expect(screen.getByText("Save")).toBeDisabled());
 
     const nameInput = screen.getByLabelText("Rule name");
-    await userEvent.clear(nameInput);
-    await userEvent.type(nameInput, "NewName");
+    await user.clear(nameInput);
+    await user.type(nameInput, "NewName");
     await waitFor(() => expect(screen.getByText("Save")).toBeEnabled());
   });
 
@@ -209,10 +214,11 @@ describe("RulesManager", () => {
     useAppStore.setState({ userRole: "viewer" });
     const rule = makeRule({ id: "r1", name: "View Only Rule", content: "read-only content" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);
+    const user = userEvent.setup({ delay: null });
     await renderRulesManager();
     await waitFor(() => expect(screen.getByText("View Only Rule")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByText("View Only Rule"));
+    await user.click(screen.getByText("View Only Rule"));
     await waitFor(() => {
       expect(screen.getByText("read-only content")).toBeInTheDocument();
       expect(screen.queryByLabelText("Rule name")).not.toBeInTheDocument();
