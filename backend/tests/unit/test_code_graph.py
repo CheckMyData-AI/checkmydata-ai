@@ -40,7 +40,7 @@ def parser() -> ASTParser:
 # ---------------------------------------------------------------------------
 
 
-PY_A = b'''
+PY_A = b"""
 def helper():
     return 1
 
@@ -53,16 +53,16 @@ class Worker(Base):
         self.process()
     def process(self):
         return 2
-'''
+"""
 
-PY_B = b'''
+PY_B = b"""
 from a import helper, Worker
 
 def driver():
     w = Worker()
     w.run()
     return helper()
-'''
+"""
 
 
 def test_builder_emits_all_edge_types(parser: ASTParser):
@@ -101,9 +101,7 @@ def test_builder_via_import_has_lower_confidence(parser: ASTParser):
     graph = CodeGraphBuilder().build(files)
     driver = next(s for s in graph.symbols.values() if s.name == "driver")
     helper = next(s for s in graph.symbols.values() if s.name == "helper")
-    via_import = [
-        e for e in graph.edges if e.src_uid == driver.uid and e.dst_uid == helper.uid
-    ]
+    via_import = [e for e in graph.edges if e.src_uid == driver.uid and e.dst_uid == helper.uid]
     assert len(via_import) == 1
     # Imported call should resolve at confidence 0.8 (between 0.7 global-unique and 1.0 local).
     assert 0.79 <= via_import[0].confidence <= 0.81
@@ -114,11 +112,7 @@ def test_builder_extends_python_base_class(parser: ASTParser):
     graph = CodeGraphBuilder().build(files)
     worker = next(s for s in graph.symbols.values() if s.name == "Worker")
     base = next(s for s in graph.symbols.values() if s.name == "Base")
-    extends = [
-        e
-        for e in graph.edges
-        if e.src_uid == worker.uid and e.edge_type == EDGE_EXTENDS
-    ]
+    extends = [e for e in graph.edges if e.src_uid == worker.uid and e.edge_type == EDGE_EXTENDS]
     assert any(e.dst_uid == base.uid for e in extends)
 
 
@@ -196,8 +190,14 @@ def test_max_symbols_drops_private():
         file_path="x.py",
         language="python",
         symbols=[
-            Symbol(uid=f"py:x:function:{n}:{i}", kind="function", name=n, file_path="x.py",
-                   start_line=i, end_line=i)
+            Symbol(
+                uid=f"py:x:function:{n}:{i}",
+                kind="function",
+                name=n,
+                file_path="x.py",
+                start_line=i,
+                end_line=i,
+            )
             for i, n in enumerate(["_private", "public_a", "public_b", "_hidden", "public_c"])
         ],
     )
@@ -249,10 +249,22 @@ def test_builtin_calls_excluded():
 
 def test_code_graph_query_by_name():
     syms = [
-        Symbol(uid="py:a:function:foo:1", kind="function", name="foo", file_path="a.py",
-               start_line=1, end_line=2),
-        Symbol(uid="py:b:function:foo:3", kind="function", name="foo", file_path="b.py",
-               start_line=3, end_line=4),
+        Symbol(
+            uid="py:a:function:foo:1",
+            kind="function",
+            name="foo",
+            file_path="a.py",
+            start_line=1,
+            end_line=2,
+        ),
+        Symbol(
+            uid="py:b:function:foo:3",
+            kind="function",
+            name="foo",
+            file_path="b.py",
+            start_line=3,
+            end_line=4,
+        ),
     ]
     g = CodeGraph(symbols=syms, edges=[])
     matches = g.query_by_name("foo")
@@ -261,12 +273,26 @@ def test_code_graph_query_by_name():
 
 
 def test_code_graph_members_of():
-    cls = Symbol(uid="py:a:class:K:1", kind="class", name="K", file_path="a.py",
-                 start_line=1, end_line=10)
-    method = Symbol(uid="py:a:method:m:3", kind="method", name="m", file_path="a.py",
-                    start_line=3, end_line=4, parent_uid=cls.uid)
-    other = Symbol(uid="py:a:function:f:5", kind="function", name="f", file_path="a.py",
-                   start_line=5, end_line=6)
+    cls = Symbol(
+        uid="py:a:class:K:1", kind="class", name="K", file_path="a.py", start_line=1, end_line=10
+    )
+    method = Symbol(
+        uid="py:a:method:m:3",
+        kind="method",
+        name="m",
+        file_path="a.py",
+        start_line=3,
+        end_line=4,
+        parent_uid=cls.uid,
+    )
+    other = Symbol(
+        uid="py:a:function:f:5",
+        kind="function",
+        name="f",
+        file_path="a.py",
+        start_line=5,
+        end_line=6,
+    )
     g = CodeGraph(symbols=[cls, method, other], edges=[])
     members = g.members_of(cls.uid)
     assert [s.name for s in members] == ["m"]

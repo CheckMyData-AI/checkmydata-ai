@@ -538,10 +538,7 @@ class CodeDbSyncPipeline:
                     depth = int(r.get("depth", 1))
                     name = r.get("caller_name", "?")
                     file_ = r.get("caller_file", "?")
-                    parts.append(
-                        f"  - {name} ({op}, depth={depth}, conf={conf:.2f}) "
-                        f"in {file_}"
-                    )
+                    parts.append(f"  - {name} ({op}, depth={depth}, conf={conf:.2f}) in {file_}")
 
         relevant_enums = [
             e
@@ -569,14 +566,14 @@ class CodeDbSyncPipeline:
                     parts.append(f"  {sf['name']} in {sf['file_path']}")
 
         relevant_rules = [
-            r
-            for r in knowledge.validation_rules
-            if table_lower in r.model_name.lower() or table_lower in r.expression.lower()
+            vr
+            for vr in knowledge.validation_rules
+            if table_lower in vr.model_name.lower() or table_lower in vr.expression.lower()
         ]
         if relevant_rules:
             parts.append("Validation rules:")
-            for r in relevant_rules[:5]:
-                parts.append(f"  [{r.rule_type}] {r.expression[:100]}")
+            for vr in relevant_rules[:5]:
+                parts.append(f"  [{vr.rule_type}] {vr.expression[:100]}")
 
         relevant_patterns = [
             qp

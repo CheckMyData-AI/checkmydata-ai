@@ -106,9 +106,7 @@ class TestEvaluate:
 
         monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
         svc = KnowledgeFreshnessService()
-        with patch(
-            "app.services.code_graph_service.CodeGraphService"
-        ) as mock_cg_cls:
+        with patch("app.services.code_graph_service.CodeGraphService") as mock_cg_cls:
             mock_cg = mock_cg_cls.return_value
             mock_cg.count = AsyncMock(return_value=(0, 0))
             snap = await svc.evaluate(
@@ -142,9 +140,7 @@ class TestEvaluate:
 
         monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
         svc = KnowledgeFreshnessService()
-        with patch(
-            "app.services.code_graph_service.CodeGraphService"
-        ) as mock_cg_cls:
+        with patch("app.services.code_graph_service.CodeGraphService") as mock_cg_cls:
             mock_cg = mock_cg_cls.return_value
             mock_cg.count = AsyncMock(return_value=(123, 456))
             snap = await svc.evaluate(

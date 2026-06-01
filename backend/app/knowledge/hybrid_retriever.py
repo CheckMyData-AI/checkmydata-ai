@@ -100,12 +100,8 @@ class HybridRetriever:
             return []
         per_leg = n_per_retriever if n_per_retriever is not None else max(10, 2 * k)
 
-        bm25_task = asyncio.create_task(
-            self._run_bm25(project_id, query_text, per_leg)
-        )
-        chroma_task = asyncio.create_task(
-            self._run_chroma(project_id, query_text, per_leg, where)
-        )
+        bm25_task = asyncio.create_task(self._run_bm25(project_id, query_text, per_leg))
+        chroma_task = asyncio.create_task(self._run_chroma(project_id, query_text, per_leg, where))
         bm25_results, chroma_results = await asyncio.gather(
             bm25_task,
             chroma_task,
@@ -195,8 +191,8 @@ class HybridRetriever:
             doc_id = hit.get("id")
             if not doc_id:
                 continue
-            entry = merged.get(doc_id)
-            if entry is None:
+            existing = merged.get(doc_id)
+            if existing is None:
                 entry = HybridResult(
                     doc_id=doc_id,
                     document=hit.get("document", "") or "",
@@ -204,6 +200,7 @@ class HybridRetriever:
                 )
                 merged[doc_id] = entry
             else:
+                entry = existing
                 # Prefer non-empty document text if BM25 had none.
                 if not entry.document and hit.get("document"):
                     entry.document = hit["document"]

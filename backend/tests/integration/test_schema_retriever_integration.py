@@ -136,16 +136,12 @@ async def test_retriever_builds_from_db_index_rows(
     assert hits[0]["metadata"]["table_name"] == "payments"
 
     # 3. Inactive 'audit_log' is filtered out by default.
-    hits = retriever.query(
-        seeded_index, "security audit events", k=5, only_active=True
-    )
+    hits = retriever.query(seeded_index, "security audit events", k=5, only_active=True)
     names = [h["metadata"]["table_name"] for h in hits]
     assert "audit_log" not in names
 
     # 4. Same query with ``only_active=False`` does surface audit_log.
-    hits = retriever.query(
-        seeded_index, "security audit events", k=5, only_active=False
-    )
+    hits = retriever.query(seeded_index, "security audit events", k=5, only_active=False)
     names = [h["metadata"]["table_name"] for h in hits]
     assert "audit_log" in names
 

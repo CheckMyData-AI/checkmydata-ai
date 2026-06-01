@@ -257,8 +257,7 @@ def test_thirty_table_fixture_recall(schema_dir):
         hits = retriever.query("conn-big", question, k=5)
         top_names = [h["metadata"]["table_name"] for h in hits]
         assert expected_table in top_names, (
-            f"question={question!r} expected={expected_table!r} "
-            f"top={top_names}"
+            f"question={question!r} expected={expected_table!r} top={top_names}"
         )
 
 

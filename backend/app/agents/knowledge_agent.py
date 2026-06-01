@@ -52,7 +52,7 @@ class KnowledgeAgent(BaseAgent):
         # single instance is shared across requests.
         self._hybrid_retriever = hybrid_retriever
         self._cache_svc = ProjectCacheService()
-        self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
+        self._knowledge_cache: TTLCache[str, ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
 
     def _get_hybrid_retriever(self) -> HybridRetriever:
         """Return the cached :class:`HybridRetriever`, building it on first use."""
@@ -493,9 +493,7 @@ class KnowledgeAgent(BaseAgent):
                 op = ref.get("op_kind", "unknown")
                 file_ = ref.get("caller_file", "?")
                 conf = float(ref.get("confidence", 0.0))
-                lines.append(
-                    f"- `{name}` [{kind}/{op}] in `{file_}` (conf={conf:.2f})"
-                )
+                lines.append(f"- `{name}` [{kind}/{op}] in `{file_}` (conf={conf:.2f})")
 
         return "\n".join(lines)
 

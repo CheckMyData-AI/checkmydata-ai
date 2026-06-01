@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -471,7 +472,7 @@ def _walk_definitions(
     symbols: list[Symbol] = []
     call_sites: list[CallSite] = []
     # Stack entries: (node, parent_uid, enclosing_symbol_uid)
-    stack: list[tuple[object, str | None, str | None]] = [(root, parent_uid, None)]
+    stack: list[tuple[Any, str | None, str | None]] = [(root, parent_uid, None)]
     call_node_types = set(grammar.call_nodes)
     while stack:
         node, current_parent, enclosing = stack.pop()
@@ -765,7 +766,9 @@ class ASTParser:
         from tree_sitter_language_pack import get_parser
 
         try:
-            parser = get_parser(language)
+            # ``language`` is a runtime-resolved grammar name; the stub types
+            # ``get_parser`` against a Literal of supported languages.
+            parser = get_parser(language)  # type: ignore[arg-type]
         except Exception:
             logger.warning("Failed to load tree-sitter parser for %s", language, exc_info=True)
             return None

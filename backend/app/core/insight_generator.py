@@ -33,7 +33,7 @@ class InsightGenerator:
 
         normalised: list[list[Any]]
         if rows and isinstance(rows[0], dict):
-            normalised = [[r.get(c) for c in columns] for r in rows]  # type: ignore[union-attr]
+            normalised = [[r.get(c) for c in columns] for r in rows]
         else:
             normalised = rows  # type: ignore[assignment]
 

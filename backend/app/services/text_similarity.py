@@ -45,7 +45,7 @@ def _load_model() -> Any | None:
         if _model_failed:
             return None
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+            from sentence_transformers import SentenceTransformer
 
             _model = SentenceTransformer(model_name)
             logger.info("text_similarity: loaded embedding model %s", model_name)
