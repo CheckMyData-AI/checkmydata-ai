@@ -106,12 +106,12 @@ class SQLAgent(BaseAgent):
 
         self._connectors: dict[str, BaseConnector] = {}
         self._connector_lock = asyncio.Lock()
-        self._schema_cache: TTLCache[SchemaInfo] = TTLCache(
+        self._schema_cache: TTLCache[str, SchemaInfo] = TTLCache(
             ttl=settings.schema_cache_ttl_seconds,
             max_size=128,
         )
         self._query_cache = QueryCache()
-        self._knowledge_cache: TTLCache[ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
+        self._knowledge_cache: TTLCache[str, ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
 
     @property
     def name(self) -> str:
@@ -700,9 +700,7 @@ class SQLAgent(BaseAgent):
 
         if not tables:
             return f"No tables found for cluster '{cluster}'."
-        return "Tables in cluster '" + cluster + "':\n" + "\n".join(
-            f"- {t}" for t in tables
-        )
+        return "Tables in cluster '" + cluster + "':\n" + "\n".join(f"- {t}" for t in tables)
 
     async def _handle_get_agent_learnings(
         self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
@@ -1122,9 +1120,7 @@ class SQLAgent(BaseAgent):
             # stable: retrieved tables first (most question-specific),
             # safety-net tables after.
             max_tables = settings.sql_agent_max_context_tables
-            safety_net = [
-                e for e in all_entries if e.is_active and e.relevance_score >= 2
-            ]
+            safety_net = [e for e in all_entries if e.is_active and e.relevance_score >= 2]
             entries_by_name = {e.table_name.lower(): e for e in all_entries}
 
             retrieved: list[Any] = []
@@ -1692,9 +1688,7 @@ class SQLAgent(BaseAgent):
                     {*(str(lid) for lid in existing), *(str(lrn.id) for lrn in learnings)}
                 )
             except Exception:
-                logger.debug(
-                    "Failed to stash exposed_learning_ids on context", exc_info=True
-                )
+                logger.debug("Failed to stash exposed_learning_ids on context", exc_info=True)
 
     async def _extract_learnings(
         self,
@@ -1920,9 +1914,7 @@ class SQLAgent(BaseAgent):
                             op = ref.get("op_kind", "unknown")
                             name = ref.get("caller_name", "?")
                             conf = float(ref.get("confidence", 0.0))
-                            parts.append(
-                                f"  - {name} [{kind}/{op}] (conf={conf:.2f})"
-                            )
+                            parts.append(f"  - {name} [{kind}/{op}] (conf={conf:.2f})")
                     break
         parts.append("")
         return "\n".join(parts)

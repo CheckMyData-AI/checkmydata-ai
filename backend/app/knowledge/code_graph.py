@@ -273,9 +273,7 @@ class CodeGraphBuilder:
         symbols_by_uid: dict[str, Symbol] = {s.uid: s for s in all_symbols}
 
         # Per-file index: file -> {name -> [Symbol]}
-        per_file_index: dict[str, dict[str, list[Symbol]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
+        per_file_index: dict[str, dict[str, list[Symbol]]] = defaultdict(lambda: defaultdict(list))
         # Global index: name -> [Symbol]
         global_index: dict[str, list[Symbol]] = defaultdict(list)
         for s in all_symbols:

@@ -22,7 +22,7 @@ class SharedCache:
     def __init__(self, prefix: str = "cmd", ttl: float = 600, max_local_size: int = 512) -> None:
         self._prefix = prefix
         self._ttl = ttl
-        self._local: TTLCache[str] = TTLCache(ttl=ttl, max_size=max_local_size)
+        self._local: TTLCache[str, str] = TTLCache(ttl=ttl, max_size=max_local_size)
         self._redis: Any | None = None
 
     async def connect(self, redis_url: str | None = None) -> None:

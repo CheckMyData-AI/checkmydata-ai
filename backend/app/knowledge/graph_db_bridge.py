@@ -149,9 +149,7 @@ _READ_VERBS = (
 
 # Tokens in HTTP route decorators that hint at the op kind. ``GET`` → read,
 # anything else → write.
-_HTTP_WRITE_METHODS = re.compile(
-    r"\b(?:post|put|patch|delete)\b", re.IGNORECASE
-)
+_HTTP_WRITE_METHODS = re.compile(r"\b(?:post|put|patch|delete)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -349,9 +347,7 @@ class GraphDBBridge:
                 max_depth=self._max_depth,
             )
         except Exception:
-            logger.debug(
-                "callers_of failed for anchor %s", anchor.uid, exc_info=True
-            )
+            logger.debug("callers_of failed for anchor %s", anchor.uid, exc_info=True)
             return
 
         if not caller_tuples:

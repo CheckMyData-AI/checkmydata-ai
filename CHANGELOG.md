@@ -4,6 +4,61 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.13.1] - 2026-06-01
+
+### CI/Deploy Restoration & Toolchain Pinning
+
+Restores a green CI pipeline (and therefore the gated Heroku deploy, which
+only runs on `workflow_run` success). CI had been red since early May: the
+unpinned dev tooling (`ruff>=0.8.0`, `mypy>=1.13.0`) silently drifted to
+newer releases that reformat code and add stricter type rules, so the
+`Format check` step failed on commits that never touched the affected files,
+and the downstream `Type check`/tests never even ran (fail-fast). Because
+`deploy.yml` is triggered by CI success, every Heroku release was skipped.
+
+- **Pinned linters/type-checkers to exact versions** (`ruff==0.15.15`,
+  `mypy==2.1.0`) so formatter output and type rules can no longer drift
+  between unrelated commits. Bumps are now deliberate.
+  (`backend/pyproject.toml`)
+- **Reformatted 16 drifted files** with the pinned `ruff` so
+  `ruff format --check` passes. Purely cosmetic (line collapsing within the
+  100-char limit). (`app/agents/{orchestrator,sql_agent,knowledge_agent}.py`,
+  `app/knowledge/{bm25_index,code_db_sync_pipeline,code_graph,graph_db_bridge,hybrid_retriever}.py`,
+  `app/models/code_graph.py`, `app/services/code_graph_service.py`, and tests)
+- **Resolved 24 `mypy` errors** surfaced by the newer type checker:
+  - Fixed a **real runtime bug**: `GET /investigate/{id}` referenced
+    `DataInvestigation.current_step`, a column that does not exist, which
+    would raise `AttributeError` on every call. The response now mirrors the
+    backing `phase` field. (`app/api/routes/data_investigations.py`)
+  - Supplied the missing value type-arg on `TTLCache[...]` annotations
+    (`app/core/cache.py`, `app/agents/{sql_agent,knowledge_agent}.py`).
+  - Switched `Model.__table__.update()` to the typed `update(Model)`
+    construct (`app/services/code_graph_service.py`).
+  - Added the established `# type: ignore[attr-defined]` for SQLAlchemy
+    `Result.rowcount` in the two services that lacked it; disambiguated
+    reused loop variables; narrowed dynamic tree-sitter node/grammar types;
+    removed three now-unused `# type: ignore` comments.
+- **Made the `pg_dump` backup test hermetic.** `test_pg_dump_failure`
+  patched `subprocess.run`, but the code pipes `pg_dump` into `gzip` via
+  `subprocess.Popen`, so the patch was a no-op and the test only passed when
+  a `pg_dump` binary happened to be installed (it errored otherwise). It now
+  patches `subprocess.Popen` and is deterministic.
+  (`backend/tests/unit/test_backup_manager_extended.py`)
+- **Bumped GitHub Actions to their Node 24-native majors**
+  (`checkout@v5`, `setup-python@v6`, `setup-node@v6`, `cache@v5`,
+  `upload-artifact@v7`) ahead of the June 2 2026 Node 20 deprecation.
+  (`.github/workflows/ci.yml`, `.github/workflows/deploy.yml`)
+- **Stabilized flaky `RulesManager` frontend tests.** The `Save` button is
+  rendered inside a `FormModal` gated on `editingId`; under CI load the
+  default real-timer `userEvent` typing interleaved with the modal's focus
+  effects and intermittently closed the editor mid-test. Switched the
+  interactive tests to the recommended `userEvent.setup({ delay: null })`
+  pattern so interactions flush synchronously inside `act()`.
+  (`frontend/src/__tests__/components/RulesManager.test.tsx`)
+
+Full suite remains green (3,178 backend unit + 470 backend integration +
+400 frontend); combined backend coverage 73%.
+
 ## [1.13.0] - 2026-05-19
 
 ### Vision Invariants & Correctness Restoration

@@ -113,9 +113,7 @@ async def project_and_conn(db_session: AsyncSession) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_full_chain_m1_through_m6(
-    db_session: AsyncSession, project_and_conn, tmp_path
-):
+async def test_full_chain_m1_through_m6(db_session: AsyncSession, project_and_conn, tmp_path):
     project_id, connection_id = project_and_conn
 
     # ---- M1: AST parse ----------------------------------------------------
@@ -148,9 +146,7 @@ async def test_full_chain_m1_through_m6(
     bridge = GraphDBBridge(max_depth=5)
     attached = bridge.enrich(knowledge, code_graph)
     assert attached >= 1, "bridge produced no caller refs"
-    assert knowledge.entities["User"].graph_callers, (
-        "graph_callers attribute should be populated"
-    )
+    assert knowledge.entities["User"].graph_callers, "graph_callers attribute should be populated"
 
     # ---- M6: clustering --------------------------------------------------
     clusters = cluster_code_graph(code_graph, knowledge)
@@ -346,9 +342,7 @@ def test_knowledge_agent_renders_graph_callers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_code_graph_service_load_graph_roundtrip(
-    db_session: AsyncSession, project_and_conn
-):
+async def test_code_graph_service_load_graph_roundtrip(db_session: AsyncSession, project_and_conn):
     """``load_graph`` must rehydrate a previously-saved graph for resume paths.
 
     When the pipeline resumes after a partial failure, ``state.code_graph``
@@ -359,8 +353,7 @@ async def test_code_graph_service_load_graph_roundtrip(
 
     parser = ASTParser()
     parsed_files = {
-        path: parser.parse_bytes(rel_path=path, content=source)
-        for path, source in FIXTURE.items()
+        path: parser.parse_bytes(rel_path=path, content=source) for path, source in FIXTURE.items()
     }
     code_graph = CodeGraphBuilder(min_call_confidence=0.3).build(parsed_files)
     cg_svc = CodeGraphService()

@@ -55,8 +55,12 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
-    "ruff>=0.8.0",
-    "mypy>=1.13.0",
+    # Linters/type-checkers are pinned to exact versions so CI stays
+    # reproducible. Unpinned ranges let newer releases silently change the
+    # formatter's output or add type-check rules, which breaks CI on commits
+    # that never touched the affected code. Bump these deliberately.
+    "ruff==0.15.15",
+    "mypy==2.1.0",
     "types-croniter>=2.0.0",
 ]
 

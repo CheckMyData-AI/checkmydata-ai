@@ -377,9 +377,7 @@ class OrchestratorAgent(BaseAgent):
                 # otherwise the planner stages can confidently run against a
                 # stale DB index / empty code graph without flagging it.
                 cfg_complex = context.connection_config
-                conn_id_complex = (
-                    cfg_complex.connection_id if cfg_complex else None
-                )
+                conn_id_complex = cfg_complex.connection_id if cfg_complex else None
                 staleness_complex = (
                     await self._ctx_loader.check_staleness(
                         context.project_id,
@@ -1250,6 +1248,7 @@ class OrchestratorAgent(BaseAgent):
 
             for sr_idx, sr_viz_type, sr_viz_config, viz_result in viz_outcomes:
                 sr = viable_sql[sr_idx]
+                assert sr.results is not None  # guaranteed by viable_sql filter
                 if viz_result is not None:
                     self.accum_usage(total_usage, viz_result.token_usage)
                     vv = self._validator.validate_viz_result(

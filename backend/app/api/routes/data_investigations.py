@@ -181,7 +181,9 @@ async def get_investigation(
         "id": inv.id,
         "status": inv.status,
         "phase": inv.phase,
-        "current_step": inv.current_step,
+        # `current_step` is a legacy alias kept in the response contract; the
+        # model tracks progress via `phase`, so mirror it here.
+        "current_step": inv.phase,
         "original_query": inv.original_query,
         "original_result_summary": inv.original_result_summary,
         "user_complaint_type": inv.user_complaint_type,

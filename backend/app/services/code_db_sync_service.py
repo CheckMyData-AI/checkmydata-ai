@@ -91,7 +91,7 @@ class CodeDbSyncService:
             stmt = stmt.where(CodeDbSync.table_name.notin_(current_table_names))
 
         result = await session.execute(stmt)
-        deleted = int(result.rowcount or 0)
+        deleted = int(result.rowcount or 0)  # type: ignore[attr-defined]
         if deleted:
             await session.flush()
         return deleted

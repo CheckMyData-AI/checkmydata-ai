@@ -286,9 +286,7 @@ class BM25Index:
                 {
                     "id": doc_id,
                     "document": snap.raw_texts[idx] if idx < len(snap.raw_texts) else "",
-                    "metadata": snap.doc_metadatas[idx]
-                    if idx < len(snap.doc_metadatas)
-                    else {},
+                    "metadata": snap.doc_metadatas[idx] if idx < len(snap.doc_metadatas) else {},
                     "score": score,
                 }
             )

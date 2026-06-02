@@ -36,14 +36,8 @@ def _sym(uid: str, name: str, file_path: str, *, kind: str = "function") -> Symb
 @pytest.fixture
 def two_cluster_graph():
     """Two tightly-connected sub-components representing 'auth' and 'billing'."""
-    auth_syms = [
-        _sym(f"auth_{i}", f"auth_fn_{i}", "app/auth/handlers.py")
-        for i in range(5)
-    ]
-    billing_syms = [
-        _sym(f"bill_{i}", f"bill_fn_{i}", "app/billing/stripe.py")
-        for i in range(5)
-    ]
+    auth_syms = [_sym(f"auth_{i}", f"auth_fn_{i}", "app/auth/handlers.py") for i in range(5)]
+    billing_syms = [_sym(f"bill_{i}", f"bill_fn_{i}", "app/billing/stripe.py") for i in range(5)]
     edges = []
     # Dense intra-cluster CALLS edges.
     for syms in (auth_syms, billing_syms):
@@ -172,10 +166,12 @@ async def test_label_clusters_calls_llm_and_applies_labels(two_cluster_graph):
     # Order from cluster_code_graph is descending by size; for our fixture
     # both are 5 symbols, so we sort by id to make assertions deterministic.
     clusters = sorted(clusters, key=lambda c: c.cluster_id)
-    fake_response = MagicMock(content=(
-        '{"id": "0", "label": "Auth & Sessions", "description": "Login"}\n'
-        '{"id": "1", "label": "Stripe Billing", "description": "Money"}\n'
-    ))
+    fake_response = MagicMock(
+        content=(
+            '{"id": "0", "label": "Auth & Sessions", "description": "Login"}\n'
+            '{"id": "1", "label": "Stripe Billing", "description": "Money"}\n'
+        )
+    )
 
     fake_router = MagicMock()
     fake_router.complete = AsyncMock(return_value=fake_response)

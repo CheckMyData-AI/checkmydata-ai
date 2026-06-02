@@ -123,7 +123,7 @@ class ConnectionHealthMonitor:
         return state.to_dict() if state else None
 
     def get_all_health(self) -> dict[str, dict[str, Any]]:
-        snapshot = dict(self._health_state._store)  # type: ignore[attr-defined]
+        snapshot = dict(self._health_state._store)
         return {cid: entry[0].to_dict() for cid, entry in snapshot.items()}
 
     def clear(self, connection_id: str) -> None:

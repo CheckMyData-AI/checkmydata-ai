@@ -13,7 +13,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.knowledge.ast_parser import Symbol
 from app.knowledge.code_graph import CodeGraph, GraphEdge
@@ -47,9 +47,7 @@ class CodeGraphService:
         await session.execute(
             delete(CodeGraphSymbol).where(CodeGraphSymbol.project_id == project_id)
         )
-        await session.execute(
-            delete(CodeGraphEdge).where(CodeGraphEdge.project_id == project_id)
-        )
+        await session.execute(delete(CodeGraphEdge).where(CodeGraphEdge.project_id == project_id))
 
         sym_rows = [
             {
@@ -184,9 +182,7 @@ class CodeGraphService:
             )
         )
         edge_count = await session.scalar(
-            select(sa_func.count(CodeGraphEdge.id)).where(
-                CodeGraphEdge.project_id == project_id
-            )
+            select(sa_func.count(CodeGraphEdge.id)).where(CodeGraphEdge.project_id == project_id)
         )
         return int(sym_count or 0), int(edge_count or 0)
 
@@ -297,13 +293,11 @@ class CodeGraphService:
            membership map encoded in ``cluster.member_uids``.
         """
         # 1. Reset existing cluster metadata.
-        await session.execute(
-            delete(CodeCluster).where(CodeCluster.project_id == project_id)
-        )
+        await session.execute(delete(CodeCluster).where(CodeCluster.project_id == project_id))
 
         if not clusters:
             await session.execute(
-                CodeGraphSymbol.__table__.update()
+                update(CodeGraphSymbol)
                 .where(CodeGraphSymbol.project_id == project_id)
                 .values(cluster_id=None)
             )
@@ -333,7 +327,7 @@ class CodeGraphService:
             for i in range(0, len(uids), 1000):
                 chunk = uids[i : i + 1000]
                 await session.execute(
-                    CodeGraphSymbol.__table__.update()
+                    update(CodeGraphSymbol)
                     .where(CodeGraphSymbol.project_id == project_id)
                     .where(CodeGraphSymbol.uid.in_(chunk))
                     .values(cluster_id=cluster.cluster_id)
@@ -344,7 +338,7 @@ class CodeGraphService:
             all_member_uids.update(c.member_uids)
         if all_member_uids:
             await session.execute(
-                CodeGraphSymbol.__table__.update()
+                update(CodeGraphSymbol)
                 .where(CodeGraphSymbol.project_id == project_id)
                 .where(CodeGraphSymbol.uid.notin_(all_member_uids))
                 .values(cluster_id=None)
@@ -384,11 +378,7 @@ class CodeGraphService:
         result = await session.execute(
             select(CodeCluster)
             .where(CodeCluster.project_id == project_id)
-            .where(
-                sa_func.lower(CodeCluster.label).like(
-                    f"%{label_substring.lower()}%"
-                )
-            )
+            .where(sa_func.lower(CodeCluster.label).like(f"%{label_substring.lower()}%"))
             .order_by(CodeCluster.symbol_count.desc())
         )
         return list(result.scalars().all())

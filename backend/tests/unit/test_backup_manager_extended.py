@@ -286,19 +286,29 @@ class TestListBackups:
 
 class TestBackupPostgres:
     async def test_pg_dump_failure(self, backup_mgr, tmp_path):
+        # `_backup_postgres` pipes `pg_dump` into `gzip` via subprocess.Popen,
+        # so patch Popen (not subprocess.run) to keep the test hermetic and
+        # independent of whether the `pg_dump` binary is installed locally.
         with patch("app.core.backup_manager.settings") as mock_s:
             mock_s.database_url = "postgresql+asyncpg://u:p@host/db"
             manifest: dict = {"files": {}, "errors": []}
             dest = tmp_path / "pg_backup"
             dest.mkdir(parents=True)
 
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_result.stderr = "pg_dump: connection refused"
+            pg_proc = MagicMock()
+            pg_proc.stdout = MagicMock()
+            pg_proc.stderr = MagicMock()
+            pg_proc.stderr.read.return_value = b"pg_dump: connection refused"
+            pg_proc.returncode = 1
+            pg_proc.wait.return_value = 1
+
+            gz_proc = MagicMock()
+            gz_proc.communicate.return_value = (b"", b"")
+            gz_proc.returncode = 0
 
             with patch(
-                "app.core.backup_manager.subprocess.run",
-                return_value=mock_result,
+                "app.core.backup_manager.subprocess.Popen",
+                side_effect=[pg_proc, gz_proc],
             ):
                 size = await backup_mgr._backup_postgres(dest, manifest)
 
