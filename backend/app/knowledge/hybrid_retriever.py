@@ -75,12 +75,18 @@ class HybridRetriever:
         rrf_k: int = 60,
         min_score: float = 0.0,
         retriever_timeout_sec: float = _DEFAULT_RETRIEVER_TIMEOUT_SEC,
+        chroma_max_distance: float | None = None,
     ) -> None:
         self._bm25 = bm25
         self._vector = vector_store
         self._rrf_k = max(1, rrf_k)
         self._min_score = max(0.0, min_score)
         self._timeout = max(0.1, retriever_timeout_sec)
+        # When set, dense (Chroma) hits whose distance exceeds this threshold
+        # are dropped *before* fusion so low-relevance semantic matches can't
+        # ride into the fused result on rank alone (parity with the legacy
+        # Chroma-only path's rag_relevance_threshold filter).
+        self._chroma_max_distance = chroma_max_distance
 
     async def query(
         self,
@@ -143,7 +149,7 @@ class HybridRetriever:
         where: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
         try:
-            return await asyncio.wait_for(
+            hits = await asyncio.wait_for(
                 asyncio.to_thread(
                     self._vector.query,
                     project_id,
@@ -159,6 +165,16 @@ class HybridRetriever:
         except Exception:
             logger.warning("hybrid: Chroma failed for %s", project_id[:8], exc_info=True)
             return []
+
+        if self._chroma_max_distance is None:
+            return hits
+        filtered: list[dict[str, Any]] = []
+        for hit in hits:
+            dist = hit.get("distance")
+            # Keep hits with unknown distance (defensive) or within threshold.
+            if dist is None or dist <= self._chroma_max_distance:
+                filtered.append(hit)
+        return filtered
 
     # ------------------------------------------------------------------
     # Reciprocal Rank Fusion

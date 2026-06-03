@@ -63,6 +63,7 @@ class KnowledgeAgent(BaseAgent):
                 vector_store=self._vector_store,
                 rrf_k=settings.hybrid_rrf_k,
                 min_score=settings.hybrid_min_score,
+                chroma_max_distance=settings.rag_relevance_threshold,
             )
         return self._hybrid_retriever
 
