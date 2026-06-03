@@ -430,12 +430,14 @@ class IndexingPipelineRunner:
         # are kept in-memory only and feed the graph_build step (M2).
         # Gated by code_graph_enabled; the step is a fast no-op when off.
         if settings.code_graph_enabled and state.repo_dir is not None:
-            # For graph building we need every file, not just changes. The
-            # graph is a full replace per run.
+            # A full parse walks every supported file; an incremental run only
+            # touches the changed set and the graph is merged into the existing
+            # one (see _run_graph_build) so unchanged files are preserved.
+            is_full_graph = force_full or state.last_sha is None
             files_to_parse = await self._collect_files_for_ast(
                 state.repo_dir,
                 state.changed_files,
-                force_full=force_full or state.last_sha is None,
+                force_full=is_full_graph,
             )
             async with tracker.step(
                 wf_id,
@@ -451,7 +453,9 @@ class IndexingPipelineRunner:
                 "graph_build",
                 f"Building code graph from {len(state.parsed_files)} parsed file(s)",
             ):
-                await self._run_graph_build(state, wf_id, db, project_id)
+                await self._run_graph_build(
+                    state, wf_id, db, project_id, is_full=is_full_graph
+                )
             await self._cp_svc.complete_step(db, cp_id, "graph_build")
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
@@ -1312,13 +1316,21 @@ class IndexingPipelineRunner:
         wf_id: str,
         db: AsyncSession,
         project_id: str,
+        *,
+        is_full: bool = True,
     ) -> None:
         """M2: build the code knowledge graph from parsed files and persist it.
+
+        On a full run the graph fully replaces the persisted one. On an
+        incremental run (``is_full=False``) only the changed files were parsed,
+        so the freshly-built subset is merged into the existing graph via
+        :meth:`CodeGraphService.save_incremental`; symbols/edges for changed and
+        deleted files are replaced while unchanged files are preserved.
 
         Failures here are non-fatal: the graph is an additive signal, and the
         legacy regex pipeline still produces the canonical EntityInfo data.
         """
-        if not state.parsed_files:
+        if not state.parsed_files and is_full:
             logger.info("graph_build: no parsed files, skipping")
             return
         try:
@@ -1327,9 +1339,19 @@ class IndexingPipelineRunner:
                 min_call_confidence=settings.code_graph_call_confidence_threshold,
             )
             graph = await asyncio.to_thread(builder.build, state.parsed_files)
-            state.code_graph = graph
             svc = CodeGraphService()
-            sym_count, edge_count = await svc.save(db, project_id, graph)
+            if is_full:
+                state.code_graph = graph
+                sym_count, edge_count = await svc.save(db, project_id, graph)
+            else:
+                affected_files = set(state.changed_files) | set(state.deleted_files)
+                sym_count, edge_count = await svc.save_incremental(
+                    db, project_id, graph, affected_files
+                )
+                # Rehydrate the merged graph so downstream M5/M6 steps see the
+                # full picture, not just the changed-file subset.
+                merged = await svc.load_graph(db, project_id)
+                state.code_graph = merged if merged is not None else graph
             # M6: observability counters.
             try:
                 from app.core.metrics import get_metrics_collector
