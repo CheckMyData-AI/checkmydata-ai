@@ -155,6 +155,9 @@ class AgentLearningService:
             entry.is_active = True
             entry.updated_at = datetime.now(UTC)
             await session.flush()
+            # Confidence/confirmation bumps change the compiled prompt ranking,
+            # so the cached summary must be invalidated even on the dedup path.
+            await self._invalidate_summary(session, connection_id)
             return entry
 
         similar = await self.find_similar(session, connection_id, category, subject, lesson)
@@ -167,6 +170,7 @@ class AgentLearningService:
             similar.is_active = True
             similar.updated_at = datetime.now(UTC)
             await session.flush()
+            await self._invalidate_summary(session, connection_id)
             return similar
 
         await self._resolve_conflicts(

@@ -189,16 +189,19 @@ class TestCreateLearning:
         result_mock.scalar_one_or_none.return_value = existing
         session.execute = AsyncMock(return_value=result_mock)
 
-        entry = await svc.create_learning(
-            session,
-            connection_id="conn-1",
-            category="table_preference",
-            subject="orders",
-            lesson="Use orders_v2 instead of orders_legacy",
-        )
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock) as mock_inv:
+            entry = await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Use orders_v2 instead of orders_legacy",
+            )
         assert entry.times_confirmed == 2
         assert entry.confidence == 0.7
         assert entry.is_active is True
+        # Dedup confirm bumps confidence/confirmations -> cache must refresh.
+        mock_inv.assert_awaited_once_with(session, "conn-1")
 
     @pytest.mark.asyncio
     async def test_similar_lesson_updates(self, svc):
@@ -224,15 +227,18 @@ class TestCreateLearning:
         session = AsyncMock()
         session.execute = mock_execute
 
-        entry = await svc.create_learning(
-            session,
-            connection_id="conn-1",
-            category="table_preference",
-            subject="orders",
-            lesson="Use orders_v2 table instead of legacy orders table",
-        )
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock) as mock_inv:
+            entry = await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Use orders_v2 table instead of legacy orders table",
+            )
         assert entry.times_confirmed == 2
         assert "legacy orders table" in entry.lesson
+        # Fuzzy-dedup merge also changes ranking -> cache must refresh.
+        mock_inv.assert_awaited_once_with(session, "conn-1")
 
     @pytest.mark.asyncio
     async def test_new_learning_truncates_sources(self, svc):
