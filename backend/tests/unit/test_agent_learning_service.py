@@ -189,16 +189,19 @@ class TestCreateLearning:
         result_mock.scalar_one_or_none.return_value = existing
         session.execute = AsyncMock(return_value=result_mock)
 
-        entry = await svc.create_learning(
-            session,
-            connection_id="conn-1",
-            category="table_preference",
-            subject="orders",
-            lesson="Use orders_v2 instead of orders_legacy",
-        )
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock) as mock_inv:
+            entry = await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Use orders_v2 instead of orders_legacy",
+            )
         assert entry.times_confirmed == 2
         assert entry.confidence == 0.7
         assert entry.is_active is True
+        # Dedup confirm bumps confidence/confirmations -> cache must refresh.
+        mock_inv.assert_awaited_once_with(session, "conn-1")
 
     @pytest.mark.asyncio
     async def test_similar_lesson_updates(self, svc):
@@ -224,15 +227,18 @@ class TestCreateLearning:
         session = AsyncMock()
         session.execute = mock_execute
 
-        entry = await svc.create_learning(
-            session,
-            connection_id="conn-1",
-            category="table_preference",
-            subject="orders",
-            lesson="Use orders_v2 table instead of legacy orders table",
-        )
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock) as mock_inv:
+            entry = await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Use orders_v2 table instead of legacy orders table",
+            )
         assert entry.times_confirmed == 2
         assert "legacy orders table" in entry.lesson
+        # Fuzzy-dedup merge also changes ranking -> cache must refresh.
+        mock_inv.assert_awaited_once_with(session, "conn-1")
 
     @pytest.mark.asyncio
     async def test_new_learning_truncates_sources(self, svc):
@@ -1160,7 +1166,7 @@ class TestResolveConflicts:
         mock_result.scalars.return_value.all.return_value = [old]
         session.execute = AsyncMock(return_value=mock_result)
 
-        await svc._resolve_conflicts(
+        outranked = await svc._resolve_conflicts(
             session,
             "conn-1",
             "table_preference",
@@ -1169,6 +1175,92 @@ class TestResolveConflicts:
             0.5,
         )
         assert old.is_active is True
+        # New lesson is outranked by the stronger, opposite-polarity old one.
+        assert outranked is True
+
+
+class TestLessonsContradict:
+    """Polarity-aware contradiction detection."""
+
+    def test_opposite_polarity_same_subject_conflicts(self):
+        from app.services.agent_learning_service import lessons_contradict
+
+        assert lessons_contradict(
+            "Always filter deleted_at column",
+            "Never filter deleted_at column",
+        )
+
+    def test_same_polarity_not_conflict(self):
+        from app.services.agent_learning_service import lessons_contradict
+
+        assert not lessons_contradict(
+            "Always filter deleted_at column",
+            "Always filter deleted_at column for users",
+        )
+
+    def test_unrelated_lessons_not_conflict(self):
+        from app.services.agent_learning_service import lessons_contradict
+
+        assert not lessons_contradict(
+            "Never use legacy_orders table",
+            "Amounts are stored in cents",
+        )
+
+    def test_contraction_normalised(self):
+        from app.services.agent_learning_service import lessons_contradict
+
+        assert lessons_contradict(
+            "Join orders on customer_id",
+            "Don't join orders on customer_id",
+        )
+
+
+class TestContradictionAwareCreate:
+    """create_learning must not merge a contradicting fuzzy match."""
+
+    @pytest.mark.asyncio
+    async def test_contradiction_skips_fuzzy_merge_and_outranks(self, svc):
+        # A strong, opposite-polarity learning already exists.
+        existing = _make_learning(
+            lesson="Always filter deleted_at column",
+            confidence=0.9,
+            times_confirmed=3,
+        )
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            m = MagicMock()
+            if call_count == 1:
+                # exact-hash lookup misses
+                m.scalar_one_or_none.return_value = None
+            else:
+                # find_similar + _resolve_conflicts both see the existing one
+                m.scalars.return_value.all.return_value = [existing]
+            return m
+
+        session = AsyncMock()
+        session.execute = mock_execute
+        session.add = MagicMock()
+
+        with patch.object(svc, "_invalidate_summary", new_callable=AsyncMock):
+            with patch.object(svc, "find_similar", new_callable=AsyncMock) as mock_find:
+                mock_find.return_value = existing
+                entry = await svc.create_learning(
+                    session,
+                    connection_id="conn-1",
+                    category="schema_gotcha",
+                    subject="orders",
+                    lesson="Never filter deleted_at column on this table",
+                    confidence=0.6,
+                )
+
+        # Not merged into the existing (times_confirmed untouched) ...
+        assert existing.times_confirmed == 3
+        # ... and the weaker new lesson is stored inactive.
+        assert entry.is_active is False
+        session.add.assert_called_once()
 
 
 class TestUpdateLearningNonLesson:

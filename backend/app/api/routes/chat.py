@@ -697,7 +697,78 @@ async def submit_feedback(
         except Exception:
             logger.debug("Feedback-triggered learning extraction failed", exc_info=True)
 
+    elif msg.user_rating == 1 and msg.metadata_json:
+        try:
+            import json as _json
+
+            from app.models.base import async_session_factory
+
+            meta = _json.loads(msg.metadata_json)
+            exposed_ids_raw = meta.get("exposed_learning_ids") or []
+            exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
+            session_row = msg.session
+            connection_id = getattr(session_row, "connection_id", None) if session_row else None
+            if exposed_ids and connection_id:
+                async with async_session_factory() as learn_session:
+                    await apply_exposed_learnings_on_positive_feedback(
+                        learn_session,
+                        connection_id=connection_id,
+                        exposed_learning_ids=exposed_ids,
+                    )
+        except Exception:
+            logger.debug("Positive-feedback learning application failed", exc_info=True)
+
     return {"ok": True, "message_id": body.message_id, "rating": msg.user_rating}
+
+
+async def apply_exposed_learnings_on_positive_feedback(
+    session: AsyncSession,
+    *,
+    connection_id: str,
+    exposed_learning_ids: list[str],
+) -> int:
+    """Credit learnings that produced a thumbs-up answer as *applied*.
+
+    Symmetric counterpart to
+    :func:`contradict_exposed_learnings_on_negative_feedback`. A positive user
+    rating is the strongest available "the LLM provably used these lessons and
+    they were correct" signal, so we bump ``times_applied`` for every learning
+    that was exposed for that message. This is what keeps ``times_applied``
+    (and the decay-score / ranking derived from it) a live signal in
+    production rather than dead code.
+
+    Returns the number of learnings credited.
+    """
+    if not exposed_learning_ids or not connection_id:
+        return 0
+
+    from sqlalchemy import select as _select
+
+    from app.models.agent_learning import AgentLearning as _AgentLearning
+    from app.services.agent_learning_service import AgentLearningService
+
+    try:
+        rows = await session.execute(
+            _select(_AgentLearning).where(
+                _AgentLearning.id.in_(exposed_learning_ids),
+                _AgentLearning.connection_id == connection_id,
+                _AgentLearning.is_active.is_(True),
+            )
+        )
+        candidates = list(rows.scalars().all())
+        svc = AgentLearningService()
+        applied = 0
+        for lrn in candidates:
+            await svc.apply_learning(session, lrn.id)
+            applied += 1
+        if applied:
+            # times_applied feeds _priority_score, so refresh the cached prompt.
+            await svc._invalidate_summary(session, connection_id)
+        await session.commit()
+        return applied
+    except Exception:
+        logger.debug("Positive-feedback application pass failed (non-critical)", exc_info=True)
+        return 0
 
 
 async def contradict_exposed_learnings_on_negative_feedback(

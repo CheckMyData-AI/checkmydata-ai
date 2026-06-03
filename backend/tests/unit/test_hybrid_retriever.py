@@ -48,6 +48,34 @@ def bm25(tmp_path) -> BM25Index:
 
 
 @pytest.mark.asyncio
+async def test_chroma_max_distance_filters_low_relevance(bm25):
+    """Dense hits beyond the distance threshold are dropped before fusion."""
+    chroma = _StubVector(
+        results=[
+            {
+                "id": "c2",
+                "document": "UserService class",
+                "distance": 0.2,  # within threshold
+                "metadata": {"source_path": "b.py"},
+            },
+            {
+                "id": "zz",
+                "document": "irrelevant semantic match",
+                "distance": 0.95,  # beyond threshold -> dropped
+                "metadata": {"source_path": "z.py"},
+            },
+        ]
+    )
+    retr = HybridRetriever(bm25=bm25, vector_store=chroma, rrf_k=60, chroma_max_distance=0.8)
+    out = await retr.query("p", "users service")
+    ids = {r.doc_id for r in out}
+    # The far hit must not appear via the dense leg.
+    far = next((r for r in out if r.doc_id == "zz"), None)
+    assert far is None or far.chroma_rank is None
+    assert "zz" not in ids
+
+
+@pytest.mark.asyncio
 async def test_rrf_combines_overlapping_results(bm25):
     chroma = _StubVector(
         results=[

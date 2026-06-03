@@ -84,6 +84,12 @@ class _PipelineState:
     ast_skipped_count: int = 0
     # M2: code knowledge graph built from parsed files.
     code_graph: CodeGraph | None = None
+    # Repo-relative paths whose LLM doc generation still failed after retry in
+    # this run; persisted to ProjectCache so the next run re-queues them.
+    failed_doc_paths: list[str] = field(default_factory=list)
+    # Previously-failed paths re-injected into changed_files this run; used to
+    # clear them from the persisted queue once they succeed.
+    requeued_doc_paths: list[str] = field(default_factory=list)
 
 
 class IndexingPipelineRunner:
@@ -271,6 +277,42 @@ class IndexingPipelineRunner:
                     f"{len(state.changed_files)} files remaining",
                 )
 
+        # --- Re-queue docs that failed generation in a previous run ---
+        # A partial failure (under generate_docs_max_failure_ratio) lets the
+        # run complete, but those paths are no longer in any future diff, so
+        # without this they'd never get LLM content again. We splice them back
+        # into changed_files (when the file still exists) so the normal
+        # incremental machinery regenerates them.
+        if not force_full and state.repo_dir is not None:
+            try:
+                prior_failed = await self._cache_svc.get_failed_doc_paths(db, project_id)
+            except Exception:
+                logger.debug("Failed to load prior failed doc paths", exc_info=True)
+                prior_failed = []
+            if prior_failed:
+                existing_changed = set(state.changed_files)
+                requeued = [
+                    p
+                    for p in prior_failed
+                    if p not in existing_changed
+                    and (state.repo_dir / p).exists()
+                    and (state.repo_dir / p).is_file()
+                    and not is_binary_file(state.repo_dir / p)
+                ]
+                if requeued:
+                    state.changed_files.extend(requeued)
+                    state.requeued_doc_paths = requeued
+                    logger.info(
+                        "Re-queued %d previously-failed doc(s) for regeneration",
+                        len(requeued),
+                    )
+                    await tracker.emit(
+                        wf_id,
+                        "detect_changes",
+                        "started",
+                        f"Re-queued {len(requeued)} previously-failed doc(s) for regeneration",
+                    )
+
         # --- Guard: vector store health (C3, v1.13.0) ---
         # Three distinct cases:
         #   1. Chroma reachable, collection legitimately empty AND no docs in
@@ -430,12 +472,14 @@ class IndexingPipelineRunner:
         # are kept in-memory only and feed the graph_build step (M2).
         # Gated by code_graph_enabled; the step is a fast no-op when off.
         if settings.code_graph_enabled and state.repo_dir is not None:
-            # For graph building we need every file, not just changes. The
-            # graph is a full replace per run.
+            # A full parse walks every supported file; an incremental run only
+            # touches the changed set and the graph is merged into the existing
+            # one (see _run_graph_build) so unchanged files are preserved.
+            is_full_graph = force_full or state.last_sha is None
             files_to_parse = await self._collect_files_for_ast(
                 state.repo_dir,
                 state.changed_files,
-                force_full=force_full or state.last_sha is None,
+                force_full=is_full_graph,
             )
             async with tracker.step(
                 wf_id,
@@ -451,7 +495,7 @@ class IndexingPipelineRunner:
                 "graph_build",
                 f"Building code graph from {len(state.parsed_files)} parsed file(s)",
             ):
-                await self._run_graph_build(state, wf_id, db, project_id)
+                await self._run_graph_build(state, wf_id, db, project_id, is_full=is_full_graph)
             await self._cp_svc.complete_step(db, cp_id, "graph_build")
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
@@ -1071,6 +1115,10 @@ class IndexingPipelineRunner:
                                 exc_info=True,
                             )
 
+            # Remember which paths still have no LLM content so the next run
+            # re-queues them (see the re-queue block after detect_changes).
+            state.failed_doc_paths = [edoc.file_path for edoc, _ in still_failed]
+
             if total_llm_tasks > 0 and still_failed:
                 failure_ratio = len(still_failed) / total_llm_tasks
                 threshold = settings.generate_docs_max_failure_ratio
@@ -1312,13 +1360,21 @@ class IndexingPipelineRunner:
         wf_id: str,
         db: AsyncSession,
         project_id: str,
+        *,
+        is_full: bool = True,
     ) -> None:
         """M2: build the code knowledge graph from parsed files and persist it.
+
+        On a full run the graph fully replaces the persisted one. On an
+        incremental run (``is_full=False``) only the changed files were parsed,
+        so the freshly-built subset is merged into the existing graph via
+        :meth:`CodeGraphService.save_incremental`; symbols/edges for changed and
+        deleted files are replaced while unchanged files are preserved.
 
         Failures here are non-fatal: the graph is an additive signal, and the
         legacy regex pipeline still produces the canonical EntityInfo data.
         """
-        if not state.parsed_files:
+        if not state.parsed_files and is_full:
             logger.info("graph_build: no parsed files, skipping")
             return
         try:
@@ -1327,9 +1383,19 @@ class IndexingPipelineRunner:
                 min_call_confidence=settings.code_graph_call_confidence_threshold,
             )
             graph = await asyncio.to_thread(builder.build, state.parsed_files)
-            state.code_graph = graph
             svc = CodeGraphService()
-            sym_count, edge_count = await svc.save(db, project_id, graph)
+            if is_full:
+                state.code_graph = graph
+                sym_count, edge_count = await svc.save(db, project_id, graph)
+            else:
+                affected_files = set(state.changed_files) | set(state.deleted_files)
+                sym_count, edge_count = await svc.save_incremental(
+                    db, project_id, graph, affected_files
+                )
+                # Rehydrate the merged graph so downstream M5/M6 steps see the
+                # full picture, not just the changed-file subset.
+                merged = await svc.load_graph(db, project_id)
+                state.code_graph = merged if merged is not None else graph
             # M6: observability counters.
             try:
                 from app.core.metrics import get_metrics_collector
@@ -1434,6 +1500,21 @@ class IndexingPipelineRunner:
                 knowledge=state.knowledge,
                 profile=state.profile,
             )
+
+            # Persist the regeneration queue: this run's still-failed docs plus
+            # any previously-queued paths we did NOT manage to retry this run,
+            # minus the ones that just succeeded. requeued_doc_paths that are
+            # not in failed_doc_paths succeeded and are dropped.
+            try:
+                prior_failed = await self._cache_svc.get_failed_doc_paths(db, project_id)
+                requeued = set(state.requeued_doc_paths)
+                still_failed = set(state.failed_doc_paths)
+                # Keep prior entries we never got to retry (not requeued this run),
+                # union with anything that failed this run.
+                pending = (set(prior_failed) - requeued) | still_failed
+                await self._cache_svc.set_failed_doc_paths(db, project_id, sorted(pending))
+            except Exception:
+                logger.debug("Failed to persist doc regeneration queue", exc_info=True)
 
             if state.changed_files:
                 await tracker.emit(

@@ -1,10 +1,15 @@
 """Persistence and queries for the code knowledge graph (M2).
 
-Provides "full replace per index run" semantics: a successful indexing run
-calls :meth:`save` with the new symbols + edges, which transactionally
-deletes the project's existing rows and inserts the new ones. This avoids the
-operational complexity of incremental graph updates while keeping query
-latency low (indexed by ``(project_id, ...)`` lookups).
+Two write paths:
+
+* :meth:`save` — "full replace": transactionally deletes the project's rows
+  and inserts the supplied graph. Used on full (re)index runs.
+* :meth:`save_incremental` — merges a changed-files-only graph into the
+  persisted one (preserving unchanged files, replacing changed files, and
+  dropping deleted files). Used on incremental runs so the graph stays
+  globally complete instead of collapsing to the changed subset.
+
+Reads are indexed by ``(project_id, ...)`` lookups for low latency.
 """
 
 from __future__ import annotations
@@ -88,6 +93,66 @@ class CodeGraphService:
             len(edge_rows),
         )
         return len(sym_rows), len(edge_rows)
+
+    async def save_incremental(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        new_graph: CodeGraph,
+        affected_files: set[str] | list[str],
+    ) -> tuple[int, int]:
+        """Merge a partial (changed-files-only) graph into the persisted graph.
+
+        On incremental indexing runs ``new_graph`` only contains symbols for
+        the files that changed in this commit range. A naive :meth:`save`
+        would delete the entire project graph and reinsert only that subset,
+        corrupting M5 lineage / M6 clustering for unchanged files. Instead we
+        load the existing graph, drop every symbol/edge belonging to an
+        ``affected_files`` path (changed *or* deleted), splice in ``new_graph``,
+        and persist the union.
+
+        When the project has no persisted graph yet this degrades to a plain
+        :meth:`save` of ``new_graph``.
+        """
+        existing = await self.load_graph(session, project_id)
+        if existing is None:
+            return await self.save(session, project_id, new_graph)
+        merged = self._merge_graphs(existing, new_graph, set(affected_files))
+        return await self.save(session, project_id, merged)
+
+    @staticmethod
+    def _merge_graphs(
+        existing: CodeGraph,
+        new_graph: CodeGraph,
+        affected_files: set[str],
+    ) -> CodeGraph:
+        """Produce a merged graph: existing minus affected files, plus new_graph.
+
+        Symbols whose ``file_path`` is in ``affected_files`` are removed from
+        the existing graph (the changed files are re-supplied by ``new_graph``;
+        deleted files simply vanish). Edges are kept from the existing graph
+        only when their *source* file is not affected; all edges from
+        ``new_graph`` are added. ``file:<path>`` import-edge sources are
+        attributed to ``<path>``.
+        """
+        existing_sym_file = {uid: sym.file_path for uid, sym in existing.symbols.items()}
+
+        def _edge_source_file(src_uid: str) -> str | None:
+            if src_uid.startswith("file:"):
+                return src_uid[len("file:") :]
+            return existing_sym_file.get(src_uid)
+
+        merged_symbols = [
+            sym for sym in existing.symbols.values() if sym.file_path not in affected_files
+        ]
+        merged_symbols.extend(new_graph.symbols.values())
+
+        merged_edges = [
+            edge for edge in existing.edges if _edge_source_file(edge.src_uid) not in affected_files
+        ]
+        merged_edges.extend(new_graph.edges)
+
+        return CodeGraph(symbols=merged_symbols, edges=merged_edges)
 
     @staticmethod
     async def _bulk_insert(

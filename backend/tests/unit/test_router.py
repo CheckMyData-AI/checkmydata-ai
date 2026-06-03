@@ -142,3 +142,26 @@ async def test_route_request_parses_llm_response():
     assert result.use_complex_pipeline is True
     assert result.is_direct is False
     assert result.needs_multiple_data_sources is True
+
+
+def test_needs_multiple_data_sources_triggers_pipeline_when_not_complex():
+    """A non-complex request that spans data sources still uses the pipeline."""
+    from app.agents.router import RouteResult
+
+    rr = RouteResult(
+        route="explore",
+        complexity="moderate",
+        approach="combine db + mcp",
+        estimated_queries=2,
+        needs_multiple_data_sources=True,
+    )
+    assert rr.use_complex_pipeline is True
+
+    rr_single = RouteResult(
+        route="query",
+        complexity="moderate",
+        approach="one query",
+        estimated_queries=1,
+        needs_multiple_data_sources=False,
+    )
+    assert rr_single.use_complex_pipeline is False

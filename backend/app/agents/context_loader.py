@@ -49,6 +49,28 @@ class ContextLoader:
         self._tracker = tracker
         self._mcp_cache = mcp_cache
         self._MCP_CACHE_TTL = mcp_cache_ttl
+        self._hybrid_retriever = None
+
+    def _get_hybrid_retriever(self):
+        """Lazily build the shared hybrid retriever (BM25 + Chroma + RRF).
+
+        Mirrors KnowledgeAgent so the orchestrator's pre-loaded knowledge uses
+        the same fusion path instead of a Chroma-only lookup (no more
+        split-brain retrieval between the orchestrator and KnowledgeAgent).
+        """
+        if self._hybrid_retriever is None:
+            from app.config import settings as _settings
+            from app.knowledge.bm25_index import BM25Index
+            from app.knowledge.hybrid_retriever import HybridRetriever
+
+            self._hybrid_retriever = HybridRetriever(
+                bm25=BM25Index(_settings.bm25_data_dir),
+                vector_store=self._vector_store,
+                rrf_k=_settings.hybrid_rrf_k,
+                min_score=_settings.hybrid_min_score,
+                chroma_max_distance=_settings.rag_relevance_threshold,
+            )
+        return self._hybrid_retriever
 
     async def has_mcp_sources(self, project_id: str, wf_id: str = "") -> bool:
         """Check if the project has any MCP-type connections (cached for 60s)."""
@@ -256,7 +278,23 @@ class ContextLoader:
         if not project_id or not question or not question.strip():
             return None
         try:
-            chunks = self._vector_store.query(project_id, question, n_results=n_results)
+            from app.config import settings as _settings
+
+            chunks: list[dict]
+            if _settings.hybrid_retrieval_enabled:
+                # Unified hybrid path: fuse BM25 + Chroma so exact-identifier
+                # questions aren't missed. hybrid_k bounds the fused pool; we
+                # still render only the top n_results below.
+                fused = await self._get_hybrid_retriever().query(
+                    project_id,
+                    question,
+                    k=max(n_results, _settings.hybrid_k),
+                )
+                chunks = [
+                    {"document": r.document, "metadata": r.metadata} for r in fused[:n_results]
+                ]
+            else:
+                chunks = self._vector_store.query(project_id, question, n_results=n_results)
             if not chunks:
                 return None
             lines = ["RELEVANT KNOWLEDGE (top documentation snippets):"]

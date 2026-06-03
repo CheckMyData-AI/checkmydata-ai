@@ -107,6 +107,19 @@ class TestValidateBasic:
         assert outcome.passed is False
         assert "missing_col" in outcome.error_summary
 
+    def test_expected_columns_case_insensitive(self, validator):
+        """Expected column names match regardless of case (no false 'missing')."""
+        stage = _make_stage(
+            validation=StageValidation(expected_columns=["UserId", "Name"]),
+        )
+        qr = QueryResult(columns=["userid", "name"], rows=[[1, "a"]], row_count=1)
+        result = _make_result(qr=qr)
+        ctx = StageContext(plan=_make_plan(stage))
+
+        outcome = validator.validate(stage, result, ctx)
+        assert outcome.passed is True
+        assert outcome.errors == []
+
 
 class TestMinMaxRows:
     def test_min_rows_warning(self, validator):

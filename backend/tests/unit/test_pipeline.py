@@ -480,6 +480,40 @@ class TestStageExecutor:
 # ------------------------------------------------------------------
 
 
+class TestPipelineFailureSurfacesPartialData:
+    """A stage_failed response must still surface completed-stage data."""
+
+    def test_stage_failed_includes_partial_results(self):
+        from app.agents.response_builder import ResponseBuilder
+        from app.agents.stage_executor import _StageExecutorResult
+
+        stage_ok = PlanStage(stage_id="s1", description="Fetch users", tool="query_database")
+        stage_bad = PlanStage(stage_id="s2", description="Aggregate", tool="query_database")
+        plan = ExecutionPlan(plan_id="p1", question="q", stages=[stage_ok, stage_bad])
+        ctx = StageContext(plan=plan)
+        qr = QueryResult(columns=["id"], rows=[[1], [2]], row_count=2)
+        ctx.set_result(
+            "s1",
+            StageResult(stage_id="s1", status="success", query="SELECT id", query_result=qr),
+        )
+
+        exec_result = _StageExecutorResult(
+            status="stage_failed",
+            stage_ctx=ctx,
+            failed_stage=stage_bad,
+            failed_validation=StageValidationOutcome(),
+        )
+        exec_result.failed_validation.fail("boom")
+
+        resp = ResponseBuilder.build_pipeline_response(exec_result, "wf1", None, "run-1")
+        assert resp.response_type == "stage_failed"
+        # Partial data from the completed stage is surfaced, not discarded.
+        assert resp.results is not None
+        assert resp.results.row_count == 2
+        assert resp.query == "SELECT id"
+        assert "1 of 2 stage(s) completed" in resp.answer
+
+
 class TestExecutionPlanSerialization:
     def test_roundtrip(self, sample_plan):
         j = sample_plan.to_json()

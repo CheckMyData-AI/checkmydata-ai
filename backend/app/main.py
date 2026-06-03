@@ -67,11 +67,12 @@ logger = logging.getLogger(__name__)
 _backup_task: asyncio.Task[None] | None = None
 _scheduler_task: asyncio.Task[None] | None = None
 _health_check_task: asyncio.Task[None] | None = None
+_maintenance_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backup_task, _scheduler_task, _health_check_task  # noqa: PLW0603
+    global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -88,7 +89,7 @@ async def lifespan(app: FastAPI):
     await _cleanup_stale_checkpoints()
     await _reset_stale_indexing_statuses()
     await _backfill_default_rules()
-    await _decay_stale_learnings()
+    await _periodic_learning_decay()
     await _periodic_insight_maintenance()
     await _cleanup_pipeline_runs()
 
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
 
     _scheduler_task = asyncio.create_task(_scheduler_loop())
     _health_check_task = asyncio.create_task(_health_check_loop())
+    _maintenance_task = asyncio.create_task(_maintenance_loop())
 
     from app.core.workflow_tracker import tracker as _wf_tracker
     from app.services.trace_persistence_service import TracePersistenceService
@@ -124,7 +126,7 @@ async def lifespan(app: FastAPI):
 
     await _trace_svc.stop()
 
-    for task in (_backup_task, _scheduler_task, _health_check_task):
+    for task in (_backup_task, _scheduler_task, _health_check_task, _maintenance_task):
         if task and not task.done():
             task.cancel()
             try:
@@ -466,21 +468,6 @@ async def _backfill_default_rules() -> None:
         logger.warning("Failed to backfill default rules at startup", exc_info=True)
 
 
-async def _decay_stale_learnings() -> None:
-    """Reduce confidence of learnings inactive for >30 days (runs once at startup)."""
-    try:
-        from app.services.agent_learning_service import AgentLearningService
-
-        svc = AgentLearningService()
-        async with async_session_factory() as session:
-            affected = await svc.decay_stale_learnings(session)
-            await session.commit()
-            if affected:
-                logger.info("Startup: decayed confidence for %d stale learnings", affected)
-    except Exception:
-        logger.warning("Failed to decay stale learnings at startup", exc_info=True)
-
-
 async def _periodic_insight_maintenance() -> None:
     """C6 (v1.13.0) — daily insight maintenance: expire insights past their
     ``expires_at`` and decay confidence on stale unverified insights.
@@ -761,8 +748,6 @@ async def _backup_cron_loop() -> None:
                     )
                 )
                 await session.commit()
-            await _periodic_learning_decay()
-            await _periodic_insight_maintenance()
         except asyncio.CancelledError:
             break
         except Exception:
@@ -774,6 +759,26 @@ async def _backup_cron_loop() -> None:
             except Exception:
                 logger.warning("Failed to record backup failure", exc_info=True)
             await asyncio.sleep(60)
+
+
+async def _maintenance_loop() -> None:
+    """Independent knowledge-lifecycle maintenance scheduler.
+
+    Runs learning + session-note confidence decay and insight TTL/decay every
+    ``settings.maintenance_interval_hours`` hours. Previously these only ran
+    inside ``_backup_cron_loop``, so with backups disabled decay never
+    happened after startup and stale knowledge accumulated indefinitely.
+    """
+    interval_seconds = max(1, settings.maintenance_interval_hours) * 3600
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await _periodic_learning_decay()
+            await _periodic_insight_maintenance()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Maintenance loop iteration failed; will retry next cycle")
 
 
 async def _maybe_initial_backup() -> None:

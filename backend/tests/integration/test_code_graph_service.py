@@ -122,6 +122,83 @@ async def test_save_replaces_existing_rows(db_session: AsyncSession, project_id:
 
 
 @pytest.mark.asyncio
+async def test_save_incremental_preserves_unchanged_files(
+    db_session: AsyncSession, project_id: str
+):
+    """An incremental run must merge, not wipe, the persisted graph."""
+    svc = CodeGraphService()
+    # Full index: a.py (3 symbols) + b.py (1 symbol).
+    base = _make_graph()
+    b_symbol = Symbol(
+        uid="python:b.py:function:other:1",
+        kind="function",
+        name="other",
+        file_path="b.py",
+        start_line=1,
+        end_line=2,
+        language="python",
+    )
+    full = CodeGraph(
+        symbols=[*base.symbols.values(), b_symbol],
+        edges=list(base.edges),
+    )
+    await svc.save(db_session, project_id, full)
+    sym_total, _ = await svc.count(db_session, project_id)
+    assert sym_total == 4
+
+    # Incremental run that only re-parsed a.py (b.py untouched). The new
+    # subset graph contains only a.py's symbols.
+    changed_only = CodeGraph(symbols=list(base.symbols.values()), edges=list(base.edges))
+    await svc.save_incremental(db_session, project_id, changed_only, {"a.py"})
+
+    rows = await svc.load_symbols(db_session, project_id)
+    files = {r.file_path for r in rows}
+    # b.py must survive the incremental run.
+    assert "b.py" in files
+    assert any(r.uid == "python:b.py:function:other:1" for r in rows)
+    assert len(rows) == 4
+
+
+@pytest.mark.asyncio
+async def test_save_incremental_drops_deleted_files(db_session: AsyncSession, project_id: str):
+    """Symbols for files in the affected set with no replacement are removed."""
+    svc = CodeGraphService()
+    base = _make_graph()
+    b_symbol = Symbol(
+        uid="python:b.py:function:other:1",
+        kind="function",
+        name="other",
+        file_path="b.py",
+        start_line=1,
+        end_line=2,
+        language="python",
+    )
+    full = CodeGraph(symbols=[*base.symbols.values(), b_symbol], edges=list(base.edges))
+    await svc.save(db_session, project_id, full)
+
+    # b.py was deleted: empty new graph, b.py in affected set.
+    empty = CodeGraph(symbols=[], edges=[])
+    await svc.save_incremental(db_session, project_id, empty, {"b.py"})
+
+    rows = await svc.load_symbols(db_session, project_id)
+    files = {r.file_path for r in rows}
+    assert "b.py" not in files
+    assert "a.py" in files
+
+
+@pytest.mark.asyncio
+async def test_save_incremental_falls_back_to_full_when_empty(
+    db_session: AsyncSession, project_id: str
+):
+    """With no persisted graph, save_incremental behaves like save."""
+    svc = CodeGraphService()
+    g = _make_graph()
+    sym_count, edge_count = await svc.save_incremental(db_session, project_id, g, {"a.py"})
+    assert sym_count == 3
+    assert edge_count == 2
+
+
+@pytest.mark.asyncio
 async def test_get_callers_and_callees(db_session: AsyncSession, project_id: str):
     svc = CodeGraphService()
     await svc.save(db_session, project_id, _make_graph())

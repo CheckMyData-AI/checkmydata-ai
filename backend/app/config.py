@@ -144,7 +144,12 @@ class Settings(BaseSettings):
     ]
 
     # Agent settings
-    max_orchestrator_iterations: int = 20
+    # Tool-calling loop safety ceiling. The wall-clock timeout
+    # (agent_wall_clock_timeout_seconds) is the real bound on a request; this
+    # ceiling just prevents a pathological infinite loop, so it is set
+    # generously (matches the documented default) rather than throttling
+    # legitimate multi-step analysis.
+    max_orchestrator_iterations: int = 100
     orchestrator_final_synthesis: bool = True
     agent_wall_clock_timeout_seconds: int = 180
     max_parallel_tool_calls: int = 2
@@ -175,6 +180,11 @@ class Settings(BaseSettings):
     # Slow query warning threshold (post-validator)
     slow_query_warning_ms: int = 30_000
 
+    # Knowledge-lifecycle maintenance loop interval (hours). Drives learning /
+    # session-note confidence decay and insight TTL/decay on a fixed cadence,
+    # decoupled from the backup cron so decay runs even when backups are off.
+    maintenance_interval_hours: int = 24
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
@@ -184,7 +194,11 @@ class Settings(BaseSettings):
     pipeline_max_parallel_stages: int = 3
 
     # SQL agent
-    llm_result_preview_rows: int = 20
+    # Number of result rows surfaced to the LLM when summarizing a query
+    # result. Too small and the model reasons over a truncated view of the
+    # data; the value is configurable so wide/large results can be tuned
+    # without code changes.
+    llm_result_preview_rows: int = 50
 
     # Answer quality validator (LLM-based, optional). Falls back to length
     # heuristic when disabled or when the validator call fails.

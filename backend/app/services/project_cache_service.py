@@ -75,6 +75,44 @@ class ProjectCacheService:
 
         await session.commit()
 
+    async def get_failed_doc_paths(
+        self,
+        session: AsyncSession,
+        project_id: str,
+    ) -> list[str]:
+        """Return repo-relative paths whose doc generation failed previously."""
+        import json
+
+        cache = await self._get_row(session, project_id)
+        if not cache or not cache.failed_doc_paths_json:
+            return []
+        try:
+            data = json.loads(cache.failed_doc_paths_json)
+            return [p for p in data if isinstance(p, str)] if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    async def set_failed_doc_paths(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        paths: list[str],
+    ) -> None:
+        """Persist the set of doc paths still pending regeneration.
+
+        Pass an empty list to clear the queue once everything succeeds. Rows
+        are created lazily so this works even before the first cache save.
+        """
+        import json
+
+        payload = json.dumps(sorted(set(paths)))
+        existing = await self._get_row(session, project_id)
+        if existing:
+            existing.failed_doc_paths_json = payload
+        else:
+            session.add(ProjectCache(project_id=project_id, failed_doc_paths_json=payload))
+        await session.commit()
+
     async def _get_row(
         self,
         session: AsyncSession,
