@@ -35,7 +35,11 @@ class RouteResult:
 
     @property
     def use_complex_pipeline(self) -> bool:
-        return self.complexity == "complex"
+        # A request is routed to the multi-stage pipeline when the router calls
+        # it complex OR when it needs to combine multiple data sources — the
+        # latter signal was previously parsed but never acted on, so
+        # multi-source questions were silently handled by the single-loop path.
+        return self.complexity == "complex" or self.needs_multiple_data_sources
 
 
 _DEFAULT_ROUTE = RouteResult(

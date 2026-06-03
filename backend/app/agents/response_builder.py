@@ -147,13 +147,26 @@ class ResponseBuilder:
             if stage_desc
             else (fail_msg or "Pipeline failed")
         )
+        # Surface partial progress: don't throw away the data the earlier
+        # stages already produced. Tell the user what completed and attach the
+        # last successful result so the frontend can still render it.
+        partial_note = ""
+        if completed > 0 and last_sql_result and last_sql_result.query_result:
+            rc = last_sql_result.query_result.row_count
+            partial_note = (
+                f"\n\n{completed} of {n_stages} stage(s) completed before the failure; "
+                f"the latest intermediate result ({rc} row(s)) is shown below."
+            )
         return AgentResponse(
-            answer=f"{error_detail}\n\n"
+            answer=f"{error_detail}{partial_note}\n\n"
             "Would you like me to **retry** with a different approach, "
             "or **modify** the request?",
+            query=last_sql_result.query if last_sql_result else None,
+            results=last_sql_result.query_result if last_sql_result else None,
             workflow_id=wf_id,
             staleness_warning=staleness_warning,
             response_type="stage_failed",
+            viz_type="table" if last_sql_result and last_sql_result.query_result else "text",
             viz_config={
                 "pipeline_run_id": pipeline_run_id,
                 "stage_id": (exec_result.failed_stage.stage_id if exec_result.failed_stage else ""),

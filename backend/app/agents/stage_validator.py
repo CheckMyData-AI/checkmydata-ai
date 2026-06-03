@@ -111,7 +111,12 @@ class StageValidator:
         v = stage.validation
 
         if v.expected_columns and qr:
-            missing = set(v.expected_columns) - {c.lower() for c in qr.columns}
+            # Case-insensitive on both sides — the planner's expected column
+            # names and the driver's reported column names can differ in case
+            # (e.g. quoted identifiers vs lowercased), which previously caused
+            # spurious "missing column" failures.
+            actual_cols = {c.lower() for c in qr.columns}
+            missing = {col for col in v.expected_columns if col.lower() not in actual_cols}
             if missing:
                 outcome.fail(f"Missing expected columns: {sorted(missing)}")
 
