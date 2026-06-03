@@ -33,6 +33,14 @@ class ProjectCache(Base):
         default="{}",
         server_default="{}",
     )
+    # JSON list of repo-relative paths whose LLM doc generation failed in a
+    # previous run (under the failure-ratio threshold). They are re-queued on
+    # the next index run so partial failures don't leave permanent KB holes.
+    failed_doc_paths_json: Mapped[str] = mapped_column(
+        Text,
+        default="[]",
+        server_default="[]",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

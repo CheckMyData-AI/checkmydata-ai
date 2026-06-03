@@ -84,6 +84,12 @@ class _PipelineState:
     ast_skipped_count: int = 0
     # M2: code knowledge graph built from parsed files.
     code_graph: CodeGraph | None = None
+    # Repo-relative paths whose LLM doc generation still failed after retry in
+    # this run; persisted to ProjectCache so the next run re-queues them.
+    failed_doc_paths: list[str] = field(default_factory=list)
+    # Previously-failed paths re-injected into changed_files this run; used to
+    # clear them from the persisted queue once they succeed.
+    requeued_doc_paths: list[str] = field(default_factory=list)
 
 
 class IndexingPipelineRunner:
@@ -270,6 +276,43 @@ class IndexingPipelineRunner:
                     f"Pre-filtered {filtered} binary/missing files, "
                     f"{len(state.changed_files)} files remaining",
                 )
+
+        # --- Re-queue docs that failed generation in a previous run ---
+        # A partial failure (under generate_docs_max_failure_ratio) lets the
+        # run complete, but those paths are no longer in any future diff, so
+        # without this they'd never get LLM content again. We splice them back
+        # into changed_files (when the file still exists) so the normal
+        # incremental machinery regenerates them.
+        if not force_full and state.repo_dir is not None:
+            try:
+                prior_failed = await self._cache_svc.get_failed_doc_paths(db, project_id)
+            except Exception:
+                logger.debug("Failed to load prior failed doc paths", exc_info=True)
+                prior_failed = []
+            if prior_failed:
+                existing_changed = set(state.changed_files)
+                requeued = [
+                    p
+                    for p in prior_failed
+                    if p not in existing_changed
+                    and (state.repo_dir / p).exists()
+                    and (state.repo_dir / p).is_file()
+                    and not is_binary_file(state.repo_dir / p)
+                ]
+                if requeued:
+                    state.changed_files.extend(requeued)
+                    state.requeued_doc_paths = requeued
+                    logger.info(
+                        "Re-queued %d previously-failed doc(s) for regeneration",
+                        len(requeued),
+                    )
+                    await tracker.emit(
+                        wf_id,
+                        "detect_changes",
+                        "started",
+                        f"Re-queued {len(requeued)} previously-failed doc(s) "
+                        "for regeneration",
+                    )
 
         # --- Guard: vector store health (C3, v1.13.0) ---
         # Three distinct cases:
@@ -1075,6 +1118,10 @@ class IndexingPipelineRunner:
                                 exc_info=True,
                             )
 
+            # Remember which paths still have no LLM content so the next run
+            # re-queues them (see the re-queue block after detect_changes).
+            state.failed_doc_paths = [edoc.file_path for edoc, _ in still_failed]
+
             if total_llm_tasks > 0 and still_failed:
                 failure_ratio = len(still_failed) / total_llm_tasks
                 threshold = settings.generate_docs_max_failure_ratio
@@ -1456,6 +1503,21 @@ class IndexingPipelineRunner:
                 knowledge=state.knowledge,
                 profile=state.profile,
             )
+
+            # Persist the regeneration queue: this run's still-failed docs plus
+            # any previously-queued paths we did NOT manage to retry this run,
+            # minus the ones that just succeeded. requeued_doc_paths that are
+            # not in failed_doc_paths succeeded and are dropped.
+            try:
+                prior_failed = await self._cache_svc.get_failed_doc_paths(db, project_id)
+                requeued = set(state.requeued_doc_paths)
+                still_failed = set(state.failed_doc_paths)
+                # Keep prior entries we never got to retry (not requeued this run),
+                # union with anything that failed this run.
+                pending = (set(prior_failed) - requeued) | still_failed
+                await self._cache_svc.set_failed_doc_paths(db, project_id, sorted(pending))
+            except Exception:
+                logger.debug("Failed to persist doc regeneration queue", exc_info=True)
 
             if state.changed_files:
                 await tracker.emit(
