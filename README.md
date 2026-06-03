@@ -191,7 +191,7 @@ Copy `backend/.env.example` to `backend/.env` and set the required values. See [
 | `JWT_SECRET` | Secret for signing JWT tokens (change from default in production) |
 | One LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
 
-**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 180s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2), `PIPELINE_MAX_PARALLEL_STAGES` (concurrent pipeline stages, default 3), `MAX_PIPELINE_REPLANS` (replan attempts, default 2), `ANSWER_VALIDATOR_ENABLED` (LLM quality gate on partial answers, default true), `LEARNING_ANALYZER_MODE` (`heuristic | hybrid | llm_first`, default `llm_first`). See `backend/.env.example` for all options.
+**Optional:** `GOOGLE_CLIENT_ID` (Google OAuth), `RESEND_API_KEY` (transactional emails), `REDIS_URL` (shared cache + task queue), `DATABASE_URL` (PostgreSQL for production), `AGENT_WALL_CLOCK_TIMEOUT_SECONDS` (orchestrator time limit, default 180s), `MAX_PARALLEL_TOOL_CALLS` (concurrent tool cap, default 2), `PIPELINE_MAX_PARALLEL_STAGES` (concurrent pipeline stages, default 3), `MAX_PIPELINE_REPLANS` (replan attempts, default 2), `ANSWER_VALIDATOR_ENABLED` (LLM quality gate on partial answers, default true), `LEARNING_ANALYZER_MODE` (`heuristic | hybrid | llm_first`, default `llm_first`), `MAX_ORCHESTRATOR_ITERATIONS` (tool-loop ceiling, default 100), `LLM_RESULT_PREVIEW_ROWS` (result rows shown to the LLM, default 50), `MAINTENANCE_INTERVAL_HOURS` (learning/insight decay cadence, default 24). See `backend/.env.example` for all options.
 
 ## Development Commands
 

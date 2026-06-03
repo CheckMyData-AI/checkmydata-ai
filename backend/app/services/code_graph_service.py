@@ -1,10 +1,15 @@
 """Persistence and queries for the code knowledge graph (M2).
 
-Provides "full replace per index run" semantics: a successful indexing run
-calls :meth:`save` with the new symbols + edges, which transactionally
-deletes the project's existing rows and inserts the new ones. This avoids the
-operational complexity of incremental graph updates while keeping query
-latency low (indexed by ``(project_id, ...)`` lookups).
+Two write paths:
+
+* :meth:`save` — "full replace": transactionally deletes the project's rows
+  and inserts the supplied graph. Used on full (re)index runs.
+* :meth:`save_incremental` — merges a changed-files-only graph into the
+  persisted one (preserving unchanged files, replacing changed files, and
+  dropping deleted files). Used on incremental runs so the graph stays
+  globally complete instead of collapsing to the changed subset.
+
+Reads are indexed by ``(project_id, ...)`` lookups for low latency.
 """
 
 from __future__ import annotations

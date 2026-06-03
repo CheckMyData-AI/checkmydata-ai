@@ -4,6 +4,73 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - Audit remediation
+
+Fixes a batch of correctness and lifecycle issues found in a full
+business-logic audit of the orchestrator, data integration/storage, and the
+self-learning/memory system.
+
+### Indexing integrity
+
+- **Incremental code-graph runs no longer wipe the graph.**
+  `CodeGraphService.save()` does a full project-wide delete+reinsert; on an
+  incremental run only changed files are parsed, so the graph collapsed to
+  that subset and corrupted M5 lineage / M6 clustering for unchanged files.
+  Added `save_incremental()` / `_merge_graphs()` that preserve unchanged
+  files, replace changed ones, and drop deleted ones; the pipeline runner
+  calls it on incremental runs and rehydrates the merged graph for M5/M6.
+- **Partial doc-generation failures no longer leave permanent KB holes.**
+  Failed paths are persisted (`project_cache.failed_doc_paths_json`, migration
+  `68aa15e554e2`) and re-queued into `changed_files` on the next index run,
+  then cleared once they succeed.
+
+### Learning / memory lifecycle
+
+- **Compiled-prompt cache invalidation on dedup paths.** Confidence/confirm
+  bumps on the exact-hash and fuzzy-dedup paths now invalidate the
+  `AgentLearningSummary` cache (previously only new inserts did), so prompt
+  ranking no longer served stale order.
+- **`times_applied` is live again.** A thumbs-up now credits the learnings
+  exposed for that answer as applied (symmetric with the V4 thumbs-down
+  contradiction), restoring the ranking and slower-decay signals that had
+  degraded to confidence-only because `apply_learning` had no caller.
+- **Polarity-aware conflict resolution.** `lessons_contradict()` (negation
+  parity + substantive content overlap) runs *before* the fuzzy merge so
+  opposite-polarity lessons aren't merged; ties deactivate the older lesson
+  and an outranked new lesson is stored inactive so two contradictory lessons
+  never both feed prompts.
+- **Decay/TTL run on an independent schedule.** A dedicated
+  `_maintenance_loop` (`MAINTENANCE_INTERVAL_HOURS`, default 24) runs learning
+  + session-note decay and insight TTL/decay regardless of whether backups are
+  enabled; session-note decay also runs at startup now.
+
+### Retrieval
+
+- **Unified hybrid retrieval.** The orchestrator's pre-loaded knowledge now
+  uses the shared BM25⊕Chroma+RRF path (bounded by the previously-dead
+  `HYBRID_K`) instead of a Chroma-only lookup. Low-relevance dense hits are
+  filtered by `RAG_RELEVANCE_THRESHOLD` before fusion.
+
+### Orchestrator / pipeline
+
+- **Raised the "20" caps.** `MAX_ORCHESTRATOR_ITERATIONS` corrected from 20 to
+  the documented 100 (the wall-clock timeout already bounds requests); the
+  LLM result preview is no longer hardcoded to 20 rows and reads
+  `LLM_RESULT_PREVIEW_ROWS` (default raised 20 → 50).
+- **Case-insensitive expected-column validation** removes spurious "missing
+  column" stage failures from quoted/lowercased identifiers.
+- **Router multi-source signal is acted on.** `needs_multiple_data_sources`
+  now also routes to the multi-stage pipeline.
+- **Partial data surfaced on `stage_failed`.** The last successful stage's
+  query/results are attached and the number of completed stages is noted,
+  instead of discarding all progress.
+
+### Knowledge freshness
+
+- `get_head_sha()` no longer blocks the event loop (run via `to_thread`), and
+  `count_commits_ahead()`'s `-1` error sentinel no longer surfaces as
+  "-1 commit(s) behind".
+
 ## [1.13.1] - 2026-06-01
 
 ### CI/Deploy Restoration & Toolchain Pinning

@@ -599,7 +599,7 @@ Agent learnings are structured lessons extracted from query validation outcomes 
   2. Fuzzy match (SequenceMatcher threshold 0.75)
   3. If duplicate found: bump confidence +0.1, keep longer lesson text
 
-- **Conflict resolution**: When creating a new learning, checks existing ones for contradictions. Detects negation flips ("use" vs "not use", "always" vs "never", "avoid" vs "prefer"). If the new lesson has higher confidence, the old conflicting one is deactivated.
+- **Conflict resolution**: When creating a new learning, checks existing ones for contradictions using `lessons_contradict()` — opposite negation polarity (after contraction normalization) combined with high substantive-token overlap. This runs *before* the fuzzy-dedup merge so opposite-polarity lessons are never merged together. On a tie the older lesson is deactivated (newer evidence wins); if a stronger contradicting lesson already exists, the new one is stored inactive so the two never both feed prompts.
 
 - **Schema cross-validation**: `validate_learnings_against_schema()` deactivates learnings whose subject no longer matches any known table in the current schema. It runs automatically during `POST /connections/{id}/refresh-schema` and is also available as a manual endpoint at `POST /connections/{id}/learnings/validate-schema`. Read-time blocklist filtering in `get_learnings()` additionally excludes legacy bad subjects (`columns`, `tables`, `information_schema`, etc.) from all prompts and API responses.
 
@@ -615,7 +615,7 @@ Agent learnings are structured lessons extracted from query validation outcomes 
     ↓ below 0.2: deactivated
   ```
 
-- **Exposure vs application** (v1.13.0 / C5): Older versions falsely incremented `times_applied` every time a learning was *included* in the prompt, conflating "the LLM saw it" with "the LLM used it." As of v1.13.0, exposure is tracked separately via `times_exposed` and `times_applied` is reserved for confirmed application (set only by the LLM analyzer or explicit feedback signal). This keeps the read-time path side-effect-free.
+- **Exposure vs application** (v1.13.0 / C5): Older versions falsely incremented `times_applied` every time a learning was *included* in the prompt, conflating "the LLM saw it" with "the LLM used it." As of v1.13.0, exposure is tracked separately via `times_exposed` and `times_applied` is reserved for confirmed application. A thumbs-up on an assistant message credits the learnings it exposed as applied (the symmetric counterpart to the V4 thumbs-down contradiction), which is what keeps `times_applied` — and the ranking/decay signals derived from it — a live signal in production. This keeps the read-time path side-effect-free.
 
 - **User voting**: REST endpoints for confirm (upvote) and contradict (downvote) allow users to directly influence learning confidence via the LearningsPanel UI. Both operations invalidate the compiled summary cache immediately so the next agent prompt reflects the updated confidence.
 
@@ -952,7 +952,7 @@ After every chat response that used RAG, the system records which chunks were re
 The system implements a biological-inspired knowledge decay model:
 
 **Agent Learning decay** (`AgentLearningService.decay_stale_learnings()`):
-- Triggered periodically (recommended: daily)
+- Triggered by the dedicated `_maintenance_loop` every `MAINTENANCE_INTERVAL_HOURS` (default 24), independent of the backup cron, plus once at startup. Session-note and insight decay run on the same loop.
 - Learnings not updated in 30+ days: confidence -= 0.02
 - Below 0.2 confidence: deactivated (soft-deleted)
 - Result: unused knowledge gradually fades, frequently-confirmed knowledge persists
