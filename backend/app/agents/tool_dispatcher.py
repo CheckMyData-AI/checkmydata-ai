@@ -239,14 +239,15 @@ class ToolDispatcher:
             elif not qr.rows:
                 parts.append("Query executed successfully but returned no rows.")
             else:
+                preview_rows = settings.llm_result_preview_rows
                 parts.append(f"**Columns:** {', '.join(qr.columns)}")
                 parts.append(f"**Rows:** {qr.row_count}")
                 parts.append(f"**Execution time:** {qr.execution_time_ms:.1f}ms")
                 parts.append("")
-                for row in qr.rows[:20]:
+                for row in qr.rows[:preview_rows]:
                     parts.append(" | ".join(str(v) for v in row))
-                if qr.row_count > 20:
-                    parts.append(f"... and {qr.row_count - 20} more rows")
+                if qr.row_count > preview_rows:
+                    parts.append(f"... and {qr.row_count - preview_rows} more rows")
 
         if warnings:
             parts.append("")
