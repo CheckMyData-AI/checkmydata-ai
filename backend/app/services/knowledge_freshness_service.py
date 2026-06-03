@@ -128,6 +128,8 @@ class KnowledgeFreshnessService:
 
         if repo_clone_dir is not None:
             try:
+                import asyncio
+
                 from app.knowledge.git_tracker import GitTracker
 
                 if repo_clone_dir.exists():
@@ -137,10 +139,16 @@ class KnowledgeFreshnessService:
                         snapshot.git_unindexed = True
                         warnings.append("Knowledge base has not been indexed yet.")
                     else:
-                        head_sha = tracker.get_head_sha(repo_clone_dir)
+                        # get_head_sha is blocking git I/O — never call it
+                        # directly on the event loop.
+                        head_sha = await asyncio.to_thread(
+                            tracker.get_head_sha, repo_clone_dir
+                        )
                         if head_sha and head_sha != last_sha:
                             behind = await tracker.count_commits_ahead(repo_clone_dir, last_sha)
-                            if behind:
+                            # count_commits_ahead returns -1 on error; only a
+                            # positive count is a real "behind" signal.
+                            if behind and behind > 0:
                                 snapshot.git_behind_commits = behind
                                 warnings.append(
                                     f"Knowledge base is {behind} commit(s) behind HEAD;"

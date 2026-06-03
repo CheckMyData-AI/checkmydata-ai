@@ -135,6 +135,42 @@ class TestEvaluate:
         assert not any("Code graph" in w for w in snap.warnings)
 
     @pytest.mark.asyncio
+    async def test_git_count_error_does_not_report_negative_behind(self, tmp_path):
+        """count_commits_ahead returning -1 must not surface a '-1 commits behind'."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_tracker_cls:
+            tracker = mock_tracker_cls.return_value
+            tracker.get_last_indexed_sha = AsyncMock(return_value="oldsha")
+            tracker.get_head_sha = MagicMock(return_value="newsha")
+            tracker.count_commits_ahead = AsyncMock(return_value=-1)
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+        assert snap.git_behind_commits is None
+        assert not any("-1 commit" in w for w in snap.warnings)
+        assert any("may be out of date" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_git_positive_behind_reported(self, tmp_path):
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_tracker_cls:
+            tracker = mock_tracker_cls.return_value
+            tracker.get_last_indexed_sha = AsyncMock(return_value="oldsha")
+            tracker.get_head_sha = MagicMock(return_value="newsha")
+            tracker.count_commits_ahead = AsyncMock(return_value=3)
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+        assert snap.git_behind_commits == 3
+        assert any("3 commit(s) behind" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
     async def test_code_graph_populated_no_warning(self, monkeypatch):
         from app import config as cfg_mod
 

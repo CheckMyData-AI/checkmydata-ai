@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     # Slow query warning threshold (post-validator)
     slow_query_warning_ms: int = 30_000
 
+    # Knowledge-lifecycle maintenance loop interval (hours). Drives learning /
+    # session-note confidence decay and insight TTL/decay on a fixed cadence,
+    # decoupled from the backup cron so decay runs even when backups are off.
+    maintenance_interval_hours: int = 24
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
