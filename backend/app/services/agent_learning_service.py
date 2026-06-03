@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, select, update
 
 from app.config import settings
 from app.models.agent_learning import AgentLearning, AgentLearningSummary, _lesson_hash
-from app.services.text_similarity import semantic_best_match, semantic_similarity
+from app.services.text_similarity import semantic_best_match
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,6 +96,123 @@ def normalize_lesson_text(lesson: str) -> str:
     return text
 
 
+# Negation tokens whose presence flips the polarity of a directive. Apostrophes
+# are stripped before matching so contractions normalise (``don't`` -> ``dont``).
+_NEGATION_TOKENS = frozenset(
+    {
+        "not",
+        "never",
+        "no",
+        "none",
+        "avoid",
+        "without",
+        "exclude",
+        "excluding",
+        "dont",
+        "cant",
+        "cannot",
+        "wont",
+        "isnt",
+        "arent",
+        "doesnt",
+        "didnt",
+        "nor",
+        "neither",
+        "stop",
+        "skip",
+    }
+)
+
+# High-frequency structural words that carry no directive intent. Removing them
+# (alongside negation tokens) keeps the content-overlap signal focused on the
+# substantive subject/object of the lesson.
+_DIRECTIVE_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "in",
+        "on",
+        "of",
+        "is",
+        "are",
+        "be",
+        "use",
+        "using",
+        "used",
+        "always",
+        "should",
+        "must",
+        "when",
+        "with",
+        "and",
+        "or",
+        "this",
+        "that",
+        "these",
+        "those",
+        "from",
+        "at",
+        "by",
+        "as",
+        "it",
+        "queries",
+        "query",
+        "production",
+        "environment",
+        "context",
+        "completely",
+    }
+)
+
+# Minimum substantive-token overlap (overlap coefficient) for two opposite-
+# polarity lessons about the same subject to count as a contradiction.
+_CONFLICT_OVERLAP_THRESHOLD = 0.6
+
+
+def _tokenize_lesson(text: str) -> list[str]:
+    return text.lower().replace("'", "").split()
+
+
+def _negation_parity(text: str) -> int:
+    """0 for an even number of negations, 1 for odd (i.e. net-negated)."""
+    tokens = _tokenize_lesson(text)
+    negations = sum(1 for t in tokens if t in _NEGATION_TOKENS)
+    return negations % 2
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Substantive tokens: drop negation tokens and structural stopwords."""
+    return {
+        t
+        for t in _tokenize_lesson(text)
+        if t not in _NEGATION_TOKENS and t not in _DIRECTIVE_STOPWORDS and len(t) > 1
+    }
+
+
+def lessons_contradict(a: str, b: str) -> bool:
+    """Heuristic: two lessons contradict when they talk about the same thing
+    (high substantive-token overlap) but with opposite negation polarity.
+
+    This is deliberately high-precision: it catches the dangerous case the
+    fuzzy-dedup path would otherwise *merge* (e.g. "always filter deleted_at"
+    vs "never filter deleted_at") without flagging unrelated lessons. It does
+    not attempt to detect ``use X`` vs ``use Y`` (different object, same
+    polarity) — that needs schema-aware parsing and is left to schema
+    validation / user voting.
+    """
+    if _negation_parity(a) == _negation_parity(b):
+        return False
+    ca = _content_tokens(a)
+    cb = _content_tokens(b)
+    if not ca or not cb:
+        return False
+    overlap = len(ca & cb) / min(len(ca), len(cb))
+    return overlap >= _CONFLICT_OVERLAP_THRESHOLD
+
+
 _COMPILE_LOCKS: dict[str, asyncio.Lock] = {}
 _COMPILE_LOCKS_GUARD = asyncio.Lock()
 
@@ -161,7 +278,11 @@ class AgentLearningService:
             return entry
 
         similar = await self.find_similar(session, connection_id, category, subject, lesson)
-        if similar:
+        # A textually-similar candidate is only a true duplicate when it agrees
+        # with the new lesson. If they have opposite polarity (e.g. "always
+        # filter X" vs "never filter X") merging would silently reinforce a
+        # contradiction, so we fall through to conflict resolution instead.
+        if similar and not lessons_contradict(lesson, similar.lesson):
             similar.times_confirmed += 1
             similar.confidence = min(1.0, similar.confidence + 0.1)
             if len(lesson) > len(similar.lesson):
@@ -173,7 +294,7 @@ class AgentLearningService:
             await self._invalidate_summary(session, connection_id)
             return similar
 
-        await self._resolve_conflicts(
+        new_is_outranked = await self._resolve_conflicts(
             session,
             connection_id,
             category,
@@ -192,6 +313,11 @@ class AgentLearningService:
             source_query=source_query[:2000] if source_query else None,
             source_error=source_error[:1000] if source_error else None,
         )
+        # If a stronger, contradicting lesson already exists we still record the
+        # new one for audit/history but keep it inactive so it never overrides
+        # the higher-confidence advice in prompts.
+        if new_is_outranked:
+            entry.is_active = False
         session.add(entry)
         await session.flush()
         await self._invalidate_summary(session, connection_id)
@@ -233,21 +359,6 @@ class AgentLearningService:
     # Conflict detection
     # ------------------------------------------------------------------
 
-    _CONFLICT_INDICATORS = frozenset(
-        {
-            "use",
-            "prefer",
-            "always",
-            "never",
-            "should",
-            "instead",
-            "not",
-            "avoid",
-            "correct",
-            "wrong",
-        }
-    )
-
     async def _resolve_conflicts(
         self,
         session: AsyncSession,
@@ -256,8 +367,21 @@ class AgentLearningService:
         subject: str,
         new_lesson: str,
         new_confidence: float,
-    ) -> None:
-        """Deactivate older conflicting learnings if the new one is stronger."""
+    ) -> bool:
+        """Reconcile a new lesson against existing same-subject learnings.
+
+        For each active learning about the same subject/category that
+        *contradicts* the new lesson (opposite polarity, same substantive
+        content — see :func:`lessons_contradict`):
+
+        * if the new lesson is at least as confident, the old one is
+          deactivated (newer evidence wins ties);
+        * otherwise the new lesson is "outranked" — a stronger contradicting
+          lesson stands, and the caller stores the new one inactive so the two
+          never both feed prompts.
+
+        Returns ``True`` when the new lesson is outranked by an existing one.
+        """
         result = await session.execute(
             select(AgentLearning).where(
                 AgentLearning.connection_id == connection_id,
@@ -268,39 +392,30 @@ class AgentLearningService:
         )
         existing = result.scalars().all()
         if not existing:
-            return
+            return False
 
-        new_lower = new_lesson.strip().lower()
-        new_keywords = {w for w in new_lower.split() if w in self._CONFLICT_INDICATORS}
-        if not new_keywords:
-            return
-
+        new_is_outranked = False
         for old in existing:
-            old_lower = old.lesson.strip().lower()
-            similarity = semantic_similarity(old_lower, new_lower)
-
-            if similarity >= SIMILARITY_THRESHOLD:
+            if not lessons_contradict(new_lesson, old.lesson):
                 continue
 
-            old_keywords = {w for w in old_lower.split() if w in self._CONFLICT_INDICATORS}
-            shared_action_words = new_keywords & old_keywords
-            if not shared_action_words:
-                continue
-
-            has_negation_flip = (
-                ("not" in new_keywords) != ("not" in old_keywords)
-                or ("never" in new_keywords) != ("never" in old_keywords)
-                or ("avoid" in new_keywords) != ("avoid" in old_keywords)
-            )
-
-            if has_negation_flip and old.confidence <= new_confidence:
+            if old.confidence <= new_confidence:
                 old.is_active = False
                 old.updated_at = datetime.now(UTC)
                 logger.info(
                     "Deactivated conflicting learning %s "
-                    "(superseded by newer, higher-confidence lesson)",
+                    "(superseded by newer, >= confidence lesson)",
                     old.id,
                 )
+            else:
+                new_is_outranked = True
+                logger.info(
+                    "New lesson outranked by existing higher-confidence "
+                    "conflicting learning %s; storing new one inactive",
+                    old.id,
+                )
+
+        return new_is_outranked
 
     # ------------------------------------------------------------------
     # Confirm / Apply / Deactivate
