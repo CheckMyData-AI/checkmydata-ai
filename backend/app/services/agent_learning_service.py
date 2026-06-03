@@ -336,6 +336,7 @@ class AgentLearningService:
             .where(AgentLearning.id == learning_id)
             .values(times_applied=AgentLearning.times_applied + 1)
         )
+        await session.flush()
 
     async def expose_learning(
         self,
