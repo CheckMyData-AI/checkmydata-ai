@@ -291,8 +291,7 @@ class ContextLoader:
                     k=max(n_results, _settings.hybrid_k),
                 )
                 chunks = [
-                    {"document": r.document, "metadata": r.metadata}
-                    for r in fused[:n_results]
+                    {"document": r.document, "metadata": r.metadata} for r in fused[:n_results]
                 ]
             else:
                 chunks = self._vector_store.query(project_id, question, n_results=n_results)

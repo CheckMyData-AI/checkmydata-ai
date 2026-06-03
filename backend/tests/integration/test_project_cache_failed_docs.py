@@ -59,9 +59,7 @@ async def test_failed_paths_cleared(db_session: AsyncSession, project_id: str):
 
 
 @pytest.mark.asyncio
-async def test_failed_paths_coexist_with_knowledge_save(
-    db_session: AsyncSession, project_id: str
-):
+async def test_failed_paths_coexist_with_knowledge_save(db_session: AsyncSession, project_id: str):
     """Setting failed paths before any cache.save must not clobber later saves."""
     svc = ProjectCacheService()
     await svc.set_failed_doc_paths(db_session, project_id, ["x.py"])

@@ -505,9 +505,7 @@ class TestPipelineFailureSurfacesPartialData:
         )
         exec_result.failed_validation.fail("boom")
 
-        resp = ResponseBuilder.build_pipeline_response(
-            exec_result, "wf1", None, "run-1"
-        )
+        resp = ResponseBuilder.build_pipeline_response(exec_result, "wf1", None, "run-1")
         assert resp.response_type == "stage_failed"
         # Partial data from the completed stage is surfaced, not discarded.
         assert resp.results is not None

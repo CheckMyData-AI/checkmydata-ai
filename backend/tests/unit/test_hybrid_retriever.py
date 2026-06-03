@@ -66,9 +66,7 @@ async def test_chroma_max_distance_filters_low_relevance(bm25):
             },
         ]
     )
-    retr = HybridRetriever(
-        bm25=bm25, vector_store=chroma, rrf_k=60, chroma_max_distance=0.8
-    )
+    retr = HybridRetriever(bm25=bm25, vector_store=chroma, rrf_k=60, chroma_max_distance=0.8)
     out = await retr.query("p", "users service")
     ids = {r.doc_id for r in out}
     # The far hit must not appear via the dense leg.

@@ -160,9 +160,7 @@ async def test_save_incremental_preserves_unchanged_files(
 
 
 @pytest.mark.asyncio
-async def test_save_incremental_drops_deleted_files(
-    db_session: AsyncSession, project_id: str
-):
+async def test_save_incremental_drops_deleted_files(db_session: AsyncSession, project_id: str):
     """Symbols for files in the affected set with no replacement are removed."""
     svc = CodeGraphService()
     base = _make_graph()

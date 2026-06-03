@@ -141,9 +141,7 @@ class KnowledgeFreshnessService:
                     else:
                         # get_head_sha is blocking git I/O — never call it
                         # directly on the event loop.
-                        head_sha = await asyncio.to_thread(
-                            tracker.get_head_sha, repo_clone_dir
-                        )
+                        head_sha = await asyncio.to_thread(tracker.get_head_sha, repo_clone_dir)
                         if head_sha and head_sha != last_sha:
                             behind = await tracker.count_commits_ahead(repo_clone_dir, last_sha)
                             # count_commits_ahead returns -1 on error; only a

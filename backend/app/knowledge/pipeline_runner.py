@@ -310,8 +310,7 @@ class IndexingPipelineRunner:
                         wf_id,
                         "detect_changes",
                         "started",
-                        f"Re-queued {len(requeued)} previously-failed doc(s) "
-                        "for regeneration",
+                        f"Re-queued {len(requeued)} previously-failed doc(s) for regeneration",
                     )
 
         # --- Guard: vector store health (C3, v1.13.0) ---
@@ -496,9 +495,7 @@ class IndexingPipelineRunner:
                 "graph_build",
                 f"Building code graph from {len(state.parsed_files)} parsed file(s)",
             ):
-                await self._run_graph_build(
-                    state, wf_id, db, project_id, is_full=is_full_graph
-                )
+                await self._run_graph_build(state, wf_id, db, project_id, is_full=is_full_graph)
             await self._cp_svc.complete_step(db, cp_id, "graph_build")
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---

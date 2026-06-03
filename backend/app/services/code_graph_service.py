@@ -135,9 +135,7 @@ class CodeGraphService:
         ``new_graph`` are added. ``file:<path>`` import-edge sources are
         attributed to ``<path>``.
         """
-        existing_sym_file = {
-            uid: sym.file_path for uid, sym in existing.symbols.items()
-        }
+        existing_sym_file = {uid: sym.file_path for uid, sym in existing.symbols.items()}
 
         def _edge_source_file(src_uid: str) -> str | None:
             if src_uid.startswith("file:"):
@@ -145,16 +143,12 @@ class CodeGraphService:
             return existing_sym_file.get(src_uid)
 
         merged_symbols = [
-            sym
-            for sym in existing.symbols.values()
-            if sym.file_path not in affected_files
+            sym for sym in existing.symbols.values() if sym.file_path not in affected_files
         ]
         merged_symbols.extend(new_graph.symbols.values())
 
         merged_edges = [
-            edge
-            for edge in existing.edges
-            if _edge_source_file(edge.src_uid) not in affected_files
+            edge for edge in existing.edges if _edge_source_file(edge.src_uid) not in affected_files
         ]
         merged_edges.extend(new_graph.edges)
 

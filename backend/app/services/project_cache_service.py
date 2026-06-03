@@ -110,9 +110,7 @@ class ProjectCacheService:
         if existing:
             existing.failed_doc_paths_json = payload
         else:
-            session.add(
-                ProjectCache(project_id=project_id, failed_doc_paths_json=payload)
-            )
+            session.add(ProjectCache(project_id=project_id, failed_doc_paths_json=payload))
         await session.commit()
 
     async def _get_row(
