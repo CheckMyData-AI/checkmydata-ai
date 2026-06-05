@@ -9,6 +9,7 @@ import { RequestAccessModal } from "./RequestAccessModal";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { invalidateRestore } from "@/hooks/useRestoreState";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -134,14 +135,7 @@ const ROLE_STYLES: Record<string, string> = {
 function AccessModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    panelRef.current?.focus();
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  useDialogA11y({ open: true, onClose, panelRef });
 
   return (
     <div
@@ -694,6 +688,8 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
               onClick={() => handleSelect(p)}
               role="button"
               tabIndex={0}
+              aria-label={`Select project: ${p.name}`}
+              aria-current={isActive ? "true" : undefined}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();

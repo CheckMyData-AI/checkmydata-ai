@@ -21,6 +21,27 @@ class _ACM:
         pass
 
 
+class _AcquireCtx:
+    """Mimics asyncpg's ``PoolAcquireContext``: both awaitable (``await
+    pool.acquire()``) and an async context manager (``async with
+    pool.acquire()``)."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def __await__(self):
+        async def _acquire():
+            return self._value
+
+        return _acquire().__await__()
+
+    async def __aenter__(self):
+        return self._value
+
+    async def __aexit__(self, *args):
+        pass
+
+
 # ---------------------------------------------------------------------------
 # PostgresConnector
 # ---------------------------------------------------------------------------
@@ -35,9 +56,28 @@ class TestPostgresConnector:
 
     def _make_pool(self, mock_conn):
         pool = MagicMock()
-        pool.acquire.return_value = _ACM(mock_conn)
+        # asyncpg's ``pool.acquire()`` is a sync call returning a
+        # PoolAcquireContext that is both awaitable and an async CM. execute_query
+        # now awaits it + releases explicitly (so a timed-out connection can be
+        # terminated before release); test_connection/introspect still use the CM.
+        pool.acquire = MagicMock(return_value=_AcquireCtx(mock_conn))
+        pool.release = AsyncMock()
         pool.close = AsyncMock()
         return pool
+
+    @staticmethod
+    def _wire_cursor(mock_conn, rows):
+        """Wire the asyncpg server-side cursor flow (R2-1).
+
+        ``conn.transaction()`` is a sync call returning an async CM, and
+        ``await conn.cursor(q, *v)`` returns a cursor whose ``fetch(n)``
+        yields ``rows``.
+        """
+        mock_conn.transaction = MagicMock(return_value=_ACM(None))
+        cur = MagicMock()
+        cur.fetch = AsyncMock(return_value=rows)
+        mock_conn.cursor = AsyncMock(return_value=cur)
+        return cur
 
     def test_db_type(self, connector):
         assert connector.db_type == "postgres"
@@ -55,7 +95,7 @@ class TestPostgresConnector:
         row2.values.return_value = [2, "bob"]
 
         mock_conn = AsyncMock()
-        mock_conn.fetch = AsyncMock(return_value=[row1, row2])
+        self._wire_cursor(mock_conn, [row1, row2])
         connector._pool = self._make_pool(mock_conn)
 
         result = await connector.execute_query("SELECT * FROM users")
@@ -63,10 +103,11 @@ class TestPostgresConnector:
         assert result.columns == ["id", "name"]
         assert result.row_count == 2
         assert result.rows == [[1, "alice"], [2, "bob"]]
+        assert result.truncated is False
 
     async def test_execute_query_empty_result(self, connector):
         mock_conn = AsyncMock()
-        mock_conn.fetch = AsyncMock(return_value=[])
+        self._wire_cursor(mock_conn, [])
         connector._pool = self._make_pool(mock_conn)
 
         result = await connector.execute_query("SELECT * FROM empty")
@@ -79,14 +120,50 @@ class TestPostgresConnector:
         row.values.return_value = [1]
 
         mock_conn = AsyncMock()
-        mock_conn.fetch = AsyncMock(return_value=[row])
+        self._wire_cursor(mock_conn, [row])
         connector._pool = self._make_pool(mock_conn)
 
         result = await connector.execute_query("SELECT * FROM users WHERE id = :id", {"id": 1})
         assert result.error is None
-        mock_conn.fetch.assert_called_once()
-        call_args = mock_conn.fetch.call_args
+        mock_conn.cursor.assert_awaited_once()
+        call_args = mock_conn.cursor.call_args
         assert "$1" in call_args[0][0]
+        assert call_args[0][1] == 1
+
+    async def test_execute_query_streams_cap_plus_one_and_truncates(self, connector):
+        """R2-1: a cursor that yields MAX_RESULT_ROWS+1 rows must report
+        truncated=True and cap the returned rows."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        def _row(i):
+            r = MagicMock()
+            r.keys.return_value = ["id"]
+            r.values.return_value = [i]
+            return r
+
+        rows = [_row(i) for i in range(MAX_RESULT_ROWS + 1)]
+        mock_conn = AsyncMock()
+        cur = self._wire_cursor(mock_conn, rows)
+        connector._pool = self._make_pool(mock_conn)
+
+        result = await connector.execute_query("SELECT * FROM big")
+        assert result.truncated is True
+        assert result.row_count == MAX_RESULT_ROWS
+        assert len(result.rows) == MAX_RESULT_ROWS
+        # We asked the cursor for exactly cap + 1 rows.
+        cur.fetch.assert_awaited_once_with(MAX_RESULT_ROWS + 1)
+
+    async def test_execute_query_non_select_uses_fetch(self, connector):
+        """DDL/DML statements can't use a cursor — they go through fetch()."""
+        mock_conn = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        mock_conn.cursor = AsyncMock()
+        connector._pool = self._make_pool(mock_conn)
+
+        result = await connector.execute_query("UPDATE users SET x = 1")
+        assert result.error is None
+        mock_conn.fetch.assert_awaited_once()
+        mock_conn.cursor.assert_not_called()
 
     async def test_execute_query_exception(self, connector):
         mock_conn = AsyncMock()
@@ -96,6 +173,79 @@ class TestPostgresConnector:
         result = await connector.execute_query("BAD SQL")
         assert result.error is not None
         assert "connection lost" in result.error
+
+    async def test_execute_query_times_out(self, connector):
+        """R1-5: a hung query is bounded by asyncio.wait_for."""
+
+        async def _never(*_a, **_k):
+            import asyncio as _aio
+
+            await _aio.sleep(10)
+
+        mock_conn = AsyncMock()
+        mock_conn.terminate = MagicMock()
+        mock_conn.transaction = MagicMock(return_value=_ACM(None))
+        cur = MagicMock()
+        cur.fetch = _never
+        mock_conn.cursor = AsyncMock(return_value=cur)
+        connector._pool = self._make_pool(mock_conn)
+
+        with patch("app.connectors.postgres.settings") as mock_settings:
+            mock_settings.query_timeout_seconds = 0.05
+            result = await connector.execute_query("SELECT * FROM slow")
+
+        assert result.error is not None
+        assert "timed out" in result.error
+
+    async def test_timeout_terminates_pooled_connection(self, connector):
+        """Re-audit: a query cancelled by the wait_for timeout must terminate
+        the underlying connection so the asyncpg pool discards it instead of
+        handing the next caller a connection still draining a server-side
+        cursor / open transaction."""
+
+        async def _never(*_a, **_k):
+            import asyncio as _aio
+
+            await _aio.sleep(10)
+
+        mock_conn = AsyncMock()
+        # terminate() is a *sync* asyncpg method — model it with MagicMock so an
+        # accidental ``await`` would fail loudly.
+        mock_conn.terminate = MagicMock()
+        mock_conn.transaction = MagicMock(return_value=_ACM(None))
+        cur = MagicMock()
+        cur.fetch = _never
+        mock_conn.cursor = AsyncMock(return_value=cur)
+        pool = self._make_pool(mock_conn)
+        connector._pool = pool
+
+        with patch("app.connectors.postgres.settings") as mock_settings:
+            mock_settings.query_timeout_seconds = 0.05
+            result = await connector.execute_query("SELECT * FROM slow")
+
+        assert result.error is not None and "timed out" in result.error
+        # Poisoned connection terminated exactly once, then released so the
+        # pool drops it (release of a closed conn is how asyncpg evicts it).
+        mock_conn.terminate.assert_called_once()
+        pool.release.assert_awaited_once_with(mock_conn)
+
+    async def test_healthy_query_releases_without_terminate(self, connector):
+        """A successful query must release the connection back to the pool
+        untouched — only timed-out/cancelled connections get terminated."""
+        row = MagicMock()
+        row.keys.return_value = ["id"]
+        row.values.return_value = [1]
+
+        mock_conn = AsyncMock()
+        mock_conn.terminate = MagicMock()
+        self._wire_cursor(mock_conn, [row])
+        pool = self._make_pool(mock_conn)
+        connector._pool = pool
+
+        result = await connector.execute_query("SELECT * FROM users")
+        assert result.error is None
+        mock_conn.terminate.assert_not_called()
+        pool.release.assert_awaited_once_with(mock_conn)
 
     async def test_introspect_schema_not_connected(self, connector):
         schema = await connector.introspect_schema()
@@ -129,6 +279,41 @@ class TestPostgresConnector:
 
     async def test_disconnect_noop_when_no_pool(self, connector):
         await connector.disconnect()
+
+
+class TestIsRowReturning:
+    def test_select_variants_are_row_returning(self):
+        from app.connectors.postgres import _is_row_returning
+
+        for q in (
+            "SELECT 1",
+            "  select * from t",
+            "WITH cte AS (SELECT 1) SELECT * FROM cte",
+            "VALUES (1), (2)",
+            "EXPLAIN SELECT 1",
+            "SHOW search_path",
+            "TABLE users",
+        ):
+            assert _is_row_returning(q) is True, q
+
+    def test_dml_ddl_not_row_returning(self):
+        from app.connectors.postgres import _is_row_returning
+
+        for q in (
+            "UPDATE t SET a = 1",
+            "INSERT INTO t VALUES (1)",
+            "DELETE FROM t",
+            "CREATE TABLE t (id int)",
+            "BAD SQL",
+        ):
+            assert _is_row_returning(q) is False, q
+
+    def test_leading_comments_are_stripped(self):
+        from app.connectors.postgres import _is_row_returning
+
+        assert _is_row_returning("-- comment\nSELECT 1") is True
+        assert _is_row_returning("/* block */ SELECT 1") is True
+        assert _is_row_returning("-- c\n/* b */\nUPDATE t SET a=1") is False
 
 
 class TestDictToPositionalPostgres:

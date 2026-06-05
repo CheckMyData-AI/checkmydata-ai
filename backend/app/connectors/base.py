@@ -1,3 +1,4 @@
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,10 +36,35 @@ def connector_key(cfg: ConnectionConfig) -> str:
     Used everywhere that needs to match a runtime config back to a
     stored ``Connection`` row or cache slot.  Keep this single source
     of truth instead of duplicating the logic.
+
+    R1-1: the key includes a credential discriminator so two configs that
+    share host/port/db but differ in credentials never collide in the
+    process-wide connector pool (which previously caused one connection to
+    silently run under another's credentials). We prefer ``connection_id``
+    (unique per stored row); for ad-hoc configs without one we fall back to
+    a short hash of the credential material. The raw secret is never stored
+    in the key.
     """
     parts = [cfg.db_type, cfg.db_host, str(cfg.db_port), cfg.db_name, str(cfg.ssh_exec_mode)]
     if cfg.ssh_host:
         parts.extend([cfg.ssh_host, str(cfg.ssh_port), cfg.ssh_user or ""])
+
+    if cfg.connection_id:
+        parts.append(f"cid={cfg.connection_id}")
+    else:
+        cred_material = "|".join(
+            [
+                cfg.db_user or "",
+                cfg.db_password or "",
+                cfg.connection_string or "",
+                cfg.ssh_user or "",
+                cfg.ssh_key_content or "",
+                cfg.ssh_key_passphrase or "",
+            ]
+        )
+        digest = hashlib.sha256(cred_material.encode("utf-8")).hexdigest()[:16]
+        parts.append(f"cred={digest}")
+
     return ":".join(parts)
 
 

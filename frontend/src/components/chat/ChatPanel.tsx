@@ -8,6 +8,7 @@ import { toast } from "@/stores/toast-store";
 import dynamic from "next/dynamic";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage, mdComponents, remarkPlugins } from "./ChatMessage";
+import { StatusDot } from "@/components/ui/StatusDot";
 
 const ReactMarkdown = dynamic(() => import("react-markdown"), {
   loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
@@ -698,9 +699,9 @@ export function ChatPanel() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3">
         <div className="flex gap-1">
-          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce" />
-          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce [animation-delay:0.1s]" />
-          <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce [animation-delay:0.2s]" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-pulse-dot" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-pulse-dot [animation-delay:0.15s]" />
+          <span className="w-2 h-2 bg-text-muted rounded-full animate-pulse-dot [animation-delay:0.3s]" />
         </div>
         <p className="text-text-muted text-sm">Restoring your session…</p>
       </div>
@@ -776,14 +777,14 @@ export function ChatPanel() {
       )}
       {connHealthStatus === "degraded" && activeConnection && (
         <div className="flex items-center gap-2 px-6 py-1.5 bg-warning/10 border-b border-warning/20">
-          <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
+          <StatusDot status="warning" title="Connection degraded" />
           <span className="text-xs text-warning">Connection may be slow</span>
         </div>
       )}
       {connHealthStatus === "down" && activeConnection && (
         <div className="flex items-center justify-between px-6 py-1.5 bg-error/10 border-b border-error/20">
           <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+            <StatusDot status="error" title="Connection down" />
             <span className="text-xs text-error">Connection is down. Click Retry to reconnect.</span>
           </div>
           <button
@@ -888,9 +889,9 @@ export function ChatPanel() {
                   <ThinkingLog entries={thinkingLog} startTime={thinkingStartTime} />
                 ) : (
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce" />
-                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce [animation-delay:0.1s]" />
-                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-pulse-dot" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-pulse-dot [animation-delay:0.15s]" />
+                    <span className="w-2 h-2 bg-surface-3 rounded-full animate-pulse-dot [animation-delay:0.3s]" />
                   </div>
                 )}
                 <button
@@ -909,9 +910,9 @@ export function ChatPanel() {
             <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden">
               <div className="flex items-center gap-2">
                 <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce" />
-                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0.1s]" />
-                  <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0.2s]" />
+                  <span className="w-2 h-2 bg-accent rounded-full animate-pulse-dot" />
+                  <span className="w-2 h-2 bg-accent rounded-full animate-pulse-dot [animation-delay:0.15s]" />
+                  <span className="w-2 h-2 bg-accent rounded-full animate-pulse-dot [animation-delay:0.3s]" />
                 </div>
                 <span className="text-sm text-text-secondary">
                   Processing in background&hellip;

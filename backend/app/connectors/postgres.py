@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -16,11 +17,12 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
-from app.connectors.ssh_tunnel import SSHTunnelManager
+from app.connectors.ssh_tunnel import shared_tunnel_manager
 
 logger = logging.getLogger(__name__)
 
-_tunnel_mgr = SSHTunnelManager()
+# R1-4: all connectors share one process-wide tunnel manager.
+_tunnel_mgr = shared_tunnel_manager
 
 
 class PostgresConnector(BaseConnector):
@@ -75,31 +77,78 @@ class PostgresConnector(BaseConnector):
             return QueryResult(error="Not connected")
 
         start = time.monotonic()
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        if params:
+            numbered_query, values = _dict_to_positional(query, params)
+        else:
+            numbered_query, values = query, []
+
+        pool = self._pool
+
+        async def _run() -> list:
+            conn = await pool.acquire()
+            try:
+                if _is_row_returning(numbered_query):
+                    # R2-1: stream via a server-side cursor and pull at most
+                    # ``MAX_RESULT_ROWS + 1`` rows. The +1 sentinel detects
+                    # truncation without materialising the entire (potentially
+                    # millions-of-rows) result set in memory. asyncpg requires
+                    # non-scrollable cursors to live inside a transaction.
+                    async with conn.transaction():
+                        cur = await conn.cursor(numbered_query, *values)
+                        return await cur.fetch(MAX_RESULT_ROWS + 1)
+                # Non-row-returning statements (DDL/DML) can't use a cursor.
+                return await conn.fetch(numbered_query, *values)
+            except (asyncio.CancelledError, TimeoutError):
+                # Re-audit fix: ``asyncio.wait_for`` below cancels this coroutine
+                # mid-cursor / mid-transaction on timeout. A connection
+                # interrupted that way may still be draining the server-side
+                # cursor or holding an open transaction, so returning it to the
+                # asyncpg pool would hand the next caller a poisoned connection.
+                # Terminate it (sync, immediate transport close) so the pool
+                # discards it on release and reconnects fresh next time.
+                try:
+                    conn.terminate()
+                except Exception:
+                    logger.debug(
+                        "Postgres: terminate on timed-out connection failed", exc_info=True
+                    )
+                raise
+            finally:
+                await pool.release(conn)
+
+        timeout_s = settings.query_timeout_seconds
         try:
-            async with self._pool.acquire() as conn:
-                if params:
-                    numbered_query, values = _dict_to_positional(query, params)
-                    rows = await conn.fetch(numbered_query, *values)
-                else:
-                    rows = await conn.fetch(query)
+            # R1-5: bound the whole operation (pool acquire + query) with an
+            # explicit wait_for, matching the mysql/clickhouse connectors.
+            # asyncpg's pool ``command_timeout`` only covers a single command,
+            # not a hung pool acquire or multi-step cursor read.
+            rows = await asyncio.wait_for(_run(), timeout=timeout_s)
 
-                elapsed = (time.monotonic() - start) * 1000
-                if not rows:
-                    return QueryResult(row_count=0, execution_time_ms=elapsed)
+            elapsed = (time.monotonic() - start) * 1000
+            if not rows:
+                return QueryResult(row_count=0, execution_time_ms=elapsed)
 
-                columns = list(rows[0].keys())
-                from app.connectors.base import MAX_RESULT_ROWS
-
-                truncated = len(rows) > MAX_RESULT_ROWS
-                capped = rows[:MAX_RESULT_ROWS] if truncated else rows
-                data = [list(r.values()) for r in capped]
-                return QueryResult(
-                    columns=columns,
-                    rows=data,
-                    row_count=len(rows),
-                    execution_time_ms=elapsed,
-                    truncated=truncated,
-                )
+            columns = list(rows[0].keys())
+            truncated = len(rows) > MAX_RESULT_ROWS
+            capped = rows[:MAX_RESULT_ROWS] if truncated else rows
+            data = [list(r.values()) for r in capped]
+            # When truncated we only know "> MAX_RESULT_ROWS"; report the
+            # returned count and rely on ``truncated`` to signal more.
+            return QueryResult(
+                columns=columns,
+                rows=data,
+                row_count=len(capped),
+                execution_time_ms=elapsed,
+                truncated=truncated,
+            )
+        except TimeoutError:
+            elapsed = (time.monotonic() - start) * 1000
+            return QueryResult(
+                error=f"Query timed out after {timeout_s}s",
+                execution_time_ms=elapsed,
+            )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(error=str(e), execution_time_ms=elapsed)
@@ -306,6 +355,32 @@ class PostgresConnector(BaseConnector):
 
 
 _PARAM_RE = re.compile(r":(?P<name>\w+)\b")
+
+# Leading SQL comments to strip before sniffing the first keyword.
+_LEADING_COMMENT_RE = re.compile(r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)", re.DOTALL)
+_ROW_RETURNING_RE = re.compile(
+    r"^\s*(?:WITH|SELECT|VALUES|TABLE|SHOW|EXPLAIN)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_row_returning(query: str) -> bool:
+    """Heuristic: does this statement return a result set (cursor-compatible)?
+
+    asyncpg server-side cursors only work for row-returning statements; DDL/DML
+    must use ``fetch``/``execute``. We strip leading comments, then match the
+    first keyword. ``WITH`` is included because CTEs commonly wrap a SELECT
+    (a ``WITH ... DELETE`` is rare in analytics workloads and degrades safely
+    to the cursor path raising, which is caught and surfaced as an error).
+    """
+    stripped = query
+    # Strip any stack of leading comments.
+    while True:
+        m = _LEADING_COMMENT_RE.match(stripped)
+        if not m:
+            break
+        stripped = stripped[m.end() :]
+    return bool(_ROW_RETURNING_RE.match(stripped))
 
 
 def _dict_to_positional(query: str, params: dict[str, Any]) -> tuple[str, list[Any]]:

@@ -133,3 +133,47 @@ class TestSSEFlow:
         result_event = next((e for e in events if e["event"] == "result"), None)
         assert result_event is not None
         assert result_event["data"]["session_id"]
+
+    @patch("app.core.agent.ConversationalAgent.run")
+    async def test_sse_releases_session_lock_on_normal_completion(self, mock_run, auth_client):
+        """Regression: after a normal stream completes, the per-session
+        processing lock must be released so the session can be reused.
+
+        Previously the lock was only released on the client-disconnect path
+        (via _background_finalize), so a successful stream left the session
+        permanently "busy" and every follow-up request returned HTTP 409
+        until the 1h TTL evicted the lock entry.
+        """
+        from app.agents.orchestrator import AgentResponse
+        from app.services.chat_service import _get_session_lock
+
+        pid = await self._create_project(auth_client)
+        mock_run.return_value = AgentResponse(
+            answer="first answer",
+            workflow_id="wf-lock-1",
+            response_type="text",
+        )
+
+        # First request creates the session and runs to normal completion.
+        resp1 = await auth_client.post(
+            "/api/chat/ask/stream",
+            json={"project_id": pid, "message": "first"},
+        )
+        assert resp1.status_code == 200
+        events1 = _parse_sse(resp1.text)
+        result1 = next(e for e in events1 if e["event"] == "result")
+        session_id = result1["data"]["session_id"]
+        assert session_id
+
+        # The lock for this session must not be held after completion.
+        lock = await _get_session_lock(session_id)
+        assert not lock.locked(), "session processing lock leaked after normal stream completion"
+
+        # And a follow-up request on the same session must not get 409.
+        resp2 = await auth_client.post(
+            "/api/chat/ask/stream",
+            json={"project_id": pid, "message": "second", "session_id": session_id},
+        )
+        assert resp2.status_code == 200
+        events2 = _parse_sse(resp2.text)
+        assert any(e["event"] == "result" for e in events2)

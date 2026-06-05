@@ -110,7 +110,7 @@ def _stub_run_preamble(agent):
     agent._has_code_db_sync = AsyncMock(return_value=False)
     agent._has_learnings = AsyncMock(return_value=False)
     agent._build_table_map = AsyncMock(return_value="")
-    agent._load_learnings_prompt = AsyncMock(return_value="")
+    agent._load_learnings_prompt = AsyncMock(return_value=("", []))
 
 
 def _make_llm_response(content="", tool_calls=None, usage=None):
@@ -762,7 +762,7 @@ class TestSQLAgentALMIntegration:
     def agent(self, mock_tracker):
         a = SQLAgent()
         a._has_learnings = AsyncMock(return_value=False)
-        a._load_learnings_prompt = AsyncMock(return_value="")
+        a._load_learnings_prompt = AsyncMock(return_value=("", []))
         return a
 
     @pytest.fixture
@@ -907,6 +907,54 @@ class TestSQLAgentALMIntegration:
             await agent._track_exposed_learnings([learning1, learning2], ctx)
 
         assert set(ctx.extra["exposed_learning_ids"]) == {"l1", "l2"}
+
+    @pytest.mark.asyncio
+    async def test_track_exposed_learning_ids_skips_when_empty(self, agent):
+        """R4-1: no IDs ⇒ no session, no commit, no ctx mutation."""
+        mock_svc = MagicMock()
+        mock_svc.expose_learning = AsyncMock()
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService",
+                return_value=mock_svc,
+            ),
+        ):
+            await agent._track_exposed_learning_ids([None, ""])
+
+        mock_sf.assert_not_called()
+        mock_svc.expose_learning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_load_learnings_prompt_returns_contributing_ids(self):
+        """R4-1: the preloaded path exposes the exact prompt learnings so a
+        later thumbs-up/down can attribute to them."""
+        agent = SQLAgent()
+
+        lrn_a = MagicMock()
+        lrn_a.id = "la"
+        lrn_b = MagicMock()
+        lrn_b.id = "lb"
+
+        mock_svc = MagicMock()
+        mock_svc.get_or_compile_summary = AsyncMock(return_value="LEARNINGS PROMPT")
+        mock_svc.get_prompt_learnings = AsyncMock(return_value=[lrn_a, lrn_b])
+        mock_session = AsyncMock()
+
+        with (
+            patch("app.models.base.async_session_factory") as mock_sf,
+            patch(
+                "app.services.agent_learning_service.AgentLearningService",
+                return_value=mock_svc,
+            ),
+        ):
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            prompt, ids = await agent._load_learnings_prompt("conn-1")
+
+        assert prompt == "LEARNINGS PROMPT"
+        assert ids == ["la", "lb"]
 
 
 # ---------------------------------------------------------------------------

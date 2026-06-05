@@ -50,7 +50,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
             onClick={handleSend}
             disabled={disabled || !value.trim()}
             aria-label="Send message"
-            className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-border-default/50 text-text-secondary hover:text-text-primary hover:border-border-default/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-border-default/50 text-text-secondary hover:text-text-primary hover:border-border-default/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-5 h-5 md:w-4 md:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />

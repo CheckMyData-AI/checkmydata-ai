@@ -3,6 +3,7 @@
 import { memo, useEffect, useRef } from "react";
 import { useLogStore, type LogEntry } from "@/stores/log-store";
 import { Icon } from "@/components/ui/Icon";
+import { StatusDot } from "@/components/ui/StatusDot";
 
 const PIPELINE_COLORS: Record<string, string> = {
   index_repo: "text-accent",
@@ -137,8 +138,10 @@ export function LogToggleButton() {
       onClick={toggle}
       className="flex items-center gap-2 px-3 py-3 bg-surface-2 border border-border-subtle rounded-lg text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors whitespace-nowrap"
     >
-      <span
-        className={`w-2 h-2 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+      <StatusDot
+        status={isConnected ? "success" : "idle"}
+        size="md"
+        title={isConnected ? "Live updates connected" : "Disconnected"}
       />
       <Icon name="activity" size={12} />
       Activity Log
@@ -163,8 +166,9 @@ export function PersistentLogToggle() {
         className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-lg"
         title="Open Activity Log"
       >
-        <span
-          className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+        <StatusDot
+          status={isConnected ? "success" : "idle"}
+          title={isConnected ? "Live updates connected" : "Disconnected"}
         />
         <Icon name="activity" size={11} />
         <span>Log</span>
@@ -212,8 +216,10 @@ export function LogPanel() {
       style={{ height: 200 }}
     >
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-subtle bg-surface-1/50 shrink-0">
-        <span
-          className={`w-2 h-2 rounded-full ${isConnected ? "bg-success" : "bg-surface-3"}`}
+        <StatusDot
+          status={isConnected ? "success" : "idle"}
+          size="md"
+          title={isConnected ? "Live updates connected" : "Disconnected"}
         />
         <Icon name="activity" size={12} className="text-text-tertiary" />
         <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider">

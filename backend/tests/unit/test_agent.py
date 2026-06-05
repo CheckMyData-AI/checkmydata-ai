@@ -275,6 +275,8 @@ class TestMaxIterations:
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
             mock_settings.answer_validator_min_chars = 80
+            mock_settings.orchestrator_result_gate_enabled = False
+            mock_settings.orchestrator_max_result_corrections = 2
 
             resp = await agent.run(
                 question="loop forever",
@@ -350,6 +352,8 @@ class TestMaxIterations:
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
             mock_settings.answer_validator_min_chars = 80
+            mock_settings.orchestrator_result_gate_enabled = False
+            mock_settings.orchestrator_max_result_corrections = 2
 
             resp = await agent.run(
                 question="complex analysis",
@@ -400,6 +404,8 @@ class TestMaxIterations:
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
             mock_settings.answer_validator_min_chars = 80
+            mock_settings.orchestrator_result_gate_enabled = False
+            mock_settings.orchestrator_max_result_corrections = 2
 
             resp = await agent.run(
                 question="loop forever",
@@ -450,6 +456,8 @@ class TestMaxIterations:
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
             mock_settings.answer_validator_min_chars = 80
+            mock_settings.orchestrator_result_gate_enabled = False
+            mock_settings.orchestrator_max_result_corrections = 2
 
             resp = await agent.run(
                 question="loop forever",

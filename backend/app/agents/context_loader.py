@@ -37,6 +37,11 @@ class ContextData:
 class ContextLoader:
     """Loads orchestrator context lazily based on intent."""
 
+    # Recent-learnings surfacing: fetch a generous candidate pool so the
+    # priority ranking decides which rows surface, then display the top N.
+    _RECENT_LEARNINGS_FETCH_CAP = 200
+    _RECENT_LEARNINGS_DISPLAY = 15
+
     def __init__(
         self,
         *,
@@ -186,21 +191,30 @@ class ContextLoader:
 
             svc = AgentLearningService()
             async with async_session_factory() as session:
+                # Re-audit fix: ``get_learnings`` applies its ``limit`` *after*
+                # ordering by confidence, so passing ``limit=15`` here would
+                # discard high-priority-but-lower-confidence rows before we get
+                # to rank by ``priority_score``. Fetch a generous candidate pool
+                # (bounded to avoid unbounded memory), rank by priority, then
+                # slice for display so the canonical ranking actually decides
+                # which 15 surface.
                 learnings = await svc.get_learnings(
                     session,
                     cfg.connection_id,
                     min_confidence=0.6,
                     active_only=True,
-                    limit=15,
+                    limit=self._RECENT_LEARNINGS_FETCH_CAP,
                 )
             if not learnings:
                 return None
 
+            # R4-4: use the canonical ranking function rather than an ad-hoc
+            # (times_confirmed, confidence) tuple so every surface agrees.
             top = sorted(
                 learnings,
-                key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
+                key=AgentLearningService.priority_score,
                 reverse=True,
-            )
+            )[: self._RECENT_LEARNINGS_DISPLAY]
 
             lines = ["RECENT AGENT LEARNINGS (verified insights):"]
             for lrn in top:

@@ -68,6 +68,11 @@ class DbIndexSummary(Base):
     summary_text: Mapped[str] = mapped_column(Text, default="")
     recommendations: Mapped[str] = mapped_column(Text, default="")
 
+    # R2-3: persisted ``SchemaInfo.fingerprint()`` JSON (table -> column
+    # signature) from the last successful run, used to skip re-analysis when
+    # the live schema is unchanged on a subsequent index.
+    schema_fingerprint: Mapped[str] = mapped_column(Text, default="{}")
+
     indexing_status: Mapped[str] = mapped_column(String(20), default="idle")
 
     indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -261,7 +261,7 @@ describe("ChatPanel", () => {
     });
 
     await renderPanel();
-    const bounceDots = document.querySelectorAll(".animate-bounce");
+    const bounceDots = document.querySelectorAll(".animate-pulse-dot");
     expect(bounceDots.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -347,7 +347,7 @@ describe("ChatPanel", () => {
     expect(screen.getAllByTestId("chip")).toHaveLength(2);
   });
 
-  it("shows bouncing dots when thinking with no thinking log", async () => {
+  it("shows pulsing dots when thinking with no thinking log", async () => {
     useAppStore.setState({
       activeProject: makeProject(),
       activeConnection: makeConnection(),
@@ -358,7 +358,7 @@ describe("ChatPanel", () => {
     });
 
     await renderPanel();
-    const dots = document.querySelectorAll(".animate-bounce");
+    const dots = document.querySelectorAll(".animate-pulse-dot");
     expect(dots.length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByTestId("thinking-log")).not.toBeInTheDocument();
   });

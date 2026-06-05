@@ -83,7 +83,7 @@ class StageExecutor:
         self._knowledge = knowledge_agent
         self._llm = llm_router
         self._tracker = tracker
-        self._validator = validator or StageValidator()
+        self._validator = validator or StageValidator(llm_router=llm_router)
         self._data_gate = data_gate or DataGate()
         self._mcp_source = mcp_source_agent
         self._staleness_warning: str | None = None
@@ -142,10 +142,24 @@ class StageExecutor:
                 and all(dep in completed_ids for dep in s.depends_on)
             ]
             if not ready:
+                remaining = [s for s in plan.stages if s.stage_id not in completed_ids]
                 logger.warning(
                     "Pipeline stuck: %d stage(s) remain with unmet dependencies",
                     n_stages - len(completed_ids),
                 )
+                # R5-6: a stuck dependency graph previously fell through to
+                # synthesize partial results and returned ``completed`` — the
+                # caller could not tell a stuck pipeline from a clean one.
+                # Surface it as ``stage_failed`` (replan-eligible) so the
+                # orchestrator can replan around the unsatisfiable stage instead
+                # of silently presenting partial data as authoritative.
+                if remaining:
+                    return _StageExecutorResult(
+                        status="stage_failed",
+                        stage_ctx=stage_ctx,
+                        failed_stage=remaining[0],
+                        replan_eligible=True,
+                    )
                 break
 
             batch = ready[:max_parallel]
@@ -223,7 +237,7 @@ class StageExecutor:
                 replan_eligible=stage.replan_on_failure,
             )
 
-        validation = self._validator.validate(stage, result, stage_ctx)
+        validation = await self._validator.validate_async(stage, result, stage_ctx)
         await self._emit_stage_validation(wf_id, stage, validation)
 
         if not validation.passed:
@@ -376,7 +390,7 @@ class StageExecutor:
             )
             if result.status == "error":
                 continue
-            validation = self._validator.validate(stage, result, stage_ctx)
+            validation = await self._validator.validate_async(stage, result, stage_ctx)
             await self._emit_stage_validation(wf_id, stage, validation)
             if validation.passed:
                 return result
@@ -413,7 +427,7 @@ class StageExecutor:
             )
             if result.status == "error":
                 continue
-            validation = self._validator.validate(stage, result, stage_ctx)
+            validation = await self._validator.validate_async(stage, result, stage_ctx)
             if not validation.passed:
                 continue
             new_gate = self._data_gate.check(stage, result, stage_ctx)
@@ -715,12 +729,15 @@ class StageExecutor:
                 pass
 
         if "operation" not in params:
+            # R5-8: don't guess a concrete transform (the old default,
+            # ``filter_data``, either errors out on a missing column or silently
+            # drops rows). Forward the source rows unchanged instead.
             logger.warning(
                 "process_data stage '%s' missing 'operation' in input_context, "
-                "defaulting to filter_data",
+                "defaulting to passthrough (forward rows unchanged)",
                 stage.stage_id,
             )
-            params["operation"] = "filter_data"
+            params["operation"] = "passthrough"
 
         if "aggregations" in params and isinstance(params["aggregations"], dict):
             params["aggregations"] = list(params["aggregations"].items())

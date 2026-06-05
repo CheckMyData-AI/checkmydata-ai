@@ -78,7 +78,7 @@ export function DataValidationCard({ messageId, query, sessionId }: DataValidati
   }
 
   return (
-    <div className="mt-3 p-3 rounded-xl border border-border-default bg-surface-2">
+    <div className="mt-3 p-3 rounded-lg bg-surface-3">
       <p className="text-xs text-text-secondary mb-2">Do these numbers look right?</p>
 
       {!showForm ? (

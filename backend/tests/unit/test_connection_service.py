@@ -368,6 +368,9 @@ class TestToConfig:
         assert config.db_type == "postgresql"
         assert config.db_host == "db.host"
         assert config.db_password == "secret"
+        # R1-7: connection_id must be carried so connector_key (R1-1) can use it
+        # as the per-connection credential discriminator.
+        assert config.connection_id == conn.id
 
     @pytest.mark.asyncio
     @patch("app.services.connection_service._ssh_key_svc")
@@ -666,7 +669,7 @@ class TestTestSsh:
 
     @pytest.mark.asyncio
     @patch("app.services.connection_service._ssh_key_svc")
-    @patch("asyncssh.connect")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     async def test_ssh_success(self, mock_connect, mock_ssh_svc, db):
         proj = await _make_project(db)
         conn = await svc.create(
@@ -698,7 +701,7 @@ class TestTestSsh:
 
     @pytest.mark.asyncio
     @patch("app.services.connection_service._ssh_key_svc")
-    @patch("asyncssh.connect")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     async def test_ssh_marker_not_found(self, mock_connect, mock_ssh_svc, db):
         proj = await _make_project(db)
         conn = await svc.create(
@@ -752,7 +755,7 @@ class TestTestSsh:
 
     @pytest.mark.asyncio
     @patch("app.services.connection_service._ssh_key_svc")
-    @patch("asyncssh.connect")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     @patch("asyncssh.import_private_key")
     async def test_ssh_with_key(self, mock_import_key, mock_connect, mock_ssh_svc, db):
         proj = await _make_project(db)
@@ -784,3 +787,83 @@ class TestTestSsh:
         result = await svc.test_ssh(db, conn.id)
         assert result["success"] is True
         mock_import_key.assert_called_once_with("---KEY---", "pass")
+
+
+class TestUpdateEvictsRuntime:
+    """R1-3: update() must tear down stale tunnels + pooled connectors."""
+
+    @pytest.mark.asyncio
+    async def test_update_evicts_tunnels_and_connectors(self, db):
+        proj = await _make_project(db)
+        conn = await svc.create(
+            db,
+            project_id=proj.id,
+            name="PG SSH",
+            db_type="postgresql",
+            db_host="10.0.0.1",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+        )
+
+        with patch.object(
+            ConnectionService, "_evict_runtime_caches", new_callable=AsyncMock
+        ) as mock_evict:
+            await svc.update(db, conn.id, db_host="10.0.0.2")
+
+        mock_evict.assert_awaited_once()
+        old_cfg, new_cfg = mock_evict.await_args.args
+        assert old_cfg.db_host == "10.0.0.1"
+        assert new_cfg.db_host == "10.0.0.2"
+
+    @pytest.mark.asyncio
+    async def test_evict_runtime_caches_closes_tunnel_and_pool(self, db):
+        from app.connectors.base import ConnectionConfig, connector_key
+
+        old_cfg = ConnectionConfig(
+            db_type="postgres",
+            db_host="10.0.0.1",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+            connection_id="c-1",
+        )
+        new_cfg = ConnectionConfig(
+            db_type="postgres",
+            db_host="10.0.0.2",
+            db_port=5432,
+            db_name="db",
+            ssh_host="bastion.example.com",
+            ssh_user="deploy",
+            ssh_port=22,
+            connection_id="c-1",
+        )
+
+        mock_connector = AsyncMock()
+        key = connector_key(old_cfg)
+        fake_sql = MagicMock()
+        fake_sql._connectors = {key: mock_connector}
+        fake_sql._schema_cache = {key: "schema"}
+        fake_orch = MagicMock()
+        fake_orch._sql = fake_sql
+        fake_agent = MagicMock()
+        fake_agent._orchestrator = fake_orch
+
+        with (
+            patch.object(
+                ConnectionService, "_close_ssh_tunnels", new_callable=AsyncMock
+            ) as mock_close,
+            patch("app.api.routes.chat._agent", fake_agent),
+        ):
+            await ConnectionService._evict_runtime_caches(old_cfg, new_cfg)
+
+        # Tunnel closed for the (single) ssh+db endpoint pair(s).
+        assert mock_close.await_count >= 1
+        # Pooled connector evicted + disconnected, schema cache cleared.
+        assert key not in fake_sql._connectors
+        assert key not in fake_sql._schema_cache
+        mock_connector.disconnect.assert_awaited_once()

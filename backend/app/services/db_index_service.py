@@ -237,8 +237,14 @@ class DbIndexService:
             return {"is_indexed": False}
         indexing_status = getattr(summary, "indexing_status", "idle") or "idle"
         actually_indexed = summary.indexed_at is not None and indexing_status != "running"
+        # R2-4 surfacing: a "completed_partial" run finished but with failed
+        # sampling / distinct-value / schema-embed evidence, so empty-looking
+        # tables may be false negatives. Expose an explicit flag so the API and
+        # UI can warn rather than presenting the index as fully trustworthy.
+        is_partial = indexing_status == "completed_partial"
         return {
             "is_indexed": actually_indexed,
+            "is_partial": is_partial,
             "indexed_at": summary.indexed_at.isoformat() if summary.indexed_at else None,
             "total_tables": summary.total_tables,
             "active_tables": summary.active_tables,

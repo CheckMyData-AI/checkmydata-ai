@@ -29,6 +29,7 @@ def _real_learning(**overrides) -> AgentLearning:
         "source_error": None,
         "times_confirmed": 1,
         "times_applied": 0,
+        "times_exposed": 0,
         "is_active": True,
         "created_at": datetime(2026, 3, 18, tzinfo=UTC),
         "updated_at": datetime(2026, 3, 18, tzinfo=UTC),

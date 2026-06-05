@@ -26,7 +26,7 @@ const LAST_UPDATED = "March 19, 2026";
 
 export default function PrivacyPage() {
   return (
-    <article className="space-y-10">
+    <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24 space-y-10">
       {/* Page title */}
       <header className="space-y-3 pb-8 border-b border-border-subtle">
         <h1 className="text-2xl font-bold tracking-tight">Privacy Policy</h1>

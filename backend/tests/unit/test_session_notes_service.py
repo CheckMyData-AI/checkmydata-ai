@@ -481,6 +481,221 @@ class TestDecayStaleNotes:
         assert count == 0
 
 
+class TestNoteMentionsTable:
+    """R4-6: word-boundary table match, not naive substring."""
+
+    def test_subject_match(self):
+        from types import SimpleNamespace
+
+        note = SimpleNamespace(subject="Orders", note="anything here")
+        assert svc._note_mentions_table(note, {"orders"}) is True
+
+    def test_word_boundary_match_in_note_body(self):
+        from types import SimpleNamespace
+
+        note = SimpleNamespace(subject="misc", note="Join orders to payments by id")
+        assert svc._note_mentions_table(note, {"orders"}) is True
+
+    def test_no_spurious_substring_match(self):
+        from types import SimpleNamespace
+
+        # "users" must NOT match inside "power_users" or "businessusers".
+        note = SimpleNamespace(subject="misc", note="The power_users table is special")
+        assert svc._note_mentions_table(note, {"users"}) is False
+
+    def test_underscore_table_name_not_partial(self):
+        from types import SimpleNamespace
+
+        note = SimpleNamespace(subject="misc", note="see my_order_items for details")
+        assert svc._note_mentions_table(note, {"order_items"}) is False
+        note2 = SimpleNamespace(subject="misc", note="see order_items for details")
+        assert svc._note_mentions_table(note2, {"order_items"}) is True
+
+
+class TestContradictionHandling:
+    """R4-5/R4-6: conflict reconciliation aligned with the learning side —
+    strict tie rule, same-polarity detection, exactly one active side."""
+
+    @pytest.mark.asyncio
+    async def test_strictly_stronger_contradiction_retires_incumbent(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        incumbent = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must always filter by deleted_at column.",
+            confidence=0.7,
+        )
+        assert incumbent.is_active is True
+
+        outranked = await svc._reconcile_contradictions(
+            db,
+            conn.id,
+            "business_logic",
+            "orders",
+            "Rows must never filter by deleted_at column.",
+            new_confidence=0.8,  # strictly higher than 0.7
+            new_is_verified=False,
+        )
+        await db.refresh(incumbent)
+        assert outranked is False
+        assert incumbent.is_active is False
+        assert incumbent.deactivated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_confidence_tie_keeps_incumbent_and_outranks_new(self, db):
+        """R4-5: a tie no longer lets the newcomer win — the incumbent stays
+        and the new note is reported outranked (stored inactive by create_note)."""
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        incumbent = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must always filter by deleted_at column.",
+            confidence=0.7,
+        )
+        outranked = await svc._reconcile_contradictions(
+            db,
+            conn.id,
+            "business_logic",
+            "orders",
+            "Rows must never filter by deleted_at column.",
+            new_confidence=0.7,  # tie
+            new_is_verified=False,
+        )
+        await db.refresh(incumbent)
+        assert outranked is True
+        assert incumbent.is_active is True
+        assert incumbent.deactivated_at is None
+
+    @pytest.mark.asyncio
+    async def test_verified_incumbent_survives_and_outranks_unverified_new(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        incumbent = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must always filter by deleted_at column.",
+            confidence=0.5,
+            is_verified=True,
+        )
+        # Even with higher confidence, an unverified note can't beat a verified
+        # incumbent — verification dominates the ordering.
+        outranked = await svc._reconcile_contradictions(
+            db,
+            conn.id,
+            "business_logic",
+            "orders",
+            "Rows must never filter by deleted_at column.",
+            new_confidence=0.9,
+            new_is_verified=False,
+        )
+        await db.refresh(incumbent)
+        assert outranked is True
+        assert incumbent.is_active is True
+        # No confidence penalty under the aligned rules.
+        assert incumbent.confidence == pytest.approx(0.5)
+
+    @pytest.mark.asyncio
+    async def test_same_polarity_divergence_is_a_conflict(self, db):
+        """R4-5: 'use X' vs 'use Y' (same polarity) now reconciles, where the
+        old opposite-polarity-only check missed it."""
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        incumbent = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Always join orders on the customer_id column.",
+            confidence=0.6,
+        )
+        outranked = await svc._reconcile_contradictions(
+            db,
+            conn.id,
+            "business_logic",
+            "orders",
+            "Always join orders on the account_id column.",
+            new_confidence=0.9,
+            new_is_verified=False,
+        )
+        await db.refresh(incumbent)
+        # The stronger same-polarity divergent note supersedes the incumbent.
+        assert outranked is False
+        assert incumbent.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_create_note_stores_outranked_note_inactive(self, db):
+        """End-to-end: a weaker conflicting new note is created inactive so two
+        contradictory notes never both feed the prompt."""
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must always filter by deleted_at column.",
+            confidence=0.9,
+            is_verified=True,
+        )
+        newcomer = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must never filter by deleted_at column.",
+            confidence=0.5,
+        )
+        assert newcomer.is_active is False
+        assert newcomer.deactivated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_non_contradicting_note_untouched(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+
+        incumbent = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="business_logic",
+            subject="orders",
+            note="Rows must always filter by deleted_at column.",
+            confidence=0.7,
+        )
+        outranked = await svc._reconcile_contradictions(
+            db,
+            conn.id,
+            "business_logic",
+            "orders",
+            "Order totals are stored in cents.",
+            new_confidence=0.9,
+            new_is_verified=True,
+        )
+        await db.refresh(incumbent)
+        assert outranked is False
+        assert incumbent.is_active is True
+        assert incumbent.confidence == pytest.approx(0.7)
+
+
 class TestDeleteAllForConnection:
     @pytest.mark.asyncio
     async def test_delete_all(self, db):

@@ -1,5 +1,6 @@
 """Tests for SSHTunnel.is_alive with restricted-shell accounts."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -52,6 +53,37 @@ class TestSSHTunnelIsAlive:
         tunnel._conn.run = AsyncMock(return_value=result)
 
         assert await tunnel.is_alive() is True
+
+    @pytest.mark.asyncio
+    async def test_cache_fast_path_skips_probe_when_transport_open(self):
+        """R1-7: within the liveness-cache TTL a healthy transport returns True
+        without paying for a round-trip probe."""
+        tunnel = SSHTunnel()
+        tunnel._conn = MagicMock()
+        tunnel._listener = MagicMock()
+        tunnel._conn.get_extra_info.return_value = MagicMock()
+        tunnel._conn.is_closed.return_value = False
+        tunnel._conn.run = AsyncMock()
+        tunnel._last_alive_check = time.monotonic()
+
+        assert await tunnel.is_alive() is True
+        tunnel._conn.run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_invalidated_when_transport_gone(self):
+        """R1-7: a dropped transport inside the cache window must not be trusted —
+        the cache is invalidated and the full probe reports dead."""
+        tunnel = SSHTunnel()
+        tunnel._conn = MagicMock()
+        tunnel._listener = MagicMock()
+        # Transport gone: both the cache-window check and the full probe read it.
+        tunnel._conn.get_extra_info.return_value = None
+        tunnel._conn.is_closed.return_value = True
+        tunnel._conn.run = AsyncMock()
+        tunnel._last_alive_check = time.monotonic()
+
+        assert await tunnel.is_alive() is False
+        tunnel._conn.run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_dead_when_no_connection(self):
@@ -146,6 +178,99 @@ class TestSSHTunnelManagerReuse:
         host, port = await mgr.get_or_create(cfg)
         assert host == "127.0.0.1"
         assert port == 9999
+
+
+class TestSSHTunnelManagerRefCounting:
+    """Re-audit: a tunnel shared by sibling connections must survive until the
+    last referencing connection releases it."""
+
+    def _alive_tunnel(self, port: int = 9999) -> SSHTunnel:
+        tunnel = SSHTunnel()
+        tunnel._conn = MagicMock()
+        tunnel._listener = MagicMock()
+        tunnel._listener.get_port.return_value = port
+        tunnel._local_host = "127.0.0.1"
+        tunnel._local_port = port
+        tunnel._conn.get_extra_info.return_value = MagicMock()
+        tunnel._conn.is_closed.return_value = False
+        tunnel._last_alive_check = time.monotonic()
+        tunnel.stop = AsyncMock()
+        return tunnel
+
+    @pytest.mark.asyncio
+    async def test_close_keeps_tunnel_for_sibling_connection(self):
+        from app.connectors.base import ConnectionConfig
+
+        mgr = SSHTunnelManager()
+        tunnel = self._alive_tunnel()
+
+        # Two connections to the same DB through the same bastion: identical
+        # transport identity (shared tunnel key) but distinct connection ids.
+        cfg_a = ConnectionConfig(
+            db_type="postgresql",
+            db_host="db.example.com",
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="tunnel-user",
+            connection_id="conn-a",
+        )
+        cfg_b = ConnectionConfig(
+            db_type="postgresql",
+            db_host="db.example.com",
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="tunnel-user",
+            connection_id="conn-b",
+        )
+        key = mgr._key(cfg_a)
+        assert key == mgr._key(cfg_b)
+        mgr._tunnels[key] = tunnel
+
+        # Both connections obtain (and reference) the shared tunnel.
+        await mgr.get_or_create(cfg_a)
+        await mgr.get_or_create(cfg_b)
+        assert mgr._refs[key] == {"conn-a", "conn-b"}
+
+        # Closing A drops only A's reference; the tunnel stays up for B.
+        closed = await mgr.close_for_config(cfg_a)
+        assert closed is False
+        tunnel.stop.assert_not_called()
+        assert key in mgr._tunnels
+        assert mgr._refs[key] == {"conn-b"}
+
+        # Closing B (the last reference) tears the tunnel down.
+        closed = await mgr.close_for_config(cfg_b)
+        assert closed is True
+        tunnel.stop.assert_awaited_once()
+        assert key not in mgr._tunnels
+        assert key not in mgr._refs
+
+    @pytest.mark.asyncio
+    async def test_force_closes_regardless_of_refs(self):
+        from app.connectors.base import ConnectionConfig
+
+        mgr = SSHTunnelManager()
+        tunnel = self._alive_tunnel()
+        cfg = ConnectionConfig(
+            db_type="postgresql",
+            db_host="db.example.com",
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="tunnel-user",
+            connection_id="conn-a",
+        )
+        key = mgr._key(cfg)
+        mgr._tunnels[key] = tunnel
+        mgr._refs[key] = {"conn-a", "conn-b"}
+
+        closed = await mgr.close_for_config(cfg, force=True)
+        assert closed is True
+        tunnel.stop.assert_awaited_once()
+        assert key not in mgr._tunnels
+        assert key not in mgr._refs
 
 
 class TestSSHTunnelPortForwardFailure:

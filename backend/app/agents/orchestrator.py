@@ -149,6 +149,11 @@ class AgentResponse:
     clarification_data: dict[str, Any] | None = None
     sql_results: list[SQLResultBlock] = field(default_factory=list)
     exposed_learning_ids: list[str] = field(default_factory=list)
+    # R5-7: set when the result gate exhausted its correction budget and the
+    # SQL result still looked wrong. The chat layer uses this to auto-route the
+    # result to the investigation ("Wrong Data") agent.
+    suspicious_result: bool = False
+    suspicious_reason: str | None = None
 
 
 class OrchestratorAgent(BaseAgent):
@@ -184,6 +189,14 @@ class OrchestratorAgent(BaseAgent):
         self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
         self._wf_sql_lock = asyncio.Lock()
         self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
+        # R5-3: per-workflow count of result-gate correction directives
+        # already issued on the unified tool loop (bounds re-query attempts).
+        self._wf_correction_counts: dict[str, int] = {}
+        # R5-7: per-workflow reason captured when the result gate spent its full
+        # correction budget and the result still looked suspicious. Drained by
+        # :meth:`pop_suspicious_reason` after the run so the response can carry
+        # the auto-investigation signal.
+        self._wf_suspicious: dict[str, str] = {}
         self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
         self._mcp_cache: dict[str, tuple[bool, float]] = {}
         self._MCP_CACHE_TTL = 60.0
@@ -218,6 +231,80 @@ class OrchestratorAgent(BaseAgent):
         for wid in stale_wf_ids:
             self._wf_enriched.pop(wid, None)
             self._wf_sql_results.pop(wid, None)
+            self._wf_correction_counts.pop(wid, None)
+            self._wf_suspicious.pop(wid, None)
+
+    def pop_suspicious_reason(self, wf_id: str) -> str | None:
+        """R5-7: drain the suspicious-result reason captured for *wf_id*.
+
+        Returns the reason (and clears it) when the result gate exhausted its
+        correction budget while the result still looked wrong, else ``None``.
+        """
+        return self._wf_suspicious.pop(wf_id, None)
+
+    def _result_gate_directive(self, wf_id: str, sql_result: SQLAgentResult) -> str | None:
+        """Unified-path result-quality gate (R5-3).
+
+        Inspect a ``query_database`` result and, when it looks wrong, return a
+        correction directive to append to the tool message so the LLM
+        re-queries on the next loop iteration. Returns ``None`` when the
+        result is acceptable or the per-workflow correction budget is spent.
+        """
+        if not settings.orchestrator_result_gate_enabled:
+            return None
+
+        budget = settings.orchestrator_max_result_corrections
+        over_budget = self._wf_correction_counts.get(wf_id, 0) >= budget
+
+        vr = self._validator.validate_sql_result(sql_result)
+        qr = getattr(sql_result, "results", None)
+        is_unexplained_empty = (
+            settings.query_empty_result_retry
+            and qr is not None
+            and getattr(qr, "row_count", 0) == 0
+            and not getattr(qr, "error", None)
+        )
+
+        if over_budget:
+            # R5-7: corrections exhausted but the result still looks wrong.
+            # Record the reason so the response can auto-route to the
+            # investigation agent instead of presenting it as authoritative.
+            if not vr.passed:
+                self._wf_suspicious[wf_id] = "; ".join(vr.errors) or "the result failed validation"
+            elif is_unexplained_empty:
+                self._wf_suspicious[wf_id] = (
+                    "query returned 0 rows after exhausting correction attempts"
+                )
+            else:
+                # Re-audit fix: a later query in the same workflow produced an
+                # acceptable result even though the budget was exhausted by an
+                # earlier attempt. Clear the stale suspicion so a good answer is
+                # not wrongly routed to investigation / flagged suspicious.
+                self._wf_suspicious.pop(wf_id, None)
+            return None
+
+        if not vr.passed:
+            self._wf_correction_counts[wf_id] = self._wf_correction_counts.get(wf_id, 0) + 1
+            reason = "; ".join(vr.errors) or "the result failed validation"
+            return (
+                f"\u26a0\ufe0f RESULT CHECK FAILED: {reason}. "
+                "Re-examine the database schema (exact table and column names) "
+                "and issue a corrected query_database call. Do not fabricate values."
+            )
+
+        if is_unexplained_empty:
+            self._wf_correction_counts[wf_id] = self._wf_correction_counts.get(wf_id, 0) + 1
+            return (
+                "\u26a0\ufe0f RESULT CHECK: the query returned 0 rows. Verify the "
+                "table/column names and filter values against the schema and try a "
+                "corrected query_database call. If a corrected query still returns "
+                "nothing, treat zero as the true answer and proceed to synthesis."
+            )
+
+        # Result acceptable within budget: clear any stale suspicion captured by
+        # an earlier failing attempt in this same workflow.
+        self._wf_suspicious.pop(wf_id, None)
+        return None
 
     _ORCH_RULES_MAX_CHARS = 2000
 
@@ -1011,6 +1098,27 @@ class OrchestratorAgent(BaseAgent):
                         else:
                             err_msg = f"{type(res).__name__}: {res}"
 
+                        # R5-8: the dispatcher already exhausted its internal
+                        # retries before re-raising. Rather than folding a bland
+                        # "tool failed" into the transcript (which the LLM tends
+                        # to treat as terminal and synthesize around), give a
+                        # targeted directive: retry the *same* call once for
+                        # transient/retryable errors, or adjust inputs / proceed
+                        # without it for fatal ones.
+                        retryable = isinstance(res, AgentRetryableError) or (
+                            isinstance(res, LLMError) and getattr(res, "is_retryable", False)
+                        )
+                        if retryable:
+                            directive = (
+                                f" This looks transient — retry the same "
+                                f"'{active_calls[i].name}' call once before giving up."
+                            )
+                        else:
+                            directive = (
+                                f" Do not retry '{active_calls[i].name}' unchanged; "
+                                "correct the inputs or continue with the data you have."
+                            )
+
                         logger.warning(
                             "Parallel tool call %s failed (%s): %s",
                             active_calls[i].name,
@@ -1028,7 +1136,7 @@ class OrchestratorAgent(BaseAgent):
                             error_type=type(res).__name__,
                         )
                         executed_pairs[tc_id] = (
-                            f"Tool '{active_calls[i].name}' failed: {err_msg}",
+                            f"Tool '{active_calls[i].name}' failed: {err_msg}.{directive}",
                             None,
                         )
                     else:
@@ -1073,6 +1181,20 @@ class OrchestratorAgent(BaseAgent):
                         all_sql_results[-1] = sub_result
                     else:
                         all_sql_results.append(sub_result)
+                    # R5-3: gate the result quality and nudge a re-query when
+                    # the query_database result looks wrong (bounded per wf).
+                    if tc.name == "query_database":
+                        gate_directive = self._result_gate_directive(wf_id, sub_result)
+                        if gate_directive:
+                            result_text = f"{result_text}\n\n{gate_directive}"
+                            await self._tracker.emit(
+                                wf_id,
+                                "result_gate",
+                                "retrying",
+                                "Result quality check flagged the query result; "
+                                "asking the agent to re-query.",
+                                tool=tc.name,
+                            )
                 elif isinstance(sub_result, KnowledgeResult):
                     knowledge_sources.extend(sub_result.sources)
                 elif isinstance(sub_result, MCPSourceResult):
@@ -1515,7 +1637,6 @@ class OrchestratorAgent(BaseAgent):
             ),
         )
         replan_history: list[dict[str, Any]] = []
-
         try:
             stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
             exec_result = await executor.execute(
@@ -1525,90 +1646,18 @@ class OrchestratorAgent(BaseAgent):
                 staleness_warning=staleness_warning,
             )
 
-            replan_count = 0
-            max_replans = settings.max_pipeline_replans
-            while (
-                exec_result.status == "stage_failed"
-                and exec_result.replan_eligible
-                and replan_count < max_replans
-            ):
-                failed = exec_result.failed_stage
-                if not failed:
-                    break
-
-                error_msg = (
-                    exec_result.failed_validation.error_summary
-                    if exec_result.failed_validation
-                    else "unknown error"
-                )
-                if exec_result.data_gate_outcome and exec_result.data_gate_outcome.errors:
-                    error_msg += " | DataGate: " + "; ".join(exec_result.data_gate_outcome.errors)
-                    if exec_result.data_gate_outcome.suggestions:
-                        error_msg += " Suggestions: " + "; ".join(
-                            exec_result.data_gate_outcome.suggestions
-                        )
-
-                replan_count += 1
-                replan_history.append(
-                    {
-                        "attempt": replan_count,
-                        "failed_stage": failed.stage_id,
-                        "error": error_msg,
-                    }
-                )
-
-                await self._tracker.emit(
-                    wf_id,
-                    "thinking",
-                    "in_progress",
-                    f"Stage '{failed.stage_id}' failed after retries — replanning "
-                    f"(attempt {replan_count}/{max_replans})…",
-                )
-
-                completed = exec_result.stage_ctx.results
-                new_plan = await adaptive.replan(
-                    context.user_question,
-                    completed_stages=completed,
-                    failed_stage=failed,
-                    error=error_msg,
-                    table_map=table_map,
-                    db_type=db_type,
-                    preferred_provider=context.preferred_provider,
-                    model=context.model,
-                    replan_history=replan_history,
-                    staleness_warning=staleness_warning,
-                )
-                if not new_plan:
-                    logger.warning("Replanning returned no plan — giving up")
-                    await self._tracker.emit(
-                        wf_id,
-                        "thinking",
-                        "in_progress",
-                        "Replanning failed — returning partial results.",
-                    )
-                    break
-
-                await self._tracker.emit(
-                    wf_id,
-                    "thinking",
-                    "in_progress",
-                    f"New plan: {len(new_plan.stages)} stages",
-                )
-
-                new_stage_ctx = StageContext(
-                    plan=new_plan,
-                    pipeline_run_id=pipeline_run.id,
-                )
-                for sid, sr in completed.items():
-                    if sr.status == "success":
-                        new_stage_ctx.set_result(sid, sr)
-
-                exec_result = await executor.execute(
-                    new_plan,
-                    pipeline_ctx,
-                    stage_ctx=new_stage_ctx,
-                    staleness_warning=staleness_warning,
-                )
+            exec_result, replan_history = await self._run_pipeline_replans(
+                executor=executor,
+                exec_result=exec_result,
+                pipeline_ctx=pipeline_ctx,
+                context=context,
+                adaptive=adaptive,
+                table_map=table_map,
+                db_type=db_type,
+                staleness_warning=staleness_warning,
+                run_id=pipeline_run.id,
+                wf_id=wf_id,
+            )
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
         except Exception:
@@ -1748,6 +1797,114 @@ class OrchestratorAgent(BaseAgent):
             "modification": context.extra.get("modification", ""),
         }
 
+    async def _run_pipeline_replans(
+        self,
+        *,
+        executor: StageExecutor,
+        exec_result: Any,
+        pipeline_ctx: AgentContext,
+        context: AgentContext,
+        adaptive: Any,
+        table_map: str,
+        db_type: str | None,
+        staleness_warning: str | None,
+        run_id: str,
+        wf_id: str,
+    ) -> tuple[Any, list[dict[str, Any]]]:
+        """Replan loop shared by the initial and resume pipeline paths.
+
+        R5-6: previously only the initial path replanned on ``stage_failed``;
+        a resumed pipeline executed once and surfaced the failure as-is. Both
+        now run the same bounded replan loop.
+        """
+        replan_history: list[dict[str, Any]] = []
+        replan_count = 0
+        max_replans = settings.max_pipeline_replans
+        while (
+            exec_result.status == "stage_failed"
+            and exec_result.replan_eligible
+            and replan_count < max_replans
+        ):
+            failed = exec_result.failed_stage
+            if not failed:
+                break
+
+            error_msg = (
+                exec_result.failed_validation.error_summary
+                if exec_result.failed_validation
+                else "unknown error"
+            )
+            if exec_result.data_gate_outcome and exec_result.data_gate_outcome.errors:
+                error_msg += " | DataGate: " + "; ".join(exec_result.data_gate_outcome.errors)
+                if exec_result.data_gate_outcome.suggestions:
+                    error_msg += " Suggestions: " + "; ".join(
+                        exec_result.data_gate_outcome.suggestions
+                    )
+
+            replan_count += 1
+            replan_history.append(
+                {
+                    "attempt": replan_count,
+                    "failed_stage": failed.stage_id,
+                    "error": error_msg,
+                }
+            )
+
+            await self._tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"Stage '{failed.stage_id}' failed after retries — replanning "
+                f"(attempt {replan_count}/{max_replans})…",
+            )
+
+            completed = exec_result.stage_ctx.results
+            new_plan = await adaptive.replan(
+                context.user_question,
+                completed_stages=completed,
+                failed_stage=failed,
+                error=error_msg,
+                table_map=table_map,
+                db_type=db_type,
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+                replan_history=replan_history,
+                staleness_warning=staleness_warning,
+            )
+            if not new_plan:
+                logger.warning("Replanning returned no plan — giving up")
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Replanning failed — returning partial results.",
+                )
+                break
+
+            await self._tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"New plan: {len(new_plan.stages)} stages",
+            )
+
+            new_stage_ctx = StageContext(
+                plan=new_plan,
+                pipeline_run_id=run_id,
+            )
+            for sid, sr in completed.items():
+                if sr.status == "success":
+                    new_stage_ctx.set_result(sid, sr)
+
+            exec_result = await executor.execute(
+                new_plan,
+                pipeline_ctx,
+                stage_ctx=new_stage_ctx,
+                staleness_warning=staleness_warning,
+            )
+
+        return exec_result, replan_history
+
     async def _resume_pipeline(self, resume_info: dict, context: AgentContext) -> AgentResponse:
         """Resume a pipeline from a checkpoint or failed stage."""
         import json as _json
@@ -1839,6 +1996,28 @@ class OrchestratorAgent(BaseAgent):
             exec_result = await executor.execute(
                 plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
             )
+
+            # R5-6: a resumed pipeline can also hit a failing stage. Give it the
+            # same bounded replan loop the initial path uses instead of
+            # surfacing the first failure as a dead end.
+            if exec_result.status == "stage_failed" and exec_result.replan_eligible:
+                adaptive = AdaptivePlanner(self._llm)
+                resume_table_map = await self._load_table_map(context, wf_id)
+                resume_db_type = (
+                    context.connection_config.db_type if context.connection_config else None
+                )
+                exec_result, _resume_replans = await self._run_pipeline_replans(
+                    executor=executor,
+                    exec_result=exec_result,
+                    pipeline_ctx=resume_ctx,
+                    context=context,
+                    adaptive=adaptive,
+                    table_map=resume_table_map,
+                    db_type=resume_db_type,
+                    staleness_warning=None,
+                    run_id=run_id,
+                    wf_id=wf_id,
+                )
 
             await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
         except Exception:
@@ -2027,9 +2206,14 @@ class OrchestratorAgent(BaseAgent):
 
         Used after the agent hits ``step_limit_hit`` / ``wall_clock_timeout_hit``
         to decide whether to surface the answer as ``sql_result`` or as
-        ``step_limit_reached`` (with the "Continue analysis" CTA). Failures
-        default to ``True`` so we never block a usable answer behind a flaky
-        validator call.
+        ``step_limit_reached`` (with the "Continue analysis" CTA).
+
+        R5-6: a validator *error* now fails closed (returns ``False``) by
+        default, so an unverifiable answer is framed as a continuable partial
+        result rather than asserted as a verified final answer. The answer is
+        still shown to the user — just honestly labelled. Set
+        ``answer_validator_fail_closed=False`` to restore the prior lenient
+        length-heuristic fallback.
         """
         if not final_text or not final_text.strip():
             return False
@@ -2064,6 +2248,8 @@ class OrchestratorAgent(BaseAgent):
             return verdict.addresses_question
         except Exception:
             logger.debug("Answer validator failed (non-critical)", exc_info=True)
+            if settings.answer_validator_fail_closed:
+                return False
             return len(final_text.strip()) > min_chars
 
     async def _stream_tokens(

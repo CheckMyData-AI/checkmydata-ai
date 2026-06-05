@@ -120,7 +120,17 @@ class SchemaRetriever:
             text = self._build_schema_doc(e)
             if not text.strip():
                 continue
-            docs.append((e.table_name.lower(), text, self._build_metadata(e)))
+            # R2-6: schema-qualify the BM25 doc id. Lowercasing the bare table
+            # name alone collides when the same table name exists in two
+            # schemas (e.g. ``public.users`` and ``analytics.users``) -- the
+            # second doc silently overwrites the first in the BM25 store, so
+            # one of the tables becomes unsearchable. Downstream consumers
+            # resolve the entry via ``metadata["table_name"]`` (which stays the
+            # bare name) and only fall back to ``id``, so qualifying the id is
+            # safe.
+            schema = (getattr(e, "table_schema", None) or "").strip()
+            doc_id = f"{schema}.{e.table_name}".lower() if schema else e.table_name.lower()
+            docs.append((doc_id, text, self._build_metadata(e)))
         self._bm25.build(self._project_key(connection_id), indexed_sha, docs)
         logger.info(
             "schema_retriever: built bm25 for conn=%s tables=%d sha=%s",

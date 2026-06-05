@@ -16,11 +16,12 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
-from app.connectors.ssh_tunnel import SSHTunnelManager
+from app.connectors.ssh_tunnel import shared_tunnel_manager
 
 logger = logging.getLogger(__name__)
 
-_tunnel_mgr = SSHTunnelManager()
+# R1-4: all connectors share one process-wide tunnel manager.
+_tunnel_mgr = shared_tunnel_manager
 
 
 class ClickHouseConnector(BaseConnector):

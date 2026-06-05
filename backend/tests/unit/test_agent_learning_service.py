@@ -1,5 +1,6 @@
 """Unit tests for AgentLearningService."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,100 @@ from app.services.agent_learning_service import (
     VALID_CATEGORIES,
     AgentLearningService,
 )
+
+
+class TestCompileLockBound:
+    """R4-6: the per-connection compile-lock map must not grow unbounded,
+    and (re-audit) eviction must never break mutual exclusion."""
+
+    @pytest.mark.asyncio
+    async def test_evicts_idle_locks_over_capacity(self):
+        import app.services.agent_learning_service as als
+
+        original = als._COMPILE_LOCKS
+        original_refs = als._COMPILE_LOCK_REFS
+        original_max = als._COMPILE_LOCKS_MAX
+        try:
+            als._COMPILE_LOCKS = als.OrderedDict()
+            als._COMPILE_LOCK_REFS = {}
+            als._COMPILE_LOCKS_MAX = 3
+            # Enter+exit so each lock becomes idle (refs back to 0).
+            for i in range(3):
+                async with als._compile_lock(f"conn-{i}"):
+                    pass
+            assert len(als._COMPILE_LOCKS) == 3
+            # Fourth distinct connection: an idle lock must be evicted.
+            async with als._compile_lock("conn-3"):
+                pass
+            assert len(als._COMPILE_LOCKS) == 3
+            assert "conn-3" in als._COMPILE_LOCKS
+        finally:
+            als._COMPILE_LOCKS = original
+            als._COMPILE_LOCK_REFS = original_refs
+            als._COMPILE_LOCKS_MAX = original_max
+
+    @pytest.mark.asyncio
+    async def test_inflight_lock_not_evicted(self):
+        """A handed-out-but-not-yet-released lock must survive eviction churn.
+
+        Regression: the previous implementation only skipped ``locked()``
+        entries, so an entry referenced by a waiting/running caller could be
+        evicted and replaced, letting two callers compile concurrently.
+        """
+        import app.services.agent_learning_service as als
+
+        original = als._COMPILE_LOCKS
+        original_refs = als._COMPILE_LOCK_REFS
+        original_max = als._COMPILE_LOCKS_MAX
+        try:
+            als._COMPILE_LOCKS = als.OrderedDict()
+            als._COMPILE_LOCK_REFS = {}
+            als._COMPILE_LOCKS_MAX = 2
+            async with als._compile_lock("held"):
+                # Churn many other connections while "held" is in flight.
+                for i in range(5):
+                    async with als._compile_lock(f"other-{i}"):
+                        pass
+                # The in-flight entry must still be present and be the same obj.
+                assert "held" in als._COMPILE_LOCKS
+                assert als._COMPILE_LOCK_REFS.get("held", 0) >= 1
+            # After release it becomes evictable again.
+            assert als._COMPILE_LOCK_REFS.get("held", 0) == 0
+        finally:
+            als._COMPILE_LOCKS = original
+            als._COMPILE_LOCK_REFS = original_refs
+            als._COMPILE_LOCKS_MAX = original_max
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_connection_serializes(self):
+        """Two callers for one connection must not overlap even under cap
+        pressure that would otherwise evict the shared lock."""
+        import app.services.agent_learning_service as als
+
+        original = als._COMPILE_LOCKS
+        original_refs = als._COMPILE_LOCK_REFS
+        original_max = als._COMPILE_LOCKS_MAX
+        try:
+            als._COMPILE_LOCKS = als.OrderedDict()
+            als._COMPILE_LOCK_REFS = {}
+            als._COMPILE_LOCKS_MAX = 1  # aggressive: forces eviction attempts
+            in_critical = 0
+            max_concurrent = 0
+
+            async def worker():
+                nonlocal in_critical, max_concurrent
+                async with als._compile_lock("shared"):
+                    in_critical += 1
+                    max_concurrent = max(max_concurrent, in_critical)
+                    await asyncio.sleep(0.02)
+                    in_critical -= 1
+
+            await asyncio.gather(*(worker() for _ in range(5)))
+            assert max_concurrent == 1, "compile lock allowed concurrent critical sections"
+        finally:
+            als._COMPILE_LOCKS = original
+            als._COMPILE_LOCK_REFS = original_refs
+            als._COMPILE_LOCKS_MAX = original_max
 
 
 @pytest.fixture
@@ -31,6 +126,7 @@ def _make_learning(**overrides) -> AgentLearning:
         "source_error": None,
         "times_confirmed": 1,
         "times_applied": 0,
+        "times_exposed": 0,
         "is_active": True,
         "created_at": datetime(2026, 3, 18, tzinfo=UTC),
         "updated_at": datetime(2026, 3, 18, tzinfo=UTC),

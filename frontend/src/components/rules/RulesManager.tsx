@@ -245,6 +245,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
             key={rule.id}
             role="button"
             tabIndex={0}
+            aria-label={`Edit rule: ${rule.name}`}
             onClick={() => handleRowClick(rule)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(rule); } }}
             className="group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md hover:bg-surface-1 transition-colors cursor-pointer"

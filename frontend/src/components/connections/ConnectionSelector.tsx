@@ -56,6 +56,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       string,
       {
         is_indexed: boolean;
+        is_partial?: boolean;
         active_tables?: number;
         total_tables?: number;
         is_indexing?: boolean;
@@ -125,6 +126,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           ...prev,
           [id]: {
             is_indexed: s.is_indexed,
+            is_partial: s.is_partial,
             active_tables: s.active_tables,
             total_tables: s.total_tables,
             is_indexing: s.is_indexing,
@@ -135,7 +137,12 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           clearInterval(timer);
           indexPollRef.current.delete(id);
           setIndexing((prev) => (prev === id ? null : prev));
-          if (s.is_indexed) {
+          if (s.is_partial) {
+            toast(
+              "DB indexed with partial evidence — some tables failed sampling; results may be incomplete",
+              "error",
+            );
+          } else if (s.is_indexed) {
             toast(
               `DB indexed: ${s.active_tables}/${s.total_tables} active tables`,
               "success",
@@ -217,6 +224,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               ...prev,
               [c.id]: {
                 is_indexed: s.is_indexed,
+                is_partial: s.is_partial,
                 active_tables: s.active_tables,
                 total_tables: s.total_tables,
                 is_indexing: s.is_indexing,
@@ -1048,6 +1056,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 }`}
                 role="button"
                 tabIndex={0}
+                aria-label={`Select connection: ${c.name}`}
+                aria-current={isActive ? "true" : undefined}
                 onClick={() => setActiveConnection(c)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -1100,23 +1110,23 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       </span>
                     ) : idx?.is_indexed ? (
                       canIndex ? (
-                        <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
+                        <Tooltip label={`${idx.is_partial ? "Indexed (PARTIAL — some tables failed sampling; results may be incomplete)" : "Indexed"}: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}. Click to re-index`} position="bottom">
                           <button
                             type="button"
-                            aria-label="Re-index database"
-                            className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            aria-label={idx.is_partial ? "Re-index database (last index was partial)" : "Re-index database"}
+                            className={`text-[10px] px-1 py-px rounded-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none ${idx.is_partial ? "bg-warning-muted text-warning hover:bg-warning/20" : "bg-success-muted text-success hover:bg-success/20"}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleIndexDb(c.id);
                             }}
                           >
-                            IDX
+                            {idx.is_partial ? "IDX*" : "IDX"}
                           </button>
                         </Tooltip>
                       ) : (
-                        <Tooltip label={`Indexed: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}`} position="bottom">
-                          <span className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success leading-none">
-                            IDX
+                        <Tooltip label={`${idx.is_partial ? "Indexed (PARTIAL — some tables failed sampling; results may be incomplete)" : "Indexed"}: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}`} position="bottom">
+                          <span className={`text-[10px] px-1 py-px rounded-full leading-none ${idx.is_partial ? "bg-warning-muted text-warning" : "bg-success-muted text-success"}`}>
+                            {idx.is_partial ? "IDX*" : "IDX"}
                           </span>
                         </Tooltip>
                       )

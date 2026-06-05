@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime
 
 from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, TableInfo
@@ -313,6 +314,24 @@ class DbIndexPipeline:
                 await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
                 return {"status": "completed", "tables": 0}
 
+            # R2-3: incremental schema diff. Load the prior fingerprint +
+            # entries; any table whose column signature is unchanged can reuse
+            # its stored LLM analysis instead of paying for a fresh call.
+            new_fp = schema.fingerprint()
+            reuse_analyses: dict[str, TableAnalysis] = {}
+            try:
+                reuse_analyses = await self._build_reuse_map(connection_id, new_fp)
+            except Exception:
+                logger.debug("Incremental reuse-map build failed", exc_info=True)
+                reuse_analyses = {}
+            if reuse_analyses:
+                await self._tracker.emit(
+                    wf_id,
+                    "introspect_schema",
+                    "started",
+                    f"Incremental: reusing analysis for {len(reuse_analyses)} unchanged table(s)",
+                )
+
             # Step 2: Fetch sample data and distinct values per table (parallel)
             samples: dict[str, tuple[QueryResult, str | None]] = {}
             distinct_values: dict[str, dict[str, list[str]]] = {}
@@ -321,17 +340,34 @@ class DbIndexPipeline:
 
             _sampled_count = [0]
 
+            # R2-4: track evidence gaps so a run with failed sampling/distinct
+            # queries is not silently presented as authoritative. A swallowed
+            # sample error makes a table look empty (is_active=False), so we
+            # must record that the evidence is partial.
+            sample_failures: set[str] = set()
+            distinct_failures = 0
+
             async def _fetch_table_samples(
                 table: TableInfo,
-            ) -> tuple[str, QueryResult, str | None, dict[str, list[str]]]:
+            ) -> tuple[str, QueryResult, str | None, dict[str, list[str]], bool, int]:
                 async with _sample_sem:
+                    sample_failed = False
+                    tbl_distinct_failures = 0
                     try:
                         query, ordering_col = _sample_query(table, connection_config.db_type)
                         result = await connector.execute_query(query)
+                        if result.error:
+                            sample_failed = True
+                            logger.debug(
+                                "Sample query returned error for %s: %s",
+                                table.name,
+                                result.error,
+                            )
                     except Exception:
                         logger.debug("Sample fetch failed for %s", table.name, exc_info=True)
                         result = QueryResult(columns=[], rows=[], row_count=0)
                         ordering_col = None
+                        sample_failed = True
 
                     tbl_distinct: dict[str, list[str]] = {}
                     heuristic_cols: set[str] = set()
@@ -350,11 +386,15 @@ class DbIndexPipeline:
                         try:
                             dq = _build_distinct_query(table, col_name, connection_config.db_type)
                             dr = await connector.execute_query(dq)
+                            if dr.error:
+                                tbl_distinct_failures += 1
+                                continue
                             if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
                                 vals = [str(r[0]) for r in dr.rows if r[0] is not None]
                                 if vals:
                                     tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
                         except Exception:
+                            tbl_distinct_failures += 1
                             logger.debug(
                                 "Distinct query failed for %s.%s",
                                 table.name,
@@ -374,7 +414,14 @@ class DbIndexPipeline:
                         f"{table.name} ({', '.join(detail_parts)})",
                     )
 
-                    return table.name, result, ordering_col, tbl_distinct
+                    return (
+                        table.name,
+                        result,
+                        ordering_col,
+                        tbl_distinct,
+                        sample_failed,
+                        tbl_distinct_failures,
+                    )
 
             async with self._tracker.step(
                 wf_id,
@@ -382,10 +429,29 @@ class DbIndexPipeline:
                 f"Fetching sample data from {total_tables} tables",
             ):
                 results = await asyncio.gather(*[_fetch_table_samples(t) for t in schema.tables])
-                for tname, result, ordering_col, tbl_distinct in results:
+                for (
+                    tname,
+                    result,
+                    ordering_col,
+                    tbl_distinct,
+                    sample_failed,
+                    tbl_distinct_failures,
+                ) in results:
                     samples[tname] = (result, ordering_col)
                     if tbl_distinct:
                         distinct_values[tname] = tbl_distinct
+                    if sample_failed:
+                        sample_failures.add(tname)
+                    distinct_failures += tbl_distinct_failures
+
+                if sample_failures or distinct_failures:
+                    await self._tracker.emit(
+                        wf_id,
+                        "fetch_samples",
+                        "started",
+                        f"Partial evidence: {len(sample_failures)} table(s) failed sampling, "
+                        f"{distinct_failures} distinct-value query failure(s)",
+                    )
 
             # Step 3: Load project knowledge and rules
             code_context = ""
@@ -425,7 +491,29 @@ class DbIndexPipeline:
                 large_tables = []
                 small_tables = []
 
+                # R2-3: tables with an unchanged signature reuse their stored
+                # analysis and are excluded from LLM classification entirely.
                 for table in schema.tables:
+                    if table.name in reuse_analyses:
+                        # R2-3 follow-up: the column signature is unchanged so the
+                        # LLM analysis (description, relevance, hints) is stable,
+                        # but data presence is NOT — a table active last run may
+                        # now be empty (or vice versa). Recompute is_active from
+                        # the fresh sample using the same data-presence rule the
+                        # validator's fallback uses. Skip the override when
+                        # sampling failed for this table: a failed sample falsely
+                        # looks empty, so trust the prior value instead.
+                        reused = reuse_analyses[table.name]
+                        fresh_sample = samples.get(table.name, (QueryResult(), None))[0]
+                        reused = self._recompute_reused_is_active(
+                            reused,
+                            fresh_sample=fresh_sample,
+                            row_count=table.row_count or 0,
+                            sampling_failed=table.name in sample_failures,
+                        )
+                        analyses.append(reused)
+                        continue
+
                     row_count = table.row_count or 0
                     sample_result = samples.get(table.name, (QueryResult(), None))[0]
                     has_data = bool(sample_result.rows)
@@ -440,7 +528,8 @@ class DbIndexPipeline:
                     "validate_tables",
                     "started",
                     f"Classified: {len(large_tables)} large tables (individual), "
-                    f"{len(small_tables)} small tables (batched)",
+                    f"{len(small_tables)} small tables (batched), "
+                    f"{len(reuse_analyses)} reused (unchanged)",
                 )
 
                 _llm_sem = asyncio.Semaphore(3)
@@ -629,6 +718,8 @@ class DbIndexPipeline:
                             "phantom_tables": phantom_count,
                             "summary_text": summary_result.summary_text,
                             "recommendations": summary_result.recommendations,
+                            # R2-3: persist for next run's incremental diff.
+                            "schema_fingerprint": json.dumps(new_fp, default=str),
                         },
                     )
                     await session.commit()
@@ -636,6 +727,7 @@ class DbIndexPipeline:
             # Step 7 (M4): build BM25 schema retriever for question-aware
             # table resolution. Gated behind ``schema_retrieval_enabled`` so
             # we can ship the index path without flipping the read path.
+            embed_failed = False
             try:
                 from app.config import settings as _settings
 
@@ -651,7 +743,9 @@ class DbIndexPipeline:
                             bm25_data_dir=_settings.bm25_data_dir,
                         )
             except Exception:
-                # Never let retriever issues fail the indexing run.
+                # Never let retriever issues fail the indexing run, but record
+                # it as an evidence gap (R2-4) instead of swallowing silently.
+                embed_failed = True
                 logger.exception("schema_embed step failed; retriever may be stale")
 
             try:
@@ -664,11 +758,22 @@ class DbIndexPipeline:
             except Exception:
                 logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
 
+            # R2-4: a run with failed sampling/distinct/embed evidence is
+            # "completed_partial", not a clean "completed". Surface it so the
+            # caller can warn and avoid treating empty-looking tables as fact.
+            partial = bool(sample_failures or distinct_failures or embed_failed)
+            end_detail = f"{total_tables} tables indexed ({active_count} active)"
+            if partial:
+                end_detail += (
+                    f" — PARTIAL: {len(sample_failures)} sample failure(s), "
+                    f"{distinct_failures} distinct failure(s)"
+                    f"{', schema_embed failed' if embed_failed else ''}"
+                )
             await self._tracker.end(
                 wf_id,
                 "db_index",
                 "completed",
-                f"{total_tables} tables indexed ({active_count} active)",
+                end_detail,
             )
 
             return {
@@ -677,6 +782,10 @@ class DbIndexPipeline:
                 "active": active_count,
                 "empty": empty_count,
                 "workflow_id": wf_id,
+                "partial": partial,
+                "sample_failures": len(sample_failures),
+                "distinct_failures": distinct_failures,
+                "embed_failed": embed_failed,
             }
 
         except Exception as exc:
@@ -690,6 +799,90 @@ class DbIndexPipeline:
                     await connector.disconnect()
                 except Exception:
                     logger.debug("Connector disconnect failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Incremental schema diff (R2-3)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _recompute_reused_is_active(
+        reused: TableAnalysis,
+        *,
+        fresh_sample: QueryResult,
+        row_count: int,
+        sampling_failed: bool,
+    ) -> TableAnalysis:
+        """Refresh ``is_active`` on a reused analysis from current evidence.
+
+        R2-3 follow-up: an unchanged column signature lets us reuse the LLM
+        analysis (description / relevance / hints), but data presence is not
+        captured by the signature — a table that had rows last run may now be
+        empty (or vice versa). Recompute ``is_active`` with the same
+        data-presence rule the validator's fallback uses
+        (``has_data or row_count > 0``).
+
+        When sampling *failed* for this table the fresh sample falsely looks
+        empty, so we keep the prior ``is_active`` rather than wrongly marking a
+        live table inactive. Only ``is_active`` is touched; ``relevance_score``
+        and the rest of the cloned analysis are preserved.
+        """
+        if sampling_failed:
+            return reused
+        has_data = bool(fresh_sample.rows)
+        recomputed_active = has_data or row_count > 0
+        if recomputed_active == reused.is_active:
+            return reused
+        return replace(reused, is_active=recomputed_active)
+
+    async def _build_reuse_map(
+        self,
+        connection_id: str,
+        new_fp: dict[str, str],
+    ) -> dict[str, TableAnalysis]:
+        """Return ``{table_name: TableAnalysis}`` for unchanged tables.
+
+        A table is reusable when (a) incremental indexing is enabled, (b) a
+        prior successful run persisted a fingerprint, (c) the prior entry's
+        column signature equals the current one, and (d) a stored ``db_index``
+        row exists to clone the analysis from. Samples/row-counts are still
+        refreshed downstream; only the LLM analysis is reused.
+        """
+        from app.config import settings as _settings
+
+        if not _settings.db_index_incremental_enabled:
+            return {}
+
+        async with async_session_factory() as session:
+            summary = await self._svc.get_summary(session, connection_id)
+            prev_raw = getattr(summary, "schema_fingerprint", None) if summary else None
+            if not prev_raw or prev_raw == "{}":
+                return {}
+            try:
+                prev_fp = json.loads(prev_raw)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+            if not isinstance(prev_fp, dict) or not prev_fp:
+                return {}
+
+            entries = await self._svc.get_index(session, connection_id)
+
+        reuse: dict[str, TableAnalysis] = {}
+        for e in entries:
+            key = f"{e.table_schema}.{e.table_name}" if e.table_schema else e.table_name
+            if new_fp.get(key) and new_fp.get(key) == prev_fp.get(key):
+                reuse[e.table_name] = TableAnalysis(
+                    table_name=e.table_name,
+                    is_active=e.is_active,
+                    relevance_score=e.relevance_score,
+                    business_description=e.business_description,
+                    data_patterns=e.data_patterns,
+                    column_notes_json=e.column_notes_json,
+                    query_hints=e.query_hints,
+                    code_match_status=e.code_match_status,
+                    code_match_details=e.code_match_details,
+                    numeric_format_notes=e.numeric_format_notes,
+                )
+        return reuse
 
     # ------------------------------------------------------------------
     # Schema retriever (M4)

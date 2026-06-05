@@ -150,6 +150,41 @@ class TestExecute:
         assert mock_sql_agent.run.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_stuck_dependency_returns_stage_failed(self, executor, context):
+        """R5-6: a plan whose only stage depends on a missing stage can never
+        become ready; the executor must surface ``stage_failed`` (replan-
+        eligible) instead of silently synthesizing partial results as
+        ``completed``."""
+        stuck = PlanStage(
+            stage_id="s1",
+            description="depends on a stage that does not exist",
+            tool="query_database",
+            depends_on=["does-not-exist"],
+        )
+        plan = _make_plan(stuck)
+        result = await executor.execute(plan, context)
+
+        assert result.status == "stage_failed"
+        assert result.replan_eligible is True
+        assert result.failed_stage is not None
+        assert result.failed_stage.stage_id == "s1"
+
+    def test_missing_operation_defaults_to_passthrough(self):
+        """R5-8: a process_data stage without an explicit operation must default
+        to ``passthrough`` (forward rows unchanged) rather than guessing
+        ``filter_data``, which silently drops rows or errors on a missing
+        column."""
+        qr = QueryResult(columns=["x"], rows=[[1]], row_count=1)
+        stage = PlanStage(
+            stage_id="p1",
+            description="process",
+            tool="process_data",
+            input_context=None,
+        )
+        params = StageExecutor._parse_process_data_params(stage, qr)
+        assert params["operation"] == "passthrough"
+
+    @pytest.mark.asyncio
     async def test_stops_on_stage_error(self, executor, context, mock_sql_agent):
         sql_result = MagicMock(spec=AgentResult)
         sql_result.status = "error"

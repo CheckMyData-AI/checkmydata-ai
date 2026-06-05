@@ -96,6 +96,18 @@ class TestNumericRangeValidation:
         with pytest.raises(Exception, match="TOOL_DEDUP_SEMANTIC_THRESHOLD"):
             Settings(tool_dedup_semantic_threshold=2.0)
 
+    def test_invalid_ssh_host_key_policy_rejected(self):
+        with pytest.raises(Exception, match="SSH_HOST_KEY_POLICY"):
+            Settings(ssh_host_key_policy="auto_add")
+
+    def test_valid_ssh_host_key_policies_accepted(self):
+        for policy in ("disabled", "tofu", "strict"):
+            assert Settings(ssh_host_key_policy=policy).ssh_host_key_policy == policy
+
+    def test_negative_result_corrections_rejected(self):
+        with pytest.raises(Exception, match="ORCHESTRATOR_MAX_RESULT_CORRECTIONS"):
+            Settings(orchestrator_max_result_corrections=-1)
+
 
 # Internal helpers / properties that are not user-tunable env vars and
 # therefore should not be required to appear in .env.example.

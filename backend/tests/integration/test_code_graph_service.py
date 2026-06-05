@@ -160,6 +160,61 @@ async def test_save_incremental_preserves_unchanged_files(
 
 
 @pytest.mark.asyncio
+async def test_save_incremental_preserves_cluster_membership(
+    db_session: AsyncSession, project_id: str
+):
+    """R3-2: an incremental run must not null the cluster_id of symbols in
+    files it did not touch."""
+    from app.knowledge.code_clustering import Cluster
+
+    svc = CodeGraphService()
+    base = _make_graph()
+    b_symbol = Symbol(
+        uid="python:b.py:function:other:1",
+        kind="function",
+        name="other",
+        file_path="b.py",
+        start_line=1,
+        end_line=2,
+        language="python",
+    )
+    full = CodeGraph(symbols=[*base.symbols.values(), b_symbol], edges=list(base.edges))
+    await svc.save(db_session, project_id, full)
+
+    # Cluster every symbol so we can detect membership loss.
+    await svc.save_clusters(
+        db_session,
+        project_id,
+        [
+            Cluster(
+                cluster_id="0",
+                member_uids=[s.uid for s in base.symbols.values()],
+                file_paths=["a.py"],
+                label="A cluster",
+            ),
+            Cluster(
+                cluster_id="1",
+                member_uids=["python:b.py:function:other:1"],
+                file_paths=["b.py"],
+                label="B cluster",
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    # Incremental run that only re-parsed a.py.
+    changed_only = CodeGraph(symbols=list(base.symbols.values()), edges=list(base.edges))
+    await svc.save_incremental(db_session, project_id, changed_only, {"a.py"})
+
+    rows = await svc.load_symbols(db_session, project_id)
+    by_uid = {r.uid: r for r in rows}
+    # Unchanged file b.py keeps its cluster.
+    assert by_uid["python:b.py:function:other:1"].cluster_id == "1"
+    # Re-parsed a.py symbols (stable uids) also keep their cluster.
+    assert by_uid["python:a.py:function:helper:1"].cluster_id == "0"
+
+
+@pytest.mark.asyncio
 async def test_save_incremental_drops_deleted_files(db_session: AsyncSession, project_id: str):
     """Symbols for files in the affected set with no replacement are removed."""
     svc = CodeGraphService()

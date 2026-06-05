@@ -224,10 +224,13 @@ class TestSshKeyServiceFindReferences:
             nonlocal call_count
             call_count += 1
             result = MagicMock()
-            if call_count == 1:
-                result.__iter__ = lambda self: iter([("MyProject",)])
-            else:
-                result.__iter__ = lambda self: iter([("MyConn",)])
+            # Order: projects, connections, repositories (R1-6).
+            rows = {
+                1: [("MyProject",)],
+                2: [("MyConn",)],
+                3: [("MyRepo",)],
+            }.get(call_count, [])
+            result.__iter__ = lambda self, _rows=rows: iter(_rows)
             return result
 
         mock_session.execute = mock_execute
@@ -235,3 +238,5 @@ class TestSshKeyServiceFindReferences:
         refs = await svc._find_references(mock_session, "key-123")
         assert "project:MyProject" in refs
         assert "connection:MyConn" in refs
+        # R1-6: project_repositories must protect the key from deletion too.
+        assert "repository:MyRepo" in refs

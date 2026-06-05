@@ -26,7 +26,7 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
 
   if (submitted) {
     return (
-      <div className="mt-3 p-3 rounded-xl border border-border-default bg-surface-2">
+      <div className="mt-3 p-3 rounded-lg bg-surface-3">
         <p className="text-xs text-text-secondary">You answered: {answer}</p>
       </div>
     );

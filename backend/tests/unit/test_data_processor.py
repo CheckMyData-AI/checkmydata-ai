@@ -179,12 +179,16 @@ class TestOrchestratorToolRegistration:
         assert "aggregations" in param_names
 
         op_param = next(p for p in PROCESS_DATA_TOOL.parameters if p.name == "operation")
+        # R5-8: passthrough is the default when no operation is supplied, so the
+        # operation parameter is optional and lists passthrough in its enum.
         assert op_param.enum == [
             "ip_to_country",
             "phone_to_country",
             "aggregate_data",
             "filter_data",
+            "passthrough",
         ]
+        assert op_param.required is False
 
 
 class TestDataProcessorPhoneToCountry:
@@ -922,6 +926,30 @@ class TestFilterData:
         qr = QueryResult(columns=["country"], rows=[["US"]], row_count=1)
         with pytest.raises(ValueError, match="Column 'bad' not found"):
             proc.process(qr, "filter_data", {"column": "bad"})
+
+
+class TestPassthrough:
+    """R5-8: the passthrough operation forwards rows unchanged (safe default
+    when the planner omits a process_data operation)."""
+
+    def test_forwards_rows_unchanged(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        qr = QueryResult(
+            columns=["country", "amount"],
+            rows=[["US", 100], ["DE", 50]],
+            row_count=2,
+        )
+        result = proc.process(qr, "passthrough", {})
+        assert result.query_result is qr
+        assert result.query_result.row_count == 2
+        assert "unchanged" in result.summary
+
+    def test_passthrough_ignores_extra_params(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        qr = QueryResult(columns=["x"], rows=[[1]], row_count=1)
+        # Stray params (e.g. a column the planner half-filled) must not error.
+        result = proc.process(qr, "passthrough", {"column": "x", "value": 1})
+        assert result.query_result.row_count == 1
 
 
 class TestGetDataProcessor:

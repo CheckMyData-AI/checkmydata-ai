@@ -191,7 +191,7 @@ export default function MarketingLayout({
 
           <div className="mt-10 pt-6 border-t border-border-subtle flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-xs text-text-tertiary">
-              &copy; {new Date().getFullYear()} CheckMyData.ai &mdash; Open
+              &copy; {new Date().getFullYear()} CheckMyData.ai &middot; Open
               Source Project. MIT License.
             </p>
             <div className="flex items-center gap-4 text-xs">
@@ -201,7 +201,7 @@ export default function MarketingLayout({
               >
                 support@checkmydata.ai
               </a>
-              <span className="text-text-muted/40">|</span>
+              <span className="text-text-muted/40">&middot;</span>
               <a
                 href="https://github.com/CheckMyData-AI/checkmydata-ai"
                 target="_blank"

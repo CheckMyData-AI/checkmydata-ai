@@ -1,9 +1,12 @@
+import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from git import Repo
+from git.exc import BadName, BadObject
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +21,19 @@ class ChangedFilesResult:
 
     changed: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
+    # R3-4: set when we fell back to a full re-list because the incremental
+    # diff failed (transient error after retries). ``None`` for a clean diff
+    # or an intentional missing-base full index.
+    diff_error: str | None = None
 
 
 class GitTracker:
     """Tracks indexed commits and computes changed files for incremental re-indexing."""
+
+    # R3-4: retry transient git/IO diff errors before degrading to a full
+    # re-list. Missing-base-commit errors are not retried (see get_changed_files).
+    _DIFF_RETRIES = 3
+    _DIFF_RETRY_DELAY_S = 0.5
 
     async def get_last_indexed_sha(
         self,
@@ -57,25 +69,65 @@ class GitTracker:
             ]
             return ChangedFilesResult(changed=all_files)
 
-        try:
-            # ``M=True`` (or ``--find-renames``) enables rename detection so
-            # renamed files surface as change_type "R" with a_path=old /
-            # b_path=new — C1 (v1.13.0) depends on this so the orphan-cleanup
-            # step drops the old path. (``R=True`` is REVERSE diff in
-            # GitPython, not rename detection — easy to confuse.)
-            diff = repo.commit(from_sha).diff(repo.commit(to_sha), M=True)
-        except Exception:
-            logger.warning(
-                "Could not diff %s..%s, falling back to full index",
-                from_sha,
-                to_sha,
-            )
+        # R3-4: distinguish a genuinely missing base commit (the old SHA was
+        # GC'd or force-pushed away — a full re-index is the *correct* answer)
+        # from a transient git/IO error (which we retry before degrading to a
+        # full re-list, so we don't silently pay for a full re-index on a
+        # flaky read).
+        diff = None
+        last_exc: Exception | None = None
+        for attempt in range(self._DIFF_RETRIES):
+            try:
+                # ``M=True`` (or ``--find-renames``) enables rename detection so
+                # renamed files surface as change_type "R" with a_path=old /
+                # b_path=new — C1 (v1.13.0) depends on this so the orphan-cleanup
+                # step drops the old path. (``R=True`` is REVERSE diff in
+                # GitPython, not rename detection — easy to confuse.)
+                diff = repo.commit(from_sha).diff(repo.commit(to_sha), M=True)
+                break
+            except (BadName, BadObject, ValueError) as exc:
+                # Unresolvable revision — retrying won't help; full re-index is
+                # the intended fallback for a missing base commit. Leave
+                # ``last_exc`` unset so diff_error stays None (this is expected,
+                # not a transient failure).
+                logger.info(
+                    "Base commit %s unresolvable (%s); doing a full re-index",
+                    from_sha,
+                    exc,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — transient git/IO error
+                last_exc = exc
+                if attempt < self._DIFF_RETRIES - 1:
+                    logger.warning(
+                        "Transient diff error %s..%s (attempt %d/%d): %s; retrying",
+                        from_sha,
+                        to_sha,
+                        attempt + 1,
+                        self._DIFF_RETRIES,
+                        exc,
+                    )
+                    time.sleep(self._DIFF_RETRY_DELAY_S * (attempt + 1))
+                else:
+                    logger.warning(
+                        "Diff %s..%s still failing after %d attempts (%s); "
+                        "falling back to full index",
+                        from_sha,
+                        to_sha,
+                        self._DIFF_RETRIES,
+                        exc,
+                    )
+
+        if diff is None:
             all_files = [
                 str(item.path)  # type: ignore[union-attr]
                 for item in repo.commit(to_sha).tree.traverse()
                 if hasattr(item, "type") and item.type == "blob"  # type: ignore[union-attr]
             ]
-            return ChangedFilesResult(changed=all_files)
+            return ChangedFilesResult(
+                changed=all_files,
+                diff_error=str(last_exc) if last_exc else None,
+            )
 
         changed: set[str] = set()
         deleted: set[str] = set()
@@ -145,13 +197,21 @@ class GitTracker:
         repo_dir: Path,
         from_sha: str,
     ) -> int:
-        """Count how many commits HEAD is ahead of *from_sha*."""
-        try:
-            repo = Repo(str(repo_dir))
-            commits = list(repo.iter_commits(f"{from_sha}..HEAD"))
-            return len(commits)
-        except Exception:
-            return -1
+        """Count how many commits HEAD is ahead of *from_sha*.
+
+        R3-5: GitPython is synchronous and walking commits is blocking IO, so
+        run it off the event loop to avoid stalling the async pipeline.
+        """
+
+        def _count() -> int:
+            try:
+                repo = Repo(str(repo_dir))
+                commits = list(repo.iter_commits(f"{from_sha}..HEAD"))
+                return len(commits)
+            except Exception:
+                return -1
+
+        return await asyncio.to_thread(_count)
 
     async def cleanup_old_records(
         self,

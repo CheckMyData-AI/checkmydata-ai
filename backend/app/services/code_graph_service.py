@@ -42,12 +42,19 @@ class CodeGraphService:
         session: AsyncSession,
         project_id: str,
         graph: CodeGraph,
+        cluster_map: dict[str, str] | None = None,
     ) -> tuple[int, int]:
         """Replace the project's symbols + edges atomically.
 
         Returns ``(symbol_count, edge_count)``. Callers should commit the
         outer transaction. We batch inserts in chunks of 1000 to avoid
         oversize parameter lists.
+
+        R3-2: ``cluster_map`` (``uid -> cluster_id``) lets callers preserve
+        previously-computed cluster membership across a full-replace rewrite.
+        Symbols absent from the map get ``cluster_id = None`` (the prior
+        behaviour). This is how :meth:`save_incremental` keeps unchanged
+        files clustered instead of nulling every membership on each commit.
         """
         await session.execute(
             delete(CodeGraphSymbol).where(CodeGraphSymbol.project_id == project_id)
@@ -68,7 +75,7 @@ class CodeGraphService:
                 "decorators_json": json.dumps(list(s.decorators), ensure_ascii=False),
                 "signature": s.signature,
                 "docstring": s.docstring,
-                "cluster_id": None,
+                "cluster_id": cluster_map.get(s.uid) if cluster_map else None,
             }
             for s in graph.symbols.values()
         ]
@@ -117,8 +124,18 @@ class CodeGraphService:
         existing = await self.load_graph(session, project_id)
         if existing is None:
             return await self.save(session, project_id, new_graph)
+
+        # R3-2: capture existing cluster membership so the full-replace inside
+        # ``save`` does not null it out for symbols that survive the merge. New
+        # symbols from changed files (fresh uids) stay unclustered until the
+        # next clustering pass, which is correct.
+        existing_rows = await self.load_symbols(session, project_id)
+        cluster_map = {
+            row.uid: row.cluster_id for row in existing_rows if row.cluster_id is not None
+        }
+
         merged = self._merge_graphs(existing, new_graph, set(affected_files))
-        return await self.save(session, project_id, merged)
+        return await self.save(session, project_id, merged, cluster_map=cluster_map)
 
     @staticmethod
     def _merge_graphs(
@@ -152,7 +169,32 @@ class CodeGraphService:
         ]
         merged_edges.extend(new_graph.edges)
 
+        merged_edges = CodeGraphService._prune_dangling_edges(merged_symbols, merged_edges)
+
         return CodeGraph(symbols=merged_symbols, edges=merged_edges)
+
+    @staticmethod
+    def _prune_dangling_edges(symbols: list[Symbol], edges: list[GraphEdge]) -> list[GraphEdge]:
+        """Drop edges whose endpoints are not in the merged symbol set (R3-1).
+
+        After an incremental merge an edge from an *unchanged* file can still
+        point at a symbol that was renamed/removed in a *changed* file, leaving
+        a dangling ``dst_uid`` (and, symmetrically, a dangling ``src_uid``).
+        Such edges corrupt traversal/clustering and—because edges have no FK to
+        symbols—silently persist. We keep only edges whose endpoints resolve to
+        a real symbol, with one exception: ``file:<path>`` IMPORTS-edge sources
+        are intentional pseudo-nodes, not symbols, so they are allowed.
+        """
+        sym_uids = {sym.uid for sym in symbols}
+
+        def _src_ok(src_uid: str) -> bool:
+            return src_uid.startswith("file:") or src_uid in sym_uids
+
+        kept = [e for e in edges if e.dst_uid in sym_uids and _src_ok(e.src_uid)]
+        dropped = len(edges) - len(kept)
+        if dropped:
+            logger.info("code_graph_service: pruned %d dangling edge(s) after merge", dropped)
+        return kept
 
     @staticmethod
     async def _bulk_insert(

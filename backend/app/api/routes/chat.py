@@ -164,9 +164,10 @@ async def estimate_cost(
                 db, connection_id, min_confidence=0.6, active_only=True
             )
             if learnings:
+                # R4-4: canonical ranking (matches prompt compilation + context loader).
                 top = sorted(
                     learnings,
-                    key=lambda lrn: (lrn.times_confirmed, lrn.confidence),
+                    key=AgentLearningService.priority_score,
                     reverse=True,
                 )[:15]
                 text = "\n".join(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}" for lrn in top)
@@ -704,17 +705,21 @@ async def submit_feedback(
             from app.models.base import async_session_factory
 
             meta = _json.loads(msg.metadata_json)
-            exposed_ids_raw = meta.get("exposed_learning_ids") or []
-            exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
-            session_row = msg.session
-            connection_id = getattr(session_row, "connection_id", None) if session_row else None
-            if exposed_ids and connection_id:
-                async with async_session_factory() as learn_session:
-                    await apply_exposed_learnings_on_positive_feedback(
-                        learn_session,
-                        connection_id=connection_id,
-                        exposed_learning_ids=exposed_ids,
-                    )
+            # Re-audit fix: if this message was already auto-credited at
+            # validation time, do NOT credit again. apply_learning is not
+            # idempotent, so a second pass would double-bump times_applied.
+            if not (isinstance(meta, dict) and meta.get("learning_credited_at_validation")):
+                exposed_ids_raw = meta.get("exposed_learning_ids") or []
+                exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
+                session_row = msg.session
+                connection_id = getattr(session_row, "connection_id", None) if session_row else None
+                if exposed_ids and connection_id:
+                    async with async_session_factory() as learn_session:
+                        await apply_exposed_learnings_on_positive_feedback(
+                            learn_session,
+                            connection_id=connection_id,
+                            exposed_learning_ids=exposed_ids,
+                        )
         except Exception:
             logger.debug("Positive-feedback learning application failed", exc_info=True)
 
@@ -769,6 +774,206 @@ async def apply_exposed_learnings_on_positive_feedback(
     except Exception:
         logger.debug("Positive-feedback application pass failed (non-critical)", exc_info=True)
         return 0
+
+
+async def _message_learning_credited(session: AsyncSession, message_id: str) -> bool:
+    """True if *message_id* was already credited for its exposed learnings."""
+    import json as _json
+
+    from sqlalchemy import select as _select
+
+    from app.models.chat_session import ChatMessage as _ChatMessage
+
+    row = await session.execute(
+        _select(_ChatMessage.metadata_json).where(_ChatMessage.id == message_id)
+    )
+    raw = row.scalar_one_or_none()
+    if not raw:
+        return False
+    try:
+        meta = _json.loads(raw)
+    except (TypeError, ValueError):
+        return False
+    return bool(isinstance(meta, dict) and meta.get("learning_credited_at_validation"))
+
+
+async def _mark_message_learning_credited(session: AsyncSession, message_id: str) -> None:
+    """Persist the idempotency flag so the thumbs-up path won't re-credit."""
+    import json as _json
+
+    from sqlalchemy import select as _select
+
+    from app.models.chat_session import ChatMessage as _ChatMessage
+
+    row = await session.execute(_select(_ChatMessage).where(_ChatMessage.id == message_id))
+    msg = row.scalar_one_or_none()
+    if msg is None:
+        return
+    try:
+        meta = _json.loads(msg.metadata_json) if msg.metadata_json else {}
+        if not isinstance(meta, dict):
+            meta = {}
+    except (TypeError, ValueError):
+        meta = {}
+    meta["learning_credited_at_validation"] = True
+    msg.metadata_json = _json.dumps(meta, default=str)
+    await session.commit()
+
+
+async def credit_validated_learnings(
+    result: object,
+    connection_id: str | None,
+    *,
+    message_id: str | None = None,
+) -> None:
+    """R4-2: credit exposed learnings on a *validated, successful* result.
+
+    A user thumbs-up is a rare signal, so ``times_applied`` (and the decay /
+    ranking score derived from it) was effectively dead in production. A
+    result that completed without error and carried exposed learnings is the
+    strongest *automatic* "the LLM provably used these lessons and produced a
+    valid answer" signal available. Crediting here keeps ``times_applied``
+    live; the R4-3 exposure penalty balances inflation (a learning that is
+    exposed but never lands on a successful answer still de-ranks).
+
+    Re-audit fixes:
+    * Idempotent per ``message_id`` — once a message is credited at validation
+      time a flag is persisted, so the thumbs-up path (and any duplicate
+      finalize, e.g. stream + background) cannot double-bump ``times_applied``
+      (``apply_learning`` is not idempotent).
+    * A result the orchestrator flagged ``suspicious_result`` is never credited
+      — that would reward learnings behind a likely-wrong answer.
+
+    Best-effort and isolated in its own session — never blocks or fails the
+    chat response.
+    """
+    from app.config import settings as _settings
+
+    if not _settings.learning_apply_on_validation_enabled:
+        return
+    if getattr(result, "error", None):
+        return
+    if getattr(result, "suspicious_result", False):
+        return
+    exposed_raw = getattr(result, "exposed_learning_ids", None) or []
+    exposed_ids = [str(x) for x in exposed_raw if isinstance(x, (str, int))]
+    if not exposed_ids or not connection_id:
+        return
+    try:
+        from app.models.base import async_session_factory
+
+        async with async_session_factory() as learn_session:
+            if message_id is not None and await _message_learning_credited(
+                learn_session, message_id
+            ):
+                return
+            await apply_exposed_learnings_on_positive_feedback(
+                learn_session,
+                connection_id=connection_id,
+                exposed_learning_ids=exposed_ids,
+            )
+            if message_id is not None:
+                await _mark_message_learning_credited(learn_session, message_id)
+    except Exception:
+        logger.debug("Validation-time learning credit failed (non-critical)", exc_info=True)
+
+
+async def maybe_auto_investigate(
+    result: object,
+    *,
+    project_id: str | None,
+    connection_id: str | None,
+    session_id: str | None,
+    message_id: str | None,
+) -> None:
+    """R5-7: auto-route a suspicious SQL result to the investigation agent.
+
+    The investigation ("Wrong Data") subsystem was previously reachable only
+    via an explicit user thumbs-down. When the orchestrator's result gate
+    exhausts its correction budget and the result still looks wrong, the
+    response is flagged ``suspicious_result``; this kicks off a background
+    investigation automatically so the root cause is surfaced without waiting
+    for the user to complain.
+
+    Best-effort and fully isolated — never blocks or fails the chat response.
+    Gated by ``orchestrator_auto_investigate_enabled`` (default off).
+    """
+    from app.config import settings as _settings
+
+    if not _settings.orchestrator_auto_investigate_enabled:
+        return
+    if not getattr(result, "suspicious_result", False):
+        return
+    if not (connection_id and project_id and session_id and message_id):
+        return
+
+    original_query = getattr(result, "query", None) or ""
+    reason = getattr(result, "suspicious_reason", None) or "Result failed automated quality checks."
+    qr = getattr(result, "results", None)
+    try:
+        result_summary = (
+            json.dumps(
+                {
+                    "row_count": getattr(qr, "row_count", None) if qr else None,
+                    "error": getattr(qr, "error", None) if qr else None,
+                }
+            )[:2000]
+            if qr
+            else "{}"
+        )
+    except (TypeError, ValueError):
+        result_summary = "{}"
+
+    try:
+        from app.api.routes.data_investigations import _run_investigation_background
+        from app.models.base import async_session_factory
+        from app.services.investigation_service import InvestigationService
+
+        inv_svc = InvestigationService()
+        async with async_session_factory() as inv_session:
+            investigation = await inv_svc.create_investigation(
+                inv_session,
+                connection_id=connection_id,
+                session_id=session_id,
+                trigger_message_id=message_id,
+                original_query=original_query,
+                original_result_summary=result_summary,
+                user_complaint_type="auto_suspicious",
+                user_complaint_detail=reason,
+            )
+            await inv_session.commit()
+            investigation_id = investigation.id
+
+        def _on_task_done(t: asyncio.Task[None]) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.warning(
+                    "Auto-investigation %s failed: %s", investigation_id, exc, exc_info=True
+                )
+
+        task = asyncio.create_task(
+            _run_investigation_background(
+                investigation_id=investigation_id,
+                project_id=project_id,
+                connection_id=connection_id,
+                original_query=original_query,
+                original_result_summary=result_summary,
+                user_complaint_type="auto_suspicious",
+                user_complaint_detail=reason,
+                user_expected_value="",
+                problematic_column="",
+            )
+        )
+        task.add_done_callback(_on_task_done)
+        logger.info(
+            "R5-7: auto-routed suspicious result to investigation %s (session=%s)",
+            investigation_id,
+            session_id,
+        )
+    except Exception:
+        logger.debug("Auto-investigation routing failed (non-critical)", exc_info=True)
 
 
 async def contradict_exposed_learnings_on_negative_feedback(
@@ -1129,6 +1334,18 @@ async def ask(
             "exposed_learning_ids": result.exposed_learning_ids,
         },
         tool_calls_json=tool_calls_str,
+    )
+
+    # R4-2: credit exposed learnings now that the result validated successfully.
+    await credit_validated_learnings(result, body.connection_id, message_id=assistant_msg.id)
+
+    # R5-7: auto-route a suspicious result to the investigation agent.
+    await maybe_auto_investigate(
+        result,
+        project_id=body.project_id,
+        connection_id=body.connection_id,
+        session_id=session_id,
+        message_id=assistant_msg.id,
     )
 
     if rag_source_dicts:
@@ -1496,6 +1713,20 @@ async def ask_stream(
                     tool_calls_json=bg_tool_calls_str,
                 )
 
+                # R4-2: credit exposed learnings on a validated background result.
+                await credit_validated_learnings(
+                    bg_result, bg_body.connection_id, message_id=bg_assistant_msg.id
+                )
+
+                # R5-7: auto-route a suspicious background result to investigation.
+                await maybe_auto_investigate(
+                    bg_result,
+                    project_id=bg_body.project_id,
+                    connection_id=bg_body.connection_id,
+                    session_id=bg_session_id,
+                    message_id=bg_assistant_msg.id,
+                )
+
                 try:
                     await _usage_svc.record_usage(
                         bg_db,
@@ -1552,6 +1783,7 @@ async def ask_stream(
         result_holder: list = []
         queue = await tracker.subscribe()
         released = False
+        lock_released = False
 
         # Emit session_rotated event before any other events
         if rotated_from and rotation_summary:
@@ -1822,6 +2054,20 @@ async def ask_stream(
                     tool_calls_json=tool_calls_str,
                 )
 
+                # R4-2: credit exposed learnings on a validated streamed result.
+                await credit_validated_learnings(
+                    result, body.connection_id, message_id=assistant_msg.id
+                )
+
+                # R5-7: auto-route a suspicious streamed result to investigation.
+                await maybe_auto_investigate(
+                    result,
+                    project_id=body.project_id,
+                    connection_id=body.connection_id,
+                    session_id=session_id,
+                    message_id=assistant_msg.id,
+                )
+
                 if stream_rag:
                     try:
                         await _rag_feedback_svc.record(
@@ -1942,6 +2188,17 @@ async def ask_stream(
                 if not released:
                     released = True
                     await agent_limiter.release(user["user_id"])
+                # Release the per-session processing lock. On the disconnect
+                # path the lock is released inside _background_finalize; on the
+                # normal-completion path it must be released here, otherwise the
+                # session stays "busy" (asyncio.Lock held) and every subsequent
+                # request to it gets HTTP 409 until the 1h TTL evicts the entry.
+                if not lock_released:
+                    lock_released = True
+                    try:
+                        await _stream_lock_cm.__aexit__(None, None, None)
+                    except Exception:
+                        logger.debug("Stream session lock release failed", exc_info=True)
 
     return StreamingResponse(
         _generate(),
@@ -2105,6 +2362,23 @@ async def chat_websocket(
                 await websocket.send_json({"type": "error", "message": limit_err})
                 continue
 
+            # R5-5: serialize concurrent requests for the same session (e.g. two
+            # browser tabs on one session) exactly like the HTTP/stream paths,
+            # otherwise interleaved runs corrupt shared session/pipeline state.
+            ws_lock_cm = session_processing_lock(session_id)
+            try:
+                await ws_lock_cm.__aenter__()
+            except SessionBusyError:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "This chat session is currently processing another "
+                        "request. Please wait for it to complete.",
+                    }
+                )
+                await agent_limiter.release(user_id)
+                continue
+
             async with async_session_factory() as db:
                 ws_user_msg = await _chat_svc.add_message(db, session_id, "user", message)
                 ws_user_message_id = ws_user_msg.id
@@ -2134,6 +2408,10 @@ async def chat_websocket(
                     sql_model=ws_sql_model,
                     project_name=ws_project.name if ws_project else None,
                     user_id=user_id,
+                    # R5-5: the HTTP/stream paths thread session_id through ``extra``
+                    # so session-scoped features (pipeline state, continuation,
+                    # session notes) work; the WS path silently omitted it.
+                    extra={"session_id": session_id},
                 )
 
                 viz_data = None
@@ -2192,6 +2470,20 @@ async def chat_websocket(
                             "exposed_learning_ids": result.exposed_learning_ids,
                         },
                         tool_calls_json=ws_tool_calls_str,
+                    )
+
+                    # R4-2: credit exposed learnings on a validated WS result.
+                    await credit_validated_learnings(
+                        result, ws_conn_id, message_id=ws_assistant_msg.id
+                    )
+
+                    # R5-7: auto-route a suspicious WS result to investigation.
+                    await maybe_auto_investigate(
+                        result,
+                        project_id=project_id,
+                        connection_id=ws_conn_id,
+                        session_id=session_id,
+                        message_id=ws_assistant_msg.id,
                     )
 
                     ws_usage = result.token_usage or {}
@@ -2284,6 +2576,11 @@ async def chat_websocket(
                         pass
                 await tracker.unsubscribe(queue)
                 await agent_limiter.release(user_id)
+                # R5-5: release the per-session lock acquired above.
+                try:
+                    await ws_lock_cm.__aexit__(None, None, None)
+                except Exception:
+                    logger.debug("WS session lock release failed", exc_info=True)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for project %s", project_id)

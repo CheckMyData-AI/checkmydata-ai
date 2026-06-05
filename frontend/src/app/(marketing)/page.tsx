@@ -54,8 +54,7 @@ const FEATURES = [
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     ),
     title: "Natural Language Queries",
-    tagline: "Talk to your database like a teammate",
-    desc: "No SQL? No problem. We generate, execute, and explain queries for you.",
+    desc: "Ask in plain English and get generated SQL, results, and an explanation of what each query does.",
   },
   {
     icon: (
@@ -66,8 +65,7 @@ const FEATURES = [
       </>
     ),
     title: "Multi-Database Support",
-    tagline: "All your data, one interface",
-    desc: "PostgreSQL, MySQL, ClickHouse, MongoDB. Connect directly or via SSH.",
+    desc: "Connect PostgreSQL, MySQL, ClickHouse, and MongoDB directly or through an SSH tunnel.",
   },
   {
     icon: (
@@ -78,8 +76,7 @@ const FEATURES = [
       </>
     ),
     title: "Data Visualization",
-    tagline: "See patterns instantly",
-    desc: "Charts, tables, exports — auto-generated. No dashboard setup needed.",
+    desc: "Charts, tables, and exports are generated automatically, with no dashboard setup required.",
   },
   {
     icon: (
@@ -91,8 +88,7 @@ const FEATURES = [
       </>
     ),
     title: "Codebase Knowledge",
-    tagline: "Understands your code, not just your data",
-    desc: "We index your repo. Queries actually match your business logic.",
+    desc: "It indexes your repository, so answers reflect your actual business logic, not just raw table names. This context is what separates a useful answer from a misleading one.",
     highlight: true,
   },
   {
@@ -105,18 +101,16 @@ const FEATURES = [
       </>
     ),
     title: "Self-Hostable",
-    tagline: "Your data stays yours",
-    desc: "Deploy anywhere. Full control. No lock-in. Docker-ready.",
+    desc: "Deploy anywhere with Docker and keep full control of your environment, with no vendor lock-in.",
   },
   {
     icon: (
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     ),
     title: "Privacy-First",
-    tagline: "Zero data leakage. Period.",
-    desc: "No tracking. No telemetry. Verify everything in the code.",
+    desc: "No tracking and no telemetry. You can verify exactly how your data is handled in the source code.",
   },
-] as { icon: React.ReactNode; title: string; tagline: string; desc: string; highlight?: boolean }[];
+] as { icon: React.ReactNode; title: string; desc: string; highlight?: boolean }[];
 
 const USE_CASES = [
   "Find why revenue dropped last week",
@@ -140,7 +134,7 @@ const STEPS = [
   {
     num: "03",
     title: "Get answers",
-    desc: "Queries, charts, insights — instantly.",
+    desc: "Queries, charts, and insights, instantly.",
   },
 ] as const;
 
@@ -178,14 +172,14 @@ export default function LandingPage() {
           <div className="max-w-3xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-subtle bg-surface-1 text-xs text-text-secondary mb-8">
               <span className="w-2 h-2 rounded-full bg-success animate-pulse-dot" />
-              Open Source &mdash; MIT License
+              Open Source &middot; MIT License
             </div>
 
-            <p className="text-sm sm:text-base text-accent font-semibold tracking-wide uppercase mb-4">
-              Like ChatGPT, but for your database
+            <p className="text-sm sm:text-base text-accent font-medium mb-4">
+              Like ChatGPT, but for your database.
             </p>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1]">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1] text-balance">
               Your data already
               <br />
               has answers.
@@ -193,10 +187,9 @@ export default function LandingPage() {
               <span className="text-text-tertiary">You just don&rsquo;t know how to ask.</span>
             </h1>
 
-            <p className="mt-8 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed">
-              Query any database in plain English.
-              <br className="hidden sm:block" />{" "}
-              Get insights, charts, and explanations instantly.
+            <p className="mt-8 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed text-pretty">
+              Query any database in plain English. Get insights, charts, and
+              explanations instantly.
             </p>
 
             <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-text-tertiary font-mono">
@@ -212,7 +205,7 @@ export default function LandingPage() {
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 href="/login"
-                className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center shadow-[0_0_20px_var(--color-accent-muted)]"
+                className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center"
               >
                 Get Started Free
               </Link>
@@ -260,10 +253,9 @@ export default function LandingPage() {
               <span className="text-accent">understand your data</span>
             </h2>
           </div>
-          <p className="text-center text-text-secondary max-w-xl mx-auto mb-16 leading-relaxed">
-            Not just queries.
-            <br />
-            Real insights, context, and decisions.
+          <p className="text-center text-text-secondary max-w-xl mx-auto mb-16 leading-relaxed text-pretty">
+            Readable SQL, exportable charts, and plain-English explanations of
+            what the numbers actually mean.
           </p>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -272,39 +264,40 @@ export default function LandingPage() {
                 key={f.title}
                 className={`bg-surface-1 border rounded-xl p-6 transition-colors group ${
                   f.highlight
-                    ? "border-accent/40 ring-1 ring-accent/10"
+                    ? "sm:col-span-2 border-accent/40 ring-1 ring-accent/10"
                     : "border-border-subtle hover:border-accent/30"
                 }`}
               >
-                <div className="w-10 h-10 rounded-lg bg-accent-muted flex items-center justify-center mb-4 group-hover:bg-accent/20 transition-colors">
-                  <svg
-                    width={20}
-                    height={20}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="text-accent"
-                  >
-                    {f.icon}
-                  </svg>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 shrink-0 rounded-lg bg-accent-muted flex items-center justify-center group-hover:bg-accent/20 transition-colors">
+                    <svg
+                      width={20}
+                      height={20}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-accent"
+                    >
+                      {f.icon}
+                    </svg>
+                  </div>
+                  <div>
+                    {f.highlight && (
+                      <span className="mb-1 inline-block text-xs font-medium text-accent">
+                        Most loved feature
+                      </span>
+                    )}
+                    <h3 className="text-base font-semibold text-text-primary mb-1">
+                      {f.title}
+                    </h3>
+                    <p className="text-sm text-text-secondary leading-relaxed">
+                      {f.desc}
+                    </p>
+                  </div>
                 </div>
-                <h3 className="text-base font-semibold text-text-primary mb-1">
-                  {f.title}
-                </h3>
-                <p className="text-sm font-medium text-accent/80 mb-2">
-                  {f.tagline}
-                </p>
-                <p className="text-sm text-text-secondary leading-relaxed">
-                  {f.desc}
-                </p>
-                {f.highlight && (
-                  <span className="mt-3 inline-block text-[10px] font-semibold text-accent uppercase tracking-wider">
-                    Killer feature
-                  </span>
-                )}
               </div>
             ))}
           </div>
@@ -319,10 +312,10 @@ export default function LandingPage() {
               <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
                 What can you do with it?
               </h2>
-              <p className="text-text-secondary leading-relaxed mb-8">
-                Ask questions like a human.
-                <br />
-                Get answers like a data scientist.
+              <p className="text-text-secondary leading-relaxed mb-8 text-pretty">
+                Ask questions in everyday language and get back the rigor of a
+                data scientist: the query, the result, and the reasoning behind
+                it.
               </p>
               <ul className="space-y-4">
                 {USE_CASES.map((uc) => (
@@ -402,8 +395,10 @@ export default function LandingPage() {
           <div className="grid sm:grid-cols-3 gap-8">
             {STEPS.map((s, i) => (
               <div key={s.num} className="relative text-center sm:text-left">
-                <div className="text-6xl font-bold text-accent/10 mb-3 font-mono">
-                  {s.num}
+                <div className="flex items-center justify-center sm:justify-start mb-4">
+                  <span className="w-9 h-9 rounded-lg bg-accent-muted text-accent font-mono text-sm font-semibold flex items-center justify-center">
+                    {s.num}
+                  </span>
                 </div>
                 <h3 className="text-xl font-semibold text-text-primary mb-2">
                   {s.title}
@@ -427,21 +422,18 @@ export default function LandingPage() {
       {/* ── OPEN SOURCE ── */}
       <section className="py-20 sm:py-28 border-t border-border-subtle">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="bg-surface-1 border border-border-subtle rounded-2xl p-8 sm:p-12 text-center relative overflow-hidden">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--color-accent-muted)_0%,_transparent_60%)] pointer-events-none" />
-            <div className="relative">
+          <div className="bg-surface-1 border border-border-subtle rounded-2xl p-8 sm:p-12 text-center">
+            <div>
               <LogoMark size={48} className="mx-auto mb-6" />
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-text-primary">
-                Built in public. Fully transparent.
+                Built in public, fully transparent
               </h2>
-              <p className="mt-4 text-lg text-text-secondary max-w-lg mx-auto leading-relaxed">
-                No black boxes.<br />
-                No hidden logic.<br />
-                No bullshit.
+              <p className="mt-4 text-lg text-text-secondary max-w-lg mx-auto leading-relaxed text-pretty">
+                The entire source is on GitHub under the MIT license.
               </p>
               <p className="mt-4 text-sm text-text-tertiary max-w-md mx-auto">
-                Every line of code is public. Inspect how your data is processed,
-                contribute improvements, or self-host on your own infrastructure.
+                Inspect exactly how your data is processed, contribute
+                improvements, or self-host on your own infrastructure.
               </p>
               <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
                 <a
@@ -477,7 +469,7 @@ export default function LandingPage() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
               href="/login"
-              className="px-10 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors shadow-[0_0_20px_var(--color-accent-muted)]"
+              className="px-10 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
             >
               Get Started Free
             </Link>

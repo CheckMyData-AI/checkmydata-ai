@@ -165,3 +165,26 @@ class TestConnectionConfig:
         c1 = ConnectionConfig(db_type="postgres", db_host="h1", db_port=5432, db_name="db")
         c2 = ConnectionConfig(db_type="postgres", db_host="h2", db_port=5432, db_name="db")
         assert connector_key(c1) != connector_key(c2)
+
+    def test_connector_key_distinguishes_credentials(self):
+        """R1-1: same host/port/db but different creds must not collide."""
+        from app.connectors.base import connector_key
+
+        base = dict(db_type="postgres", db_host="h", db_port=5432, db_name="db")
+        c1 = ConnectionConfig(**base, db_user="alice", db_password="pw1")
+        c2 = ConnectionConfig(**base, db_user="bob", db_password="pw2")
+        assert connector_key(c1) != connector_key(c2)
+        # And the raw secret never appears in the key.
+        assert "pw1" not in connector_key(c1)
+
+    def test_connector_key_distinguishes_connection_id(self):
+        """R1-1: distinct stored rows (connection_id) get distinct keys."""
+        from app.connectors.base import connector_key
+
+        base = dict(db_type="postgres", db_host="h", db_port=5432, db_name="db", db_user="u")
+        c1 = ConnectionConfig(**base, connection_id="conn-1")
+        c2 = ConnectionConfig(**base, connection_id="conn-2")
+        assert connector_key(c1) != connector_key(c2)
+        # Same connection_id -> same key (shared pool is correct here).
+        c1b = ConnectionConfig(**base, connection_id="conn-1")
+        assert connector_key(c1) == connector_key(c1b)

@@ -10,6 +10,88 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### Re-audit remediation
+
+A meta-audit of the audit-remediation changeset surfaced a functional
+regression and several correctness gaps that silently negated their own
+fixes. These are now fixed, each with a regression test.
+
+- **SSE session lock no longer leaks on normal completion.** The `/ask/stream`
+  handler acquired `session_processing_lock(session_id)` but only released it
+  on the client-disconnect path; a normally-completing stream left the lock
+  held in its 1h-TTL cache, so the session returned `409 Busy` for up to an
+  hour. The lock is now released on the normal-completion branch with a
+  `finalized` guard so the disconnect and normal paths can't both
+  release/persist. (`app/api/routes/chat.py`)
+- **Compile-lock eviction race closed.** `_get_compile_lock` could hand out a
+  lock and then have it evicted by a concurrent caller (the cap evicted
+  *unheld-looking* entries), letting two `_compile_prompt_locked` run for one
+  connection. Eviction now tracks an in-flight refcount and never evicts a
+  recently-handed-out lock; the bounded cap is preserved.
+  (`app/services/agent_learning_service.py`)
+- **Binary-skip re-queue is no longer dropped (R3-7).** `state.failed_doc_paths`
+  was reassigned (not unioned) late in the run, dropping the binary-skipped
+  paths appended earlier; they are now unioned, and binary skips are no longer
+  marked processed. (`app/knowledge/pipeline_runner.py`)
+- **Stale "suspicious" workflow flag cleared (R5-3).** The result gate set
+  `_wf_suspicious[wf_id]` on an over-budget result but never cleared it on a
+  later good result, so a subsequent valid query stayed flagged. The flag is
+  now popped when the current result is acceptable. (`app/agents/orchestrator.py`)
+- **Validation learning credit is idempotent.** A successful answer credited
+  exposed learnings, and a following thumbs-up credited them again
+  (`apply_learning` is not idempotent), double-bumping `times_applied`; credit
+  is now keyed per `message_id` and skipped for results flagged
+  `suspicious_result`. (`app/api/routes/chat.py`)
+- **Shared SSH tunnels are ref-counted.** Tearing down a tunnel keyed by
+  transport identity closed a tunnel still in use by a sibling connection, and
+  `delete()` never evicted the connector pool. Tunnels are now ref-counted
+  (only torn down at zero refs, unless forced), `delete()` reuses
+  `_evict_runtime_caches`, and a metadata-only update with unchanged transport
+  identity preserves the tunnel. (`app/connectors/ssh_tunnel.py`,
+  `app/services/connection_service.py`)
+- **Postgres query timeout no longer poisons the pool.** `asyncio.wait_for`
+  cancels mid-cursor; the connection could return to the asyncpg pool in an
+  aborted state. On timeout/cancel the connection is now `terminate()`d so the
+  pool discards it. (`app/connectors/postgres.py`)
+- **Recent-learnings ranking fixed.** `context_loader` fetched the top 15 by
+  confidence and *then* sorted by `priority_score`, so high-priority rows past
+  the first 15 never surfaced. It now fetches an uncapped pool, sorts by
+  `priority_score`, then slices the display count. (`app/agents/context_loader.py`)
+- **`process_data` passthrough on the unified path (R5-8).** `_handle_process_data`
+  defaulted a missing operation to `""` (→ `ValueError`) while the stage
+  executor defaulted to `passthrough`; it now defaults to `passthrough` and
+  the tool enum lists it. (`app/agents/tool_dispatcher.py`,
+  `app/agents/tools/orchestrator_tools.py`)
+- **`completed_partial` indexing is surfaced.** `db_index_service.get_status()`
+  now returns `is_partial`, and the connection UI shows an `IDX*` badge plus a
+  warning toast so a partial index isn't mistaken for a complete one.
+  (`app/services/db_index_service.py`, `frontend/.../ConnectionSelector.tsx`)
+- **Reused tables recompute `is_active` from fresh samples.** Incremental reuse
+  cloned a possibly-stale `is_active`; it is now recomputed from the fresh
+  sample / row count (preserving the prior value only when sampling failed),
+  while the LLM analysis is preserved. (`app/knowledge/db_index_pipeline.py`)
+- **Code-index incremental correctness (R3-3 / R3-4).** A partial AST parse
+  failure no longer purges the failed file's existing graph symbols
+  (per-file parse outcome is tracked; failed files are excluded from the merge
+  purge set), and a transient-diff fallback to a full re-list now recovers
+  deletions by diffing known doc paths against the current tree instead of
+  silently leaving `deleted=[]`. `get_head_sha()` in the staleness check also
+  runs via `to_thread` instead of blocking the loop.
+  (`app/knowledge/pipeline_runner.py`, `app/core/orchestrator.py`)
+- **Config hardening.** `SSH_HOST_KEY_POLICY` rejects unknown values
+  (`disabled | tofu | strict`), `ORCHESTRATOR_MAX_RESULT_CORRECTIONS` must be
+  `>= 0`, and `.env.example` documents the correct SSH policy values. Note:
+  `QUERY_EMPTY_RESULT_RETRY` now defaults to `True` (an empty result is treated
+  as suspicious and retried once within the correction budget). (`app/config.py`,
+  `backend/.env.example`)
+- **`cleanup_idle()` is called once.** The shared tunnel manager's idle sweep
+  ran once per connector module aliasing it; `main.py` now invokes it a single
+  time. (`app/main.py`)
+- **Session-note conflict rules aligned with learnings (R4-5).** Note
+  reconciliation now uses the strict `>` tie rule and same-polarity conflict
+  detection used by learnings, so a verified incumbent can't leave a new
+  contradicting note active.
+
 ### Indexing integrity
 
 - **Incremental code-graph runs no longer wipe the graph.**
@@ -23,6 +105,22 @@ self-learning/memory system.
   Failed paths are persisted (`project_cache.failed_doc_paths_json`, migration
   `68aa15e554e2`) and re-queued into `changed_files` on the next index run,
   then cleared once they succeed.
+- **Binary-skipped docs are retried instead of silently lost (R3-7).** A doc
+  the `_is_binary_content` heuristic flags is now appended to
+  `failed_doc_paths` (and a failure to persist that queue logs at `warning`,
+  not `debug`), so a false-positive gets one more attempt on the next run
+  instead of being dropped until a forced full re-index.
+- **Schema-qualified BM25 doc IDs (R2-6).** The schema-retriever keyed BM25
+  docs by the bare lowercased table name, so two same-named tables in
+  different schemas (`public.users` / `analytics.users`) collided and one
+  became unsearchable. IDs are now `{schema}.{table}`; `metadata["table_name"]`
+  stays the bare name for downstream consumers.
+- **Worker DB-index path parity (R2-6).** The ARQ `run_db_index` route now
+  regenerates the project overview, runs data probes, and surfaces the
+  `PARTIAL` evidence status — previously only the in-process fallback did, so
+  Redis-backed deployments silently diverged. Index-completion logging also
+  reads the returned `tables` key (the old `tables_indexed` never existed and
+  always logged `None`).
 
 ### Learning / memory lifecycle
 
@@ -43,6 +141,19 @@ self-learning/memory system.
   `_maintenance_loop` (`MAINTENANCE_INTERVAL_HOURS`, default 24) runs learning
   + session-note decay and insight TTL/decay regardless of whether backups are
   enabled; session-note decay also runs at startup now.
+- **Session-note contradiction reconciliation (R4-6).** `create_note()` now
+  runs `_reconcile_contradictions`, reusing the learning-side
+  `lessons_contradict` heuristic to penalize (or retire, when the new note is
+  verified/stronger) an existing active note that contradicts a new one for
+  the same subject+category, so the agent prompt can't carry both sides.
+- **Tighter table-scoped note filtering (R4-6).** `get_notes_for_context`
+  matches table names on word boundaries (`\btable\b`) instead of a naive
+  substring search, so "users" no longer pulls in notes about "power_users".
+- **Bounded compile-lock map (R4-6).** The per-connection `_COMPILE_LOCKS`
+  dict was unbounded and leaked one `asyncio.Lock` per connection touched over
+  a process's lifetime. It's now an `OrderedDict` capped at 512 that evicts the
+  oldest *unheld* lock (a held lock is never evicted, so in-flight critical
+  sections are safe).
 
 ### Retrieval
 
@@ -64,6 +175,15 @@ self-learning/memory system.
 - **Partial data surfaced on `stage_failed`.** The last successful stage's
   query/results are attached and the number of completed stages is noted,
   instead of discarding all progress.
+- **`process_data` defaults to `passthrough` (R5-8).** When no operation is
+  given the stage executor no longer silently coerces to `filter_data` (which
+  could drop rows against intent); it passes data through unchanged. The
+  orchestrator's `LLMError` retry check also reads the correct `is_retryable`
+  attribute (was the non-existent `retryable`, so retryable LLM errors were
+  never retried).
+- **`connection_string` + `ssh_host` footgun documented (R1-7).** Supplying a
+  raw `connection_string` bypasses SSH tunneling; the combination now warns so
+  operators don't assume a tunnel is in effect.
 
 ### Knowledge freshness
 

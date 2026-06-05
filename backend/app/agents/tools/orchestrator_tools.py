@@ -98,6 +98,8 @@ PROCESS_DATA_TOOL = Tool(
         "functions: count, count_distinct, sum, avg, min, max, median\n"
         "• filter_data — filter rows by column value "
         "(requires 'column', optional 'op', 'value', 'exclude_empty')\n"
+        "• passthrough — forward the rows unchanged (the default when no "
+        "operation is given)\n"
         "Use after query_database when you need to transform or enrich raw "
         "data before continuing analysis. You can chain multiple process_data "
         "calls sequentially."
@@ -106,13 +108,15 @@ PROCESS_DATA_TOOL = Tool(
         ToolParameter(
             name="operation",
             type="string",
-            description="Processing operation to apply",
+            description="Processing operation to apply (defaults to passthrough if omitted)",
             enum=[
                 "ip_to_country",
                 "phone_to_country",
                 "aggregate_data",
                 "filter_data",
+                "passthrough",
             ],
+            required=False,
         ),
         ToolParameter(
             name="column",

@@ -28,6 +28,7 @@ from app.connectors.exec_templates import (
     EXEC_TEMPLATES,
     format_template,
 )
+from app.connectors.ssh_known_hosts import connect_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,6 @@ class SSHExecConnector(BaseConnector):
             "host": (config.ssh_host or "").strip(),
             "port": config.ssh_port,
             "username": (config.ssh_user or "").strip(),
-            "known_hosts": None,
             "login_timeout": SSH_CONNECT_TIMEOUT,
             "connect_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": 15,
@@ -114,8 +114,9 @@ class SSHExecConnector(BaseConnector):
             )
             connect_kwargs["client_keys"] = [key]
 
-        self._conn = await asyncio.wait_for(
-            asyncssh.connect(**connect_kwargs),
+        # R1-2: host-key verification is governed by ssh_host_key_policy.
+        self._conn = await connect_with_policy(
+            connect_kwargs,
             timeout=SSH_CONNECT_TIMEOUT + 10,
         )
         logger.info(

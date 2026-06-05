@@ -165,8 +165,11 @@ class SQLAgent(BaseAgent):
             table_map = context.table_map
 
         learnings_prompt = ""
+        preloaded_learning_ids: list[str] = []
         if has_learnings and cfg.connection_id:
-            learnings_prompt = await self._load_learnings_prompt(cfg.connection_id)
+            learnings_prompt, preloaded_learning_ids = await self._load_learnings_prompt(
+                cfg.connection_id
+            )
 
         sync_conventions = ""
         sync_critical_warnings = ""
@@ -215,6 +218,13 @@ class SQLAgent(BaseAgent):
             notes_preloaded=bool(notes_prompt),
             has_code_clusters=has_clusters,
         )
+
+        # R4-1: when learnings are preloaded into the system prompt the
+        # ``get_agent_learnings`` tool is omitted, so record exposure here.
+        # This bumps ``times_exposed`` and stashes the IDs on ``context.extra``
+        # so a later thumbs-up/down can credit/contradict these exact lessons.
+        if learnings_prompt and preloaded_learning_ids:
+            await self._track_exposed_learning_ids(preloaded_learning_ids, context)
 
         messages: list[Message] = [
             Message(role="system", content=system_prompt),
@@ -1414,17 +1424,27 @@ class SQLAgent(BaseAgent):
             logger.debug("_build_table_map failed", exc_info=True)
             return ""
 
-    async def _load_learnings_prompt(self, connection_id: str) -> str:
+    async def _load_learnings_prompt(self, connection_id: str) -> tuple[str, list[str]]:
+        """Return ``(compiled_prompt, contributing_learning_ids)``.
+
+        R4-1: the IDs let the caller record exposure for the preloaded path
+        (the common case) so feedback can attribute to these learnings.
+        """
         try:
             from app.models.base import async_session_factory
             from app.services.agent_learning_service import AgentLearningService
 
             svc = AgentLearningService()
             async with async_session_factory() as session:
-                return await svc.get_or_compile_summary(session, connection_id)
+                prompt = await svc.get_or_compile_summary(session, connection_id)
+                ids: list[str] = []
+                if prompt:
+                    prompt_learnings = await svc.get_prompt_learnings(session, connection_id)
+                    ids = [str(lrn.id) for lrn in prompt_learnings]
+            return prompt, ids
         except Exception:
             logger.debug("_load_learnings_prompt failed", exc_info=True)
-            return ""
+            return "", []
 
     async def _load_sync_for_prompt(self, connection_id: str) -> tuple[str, str]:
         """Return (data_conventions, critical_warnings) for the system prompt."""
@@ -1667,14 +1687,28 @@ class SQLAgent(BaseAgent):
         read-side signal (the LLM saw the learning), application is a
         write-side signal (the LLM provably used it). Bumping
         ``times_applied`` on every read corrupted the decay-score signal."""
+        await self._track_exposed_learning_ids([getattr(lrn, "id", None) for lrn in learnings], ctx)
+
+    async def _track_exposed_learning_ids(self, ids: list, ctx: AgentContext | None = None) -> None:
+        """Id-based core of :meth:`_track_exposed_learnings`.
+
+        R4-1: lets the preloaded-summary path attribute exposure without
+        holding live ORM objects — the chat route's thumbs-up/down can now
+        credit/contradict the exact learnings that were injected into the
+        prompt, not just those fetched via the ``get_agent_learnings`` tool.
+        """
+        clean_ids = [str(i) for i in ids if i]
+        if not clean_ids:
+            return
+
         try:
             from app.models.base import async_session_factory
             from app.services.agent_learning_service import AgentLearningService
 
             svc = AgentLearningService()
             async with async_session_factory() as session:
-                for lrn in learnings:
-                    await svc.expose_learning(session, lrn.id)
+                for lid in clean_ids:
+                    await svc.expose_learning(session, lid)
                 await session.commit()
         except Exception:
             logger.debug("expose_learning tracking failed (non-critical)", exc_info=True)
@@ -1685,7 +1719,7 @@ class SQLAgent(BaseAgent):
                 if not isinstance(existing, list):
                     existing = []
                 ctx.extra["exposed_learning_ids"] = list(
-                    {*(str(lid) for lid in existing), *(str(lrn.id) for lrn in learnings)}
+                    {*(str(lid) for lid in existing), *clean_ids}
                 )
             except Exception:
                 logger.debug("Failed to stash exposed_learning_ids on context", exc_info=True)

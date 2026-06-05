@@ -33,6 +33,7 @@ SUPPORTED_OPERATIONS = (
     "phone_to_country",
     "aggregate_data",
     "filter_data",
+    "passthrough",
 )
 
 _AGG_FUNCTIONS = {"count", "count_distinct", "sum", "avg", "min", "max", "median"}
@@ -67,8 +68,28 @@ class DataProcessor:
             return self._aggregate_data(query_result, params)
         if operation == "filter_data":
             return self._filter_data(query_result, params)
+        if operation == "passthrough":
+            return self._passthrough(query_result)
         raise ValueError(
             f"Unknown operation '{operation}'. Supported: {', '.join(SUPPORTED_OPERATIONS)}"
+        )
+
+    @staticmethod
+    def _passthrough(qr: QueryResult) -> ProcessedData:
+        """R5-8: return the source data unchanged.
+
+        Used when the planner emits a ``process_data`` stage without an
+        explicit operation. Guessing a concrete operation (e.g. ``filter_data``)
+        risks silently dropping rows or applying the wrong transform, so the
+        safe default is to forward the rows untouched and let synthesis work
+        from the real query result.
+        """
+        return ProcessedData(
+            query_result=qr,
+            summary=(
+                f"No data-processing operation was specified; forwarded "
+                f"{qr.row_count} row(s) unchanged."
+            ),
         )
 
     # ------------------------------------------------------------------
