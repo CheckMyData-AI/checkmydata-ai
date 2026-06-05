@@ -48,6 +48,11 @@ export default function MarketingLayout({
 }) {
   return (
     <div className="min-h-screen bg-surface-0 text-text-primary flex flex-col">
+      {/* Failsafe: if JS is disabled, cinematic reveals must not hide content. */}
+      <noscript>
+        <style>{`.cmd-reveal{opacity:1!important;transform:none!important}`}</style>
+      </noscript>
+
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-border-subtle/60 bg-surface-0/80 backdrop-blur-lg">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">

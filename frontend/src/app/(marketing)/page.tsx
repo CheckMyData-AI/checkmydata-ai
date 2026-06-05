@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
 import { AuthRedirect } from "@/components/auth/AuthRedirect";
+import { CinematicEngine } from "@/components/marketing/CinematicEngine";
+import { SchemaGraph } from "@/components/marketing/SchemaGraph";
 
 export const metadata: Metadata = {
   title: "CheckMyData.ai — AI Analyst for Your Database",
@@ -142,6 +144,7 @@ export default function LandingPage() {
   return (
     <>
       <AuthRedirect />
+      <CinematicEngine />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -166,20 +169,85 @@ export default function LandingPage() {
       />
 
       {/* ── HERO ── */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--color-accent-muted)_0%,_transparent_50%)] pointer-events-none" />
-        <div className="max-w-6xl mx-auto px-6 pt-24 pb-20 sm:pt-32 sm:pb-28 relative">
+      <section className="relative overflow-hidden cmd-stage">
+        {/* depth-0 — drifting technical grid */}
+        <div className="cmd-grid" aria-hidden="true" />
+
+        {/* depth-1 — atmospheric glow blobs (parallax + pulse) */}
+        <div
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+          aria-hidden="true"
+        >
+          <div
+            data-cmd-parallax="0.05"
+            className="cmd-parallax absolute"
+            style={{ top: -180, left: "6%", width: 520, height: 520 }}
+          >
+            <div
+              className="cmd-glow"
+              style={{
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                background:
+                  "color-mix(in srgb, var(--color-accent) 30%, transparent)",
+              }}
+            />
+          </div>
+          <div
+            data-cmd-parallax="0.08"
+            className="cmd-parallax absolute"
+            style={{ top: 80, right: "2%", width: 440, height: 440 }}
+          >
+            <div
+              className="cmd-glow"
+              style={{
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                background:
+                  "color-mix(in srgb, var(--color-info) 26%, transparent)",
+                animationDelay: "-4s",
+              }}
+            />
+          </div>
+          <div
+            data-cmd-parallax="0.03"
+            className="cmd-parallax absolute"
+            style={{ bottom: -140, left: "42%", width: 380, height: 380 }}
+          >
+            <div
+              className="cmd-glow"
+              style={{
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                background:
+                  "color-mix(in srgb, var(--color-success) 18%, transparent)",
+                animationDelay: "-8s",
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto px-6 pt-24 pb-16 sm:pt-32 sm:pb-20 relative">
           <div className="max-w-3xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-subtle bg-surface-1 text-xs text-text-secondary mb-8">
+            <div className="cmd-reveal inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-subtle bg-surface-1 text-xs text-text-secondary mb-8">
               <span className="w-2 h-2 rounded-full bg-success animate-pulse-dot" />
               Open Source &middot; MIT License
             </div>
 
-            <p className="text-sm sm:text-base text-accent font-medium mb-4">
+            <p
+              className="cmd-reveal text-sm sm:text-base text-accent font-medium mb-4"
+              style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
+            >
               Like ChatGPT, but for your database.
             </p>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1] text-balance">
+            <h1
+              className="cmd-reveal text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1] text-balance"
+              style={{ ["--cmd-i"]: 2 } as React.CSSProperties}
+            >
               Your data already
               <br />
               has answers.
@@ -187,12 +255,18 @@ export default function LandingPage() {
               <span className="text-text-tertiary">You just don&rsquo;t know how to ask.</span>
             </h1>
 
-            <p className="mt-8 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed text-pretty">
+            <p
+              className="cmd-reveal mt-8 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed text-pretty"
+              style={{ ["--cmd-i"]: 3 } as React.CSSProperties}
+            >
               Query any database in plain English. Get insights, charts, and
               explanations instantly.
             </p>
 
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-text-tertiary font-mono">
+            <div
+              className="cmd-reveal mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-text-tertiary font-mono"
+              style={{ ["--cmd-i"]: 4 } as React.CSSProperties}
+            >
               <span>PostgreSQL</span>
               <span className="text-border-default">&middot;</span>
               <span>MySQL</span>
@@ -202,7 +276,10 @@ export default function LandingPage() {
               <span>MongoDB</span>
             </div>
 
-            <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div
+              className="cmd-reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
+              style={{ ["--cmd-i"]: 5 } as React.CSSProperties}
+            >
               <Link
                 href="/login"
                 className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center"
@@ -220,16 +297,39 @@ export default function LandingPage() {
               </a>
             </div>
 
-            <p className="mt-5 text-xs text-text-tertiary">
+            <p
+              className="cmd-reveal mt-5 text-xs text-text-tertiary"
+              style={{ ["--cmd-i"]: 6 } as React.CSSProperties}
+            >
               No credit card. Deploy in minutes. Self-host or use hosted.
             </p>
+          </div>
+
+          {/* Showcase — the intelligence core rises into view on scroll */}
+          <div
+            className="cmd-reveal cmd-reveal-rise mt-16 sm:mt-20 max-w-4xl mx-auto"
+            style={{ ["--cmd-i"]: 7 } as React.CSSProperties}
+          >
+            <div className="cmd-float relative overflow-hidden rounded-2xl border border-border-subtle bg-surface-1/40 backdrop-blur-sm p-4 sm:p-8">
+              {/* scan sweep */}
+              <div
+                aria-hidden="true"
+                className="cmd-scan pointer-events-none absolute inset-x-0 top-0 h-24"
+                style={{
+                  background:
+                    "linear-gradient(to bottom, var(--color-accent), transparent)",
+                  opacity: 0.06,
+                }}
+              />
+              <SchemaGraph />
+            </div>
           </div>
         </div>
       </section>
 
       {/* ── SOCIAL PROOF BAR ── */}
       <section className="border-y border-border-subtle bg-surface-1/50">
-        <div className="max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-3 text-sm text-text-secondary">
+        <div className="cmd-reveal max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-3 text-sm text-text-secondary">
           <span className="inline-flex items-center gap-2">
             <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" className="text-warning" aria-hidden="true">
               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -246,23 +346,27 @@ export default function LandingPage() {
       {/* ── VALUE SECTION ── */}
       <section className="py-20 sm:py-28" id="features">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-6">
+          <div className="cmd-reveal text-center mb-6">
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
               Everything you need to actually
               <br className="hidden sm:block" />{" "}
-              <span className="text-accent">understand your data</span>
+              <span className="cmd-shimmer-text">understand your data</span>
             </h2>
           </div>
-          <p className="text-center text-text-secondary max-w-xl mx-auto mb-16 leading-relaxed text-pretty">
+          <p
+            className="cmd-reveal text-center text-text-secondary max-w-xl mx-auto mb-16 leading-relaxed text-pretty"
+            style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
+          >
             Readable SQL, exportable charts, and plain-English explanations of
             what the numbers actually mean.
           </p>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURES.map((f) => (
+            {FEATURES.map((f, i) => (
               <div
                 key={f.title}
-                className={`bg-surface-1 border rounded-xl p-6 transition-colors group ${
+                style={{ ["--cmd-i"]: i % 3 } as React.CSSProperties}
+                className={`cmd-reveal cmd-reveal-scale bg-surface-1 border rounded-xl p-6 transition-colors group ${
                   f.highlight
                     ? "sm:col-span-2 border-accent/40 ring-1 ring-accent/10"
                     : "border-border-subtle hover:border-accent/30"
@@ -308,7 +412,7 @@ export default function LandingPage() {
       <section className="py-20 sm:py-28 border-t border-border-subtle" id="use-cases">
         <div className="max-w-6xl mx-auto px-6">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div>
+            <div className="cmd-reveal cmd-reveal-left">
               <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
                 What can you do with it?
               </h2>
@@ -318,10 +422,11 @@ export default function LandingPage() {
                 it.
               </p>
               <ul className="space-y-4">
-                {USE_CASES.map((uc) => (
+                {USE_CASES.map((uc, i) => (
                   <li
                     key={uc}
-                    className="flex items-start gap-3 text-text-primary"
+                    style={{ ["--cmd-i"]: i + 1 } as React.CSSProperties}
+                    className="cmd-reveal flex items-start gap-3 text-text-primary"
                   >
                     <svg
                       width={20}
@@ -343,7 +448,7 @@ export default function LandingPage() {
               </ul>
             </div>
 
-            <div className="bg-surface-1 border border-border-subtle rounded-xl p-6 sm:p-8 font-mono text-sm">
+            <div className="cmd-reveal cmd-reveal-right cmd-float bg-surface-1 border border-border-subtle rounded-xl p-6 sm:p-8 font-mono text-sm">
               <div className="flex items-center gap-2 mb-4 text-text-muted text-xs">
                 <span className="w-3 h-3 rounded-full bg-error/50" />
                 <span className="w-3 h-3 rounded-full bg-warning/50" />
@@ -386,15 +491,20 @@ export default function LandingPage() {
       {/* ── HOW IT WORKS ── */}
       <section className="py-20 sm:py-28 border-t border-border-subtle" id="how-it-works">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16">
+          <div className="cmd-reveal text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
-              From zero to insight in <span className="text-accent">30 seconds</span>
+              From zero to insight in{" "}
+              <span className="cmd-shimmer-text">30 seconds</span>
             </h2>
           </div>
 
           <div className="grid sm:grid-cols-3 gap-8">
             {STEPS.map((s, i) => (
-              <div key={s.num} className="relative text-center sm:text-left">
+              <div
+                key={s.num}
+                style={{ ["--cmd-i"]: i } as React.CSSProperties}
+                className="cmd-reveal relative text-center sm:text-left"
+              >
                 <div className="flex items-center justify-center sm:justify-start mb-4">
                   <span className="w-9 h-9 rounded-lg bg-accent-muted text-accent font-mono text-sm font-semibold flex items-center justify-center">
                     {s.num}
@@ -422,8 +532,30 @@ export default function LandingPage() {
       {/* ── OPEN SOURCE ── */}
       <section className="py-20 sm:py-28 border-t border-border-subtle">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="bg-surface-1 border border-border-subtle rounded-2xl p-8 sm:p-12 text-center">
-            <div>
+          <div className="cmd-reveal cmd-reveal-scale relative overflow-hidden bg-surface-1 border border-border-subtle rounded-2xl p-8 sm:p-12 text-center">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute"
+              style={{
+                top: -120,
+                left: "50%",
+                width: 420,
+                height: 280,
+                transform: "translateX(-50%)",
+              }}
+            >
+              <div
+                className="cmd-glow"
+                style={{
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  background:
+                    "color-mix(in srgb, var(--color-accent) 26%, transparent)",
+                }}
+              />
+            </div>
+            <div className="relative">
               <LogoMark size={48} className="mx-auto mb-6" />
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-text-primary">
                 Built in public, fully transparent
@@ -459,9 +591,9 @@ export default function LandingPage() {
 
       {/* ── FINAL CTA ── */}
       <section className="py-20 sm:py-28 border-t border-border-subtle">
-        <div className="max-w-6xl mx-auto px-6 text-center">
+        <div className="cmd-reveal max-w-6xl mx-auto px-6 text-center">
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
-            Start exploring your data today
+            Start exploring <span className="cmd-shimmer-text">your data</span> today
           </h2>
           <p className="text-text-secondary max-w-md mx-auto mb-10">
             No credit card. Deploy in minutes.
