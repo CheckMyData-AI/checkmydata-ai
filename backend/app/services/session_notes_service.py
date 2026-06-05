@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -70,7 +71,18 @@ class SessionNotesService:
             await session.flush()
             return entry
 
+        # R4-5: guard the fuzzy merge against opposite-polarity notes
+        # ("always filter" vs "never filter") which are textually near-identical
+        # — a naive similarity match would merge them and silently overwrite the
+        # established fact. Mirror the learning side, which checks
+        # ``not lessons_contradict`` (opposite polarity only) before merging; the
+        # broader same-polarity divergence is left to ``_reconcile_contradictions``
+        # so legitimate refinements ("amount"/"amounts") still merge here.
+        from app.services.agent_learning_service import lessons_contradict
+
         similar = await self._find_similar(session, connection_id, category, subject, note)
+        if similar and lessons_contradict(note, similar.note):
+            similar = None
         if similar:
             similar.confidence = min(1.0, similar.confidence + 0.1)
             if len(note) > len(similar.note):
@@ -83,6 +95,25 @@ class SessionNotesService:
             await session.flush()
             return similar
 
+        # R4-5/R4-6: conflict handling. The fuzzy-dedup above only merges notes
+        # that are *similar*; it does nothing about a new observation that
+        # conflicts with an existing one for the same subject (e.g. "amounts are
+        # stored in cents" vs "amounts are stored in dollars"). Without this,
+        # both opposing facts surface in the prompt and the agent has no way to
+        # tell which is current. Mirror the learning service: deactivate
+        # incumbents the new note supersedes, and — when an incumbent outranks
+        # the new note — store the newcomer inactive so the two never both feed
+        # the prompt.
+        new_is_outranked = await self._reconcile_contradictions(
+            session,
+            connection_id,
+            category,
+            subject,
+            note,
+            new_confidence=confidence,
+            new_is_verified=is_verified,
+        )
+
         entry = SessionNote(
             connection_id=connection_id,
             project_id=project_id,
@@ -93,7 +124,10 @@ class SessionNotesService:
             confidence=confidence,
             source_session_id=source_session_id,
             is_verified=is_verified,
+            is_active=not new_is_outranked,
         )
+        if new_is_outranked:
+            entry.deactivated_at = datetime.now(UTC)
         session.add(entry)
         await session.flush()
         return entry
@@ -132,6 +166,88 @@ class SessionNotesService:
         idx, _score = match
         return candidates[idx]
 
+    async def _reconcile_contradictions(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        category: str,
+        subject: str,
+        note_text: str,
+        *,
+        new_confidence: float,
+        new_is_verified: bool,
+    ) -> bool:
+        """R4-5/R4-6: reconcile active notes that conflict with *note_text*.
+
+        Scopes the scan to the same connection + category + subject and reuses
+        the learning service's conflict heuristic. Aligned with the learning
+        side (``_reconcile_with_learnings``):
+
+        * conflict detection uses :func:`lessons_conflict`, which catches both
+          opposite-polarity contradictions ("always X" vs "never X") *and*
+          same-polarity divergence ("use X" vs "use Y") — the note side
+          previously only caught the former.
+        * tie rule is strict: a new note supersedes an incumbent only when it is
+          *strictly* stronger (a verified note outranks an unverified one;
+          otherwise strictly higher confidence). A tie keeps the incumbent — so
+          a verified or equally-confident incumbent is never displaced.
+        * exactly one side stays active: incumbents the new note beats are
+          deactivated; if any incumbent outranks the new note, the caller stores
+          the new note inactive (returns ``True``). This prevents two
+          contradictory notes from both feeding the prompt — the gap the old
+          "penalise but still create active" path left open for verified
+          incumbents.
+
+        Returns ``True`` when the new note is outranked by an existing one.
+        """
+        # Lazy import: keeps this module's import graph light and avoids any
+        # import-order coupling with the (heavier) learning service.
+        from app.services.agent_learning_service import lessons_conflict
+
+        result = await session.execute(
+            select(SessionNote).where(
+                SessionNote.connection_id == connection_id,
+                SessionNote.category == category,
+                SessionNote.subject == subject,
+                SessionNote.is_active.is_(True),
+            )
+        )
+        incumbents = result.scalars().all()
+        if not incumbents:
+            return False
+
+        now = datetime.now(UTC)
+        new_is_outranked = False
+        for inc in incumbents:
+            if not lessons_conflict(note_text, inc.note):
+                continue
+            # Strength ordering: verified beats unverified; within the same
+            # verification status a *strictly* higher confidence wins. A tie
+            # leaves the incumbent in place (mirrors the learning side).
+            new_stronger = (new_is_verified and not inc.is_verified) or (
+                new_is_verified == inc.is_verified and new_confidence > inc.confidence
+            )
+            if new_stronger:
+                inc.is_active = False
+                inc.deactivated_at = now
+                inc.updated_at = now
+                logger.info(
+                    "session_notes: retired conflicting note %s (subject=%s) "
+                    "superseded by strictly stronger note",
+                    inc.id,
+                    subject,
+                )
+            else:
+                new_is_outranked = True
+                logger.info(
+                    "session_notes: new note outranked by conflicting note %s "
+                    "(subject=%s); storing new note inactive",
+                    inc.id,
+                    subject,
+                )
+        await session.flush()
+        return new_is_outranked
+
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------
@@ -160,15 +276,26 @@ class SessionNotesService:
 
         if table_names:
             lower_tables = {t.lower() for t in table_names}
-            filtered = [
-                n
-                for n in notes
-                if n.subject.lower() in lower_tables
-                or any(t in n.note.lower() for t in lower_tables)
-            ]
+            filtered = [n for n in notes if self._note_mentions_table(n, lower_tables)]
             return filtered if filtered else notes[:20]
 
         return notes[:50]
+
+    @staticmethod
+    def _note_mentions_table(note: SessionNote, lower_tables: set[str]) -> bool:
+        """R4-6: word-boundary table match instead of a naive substring scan.
+
+        The old ``any(t in n.note.lower() ...)`` matched a table name anywhere
+        inside the note text, so a table called ``users`` would spuriously pull
+        in every note that happened to contain the word "users" in prose (or a
+        longer identifier like ``power_users``). Matching on a word boundary
+        keeps ``order_items`` from matching ``my_order_items`` while still
+        catching the table name when it appears as a standalone token.
+        """
+        if note.subject.lower() in lower_tables:
+            return True
+        note_lower = note.note.lower()
+        return any(re.search(rf"\b{re.escape(t)}\b", note_lower) for t in lower_tables)
 
     async def get_note_by_id(
         self,

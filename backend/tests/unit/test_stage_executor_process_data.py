@@ -74,7 +74,9 @@ class TestParseProcessDataParams:
         assert isinstance(params["aggregations"], list)
         assert len(params["aggregations"]) == 3
 
-    def test_heuristic_ip_from_description(self):
+    def test_missing_operation_with_description_defaults_to_passthrough(self):
+        # R5-8: no keyword inference — a description without an explicit
+        # operation forwards rows unchanged rather than guessing filter_data.
         stage = _make_stage(
             description="Convert IP addresses to countries",
             input_context="resolve IPs",
@@ -83,9 +85,9 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "filter_data"
+        assert params["operation"] == "passthrough"
 
-    def test_no_heuristic_phone_defaults_to_filter(self):
+    def test_no_operation_phone_defaults_to_passthrough(self):
         stage = _make_stage(
             description="Convert phone numbers to destination countries",
             input_context="",
@@ -94,9 +96,9 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "filter_data"
+        assert params["operation"] == "passthrough"
 
-    def test_no_heuristic_aggregate_defaults_to_filter(self):
+    def test_no_operation_aggregate_defaults_to_passthrough(self):
         stage = _make_stage(
             description="Group and aggregate results by country",
             input_context="",
@@ -105,17 +107,17 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "filter_data"
+        assert params["operation"] == "passthrough"
 
-    def test_fallback_to_filter_data(self):
+    def test_fallback_to_passthrough(self):
         stage = _make_stage(description="Process the data", input_context="")
         qr = _make_qr(["some_ip", "amount"])
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "filter_data"
+        assert params["operation"] == "passthrough"
 
-    def test_invalid_json_falls_back_to_heuristic(self):
+    def test_invalid_json_falls_back_to_passthrough(self):
         stage = _make_stage(
             description="ip resolution",
             input_context="not valid json {{{",
@@ -124,7 +126,7 @@ class TestParseProcessDataParams:
 
         params = StageExecutor._parse_process_data_params(stage, qr)
 
-        assert params["operation"] == "filter_data"
+        assert params["operation"] == "passthrough"
 
     def test_no_column_without_explicit_context(self):
         stage = _make_stage(

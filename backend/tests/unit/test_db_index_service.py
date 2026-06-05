@@ -220,6 +220,23 @@ class TestGetStatus:
         assert status["is_indexed"] is True
         assert status["total_tables"] == 10
         assert status["active_tables"] == 8
+        # A clean run is not partial.
+        assert status["is_partial"] is False
+
+    @pytest.mark.asyncio
+    async def test_completed_partial_surfaces_is_partial(self, svc):
+        """R2-4: a 'completed_partial' run is indexed *and* flagged partial so
+        the UI can warn that empty-looking tables may be false negatives."""
+        session = AsyncMock()
+        summary = _make_summary(indexing_status="completed_partial")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = summary
+        session.execute = AsyncMock(return_value=result)
+
+        status = await svc.get_status(session, "conn-1")
+        assert status["is_indexed"] is True
+        assert status["is_partial"] is True
+        assert status["indexing_status"] == "completed_partial"
 
     @pytest.mark.asyncio
     async def test_running_status_not_indexed(self, svc):

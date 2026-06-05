@@ -4,8 +4,10 @@ import pytest
 
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent, SQLResultBlock
 from app.agents.response_builder import ResponseBuilder
+from app.config import settings
 from app.connectors.base import ConnectionConfig, QueryResult, SchemaInfo
 from app.core.orchestrator import Orchestrator, OrchestratorResponse
+from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import LLMResponse, Message, ToolCall
 
 
@@ -814,6 +816,34 @@ class TestHandleProcessData:
         assert sql_res.results is qr_original
         assert agent._wf_sql_results["wf-1"][-1].results is enriched_qr
         assert "Added country" in result_text
+
+    @pytest.mark.asyncio
+    async def test_missing_operation_defaults_to_passthrough(self):
+        """Re-audit (R5-8 parity): a process_data call with no 'operation'
+        must default to passthrough (forward rows unchanged) rather than
+        raising a ValueError on the unified dispatcher path."""
+        from app.agents.sql_agent import SQLAgentResult
+        from app.core.workflow_tracker import WorkflowTracker
+        from app.services.data_processor import ProcessedData
+
+        qr = QueryResult(columns=["id"], rows=[[1]], row_count=1)
+        sql_res = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+
+        tracker = MagicMock(spec=WorkflowTracker)
+        tracker.emit = AsyncMock()
+        agent = OrchestratorAgent(llm_router=MagicMock(), workflow_tracker=tracker)
+        agent._wf_sql_results["wf-1"] = [sql_res]
+
+        passthrough = ProcessedData(query_result=qr, summary="forwarded unchanged")
+        with patch("app.agents.tool_dispatcher.get_data_processor") as mock_gdp:
+            mock_gdp.return_value.process.return_value = passthrough
+            tc = ToolCall(id="tc1", name="process_data", arguments={})
+            result_text = await agent._dispatcher._handle_process_data(tc, "wf-1")
+
+        # The processor was invoked with the passthrough operation, not "".
+        _, call_args, _ = mock_gdp.return_value.process.mock_calls[0]
+        assert call_args[1] == "passthrough"
+        assert "no query results" not in result_text.lower()
 
 
 # ------------------------------------------------------------------
@@ -2102,6 +2132,83 @@ class TestDispatcherRemainingWall:
         assert call_kwargs.get("wall_clock_remaining") == 45.0
 
 
+class TestDispatcherErrorContextRetry:
+    """R5-4: SQL retry injects prior errors into the question."""
+
+    def test_augment_question_with_error(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        out = ToolDispatcher._augment_question_with_error("list users", ["unknown column 'usr_id'"])
+        assert "list users" in out
+        assert "PREVIOUS ATTEMPT FAILED" in out
+        assert "usr_id" in out
+
+    def test_augment_question_noop_without_errors(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        assert ToolDispatcher._augment_question_with_error("q", []) == "q"
+        assert ToolDispatcher._augment_question_with_error("q", [""]) == "q"
+
+    @pytest.mark.asyncio
+    async def test_retry_feeds_error_context_into_second_call(self):
+        from app.agents.base import AgentContext
+        from app.agents.sql_agent import SQLAgent, SQLAgentResult
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.agents.validation import AgentResultValidator
+
+        good = SQLAgentResult(
+            status="success",
+            query="SELECT 1",
+            results=QueryResult(columns=["a"], rows=[[1]], row_count=1),
+        )
+        bad = SQLAgentResult(status="error", query=None, results=None, error="boom")
+
+        mock_sql = MagicMock(spec=SQLAgent)
+        mock_sql.run = AsyncMock(side_effect=[bad, good])
+
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+
+        mock_validator = MagicMock(spec=AgentResultValidator)
+        mock_validator.validate_sql_result = MagicMock(
+            side_effect=[
+                MagicMock(passed=False, warnings=[], errors=["unknown column"]),
+                MagicMock(passed=True, warnings=[], errors=[]),
+            ]
+        )
+
+        dispatcher = ToolDispatcher(
+            sql_agent=mock_sql,
+            knowledge_agent=MagicMock(),
+            mcp_source_agent=MagicMock(),
+            validator=mock_validator,
+            tracker=mock_tracker,
+            wf_sql_results={},
+            wf_enriched={},
+        )
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="orig question",
+            chat_history=[],
+            llm_router=MagicMock(),
+            tracker=mock_tracker,
+            workflow_id="wf-1",
+        )
+        tc = ToolCall(id="tc1", name="query_database", arguments={"question": "orig question"})
+        await dispatcher.dispatch(tc, ctx, "wf-1", {})
+
+        assert mock_sql.run.call_count == 2
+        first_q = mock_sql.run.call_args_list[0].kwargs["question"]
+        second_q = mock_sql.run.call_args_list[1].kwargs["question"]
+        assert first_q == "orig question"
+        assert "PREVIOUS ATTEMPT FAILED" in second_q
+        assert "unknown column" in second_q
+
+
 class TestSqlAgentTimeBudget:
     """Verify SQL agent caps query timeout based on wall_clock_remaining."""
 
@@ -2140,3 +2247,117 @@ class TestSqlAgentTimeBudget:
         agent._wall_clock_remaining = 2.0
         config = agent._build_validation_config()
         assert config.query_timeout_seconds >= 5
+
+
+class TestUnifiedResultGate:
+    """R5-3: orchestrator-level result-quality gate on the unified tool loop."""
+
+    def _agent(self):
+        tracker = MagicMock(spec=WorkflowTracker)
+        tracker.emit = AsyncMock()
+        return OrchestratorAgent(llm_router=MagicMock(), workflow_tracker=tracker)
+
+    def test_hard_failure_emits_directive_and_counts(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        # No query produced -> validator fails -> hard directive.
+        bad = SQLAgentResult(status="success", query=None, results=None)
+        directive = agent._result_gate_directive("wf-1", bad)
+        assert directive is not None
+        assert "RESULT CHECK FAILED" in directive
+        assert agent._wf_correction_counts["wf-1"] == 1
+
+    def test_budget_exhausts_after_max_corrections(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        bad = SQLAgentResult(status="error", query=None, results=None, error="boom")
+        budget = settings.orchestrator_max_result_corrections
+        for _ in range(budget):
+            assert agent._result_gate_directive("wf-9", bad) is not None
+        # Budget spent -> no further directives.
+        assert agent._result_gate_directive("wf-9", bad) is None
+        assert agent._wf_correction_counts["wf-9"] == budget
+
+    def test_good_result_no_directive(self):
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        qr = QueryResult(columns=["n"], rows=[[1]], row_count=1)
+        ok = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+        assert agent._result_gate_directive("wf-2", ok) is None
+
+    def test_empty_result_soft_directive_only_when_enabled(self, monkeypatch):
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        qr = QueryResult(columns=["n"], rows=[], row_count=0)
+        empty = SQLAgentResult(status="success", query="SELECT 1 WHERE false", results=qr)
+
+        monkeypatch.setattr(settings, "query_empty_result_retry", False)
+        assert agent._result_gate_directive("wf-3", empty) is None
+
+        monkeypatch.setattr(settings, "query_empty_result_retry", True)
+        directive = agent._result_gate_directive("wf-3", empty)
+        assert directive is not None
+        assert "0 rows" in directive
+
+    def test_gate_disabled_returns_none(self, monkeypatch):
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        bad = SQLAgentResult(status="error", query=None, results=None, error="boom")
+        monkeypatch.setattr(settings, "orchestrator_result_gate_enabled", False)
+        assert agent._result_gate_directive("wf-4", bad) is None
+
+    def test_exhausted_budget_flags_suspicious(self):
+        """R5-7: once corrections are spent and the result still fails the gate,
+        the workflow is flagged suspicious so the chat layer can auto-route to
+        the investigation agent."""
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        bad = SQLAgentResult(status="error", query=None, results=None, error="boom")
+        budget = settings.orchestrator_max_result_corrections
+        for _ in range(budget):
+            agent._result_gate_directive("wf-susp", bad)
+        # Over budget now: no directive, but the suspicion is recorded.
+        assert agent._result_gate_directive("wf-susp", bad) is None
+        reason = agent.pop_suspicious_reason("wf-susp")
+        assert reason is not None
+        # Draining clears it.
+        assert agent.pop_suspicious_reason("wf-susp") is None
+
+    def test_good_result_never_flags_suspicious(self):
+        """R5-7: a clean result must not leave a suspicious flag, even after
+        many calls within budget."""
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        qr = QueryResult(columns=["n"], rows=[[1]], row_count=1)
+        ok = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+        for _ in range(settings.orchestrator_max_result_corrections + 2):
+            agent._result_gate_directive("wf-clean", ok)
+        assert agent.pop_suspicious_reason("wf-clean") is None
+
+    def test_good_result_clears_stale_suspicious_after_exhausted_budget(self):
+        """Re-audit fix: if the correction budget is spent on a failing result
+        (flagging the workflow suspicious) but a later query in the SAME
+        workflow returns a clean result, the stale suspicion must be cleared."""
+        from app.agents.sql_agent import SQLAgentResult
+
+        agent = self._agent()
+        bad = SQLAgentResult(status="error", query=None, results=None, error="boom")
+        budget = settings.orchestrator_max_result_corrections
+        for _ in range(budget):
+            agent._result_gate_directive("wf-recover", bad)
+        # Exhaust budget on a bad result -> flagged suspicious.
+        assert agent._result_gate_directive("wf-recover", bad) is None
+        assert agent._wf_suspicious.get("wf-recover") is not None
+
+        # A subsequent good query in the same workflow must clear the flag.
+        qr = QueryResult(columns=["n"], rows=[[1]], row_count=1)
+        ok = SQLAgentResult(status="success", query="SELECT 1", results=qr)
+        assert agent._result_gate_directive("wf-recover", ok) is None
+        assert agent.pop_suspicious_reason("wf-recover") is None

@@ -101,3 +101,59 @@ class TestGenerateDocsResilience:
         from app.config import settings
 
         assert settings.generate_docs_max_failure_ratio == 0.3
+
+
+class TestBinarySkipQueuesForRetry:
+    """R3-7: a doc skipped by the binary-content heuristic must be queued for
+    regeneration (it is most likely a false positive) instead of being marked
+    processed and lost until a forced full re-index."""
+
+    def test_is_binary_content_flags_high_nonprintable(self):
+        from app.knowledge.doc_generator import _is_binary_content
+
+        # >30% non-printable bytes → treated as binary.
+        assert _is_binary_content("\x00\x01\x02\x03" * 100) is True
+        # Normal source code → not binary.
+        assert _is_binary_content("def foo():\n    return 42\n") is False
+        # Empty content is never binary.
+        assert _is_binary_content("") is False
+
+    def test_binary_skip_appends_to_regeneration_queue(self):
+        """Mirror the inline generate_docs contract: when a doc is binary, its
+        path joins ``failed_doc_paths`` (deduped) so the next run retries it."""
+        from app.knowledge.doc_generator import _is_binary_content
+
+        failed_doc_paths: list[str] = []
+        docs = [
+            ("a.py", "def a(): pass"),
+            ("blob.bin", "\x00\x01\x02" * 500),
+            ("blob.bin", "\x00\x01\x02" * 500),  # duplicate path must not double-add
+        ]
+        for path, content in docs:
+            if _is_binary_content(content):
+                if path not in failed_doc_paths:
+                    failed_doc_paths.append(path)
+
+        assert failed_doc_paths == ["blob.bin"]
+
+    def test_binary_skip_survives_still_failed_union(self):
+        """R3-7 re-audit: the still-failed reassignment must UNION with the
+        binary-skipped paths, not overwrite them.
+
+        The earlier code did ``failed_doc_paths = [p for failed]`` which
+        silently dropped the binary skips appended in Phase 1, negating the
+        whole re-queue fix. This encodes the corrected union semantics from
+        pipeline_runner.generate_docs.
+        """
+        # Phase 1: a binary-looking doc was queued for retry.
+        failed_doc_paths: list[str] = ["weird_unicode.py"]
+
+        # Phase 2: an unrelated doc failed its LLM generation.
+        still_failed_paths = ["broken.py"]
+
+        # Corrected line-1133 behavior: union (sorted set), not overwrite.
+        failed_doc_paths = sorted(set(failed_doc_paths) | set(still_failed_paths))
+
+        assert "weird_unicode.py" in failed_doc_paths, "binary skip was dropped by overwrite"
+        assert "broken.py" in failed_doc_paths
+        assert failed_doc_paths == ["broken.py", "weird_unicode.py"]

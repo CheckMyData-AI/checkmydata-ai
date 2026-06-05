@@ -374,7 +374,9 @@ class Orchestrator:
             if not last_sha:
                 return "Knowledge base has not been indexed yet."
 
-            head_sha = git_tracker.get_head_sha(repo_dir)
+            # get_head_sha is blocking git subprocess I/O — never call it
+            # directly on the event loop (R3 follow-up). Offload to a thread.
+            head_sha = await asyncio.to_thread(git_tracker.get_head_sha, repo_dir)
             if head_sha == last_sha:
                 return None
 

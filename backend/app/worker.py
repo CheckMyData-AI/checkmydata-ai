@@ -64,8 +64,45 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
                 result.get("error", "unknown"),
             )
         else:
-            logger.info("run_db_index completed: connection=%s", connection_id[:8])
-            final_status = "completed"
+            # R2-6: mirror the in-process background path (connections.py
+            # _run_db_index_background) so the worker route doesn't silently
+            # skip post-index steps. Without this, deployments running ARQ
+            # (REDIS_URL set) never regenerate the project overview or run data
+            # probes, and never surface the PARTIAL evidence status -- a quiet
+            # behavioural divergence from the in-process fallback.
+            is_partial = isinstance(result, dict) and result.get("partial")
+            if is_partial:
+                logger.warning(
+                    "run_db_index completed with PARTIAL evidence: connection=%s "
+                    "tables=%s sample_failures=%s distinct_failures=%s embed_failed=%s",
+                    connection_id[:8],
+                    result.get("tables"),
+                    result.get("sample_failures"),
+                    result.get("distinct_failures"),
+                    result.get("embed_failed"),
+                )
+                final_status = "completed_partial"
+            else:
+                logger.info(
+                    "run_db_index completed: connection=%s tables=%s",
+                    connection_id[:8],
+                    result.get("tables") if isinstance(result, dict) else "ok",
+                )
+                final_status = "completed"
+            try:
+                from app.api.routes.connections import (
+                    _regenerate_overview,
+                    _run_data_probes,
+                )
+
+                await _regenerate_overview(project_id, connection_id)
+                await _run_data_probes(connection_id, config, project_id)
+            except Exception:
+                logger.debug(
+                    "run_db_index post-index steps failed for %s",
+                    connection_id[:8],
+                    exc_info=True,
+                )
     except Exception:
         logger.exception("run_db_index failed for %s", connection_id[:8])
     finally:

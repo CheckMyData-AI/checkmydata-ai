@@ -92,6 +92,14 @@ class ConversationalAgent:
             exposed = context.extra.get("exposed_learning_ids") or []
             if isinstance(exposed, list) and exposed:
                 response.exposed_learning_ids = [str(x) for x in exposed]
+            # R5-7: surface the result gate's suspicious-result signal so the
+            # chat layer can auto-route to the investigation agent.
+            pop_suspicious = getattr(self._orchestrator, "pop_suspicious_reason", None)
+            if callable(pop_suspicious):
+                reason = pop_suspicious(wf_id)
+                if reason and not response.error:
+                    response.suspicious_result = True
+                    response.suspicious_reason = reason
             return response
         except Exception as exc:
             if not self._tracker.has_ended(wf_id):

@@ -106,9 +106,23 @@ class Settings(BaseSettings):
     query_max_retries: int = 3
     query_enable_explain: bool = True
     query_enable_schema_validation: bool = True
-    query_empty_result_retry: bool = False  # Set QUERY_EMPTY_RESULT_RETRY=true to enable
+    # R5-2: enabled by default — an empty result set is usually a
+    # wrong-query signal (bad table/column/filter), so the ValidationLoop
+    # retries once with schema hints (bounded by ``query_max_retries``).
+    # Set QUERY_EMPTY_RESULT_RETRY=false to restore "empty is always valid".
+    query_empty_result_retry: bool = True
     query_explain_row_warning_threshold: int = 100_000
     query_timeout_seconds: int = 30
+
+    # Orchestrator unified-path result-quality gate (R5-3). On the unified
+    # tool loop (used by simple/moderate queries) a failing query_database
+    # result was previously fed straight back to the LLM with no signal.
+    # When enabled, the orchestrator appends a correction directive to the
+    # tool message (hard failure: validation error / no query / exec error;
+    # soft: suspicious empty result, only when ``query_empty_result_retry``
+    # is on) so the LLM re-queries. Bounded per workflow to avoid loops.
+    orchestrator_result_gate_enabled: bool = True
+    orchestrator_max_result_corrections: int = 2
 
     max_history_tokens: int = 2500
     history_summary_model: str = ""
@@ -117,6 +131,30 @@ class Settings(BaseSettings):
     db_index_ttl_hours: int = 24
     db_index_batch_size: int = 5
     auto_index_db_on_test: bool = False
+    # R2-3: reuse prior LLM table analysis for tables whose schema signature
+    # is unchanged since the last successful index, instead of re-LLM-ing every
+    # table on each run. Samples/row-counts still refresh; only the expensive
+    # business-description generation is skipped for unchanged tables.
+    db_index_incremental_enabled: bool = True
+    # R4-2: credit exposed learnings as "applied" when a result passes
+    # validation (not only on a rare thumbs-up), so times_applied / the decay
+    # and ranking signals derived from it stay live in production.
+    learning_apply_on_validation_enabled: bool = True
+    # R5-6: when the post-timeout answer validator errors, treat the answer as
+    # unverified (frame it as a continuable partial result with the "Continue
+    # analysis" CTA) rather than silently presenting it as a verified final
+    # answer. Set False to restore the lenient length-heuristic fallback.
+    answer_validator_fail_closed: bool = True
+
+    # R5-7: auto-route suspicious SQL results to the investigation ("Wrong
+    # Data") agent. When the orchestrator's result gate spends its full
+    # correction budget and the result still looks wrong (failed validation or
+    # an unexplained empty set), the response is flagged ``suspicious_result``.
+    # With this enabled, the chat layer kicks off a background investigation on
+    # that flagged result automatically instead of waiting for a manual user
+    # thumbs-down. Default off: auto-investigations cost LLM calls, so it is
+    # opt-in per deployment.
+    orchestrator_auto_investigate_enabled: bool = False
 
     # Batch query execution (T19). ``batch_max_concurrency`` caps the
     # number of concurrent queries inside one batch; ``batch_result_row_cap``
@@ -357,6 +395,16 @@ class Settings(BaseSettings):
     ssh_connect_timeout: int = 30
     ssh_command_timeout: int = 60
 
+    # R1-2: SSH host-key verification policy.
+    #   "disabled" — known_hosts=None (no verification; legacy default, MITM-exposed)
+    #   "tofu"      — trust-on-first-use: pin the host key on first connect into
+    #                 ``ssh_known_hosts_path`` and verify against it thereafter
+    #   "strict"    — verify against ``ssh_known_hosts_path`` only; reject unknown hosts
+    # Use the ``SSH_HOST_KEY_POLICY`` env var to opt into verification.
+    ssh_host_key_policy: str = "disabled"
+    # Where TOFU/strict host keys are stored (writable path).
+    ssh_known_hosts_path: str = "/tmp/checkmydata_known_hosts"
+
     # Admin emails — users with these emails get access to admin-only endpoints
     # (manual backup trigger, cluster-wide metrics, etc.). Use the
     # ``ADMIN_EMAILS`` env var (JSON list, e.g. ``["alice@x.com","bob@x.com"]``).
@@ -454,6 +502,14 @@ class Settings(BaseSettings):
             raise ValueError("LEARNING_ANALYZER_MODE must be one of: heuristic, hybrid, llm_first")
         if self.default_llm_provider not in {"openai", "anthropic", "openrouter"}:
             raise ValueError("DEFAULT_LLM_PROVIDER must be one of: openai, anthropic, openrouter")
+        # R1-2: reject unknown SSH host-key policies early so a typo can't
+        # silently fall back to the insecure "disabled" behavior at runtime.
+        if self.ssh_host_key_policy not in {"disabled", "tofu", "strict"}:
+            raise ValueError("SSH_HOST_KEY_POLICY must be one of: disabled, tofu, strict")
+        # R5-3: the result-gate correction budget must be non-negative (0 = gate
+        # validates but never issues a correction directive).
+        if self.orchestrator_max_result_corrections < 0:
+            raise ValueError("ORCHESTRATOR_MAX_RESULT_CORRECTIONS must be >= 0.")
         return self
 
 

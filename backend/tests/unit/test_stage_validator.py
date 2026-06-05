@@ -200,6 +200,59 @@ class TestBusinessRules:
         assert outcome.warnings == []
 
 
+class TestValidateAsync:
+    """validate_async is the path the pipeline actually uses (R5-1)."""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_heuristic_without_router(self, validator):
+        stage = _make_stage(
+            validation=StageValidation(business_rules=["Ensure no negative values"]),
+        )
+        qr = QueryResult(columns=["amount"], rows=[[100], [-5]], row_count=2)
+        result = _make_result(qr=qr)
+        ctx = StageContext(plan=_make_plan(stage))
+
+        outcome = await validator.validate_async(stage, result, ctx)
+        assert any("negative" in w.lower() for w in outcome.warnings)
+
+    @pytest.mark.asyncio
+    async def test_llm_router_flags_violation(self):
+        class _Resp:
+            content = '{"violated": true, "explanation": "amount went negative"}'
+
+        class _Router:
+            async def complete(self, **_kwargs):
+                return _Resp()
+
+        validator = StageValidator(llm_router=_Router())
+        stage = _make_stage(
+            validation=StageValidation(business_rules=["no shrinking revenue"]),
+        )
+        qr = QueryResult(columns=["rev"], rows=[[10], [9]], row_count=2)
+        result = _make_result(qr=qr)
+        ctx = StageContext(plan=_make_plan(stage))
+
+        outcome = await validator.validate_async(stage, result, ctx)
+        assert any("amount went negative" in w for w in outcome.warnings)
+
+    @pytest.mark.asyncio
+    async def test_router_exception_falls_back_to_heuristic(self):
+        class _Router:
+            async def complete(self, **_kwargs):
+                raise RuntimeError("llm down")
+
+        validator = StageValidator(llm_router=_Router())
+        stage = _make_stage(
+            validation=StageValidation(business_rules=["Ensure no negative values"]),
+        )
+        qr = QueryResult(columns=["amount"], rows=[[100], [-5]], row_count=2)
+        result = _make_result(qr=qr)
+        ctx = StageContext(plan=_make_plan(stage))
+
+        outcome = await validator.validate_async(stage, result, ctx)
+        assert any("negative" in w.lower() for w in outcome.warnings)
+
+
 class TestCrossStageChecks:
     def test_unrecognised_format(self, validator):
         stage = _make_stage(

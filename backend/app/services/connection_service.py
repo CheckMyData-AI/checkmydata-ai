@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import ConnectionConfig
 from app.connectors.registry import get_connector
+from app.connectors.ssh_known_hosts import connect_with_policy
 from app.core.retry import retry
 from app.models.connection import Connection
 from app.services.encryption import decrypt, encrypt
@@ -83,6 +84,17 @@ class ConnectionService:
         if not conn:
             return None
 
+        # R1-3: snapshot the pre-update config so we can tear down the tunnel
+        # and evict the pooled connector that were built for the *old*
+        # endpoint/credentials. Without this, editing host/port/SSH/creds
+        # leaves a live tunnel to the old target and a cached connector that
+        # keeps serving stale (or wrong-credential) data until process restart.
+        old_config: ConnectionConfig | None = None
+        try:
+            old_config = await self.to_config(session, conn)
+        except Exception:
+            logger.debug("update(): could not snapshot old config", exc_info=True)
+
         kwargs = self._sanitize_strings(kwargs)
         if "db_password" in kwargs:
             pw = kwargs.pop("db_password")
@@ -108,6 +120,14 @@ class ConnectionService:
         conn.updated_at = datetime.now(UTC)
         await session.commit()
         await session.refresh(conn)
+
+        # R1-3: evict stale runtime state built for the previous config.
+        try:
+            new_config = await self.to_config(session, conn)
+            await self._evict_runtime_caches(old_config, new_config)
+        except Exception:
+            logger.debug("update(): runtime cache eviction failed", exc_info=True)
+
         return conn
 
     async def get(self, session: AsyncSession, connection_id: str) -> Connection | None:
@@ -137,10 +157,13 @@ class ConnectionService:
 
         try:
             config = await self.to_config(session, conn)
-            if config.ssh_host:
-                await self._close_ssh_tunnels(config)
+            # Re-audit fix: reuse the update-path eviction so delete() also
+            # evicts the pooled connector + schema cache (not just the tunnel),
+            # and the tunnel teardown is ref-counted (siblings sharing the same
+            # bastion/DB endpoint keep their live transport).
+            await self._evict_runtime_caches(config, None)
         except Exception:
-            logger.debug("Failed to clean up SSH tunnels on delete", exc_info=True)
+            logger.debug("Failed to clean up runtime caches on delete", exc_info=True)
 
         await session.delete(conn)
         await session.commit()
@@ -162,21 +185,80 @@ class ConnectionService:
 
     @staticmethod
     async def _close_ssh_tunnels(config: ConnectionConfig) -> None:
-        """Close SSH tunnels for all connector types."""
-        connector_modules = [
-            "app.connectors.postgres",
-            "app.connectors.mysql",
-            "app.connectors.mongodb",
-            "app.connectors.clickhouse",
-        ]
-        for mod_path in connector_modules:
-            try:
-                mod = __import__(mod_path, fromlist=["_tunnel_mgr"])
-                mgr = getattr(mod, "_tunnel_mgr", None)
-                if mgr:
-                    await mgr.close_for_config(config)
-            except Exception:
-                logger.debug("Error closing tunnel via %s", mod_path, exc_info=True)
+        """Close the SSH tunnel for *config* via the shared tunnel manager.
+
+        R1-4: connectors now share a single tunnel manager, so one
+        ``close_for_config`` is enough. We still import lazily to avoid a
+        circular import at module load.
+        """
+        try:
+            from app.connectors.ssh_tunnel import shared_tunnel_manager
+
+            await shared_tunnel_manager.close_for_config(config)
+        except Exception:
+            logger.debug("Error closing shared SSH tunnel", exc_info=True)
+
+    @classmethod
+    async def _evict_runtime_caches(
+        cls,
+        old_config: ConnectionConfig | None,
+        new_config: ConnectionConfig | None,
+    ) -> None:
+        """Tear down stale tunnels + pooled connectors after an update (R1-3).
+
+        Closes the tunnel for the old endpoint (and the new one, if it
+        differs) and evicts the live connector/schema caches keyed by the
+        connector key so the next query rebuilds against current settings.
+        """
+
+        def _ident(c: ConnectionConfig | None) -> tuple | None:
+            if c is None or not c.ssh_host:
+                return None
+            return (c.ssh_host, c.ssh_port, c.ssh_user, c.db_host, c.db_port)
+
+        # Re-audit fix: skip tunnel teardown entirely on a metadata-only update
+        # (transport identity unchanged) — the live tunnel is still valid and
+        # tearing it down would needlessly disrupt this and sibling connections.
+        old_ident = _ident(old_config)
+        new_ident = _ident(new_config)
+        transport_unchanged = old_ident is not None and old_ident == new_ident
+        if not transport_unchanged:
+            configs = [c for c in (old_config, new_config) if c is not None and c.ssh_host]
+            seen: set[tuple] = set()
+            for cfg in configs:
+                ident = (cfg.ssh_host, cfg.ssh_port, cfg.ssh_user, cfg.db_host, cfg.db_port)
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                # Ref-counted: only tears down when no sibling connection still
+                # references the shared tunnel.
+                await cls._close_ssh_tunnels(cfg)
+
+        # Evict pooled connectors in the long-lived chat agent (best-effort:
+        # the agent may not be initialised in every process, e.g. workers).
+        try:
+            from app.connectors.base import connector_key
+
+            keys = {connector_key(c) for c in (old_config, new_config) if c is not None}
+            from app.api.routes import chat as _chat
+
+            sql = getattr(
+                getattr(getattr(_chat, "_agent", None), "_orchestrator", None), "_sql", None
+            )
+            if sql is None:
+                return
+            pool = getattr(sql, "_connectors", {})
+            schema_cache = getattr(sql, "_schema_cache", {})
+            for key in keys:
+                conn = pool.pop(key, None)
+                if conn is not None:
+                    try:
+                        await conn.disconnect()
+                    except Exception:
+                        logger.debug("evict: connector disconnect failed", exc_info=True)
+                schema_cache.pop(key, None)
+        except Exception:
+            logger.debug("evict: runtime connector pool eviction skipped", exc_info=True)
 
     async def test_connection(self, session: AsyncSession, connection_id: str) -> dict:
         conn = await self.get(session, connection_id)
@@ -249,7 +331,6 @@ class ConnectionService:
             "host": (conn.ssh_host or "").strip(),
             "port": conn.ssh_port,
             "username": (conn.ssh_user or "").strip(),
-            "known_hosts": None,
             "login_timeout": 30,
             "connect_timeout": 30,
         }
@@ -259,7 +340,8 @@ class ConnectionService:
 
         _marker = "__SSH_TEST_OK__"
         try:
-            async with asyncssh.connect(**connect_kwargs) as ssh_conn:
+            # R1-2: host-key verification is governed by ssh_host_key_policy.
+            async with await connect_with_policy(connect_kwargs, timeout=40) as ssh_conn:
                 result = await ssh_conn.run(
                     f"echo {_marker} && hostname",
                     timeout=10,
@@ -296,6 +378,10 @@ class ConnectionService:
         except Exception as e:
             logger.warning("SSH test error for '%s' (host=%s): %s", conn.name, conn.ssh_host, e)
             return {"success": False, "error": str(e)}
+        # Defensive: only reachable if the context manager's __aexit__ swallows
+        # an exception (so the in-block return never ran). Keep the contract that
+        # this coroutine always returns a result dict.
+        return {"success": False, "error": "SSH test did not complete"}
 
     async def to_config(
         self,
@@ -337,6 +423,18 @@ class ConnectionService:
                 )
                 pre_commands = None
 
+        # Documented footgun: a raw connection_string (DSN) takes precedence over
+        # the discrete db_host/db_port, so an SSH tunnel — which rewrites those to
+        # 127.0.0.1:<local_port> — is bypassed entirely. Warn loudly rather than
+        # silently connecting straight to the DB host.
+        if connection_string and conn.ssh_host:
+            logger.warning(
+                "Connection '%s' sets both a connection_string and ssh_host: the "
+                "DSN bypasses the SSH tunnel (it connects directly to the DSN "
+                "host). Drop the connection_string to route through the tunnel.",
+                conn.name,
+            )
+
         extra: dict = {}
         if conn.source_type == "mcp":
             extra["mcp_transport_type"] = conn.mcp_transport_type or "stdio"
@@ -356,6 +454,11 @@ class ConnectionService:
                     extra["mcp_env"] = {}
 
         return ConnectionConfig(
+            # R1-7: carry the connection id so ``connector_key`` (R1-1) can use
+            # it as the credential discriminator — without it the key falls back
+            # to endpoint-only and two connections to the same host/db could
+            # share a pooled connector under the wrong credentials.
+            connection_id=conn.id,
             db_type=conn.db_type,
             db_host=conn.db_host,
             db_port=conn.db_port,

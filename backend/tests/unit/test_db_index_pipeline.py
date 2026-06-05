@@ -1,9 +1,12 @@
 """Unit tests for DbIndexPipeline helpers and sample query generation."""
 
+import asyncio
 import json
+import types
 
-from app.connectors.base import ColumnInfo, QueryResult, TableInfo
+from app.connectors.base import ColumnInfo, QueryResult, SchemaInfo, TableInfo
 from app.knowledge.db_index_pipeline import (
+    DbIndexPipeline,
     _build_distinct_query,
     _detect_latest_record,
     _find_ordering_column,
@@ -11,6 +14,7 @@ from app.knowledge.db_index_pipeline import (
     _sample_query,
     _sample_to_json,
 )
+from app.knowledge.db_index_validator import TableAnalysis
 
 
 class TestFindOrderingColumn:
@@ -290,3 +294,182 @@ class TestBuildDistinctQuery:
         )
         q = _build_distinct_query(table, "type", "postgres")
         assert '"analytics"."events"' in q
+
+
+def _make_db_index_entry(table_name: str, schema: str = "public", **kw):
+    """Lightweight stand-in for a DbIndex ORM row."""
+    defaults = dict(
+        table_name=table_name,
+        table_schema=schema,
+        is_active=True,
+        relevance_score=4,
+        business_description="reused desc",
+        data_patterns="reused patterns",
+        column_notes_json="{}",
+        query_hints="reused hints",
+        code_match_status="matched",
+        code_match_details="reused details",
+        numeric_format_notes="{}",
+    )
+    defaults.update(kw)
+    return types.SimpleNamespace(**defaults)
+
+
+class TestBuildReuseMap:
+    """R2-3: incremental reuse of LLM analysis for unchanged tables."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def _pipeline_with_stub(self, monkeypatch, *, prev_fp, entries, enabled=True):
+        pipeline = DbIndexPipeline()
+        summary = types.SimpleNamespace(schema_fingerprint=json.dumps(prev_fp))
+
+        async def _get_summary(session, connection_id):
+            return summary
+
+        async def _get_index(session, connection_id):
+            return entries
+
+        monkeypatch.setattr(pipeline._svc, "get_summary", _get_summary)
+        monkeypatch.setattr(pipeline._svc, "get_index", _get_index)
+
+        import app.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "db_index_incremental_enabled", enabled)
+        return pipeline
+
+    def _schema(self):
+        return SchemaInfo(
+            tables=[
+                TableInfo(
+                    name="users",
+                    schema="public",
+                    columns=[ColumnInfo(name="id", data_type="int")],
+                ),
+                TableInfo(
+                    name="orders",
+                    schema="public",
+                    columns=[ColumnInfo(name="id", data_type="int")],
+                ),
+            ]
+        )
+
+    def test_reuses_unchanged_tables(self, monkeypatch):
+        schema = self._schema()
+        new_fp = schema.fingerprint()
+        entries = [_make_db_index_entry("users"), _make_db_index_entry("orders")]
+        pipeline = self._pipeline_with_stub(monkeypatch, prev_fp=new_fp, entries=entries)
+
+        reuse = self._run(pipeline._build_reuse_map("conn1", new_fp))
+
+        assert set(reuse) == {"users", "orders"}
+        assert reuse["users"].business_description == "reused desc"
+
+    def test_changed_table_not_reused(self, monkeypatch):
+        schema = self._schema()
+        new_fp = schema.fingerprint()
+        prev_fp = dict(new_fp)
+        # mutate the signature for orders -> should not be reused
+        order_key = next(k for k in prev_fp if k.endswith("orders"))
+        prev_fp[order_key] = "deadbeef0000"
+        entries = [_make_db_index_entry("users"), _make_db_index_entry("orders")]
+        pipeline = self._pipeline_with_stub(monkeypatch, prev_fp=prev_fp, entries=entries)
+
+        reuse = self._run(pipeline._build_reuse_map("conn1", new_fp))
+
+        assert "users" in reuse
+        assert "orders" not in reuse
+
+    def test_disabled_returns_empty(self, monkeypatch):
+        schema = self._schema()
+        new_fp = schema.fingerprint()
+        entries = [_make_db_index_entry("users")]
+        pipeline = self._pipeline_with_stub(
+            monkeypatch, prev_fp=new_fp, entries=entries, enabled=False
+        )
+
+        reuse = self._run(pipeline._build_reuse_map("conn1", new_fp))
+
+        assert reuse == {}
+
+    def test_no_prior_fingerprint_returns_empty(self, monkeypatch):
+        schema = self._schema()
+        new_fp = schema.fingerprint()
+        entries = [_make_db_index_entry("users")]
+        pipeline = self._pipeline_with_stub(monkeypatch, prev_fp={}, entries=entries)
+
+        reuse = self._run(pipeline._build_reuse_map("conn1", new_fp))
+
+        assert reuse == {}
+
+
+class TestRecomputeReusedIsActive:
+    """R2-3 follow-up: a reused table's is_active is recomputed from fresh
+    samples (data presence), while its LLM analysis is preserved."""
+
+    @staticmethod
+    def _reused(is_active: bool, relevance: int = 4) -> TableAnalysis:
+        return TableAnalysis(
+            table_name="t",
+            is_active=is_active,
+            relevance_score=relevance,
+            business_description="reused desc",
+        )
+
+    def test_active_table_now_empty_becomes_inactive(self):
+        reused = self._reused(is_active=True)
+        out = DbIndexPipeline._recompute_reused_is_active(
+            reused,
+            fresh_sample=QueryResult(rows=[], row_count=0),
+            row_count=0,
+            sampling_failed=False,
+        )
+        assert out.is_active is False
+        # LLM analysis (relevance/description) is preserved.
+        assert out.relevance_score == 4
+        assert out.business_description == "reused desc"
+
+    def test_empty_table_now_has_rows_becomes_active(self):
+        reused = self._reused(is_active=False)
+        out = DbIndexPipeline._recompute_reused_is_active(
+            reused,
+            fresh_sample=QueryResult(rows=[[1]], row_count=1),
+            row_count=0,
+            sampling_failed=False,
+        )
+        assert out.is_active is True
+
+    def test_active_by_row_count_even_without_sample_rows(self):
+        reused = self._reused(is_active=False)
+        out = DbIndexPipeline._recompute_reused_is_active(
+            reused,
+            fresh_sample=QueryResult(rows=[], row_count=0),
+            row_count=500,
+            sampling_failed=False,
+        )
+        assert out.is_active is True
+
+    def test_failed_sampling_keeps_prior_is_active(self):
+        """A failed sample falsely looks empty — keep the prior value rather
+        than wrongly marking a live table inactive."""
+        reused = self._reused(is_active=True)
+        out = DbIndexPipeline._recompute_reused_is_active(
+            reused,
+            fresh_sample=QueryResult(rows=[], row_count=0),
+            row_count=0,
+            sampling_failed=True,
+        )
+        assert out.is_active is True
+        # Unchanged object returned when nothing is recomputed.
+        assert out is reused
+
+    def test_unchanged_value_returns_same_object(self):
+        reused = self._reused(is_active=True)
+        out = DbIndexPipeline._recompute_reused_is_active(
+            reused,
+            fresh_sample=QueryResult(rows=[[1]], row_count=1),
+            row_count=1,
+            sampling_failed=False,
+        )
+        assert out is reused

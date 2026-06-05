@@ -221,6 +221,24 @@ class ToolDispatcher:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _augment_question_with_error(base_question: str, errors: list[str]) -> str:
+        """Append prior-attempt error context to the SQL sub-question (R5-4).
+
+        Mirrors the stage pipeline's ``error_context`` injection so a retry
+        corrects the query instead of re-running the identical one.
+        """
+        if not errors:
+            return base_question
+        reason = "; ".join(str(e) for e in errors if e)
+        if not reason:
+            return base_question
+        return (
+            f"{base_question}\n\nPREVIOUS ATTEMPT FAILED: {reason}. "
+            "Re-examine the database schema (exact table and column names) and "
+            "produce a corrected query. Do not repeat the same query."
+        )
+
+    @staticmethod
     def format_sql_result_for_llm(
         result: SQLAgentResult,
         warnings: list[str] | None = None,
@@ -276,9 +294,14 @@ class ToolDispatcher:
         )
         sql_context = replace(context, chat_history=scoped_history)
 
+        # R5-4: on retry we feed the prior validation errors back into the
+        # question (the pipeline already does this) so the agent corrects the
+        # query instead of re-running the identical one.
+        effective_question = sub_question
+
         for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
             try:
-                _sd_sql: dict[str, Any] = {"input_preview": sub_question[:_PREVIEW_MAX]}
+                _sd_sql: dict[str, Any] = {"input_preview": effective_question[:_PREVIEW_MAX]}
                 async with self._tracker.step(
                     wf_id,
                     "orchestrator:sql_agent",
@@ -288,7 +311,7 @@ class ToolDispatcher:
                 ):
                     sql_result = await self._sql.run(
                         sql_context,
-                        question=sub_question,
+                        question=effective_question,
                         wall_clock_remaining=remaining_wall_seconds,
                     )
                     preview_parts = []
@@ -304,11 +327,29 @@ class ToolDispatcher:
                 _accum_usage(total_usage, sql_result.token_usage)
 
                 vr = self._validator.validate_sql_result(sql_result)
-                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
+                # R5-4: a suspicious empty result is a likely-wrong-query
+                # signal, but only treat it as retryable when policy allows.
+                qr = getattr(sql_result, "results", None)
+                empty_suspicious = (
+                    settings.query_empty_result_retry
+                    and qr is not None
+                    and getattr(qr, "row_count", 0) == 0
+                    and not getattr(qr, "error", None)
+                )
+                needs_retry = not vr.passed or empty_suspicious
+                if needs_retry and attempt < MAX_SUB_AGENT_RETRIES:
+                    retry_errors = list(vr.errors) or (
+                        ["Query returned zero rows — verify table/column names and filters"]
+                        if empty_suspicious
+                        else []
+                    )
                     logger.info(
-                        "SQL agent validation failed (attempt %d): %s",
+                        "SQL agent result needs retry (attempt %d): %s",
                         attempt + 1,
-                        vr.errors,
+                        retry_errors,
+                    )
+                    effective_question = self._augment_question_with_error(
+                        sub_question, retry_errors
                     )
                     continue
 
@@ -348,7 +389,11 @@ class ToolDispatcher:
     ) -> str:
         """Apply a data-processing operation to the last query result."""
         args = tc.arguments or {}
-        operation: str = args.get("operation", "")
+        # R5-8 parity: the unified stage path defaults a missing operation to
+        # ``passthrough`` (forward rows unchanged) rather than erroring out. Do
+        # the same here so a process_data call without an explicit operation
+        # forwards the rows instead of raising a ValueError.
+        operation: str = args.get("operation") or "passthrough"
 
         bucket = self._wf_sql_results.get(wf_id) or []
         wf_sql = bucket[-1] if bucket else None

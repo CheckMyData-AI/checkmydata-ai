@@ -402,12 +402,26 @@ async def refresh_schema(
             except Exception:
                 logger.debug("Rule schema validation skipped", exc_info=True)
 
+        # R2-2: a live re-introspection alone leaves the stored ``db_index``
+        # rows and BM25 schema retriever stale. If this connection has been
+        # indexed before, trigger a background re-index so the persisted
+        # schema knowledge tracks the refreshed live schema.
+        reindex_triggered = False
+        if known_tables:
+            try:
+                reindex_triggered = await _maybe_start_db_index(
+                    db, connection_id, config, conn.project_id
+                )
+            except Exception:
+                logger.debug("Auto-reindex after refresh-schema failed", exc_info=True)
+
         return {
             "ok": True,
             "tables": len(schema.tables),
             "db_type": schema.db_type,
             "learnings_validation": validation,
             "rules_issues": rules_issues,
+            "reindex_triggered": reindex_triggered,
         }
     except HTTPException:
         raise
@@ -435,6 +449,9 @@ async def index_database(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
+    config = await _svc.to_config(db, conn, user_id=user["user_id"])
+    project_id = conn.project_id
+
     idx_start_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
     async with idx_start_lock:
         existing = _db_index_tasks.get(connection_id)
@@ -450,9 +467,6 @@ async def index_database(
                 status_code=409,
                 detail="Database indexing already in progress for this connection",
             )
-
-        config = await _svc.to_config(db, conn, user_id=user["user_id"])
-        project_id = conn.project_id
 
         await _db_index_svc.set_indexing_status(db, connection_id, "running")
         await db.commit()
@@ -562,6 +576,52 @@ async def _regenerate_overview(project_id: str, connection_id: str | None = None
         logger.debug("Failed to regenerate project overview", exc_info=True)
 
 
+async def _maybe_start_db_index(
+    db: AsyncSession,
+    connection_id: str,
+    config: ConnectionConfig,
+    project_id: str,
+    *,
+    require_prior_index: bool = True,
+) -> bool:
+    """Start a background DB index run if one isn't already in flight.
+
+    Returns ``True`` when a new task was scheduled. Guarded by the same
+    per-connection start lock as the ``/index-db`` endpoint so concurrent
+    refresh + manual index requests can't double-start. When
+    ``require_prior_index`` is set (the refresh-schema path, R2-2) it only
+    re-indexes connections that already have a stored ``db_index``.
+    """
+    if require_prior_index:
+        try:
+            existing_entries = await _db_index_svc.get_index(db, connection_id)
+            if not existing_entries:
+                return False
+        except Exception:
+            logger.debug("Could not check existing db_index entries", exc_info=True)
+            return False
+
+    idx_start_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
+    async with idx_start_lock:
+        existing = _db_index_tasks.get(connection_id)
+        if existing and not existing.done():
+            return False
+
+        db_status = await _db_index_svc.get_indexing_status(db, connection_id)
+        if db_status == "running" and not (existing and existing.done()):
+            return False
+
+        await _db_index_svc.set_indexing_status(db, connection_id, "running")
+        await db.commit()
+
+        task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
+        task.add_done_callback(_log_task_error("DB index", connection_id))
+        _db_index_tasks[connection_id] = task
+
+    logger.info("Auto DB re-index started: connection=%s", connection_id[:8])
+    return True
+
+
 async def _run_db_index_background(
     connection_id: str,
     connection_config: ConnectionConfig,
@@ -590,12 +650,28 @@ async def _run_db_index_background(
             )
             final_status = "failed"
         else:
-            logger.info(
-                "DB index completed: connection=%s tables=%s",
-                connection_id[:8],
-                result.get("tables_indexed") if isinstance(result, dict) else "ok",
-            )
-            final_status = "completed"
+            is_partial = isinstance(result, dict) and result.get("partial")
+            if is_partial:
+                logger.warning(
+                    "DB index completed with PARTIAL evidence: connection=%s "
+                    "tables=%s sample_failures=%s distinct_failures=%s embed_failed=%s",
+                    connection_id[:8],
+                    result.get("tables"),
+                    result.get("sample_failures"),
+                    result.get("distinct_failures"),
+                    result.get("embed_failed"),
+                )
+                final_status = "completed_partial"
+            else:
+                logger.info(
+                    "DB index completed: connection=%s tables=%s",
+                    connection_id[:8],
+                    # R2-6: the pipeline returns the indexed-table count under
+                    # "tables" (see DbIndexPipeline.run); the old "tables_indexed"
+                    # key never existed, so this line always logged tables=None.
+                    result.get("tables") if isinstance(result, dict) else "ok",
+                )
+                final_status = "completed"
             await _regenerate_overview(project_id, connection_id)
             await _run_data_probes(
                 connection_id,

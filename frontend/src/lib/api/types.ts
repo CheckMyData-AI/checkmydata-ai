@@ -186,6 +186,10 @@ export interface UpdateCheck {
 
 export interface DbIndexStatus {
   is_indexed: boolean;
+  // R2-4: the index finished but with failed sampling / distinct-value /
+  // schema-embed evidence ("completed_partial"); empty-looking tables may be
+  // false negatives, so the UI warns instead of presenting it as trustworthy.
+  is_partial?: boolean;
   is_indexing?: boolean;
   indexing_status?: string;
   indexed_at?: string | null;

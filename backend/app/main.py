@@ -840,25 +840,15 @@ async def _health_check_loop() -> None:
             logger.warning("Health check loop error", exc_info=True)
 
         try:
-            for mod_path in (
-                "app.connectors.postgres",
-                "app.connectors.mysql",
-                "app.connectors.mongodb",
-                "app.connectors.clickhouse",
-            ):
-                try:
-                    mod = __import__(mod_path, fromlist=["_tunnel_mgr"])
-                    mgr = getattr(mod, "_tunnel_mgr", None)
-                    if mgr and hasattr(mgr, "cleanup_idle"):
-                        closed = await mgr.cleanup_idle()
-                        if closed:
-                            logger.info(
-                                "Cleaned up %d idle SSH tunnel(s) from %s",
-                                closed,
-                                mod_path,
-                            )
-                except Exception:
-                    logger.debug("Tunnel cleanup skipped for %s", mod_path, exc_info=True)
+            # Every connector module (`postgres`, `mysql`, `mongodb`,
+            # `clickhouse`) aliases the same `shared_tunnel_manager`, so the
+            # idle sweep must run exactly once — iterating per-module ran it 4x
+            # against one manager.
+            from app.connectors.ssh_tunnel import shared_tunnel_manager
+
+            closed = await shared_tunnel_manager.cleanup_idle()
+            if closed:
+                logger.info("Cleaned up %d idle SSH tunnel(s)", closed)
         except Exception:
             logger.debug("SSH tunnel idle cleanup failed", exc_info=True)
 
@@ -911,16 +901,18 @@ async def module_health(
 
     # SSH tunnels
     try:
-        tunnel_info = []
-        for mod_path in ("app.connectors.postgres", "app.connectors.mysql"):
-            try:
-                mod = __import__(mod_path, fromlist=["_tunnel_mgr"])
-                mgr = getattr(mod, "_tunnel_mgr", None)
-                if mgr:
-                    tunnel_info.append({"module": mod_path, "active_tunnels": len(mgr._tunnels)})
-            except Exception:
-                logger.debug("Tunnel introspection failed for %s", mod_path, exc_info=True)
-        results["ssh_tunnels"] = {"status": "ok", "detail": tunnel_info}
+        # R1-4: a single shared tunnel manager backs every connector, so we
+        # report the one true count instead of probing pg+mysql modules only.
+        from app.connectors.ssh_tunnel import shared_tunnel_manager
+
+        tunnel_keys = list(shared_tunnel_manager._tunnels.keys())
+        results["ssh_tunnels"] = {
+            "status": "ok",
+            "detail": {
+                "active_tunnels": shared_tunnel_manager.active_count,
+                "endpoints": tunnel_keys,
+            },
+        }
     except Exception:
         results["ssh_tunnels"] = {"status": "error", "detail": "Service unavailable"}
 

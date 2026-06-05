@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import Counter
+from collections import Counter, OrderedDict
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -213,17 +214,112 @@ def lessons_contradict(a: str, b: str) -> bool:
     return overlap >= _CONFLICT_OVERLAP_THRESHOLD
 
 
-_COMPILE_LOCKS: dict[str, asyncio.Lock] = {}
+# R4-5: a higher threshold for the same-polarity case — we only want to flag
+# lessons that clearly prescribe diverging values for the same subject, not
+# refinements of one another.
+_SAME_POLARITY_OVERLAP_THRESHOLD = 0.6
+
+# R4-3: a learning surfaced at least this many times with zero applications is
+# the strongest dead-weight signal; decay it fastest.
+_EXPOSED_UNUSED_CUTOFF = 5
+
+
+def lessons_conflict_same_polarity(a: str, b: str) -> bool:
+    """Detect *same-polarity* conflicts (R4-5).
+
+    ``lessons_contradict`` only catches opposite-polarity pairs ("always X" vs
+    "never X"). It misses the equally dangerous "use X" vs "use Y" case: same
+    polarity, same subject, but mutually-exclusive prescriptions. We flag those
+    when (a) both lessons share the same negation polarity, (b) they have
+    substantial shared content (so they're about the same thing), yet (c)
+    *neither token set is a subset of the other* — i.e. each contributes a
+    distinct prescription, so this is divergence rather than a refinement.
+
+    Callers scope this to same subject+category, so the overlap requirement is
+    primarily a guard against flagging unrelated lessons.
+    """
+    if _negation_parity(a) != _negation_parity(b):
+        return False
+    ca = _content_tokens(a)
+    cb = _content_tokens(b)
+    if not ca or not cb:
+        return False
+    # A pure refinement (one is a superset of the other) is not a conflict.
+    if ca <= cb or cb <= ca:
+        return False
+    overlap = len(ca & cb) / min(len(ca), len(cb))
+    distinct = bool((ca - cb) and (cb - ca))
+    return overlap >= _SAME_POLARITY_OVERLAP_THRESHOLD and distinct
+
+
+def lessons_conflict(a: str, b: str) -> bool:
+    """True when two lessons conflict by either opposite or same polarity."""
+    return lessons_contradict(a, b) or lessons_conflict_same_polarity(a, b)
+
+
+# R4-6: bound the per-connection compile-lock map. It was an unbounded dict
+# keyed by connection_id, so a process that touched many connections over its
+# lifetime leaked one lock per connection forever. Cap it and evict the oldest
+# idle lock when over capacity.
+#
+# Eviction must NOT drop a lock that has been handed out to a caller but not
+# yet acquired (``Lock.locked()`` is still False in that window): if it did, a
+# second caller for the same connection would create a *different* Lock object
+# and the two callers would compile concurrently, corrupting the cached
+# summary. We therefore refcount in-flight references and never evict an entry
+# with refs > 0. Idle entries (refs == 0, not locked) remain evictable.
+_COMPILE_LOCKS: OrderedDict[str, asyncio.Lock] = OrderedDict()
+_COMPILE_LOCK_REFS: dict[str, int] = {}
 _COMPILE_LOCKS_GUARD = asyncio.Lock()
+_COMPILE_LOCKS_MAX = 512
 
 
-async def _get_compile_lock(connection_id: str) -> asyncio.Lock:
+def _evict_idle_compile_locks(keep: str) -> None:
+    """Drop oldest idle (refs == 0, unlocked) locks while over capacity.
+
+    Caller must hold ``_COMPILE_LOCKS_GUARD``. ``keep`` is never evicted.
+    """
+    if len(_COMPILE_LOCKS) <= _COMPILE_LOCKS_MAX:
+        return
+    for key in list(_COMPILE_LOCKS.keys()):
+        if key == keep:
+            continue
+        if _COMPILE_LOCK_REFS.get(key, 0) > 0 or _COMPILE_LOCKS[key].locked():
+            continue
+        del _COMPILE_LOCKS[key]
+        if len(_COMPILE_LOCKS) <= _COMPILE_LOCKS_MAX:
+            break
+
+
+@asynccontextmanager
+async def _compile_lock(connection_id: str):
+    """Acquire the per-connection compile lock, safe against cap eviction.
+
+    A reference is registered under the guard *before* the guard is released,
+    so the entry cannot be evicted between hand-out and acquisition. This
+    guarantees every caller for the same ``connection_id`` shares one Lock
+    object and compilation stays serialized.
+    """
     async with _COMPILE_LOCKS_GUARD:
         lock = _COMPILE_LOCKS.get(connection_id)
         if lock is None:
             lock = asyncio.Lock()
             _COMPILE_LOCKS[connection_id] = lock
-        return lock
+        else:
+            _COMPILE_LOCKS.move_to_end(connection_id)
+        _COMPILE_LOCK_REFS[connection_id] = _COMPILE_LOCK_REFS.get(connection_id, 0) + 1
+        _evict_idle_compile_locks(keep=connection_id)
+
+    try:
+        async with lock:
+            yield
+    finally:
+        async with _COMPILE_LOCKS_GUARD:
+            remaining = _COMPILE_LOCK_REFS.get(connection_id, 0) - 1
+            if remaining <= 0:
+                _COMPILE_LOCK_REFS.pop(connection_id, None)
+            else:
+                _COMPILE_LOCK_REFS[connection_id] = remaining
 
 
 class AgentLearningService:
@@ -396,21 +492,27 @@ class AgentLearningService:
 
         new_is_outranked = False
         for old in existing:
-            if not lessons_contradict(new_lesson, old.lesson):
+            # R4-5: catch same-polarity divergence ("use X" vs "use Y") in
+            # addition to opposite-polarity contradictions.
+            if not lessons_conflict(new_lesson, old.lesson):
                 continue
 
-            if old.confidence <= new_confidence:
+            # R4-5: keep the incumbent on a confidence tie. Only a *strictly*
+            # more confident new lesson supersedes the existing one; equal
+            # confidence leaves the established learning in place and stores
+            # the newcomer inactive.
+            if old.confidence < new_confidence:
                 old.is_active = False
                 old.updated_at = datetime.now(UTC)
                 logger.info(
                     "Deactivated conflicting learning %s "
-                    "(superseded by newer, >= confidence lesson)",
+                    "(superseded by strictly more confident lesson)",
                     old.id,
                 )
             else:
                 new_is_outranked = True
                 logger.info(
-                    "New lesson outranked by existing higher-confidence "
+                    "New lesson outranked by existing >= confidence "
                     "conflicting learning %s; storing new one inactive",
                     old.id,
                 )
@@ -722,18 +824,32 @@ class AgentLearningService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _priority_score(lrn: AgentLearning) -> float:
-        """Composite score for ordering learnings in the prompt.
+    def priority_score(lrn: AgentLearning) -> float:
+        """Canonical composite rank for a learning (R4-4: single source).
 
-        Combines confidence (0-1), confirmation count (log-scaled),
-        and application count (log-scaled) into a single rank.
+        Combines confidence (0-1), confirmation count (log-scaled), and
+        application count (log-scaled) into a single rank. R4-3: learnings that
+        have been repeatedly surfaced to the LLM (``times_exposed``) but never
+        provably applied (``times_applied``) are dead weight — they earn a
+        small penalty so proven learnings out-rank perennial no-ops.
+
+        This is THE ranking function for every surface (prompt compilation,
+        orchestrator context loader, cost estimation). Do not reimplement an
+        ad-hoc ``(times_confirmed, confidence)`` ordering elsewhere.
         """
         import math as _math
 
         conf_part = lrn.confidence * 0.4
         confirmed_part = _math.log1p(lrn.times_confirmed) * 0.4
         applied_part = _math.log1p(lrn.times_applied) * 0.2
-        return conf_part + confirmed_part + applied_part
+        # Exposed-but-unapplied penalty: only the surplus exposures over
+        # applications count, kept small so it breaks ties rather than dominates.
+        unused_exposure = max(0, (lrn.times_exposed or 0) - (lrn.times_applied or 0))
+        exposure_penalty = _math.log1p(unused_exposure) * 0.05
+        return conf_part + confirmed_part + applied_part - exposure_penalty
+
+    # Backwards-compatible alias (kept so existing callers/tests don't break).
+    _priority_score = priority_score
 
     async def compile_prompt(
         self,
@@ -749,8 +865,7 @@ class AgentLearningService:
         ``get_or_compile_summary``), waiters that arrive after the lock holder
         finishes will see the freshly cached prompt and return immediately.
         """
-        lock = await _get_compile_lock(connection_id)
-        async with lock:
+        async with _compile_lock(connection_id):
             if not force:
                 cached = await session.execute(
                     select(AgentLearningSummary).where(
@@ -763,19 +878,32 @@ class AgentLearningService:
 
             return await self._compile_prompt_locked(session, connection_id)
 
+    async def get_prompt_learnings(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+    ) -> list[AgentLearning]:
+        """Return the exact learnings that feed the compiled prompt.
+
+        R4-1: single source of truth for *which* learnings are surfaced to
+        the LLM, so the preloaded path can attribute feedback to them
+        (``exposed_learning_ids`` / ``times_exposed``) instead of leaving the
+        signal inert.
+        """
+        learnings = await self.get_learnings(
+            session, connection_id, min_confidence=0.5, active_only=True
+        )
+        learnings.sort(key=self._priority_score, reverse=True)
+        return learnings[:30]
+
     async def _compile_prompt_locked(
         self,
         session: AsyncSession,
         connection_id: str,
     ) -> str:
-        learnings = await self.get_learnings(
-            session, connection_id, min_confidence=0.5, active_only=True
-        )
+        learnings = await self.get_prompt_learnings(session, connection_id)
         if not learnings:
             return ""
-
-        learnings.sort(key=self._priority_score, reverse=True)
-        learnings = learnings[:30]
 
         by_category: dict[str, list[AgentLearning]] = {}
         for lrn in learnings:
@@ -1065,8 +1193,10 @@ class AgentLearningService:
 
         Called periodically (e.g. daily).  Learnings not updated in >30 days
         lose confidence:
-        - -0.05 if never applied (times_applied == 0) — faster cleanup
         - -0.02 if previously applied — slower decay for proven learnings
+        - -0.05 if never applied (times_applied == 0) — faster cleanup
+        - -0.08 if surfaced many times but never applied (R4-3) — these are
+          proven dead weight (the LLM keeps seeing them and never uses them)
         Those below 0.2 are deactivated.
         Returns the number of affected rows.
         """
@@ -1087,8 +1217,15 @@ class AgentLearningService:
         affected_connections: set[str] = set()
         affected = 0
 
+        # R4-3: "surfaced often, never applied" is the strongest dead-weight
+        # signal — decay it fastest so it falls below the 0.2 cutoff sooner.
         for lrn in stale:
-            penalty = 0.02 if lrn.times_applied > 0 else 0.05
+            if lrn.times_applied > 0:
+                penalty = 0.02
+            elif (lrn.times_exposed or 0) >= _EXPOSED_UNUSED_CUTOFF:
+                penalty = 0.08
+            else:
+                penalty = 0.05
             lrn.confidence = max(0.0, round(lrn.confidence - penalty, 4))
             affected += 1
             affected_connections.add(lrn.connection_id)

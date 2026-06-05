@@ -296,3 +296,64 @@ def test_code_graph_members_of():
     g = CodeGraph(symbols=[cls, method, other], edges=[])
     members = g.members_of(cls.uid)
     assert [s.name for s in members] == ["m"]
+
+
+# ---------------------------------------------------------------------------
+# Incremental merge: dangling-edge pruning (R3-1)
+# ---------------------------------------------------------------------------
+
+
+def _sym(uid: str, file_path: str, name: str = "s") -> Symbol:
+    return Symbol(
+        uid=uid,
+        kind="function",
+        name=name,
+        file_path=file_path,
+        start_line=1,
+        end_line=2,
+    )
+
+
+def test_prune_dangling_edges_drops_unresolved_endpoints():
+    from app.services.code_graph_service import CodeGraphService
+
+    a = _sym("py:a:function:a:1", "a.py", "a")
+    b = _sym("py:b:function:b:1", "b.py", "b")
+    edges = [
+        # both endpoints resolve — keep
+        GraphEdge(src_uid=a.uid, dst_uid=b.uid, edge_type=EDGE_CALLS, confidence=1.0),
+        # dangling dst — drop
+        GraphEdge(src_uid=a.uid, dst_uid="py:gone:function:x:9", edge_type=EDGE_CALLS),
+        # dangling src (non-file) — drop
+        GraphEdge(src_uid="py:gone:function:y:9", dst_uid=b.uid, edge_type=EDGE_CALLS),
+        # file: pseudo-source IMPORTS edge with resolved dst — keep
+        GraphEdge(src_uid="file:a.py", dst_uid=b.uid, edge_type=EDGE_IMPORTS, confidence=1.0),
+        # file: pseudo-source but dangling dst — drop
+        GraphEdge(src_uid="file:a.py", dst_uid="py:gone:function:z:9", edge_type=EDGE_IMPORTS),
+    ]
+    kept = CodeGraphService._prune_dangling_edges([a, b], edges)
+    kept_pairs = {(e.src_uid, e.dst_uid) for e in kept}
+    assert kept_pairs == {(a.uid, b.uid), ("file:a.py", b.uid)}
+
+
+def test_merge_graphs_prunes_edges_to_renamed_symbol():
+    """An edge from an unchanged file to a symbol that vanished in a changed
+    file must not survive the merge."""
+    from app.services.code_graph_service import CodeGraphService
+
+    # unchanged file a.py calls old symbol in changed file b.py
+    a = _sym("py:a:function:caller:1", "a.py", "caller")
+    b_old = _sym("py:b:function:old:1", "b.py", "old")
+    existing = CodeGraph(
+        symbols=[a, b_old],
+        edges=[GraphEdge(src_uid=a.uid, dst_uid=b_old.uid, edge_type=EDGE_CALLS, confidence=1.0)],
+    )
+    # b.py reindexed: old symbol renamed to new
+    b_new = _sym("py:b:function:new:1", "b.py", "new")
+    new_graph = CodeGraph(symbols=[b_new], edges=[])
+
+    merged = CodeGraphService._merge_graphs(existing, new_graph, {"b.py"})
+
+    assert set(merged.symbols.keys()) == {a.uid, b_new.uid}
+    # the stale edge a->old must have been pruned
+    assert merged.edges == []

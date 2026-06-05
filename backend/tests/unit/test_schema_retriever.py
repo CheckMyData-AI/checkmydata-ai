@@ -20,12 +20,13 @@ def _make_entry(
     query_hints: str = "",
     relevance_score: int = 3,
     is_active: bool = True,
+    table_schema: str = "public",
 ) -> DbIndex:
     return DbIndex(
-        id=f"id-{table_name}",
+        id=f"id-{table_schema}-{table_name}",
         connection_id="conn-1",
         table_name=table_name,
-        table_schema="public",
+        table_schema=table_schema,
         column_count=len(column_notes or {}),
         row_count=100,
         sample_data_json="[]",
@@ -270,6 +271,42 @@ def test_indexed_sha_freshness_changes_on_rebuild(schema_dir):
     # The freshness signal travels through BM25Index._sha_path which is unit-
     # tested in test_bm25_index.py — here we just confirm rebuild succeeds.
     assert retriever.has_index("conn-f") is True
+
+
+def test_same_table_name_across_schemas_both_indexed(schema_dir):
+    """R2-6: identical table names in different schemas must not collide.
+
+    The BM25 doc id is schema-qualified, so ``public.users`` and
+    ``analytics.users`` produce distinct docs instead of one overwriting the
+    other. Both must remain retrievable.
+    """
+    retriever = SchemaRetriever(data_dir=schema_dir)
+    entries = [
+        _make_entry(
+            table_name="users",
+            table_schema="public",
+            business_description="application login accounts and profiles",
+        ),
+        _make_entry(
+            table_name="users",
+            table_schema="analytics",
+            business_description="warehouse user dimension for reporting metrics",
+        ),
+        _make_entry(
+            table_name="orders",
+            business_description="customer purchase orders",
+        ),
+    ]
+    retriever.build("conn-multi", indexed_sha="sha-1", entries=entries)
+
+    # Both "users" docs survived the build (no silent overwrite): a query that
+    # hits the analytics-specific wording surfaces a users hit, and so does the
+    # app-login wording.
+    analytics_hits = retriever.query("conn-multi", "warehouse reporting metrics", k=5)
+    assert any(h["metadata"]["table_name"] == "users" for h in analytics_hits)
+
+    login_hits = retriever.query("conn-multi", "application login accounts", k=5)
+    assert any(h["metadata"]["table_name"] == "users" for h in login_hits)
 
 
 def test_indexes_entries_with_only_table_name(schema_dir):

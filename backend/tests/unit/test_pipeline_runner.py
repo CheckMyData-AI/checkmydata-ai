@@ -300,3 +300,127 @@ class TestIncrementalDocSkipping:
 
         to_check = [d for d in all_docs if d in changed_set or d == "__project_summary__"]
         assert "__project_summary__" in to_check
+
+
+class TestRecoverDeletionsOnFallback:
+    """R3-4: when the incremental diff degrades to a full re-list (deleted=[]),
+    deletions are recovered by diffing known doc paths vs the current tree."""
+
+    def test_recovers_paths_no_longer_present(self):
+        recovered = IndexingPipelineRunner._recover_deletions_on_fallback(
+            current_files=["a.py", "b.py"],
+            known_doc_paths={"a.py", "b.py", "gone.py", "also_gone.py"},
+        )
+        assert recovered == ["also_gone.py", "gone.py"]
+
+    def test_nothing_recovered_when_all_present(self):
+        recovered = IndexingPipelineRunner._recover_deletions_on_fallback(
+            current_files=["a.py", "b.py", "c.py"],
+            known_doc_paths={"a.py", "b.py"},
+        )
+        assert recovered == []
+
+    def test_existing_binaries_in_relist_are_not_flagged(self):
+        # The fallback re-list includes every blob (incl. binaries that have no
+        # doc), so a still-present file is never treated as deleted.
+        recovered = IndexingPipelineRunner._recover_deletions_on_fallback(
+            current_files=["a.py", "logo.png"],
+            known_doc_paths={"a.py"},
+        )
+        assert recovered == []
+
+
+class TestGraphBuildPreservesFailedParseSymbols:
+    """R3-3: a changed file whose AST parse failed must NOT have its existing
+    graph symbols purged on an incremental merge."""
+
+    def _make_runner(self) -> IndexingPipelineRunner:
+        return IndexingPipelineRunner(
+            ssh_key_svc=MagicMock(),
+            git_tracker=MagicMock(),
+            repo_analyzer=MagicMock(),
+            doc_store=MagicMock(),
+            doc_generator=MagicMock(),
+            vector_store=MagicMock(),
+            cache_svc=MagicMock(),
+            checkpoint_svc=MagicMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_partial_parse_failure_excludes_failed_file_from_purge(self):
+        runner = self._make_runner()
+        state = _PipelineState()
+        state.changed_files = ["good.py", "broken.py"]
+        state.deleted_files = ["removed.py"]
+        state.ast_failed_files = {"broken.py"}
+        state.parsed_files = {"good.py": MagicMock()}
+
+        built_graph = MagicMock()
+        built_graph.symbols = [MagicMock()]  # good.py produced symbols
+
+        captured: dict = {}
+
+        class _Svc:
+            async def save_incremental(self, db, project_id, graph, affected_files):
+                captured["affected"] = affected_files
+                return (1, 1)
+
+            async def load_graph(self, db, project_id):
+                return built_graph
+
+        with (
+            patch("app.knowledge.pipeline_runner.CodeGraphBuilder") as mock_builder,
+            patch("app.knowledge.pipeline_runner.CodeGraphService", _Svc),
+            patch(
+                "app.knowledge.pipeline_runner.asyncio.to_thread",
+                new=AsyncMock(return_value=built_graph),
+            ),
+            patch("app.core.workflow_tracker.tracker") as mock_tracker,
+        ):
+            mock_builder.return_value = MagicMock()
+            mock_tracker.emit = AsyncMock()
+            await runner._run_graph_build(state, "wf-1", AsyncMock(), "proj-1", is_full=False)
+
+        # broken.py is excluded; good.py and the deletion are reconciled.
+        assert captured["affected"] == {"good.py", "removed.py"}
+
+    @pytest.mark.asyncio
+    async def test_failed_file_never_in_affected_set_so_symbols_survive(self):
+        """Even when only failed files changed, the failed path stays out of the
+        affected (purge) set so its last-good symbols are never dropped."""
+        runner = self._make_runner()
+        state = _PipelineState()
+        state.changed_files = ["broken.py"]
+        state.deleted_files = []
+        state.ast_failed_files = {"broken.py"}
+        state.parsed_files = {"broken.py": MagicMock()}
+
+        built_graph = MagicMock()
+        built_graph.symbols = []  # nothing parsed cleanly
+
+        captured: dict = {"affected": None}
+
+        class _Svc:
+            async def save_incremental(self, db, project_id, graph, affected_files):
+                captured["affected"] = affected_files
+                return (0, 0)
+
+            async def load_graph(self, db, project_id):
+                return built_graph
+
+        with (
+            patch("app.knowledge.pipeline_runner.CodeGraphBuilder") as mock_builder,
+            patch("app.knowledge.pipeline_runner.CodeGraphService", _Svc),
+            patch(
+                "app.knowledge.pipeline_runner.asyncio.to_thread",
+                new=AsyncMock(return_value=built_graph),
+            ),
+            patch("app.core.workflow_tracker.tracker") as mock_tracker,
+        ):
+            mock_builder.return_value = MagicMock()
+            mock_tracker.emit = AsyncMock()
+            await runner._run_graph_build(state, "wf-1", AsyncMock(), "proj-1", is_full=False)
+
+        # broken.py is excluded from the purge set → its symbols are preserved.
+        assert captured["affected"] is not None
+        assert "broken.py" not in captured["affected"]

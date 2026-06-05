@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
 from app.models.project import Project
+from app.models.repository import ProjectRepository
 from app.models.ssh_key import SshKey
 from app.services.encryption import decrypt, encrypt
 
@@ -135,5 +136,14 @@ class SshKeyService:
         )
         for (name,) in conn_result:
             refs.append(f"connection:{name}")
+
+        # R1-6: project_repositories also reference ssh_keys (FK SET NULL). If
+        # omitted here, deleting an in-use key silently un-links repos and
+        # breaks their next indexing run. Include them so the key is protected.
+        repo_result = await session.execute(
+            select(ProjectRepository.name).where(ProjectRepository.ssh_key_id == key_id)
+        )
+        for (name,) in repo_result:
+            refs.append(f"repository:{name}")
 
         return refs

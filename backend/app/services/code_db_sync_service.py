@@ -327,6 +327,17 @@ class CodeDbSyncService:
         else:
             parts.append("## Code-DB Sync\n")
 
+        # R2-5: a DB re-index (or code change) marks the sync "stale" but does
+        # not re-run it. Surface that explicitly so the agent treats the
+        # code↔DB mapping below as a hint that may lag the live schema rather
+        # than as ground truth.
+        if summary and getattr(summary, "sync_status", None) == "stale":
+            parts.append(
+                "> ⚠️ **Stale:** the database or codebase changed since this "
+                "code-DB analysis ran. Treat the mappings below as approximate "
+                "and verify against the live schema before relying on them.\n"
+            )
+
         if summary and summary.global_notes:
             parts.append("### Project Data Overview\n")
             parts.append(summary.global_notes)

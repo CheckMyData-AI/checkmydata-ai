@@ -133,7 +133,9 @@ class TestGetChangedFiles:
         assert "foo.py" not in result.changed
         assert "bar.py" not in result.deleted
 
-    def test_diff_exception_falls_back_to_full_index(self, tracker):
+    def test_diff_exception_falls_back_to_full_index(self, tracker, monkeypatch):
+        # R3-4: keep retries fast in tests.
+        monkeypatch.setattr(GitTracker, "_DIFF_RETRY_DELAY_S", 0)
         blob = MagicMock()
         blob.type = "blob"
         blob.path = "fallback.py"
@@ -154,6 +156,62 @@ class TestGetChangedFiles:
 
         assert "fallback.py" in result.changed
         assert result.deleted == []
+        # R3-4: transient fallback records the error
+        assert result.diff_error == "bad diff"
+        # retried the configured number of times
+        assert mock_commit_from.diff.call_count == GitTracker._DIFF_RETRIES
+
+    def test_transient_diff_error_retries_then_succeeds(self, tracker, monkeypatch):
+        """R3-4: a transient diff error is retried; success on retry yields a
+        normal incremental diff (no fallback, no diff_error)."""
+        monkeypatch.setattr(GitTracker, "_DIFF_RETRY_DELAY_S", 0)
+
+        entry = MagicMock()
+        entry.deleted_file = False
+        entry.change_type = "M"
+        entry.a_path = "src/x.py"
+        entry.b_path = "src/x.py"
+
+        mock_commit_from = MagicMock()
+        mock_commit_from.diff.side_effect = [OSError("flaky"), [entry]]
+
+        mock_repo = MagicMock()
+        mock_repo.commit.side_effect = lambda sha: mock_commit_from if sha == "old" else MagicMock()
+
+        with patch("app.knowledge.git_tracker.Repo", return_value=mock_repo):
+            result = tracker.get_changed_files(Path("/repo"), "old", "new")
+
+        assert result.changed == ["src/x.py"]
+        assert result.diff_error is None
+        assert mock_commit_from.diff.call_count == 2
+
+    def test_missing_base_commit_no_retry(self, tracker, monkeypatch):
+        """R3-4: an unresolvable base commit is NOT retried and falls back to a
+        full index without flagging a transient diff_error."""
+        from git.exc import BadName
+
+        monkeypatch.setattr(GitTracker, "_DIFF_RETRY_DELAY_S", 0)
+        blob = MagicMock()
+        blob.type = "blob"
+        blob.path = "full.py"
+
+        mock_commit_to = MagicMock()
+        mock_commit_to.tree.traverse.return_value = [blob]
+
+        def _commit(sha):
+            if sha == "missing":
+                raise BadName("missing")
+            return mock_commit_to
+
+        mock_repo = MagicMock()
+        mock_repo.commit.side_effect = _commit
+
+        with patch("app.knowledge.git_tracker.Repo", return_value=mock_repo):
+            result = tracker.get_changed_files(Path("/repo"), "missing", "new")
+
+        assert "full.py" in result.changed
+        # intentional full reindex, not a transient failure
+        assert result.diff_error is None
 
 
 class TestGetLastIndexedSha:

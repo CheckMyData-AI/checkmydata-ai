@@ -82,6 +82,10 @@ class _PipelineState:
     parsed_files: dict[str, ParsedFile] = field(default_factory=dict)
     ast_unsupported_count: int = 0
     ast_skipped_count: int = 0
+    # R3-3: changed files whose AST parse failed this run (raised, or produced
+    # parse_errors). Their existing graph symbols must NOT be purged on an
+    # incremental merge — keep the last-good symbols until a clean parse.
+    ast_failed_files: set[str] = field(default_factory=set)
     # M2: code knowledge graph built from parsed files.
     code_graph: CodeGraph | None = None
     # Repo-relative paths whose LLM doc generation still failed after retry in
@@ -240,6 +244,29 @@ class IndexingPipelineRunner:
                 )
                 state.changed_files = diff.changed
                 state.deleted_files = diff.deleted
+                # R3-4: a transient diff failure degrades to a full re-list
+                # (every current blob in ``changed``) with ``deleted=[]``, so
+                # files removed since the last index would never be cleaned up.
+                # Recover deletions by diffing the known doc paths against the
+                # current tree. ``diff_error is None`` for clean diffs and for
+                # the intentional missing-base full index (first-run / GC'd
+                # base), where there is nothing reliable to diff against.
+                if diff.diff_error and state.last_sha:
+                    known_docs = await self._doc_store.get_docs_for_project(db, project_id)
+                    known_paths = {d.source_path for d in known_docs if d.source_path}
+                    recovered = self._recover_deletions_on_fallback(
+                        current_files=diff.changed,
+                        known_doc_paths=known_paths,
+                    )
+                    if recovered:
+                        state.deleted_files = sorted(set(state.deleted_files) | set(recovered))
+                        logger.warning(
+                            "detect_changes: diff fell back to full re-list (%s); "
+                            "recovered %d deletion(s) by diffing %d known doc paths",
+                            diff.diff_error,
+                            len(recovered),
+                            len(known_paths),
+                        )
             await tracker.emit(
                 wf_id,
                 "detect_changes",
@@ -381,6 +408,11 @@ class IndexingPipelineRunner:
                 "completed",
                 "No file changes detected since last index, skipping doc generation",
             )
+            # R3-6: a no-op exit historically skipped the BM25 step entirely,
+            # so a missing/stale snapshot (deleted .pkl, crashed prior build,
+            # or sha drift) would never self-heal and the hybrid retriever
+            # would degrade silently to dense-only. Verify + repair here.
+            await self._repair_bm25_if_stale(db, project_id, state.head_sha, wf_id)
             return await self._record_and_finish(
                 project_id=project_id,
                 project=project,
@@ -880,10 +912,18 @@ class IndexingPipelineRunner:
                         edoc.file_path,
                     )
                     skipped += 1
-                    pending_paths.append(edoc.file_path)
-                    if len(pending_paths) >= batch_flush_size:
-                        await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
-                        pending_paths = []
+                    # R3-7: ``_is_binary_content`` is a >30%-non-printable
+                    # heuristic, and genuine binaries were already pre-filtered
+                    # upstream, so a hit here is most likely a false positive
+                    # (e.g. heavy-unicode source). Queue it for regeneration so
+                    # it gets one more attempt on the next run instead of being
+                    # silently lost until someone forces a full re-index.
+                    if edoc.file_path not in state.failed_doc_paths:
+                        state.failed_doc_paths.append(edoc.file_path)
+                    # R3-7: do NOT checkpoint a binary skip as processed. It
+                    # produced no doc and is queued for retry, so a resumed run
+                    # (and the next full run via failed_doc_paths) must attempt
+                    # it again rather than treating it as completed.
                     continue
 
                 if edoc.file_path == "__project_summary__":
@@ -1117,7 +1157,12 @@ class IndexingPipelineRunner:
 
             # Remember which paths still have no LLM content so the next run
             # re-queues them (see the re-queue block after detect_changes).
-            state.failed_doc_paths = [edoc.file_path for edoc, _ in still_failed]
+            # R3-7: union (don't overwrite) so binary-skipped paths appended in
+            # Phase 1 above survive to persistence; overwriting dropped them and
+            # silently negated the binary re-queue fix.
+            state.failed_doc_paths = sorted(
+                set(state.failed_doc_paths) | {edoc.file_path for edoc, _ in still_failed}
+            )
 
             if total_llm_tasks > 0 and still_failed:
                 failure_ratio = len(still_failed) / total_llm_tasks
@@ -1233,6 +1278,43 @@ class IndexingPipelineRunner:
             )
             return False
 
+    async def _repair_bm25_if_stale(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        head_sha: str,
+        wf_id: str,
+    ) -> None:
+        """Rebuild the BM25 snapshot if missing or out of sync with *head_sha*.
+
+        R3-6: called on the no-change early-exit path so a deleted/corrupt/
+        stale ``.pkl`` self-heals instead of silently degrading the hybrid
+        retriever to dense-only. No-op when hybrid retrieval is disabled or the
+        snapshot already matches the current head.
+        """
+        if not settings.hybrid_retrieval_enabled:
+            return
+        try:
+            bm25 = BM25Index(settings.bm25_data_dir)
+            current_sha = await asyncio.to_thread(bm25.indexed_sha, project_id)
+            if current_sha == head_sha:
+                return
+            logger.warning(
+                "BM25 snapshot stale on no-op run (project=%s have=%s want=%s); repairing",
+                project_id[:8],
+                current_sha,
+                head_sha,
+            )
+            await tracker.emit(
+                wf_id,
+                "bm25_build",
+                "started",
+                "BM25 snapshot missing/stale on no-op run — repairing",
+            )
+            await self._run_bm25_build(db, project_id, head_sha, wf_id)
+        except Exception:
+            logger.debug("BM25 staleness repair check failed", exc_info=True)
+
     @staticmethod
     async def _collect_files_for_ast(
         repo_dir: Path,
@@ -1312,6 +1394,9 @@ class IndexingPipelineRunner:
                     parsed = await asyncio.to_thread(parser.parse_file, repo_root, rel_path)
                 except Exception as exc:
                     errors += 1
+                    # R3-3: a hard parse failure on a changed file — preserve
+                    # its last-good symbols rather than purging on merge.
+                    state.ast_failed_files.add(rel_path)
                     logger.debug("ast_parse: %s raised %s", rel_path, exc, exc_info=True)
                     return
             if parsed is None:
@@ -1319,6 +1404,9 @@ class IndexingPipelineRunner:
                 return
             if parsed.parse_errors:
                 skipped += 1
+                # R3-3: a syntactically broken file yields partial/zero symbols;
+                # treat it as a parse failure so we don't drop its known symbols.
+                state.ast_failed_files.add(rel_path)
                 # Keep the record so the graph builder can see attempted files;
                 # downstream consumers gate on symbols/imports presence.
             state.parsed_files[rel_path] = parsed
@@ -1354,6 +1442,23 @@ class IndexingPipelineRunner:
             f"{total_imports} imports ({unsupported} unsupported, {skipped} skipped)",
         )
 
+    @staticmethod
+    def _recover_deletions_on_fallback(
+        *,
+        current_files: list[str],
+        known_doc_paths: set[str],
+    ) -> list[str]:
+        """R3-4: when the incremental git diff degrades to a full re-list,
+        deletions are lost (``deleted=[]``). Recover them by diffing the
+        previously-indexed doc paths against the current full tree: any known
+        doc whose source path is no longer present was deleted.
+
+        ``current_files`` is the full blob list from the fallback re-list, so
+        files that still exist (including binaries) are never flagged.
+        """
+        current = set(current_files)
+        return sorted(p for p in known_doc_paths if p not in current)
+
     async def _run_graph_build(
         self,
         state: _PipelineState,
@@ -1388,7 +1493,42 @@ class IndexingPipelineRunner:
                 state.code_graph = graph
                 sym_count, edge_count = await svc.save(db, project_id, graph)
             else:
-                affected_files = set(state.changed_files) | set(state.deleted_files)
+                changed = set(state.changed_files)
+                deleted = set(state.deleted_files)
+                # R3-3: a changed file whose AST parse failed this run produced
+                # no (or partial) symbols. Purging it on merge would wrongly
+                # drop its last-good symbols, so exclude it from the affected
+                # set — its existing graph rows are preserved until a clean
+                # parse reconciles them. Deletions are always purged.
+                failed = state.ast_failed_files & changed
+                reconciled_changed = changed - failed
+                # If *every* changed file failed to parse, skip the merge
+                # entirely and keep the last-good graph (a later run retries).
+                if not graph.symbols and reconciled_changed:
+                    logger.warning(
+                        "graph_build: incremental build produced 0 symbols for %d "
+                        "cleanly-changed file(s) (likely parse failure); skipping merge "
+                        "to preserve graph",
+                        len(reconciled_changed),
+                    )
+                    merged = await svc.load_graph(db, project_id)
+                    state.code_graph = merged if merged is not None else graph
+                    await tracker.emit(
+                        wf_id,
+                        "graph_build",
+                        "skipped",
+                        "Incremental graph build produced no symbols (parse failure?); "
+                        "kept existing graph",
+                    )
+                    return
+                if failed:
+                    logger.info(
+                        "graph_build: preserving symbols for %d changed file(s) that "
+                        "failed to parse this run: %s",
+                        len(failed),
+                        sorted(failed)[:5],
+                    )
+                affected_files = reconciled_changed | deleted
                 sym_count, edge_count = await svc.save_incremental(
                     db, project_id, graph, affected_files
                 )
@@ -1514,7 +1654,16 @@ class IndexingPipelineRunner:
                 pending = (set(prior_failed) - requeued) | still_failed
                 await self._cache_svc.set_failed_doc_paths(db, project_id, sorted(pending))
             except Exception:
-                logger.debug("Failed to persist doc regeneration queue", exc_info=True)
+                # R3-7: this was a debug-level swallow, so a failure to persist
+                # the regeneration queue meant failed docs silently never got
+                # retried with no visible signal. Surface it at warning level
+                # (still non-fatal: the index commit itself already succeeded).
+                logger.warning(
+                    "Failed to persist doc regeneration queue for project %s; "
+                    "failed docs may not be retried on the next run",
+                    project_id[:8],
+                    exc_info=True,
+                )
 
             if state.changed_files:
                 await tracker.emit(
