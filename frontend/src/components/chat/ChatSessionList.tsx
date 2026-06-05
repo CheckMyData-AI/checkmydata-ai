@@ -75,6 +75,8 @@ const SessionItem = memo(function SessionItem({
       onClick={() => onSelect(session.id)}
       role="button"
       tabIndex={0}
+      aria-label={`Open session: ${session.title}`}
+      aria-current={isActive ? "true" : undefined}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();

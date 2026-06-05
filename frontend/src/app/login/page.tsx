@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { Icon } from "@/components/ui/Icon";
 import { LogoMark } from "@/components/ui/Logo";
+import { Spinner } from "@/components/ui/Spinner";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
@@ -110,7 +111,7 @@ export default function LoginPage() {
   if (restoring || user) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
-        <p className="text-sm text-text-muted animate-pulse">Loading...</p>
+        <Spinner />
       </div>
     );
   }
@@ -209,6 +210,11 @@ export default function LoginPage() {
               className={`${inputCls} ${mode === "register" && password.length > 0 && password.length < 8 ? "border-error focus:border-error focus:ring-error/30" : ""}`}
               aria-label="Password"
               aria-required="true"
+              aria-invalid={
+                mode === "register" && password.length > 0
+                  ? password.length < 8
+                  : undefined
+              }
             />
             {mode === "register" && password.length > 0 && password.length < 8 ? (
               <p className="text-[10px] text-error mt-1 px-1">

@@ -295,17 +295,17 @@ px-4 py-2.5 rounded-lg border text-xs shadow-lg
 animate-[slideIn_0.2s_ease-out] flex items-start gap-2
 ```
 
-**Semantic variants:**
+**Semantic variants** (defined in `ToastContainer.tsx`, fully tokenized):
 
 | Type | Classes |
 |------|---------|
-| `success` | `bg-emerald-900/90 border-emerald-700 text-emerald-200` |
-| `error` | `bg-red-900/90 border-red-700 text-red-200` |
-| `info` | `bg-zinc-800/90 border-zinc-600 text-zinc-200` |
+| `success` | `bg-success-muted border-success/30 text-success` |
+| `error` | `bg-error-muted border-error/30 text-error` |
+| `info` | `bg-surface-2/90 border-border-default text-text-primary` |
 
 Each toast has `role="alert"`, `aria-live="polite"`, and a dismiss button with `aria-label="Dismiss notification"`.
 
-> **Migration note:** toast colors use raw palette classes for the semi-transparent backgrounds. This is acceptable because the status variants need distinct hues beyond what the semantic tokens provide. If new toast types are added, follow the same `{hue}-900/90` + `{hue}-700` + `{hue}-200` pattern.
+> New toast types must follow the same pattern: `bg-{semantic}-muted` + `border-{semantic}/30` + `text-{semantic}`. Never use raw palette classes.
 
 ### 2.7 Status Dots
 
@@ -492,16 +492,17 @@ Some components still use raw Tailwind palette classes. The table below maps the
 
 ### 5.2 Components Needing Migration
 
-These components still use raw Tailwind classes where semantic tokens should be used:
+All previously flagged `ui/` components (`ConfirmModal`, `ToastContainer`, `Spinner`, `ChatInput`) have been migrated to semantic tokens. No outstanding raw-palette migrations remain in the shared component layer.
 
-| Component | File | Issue |
-|-----------|------|-------|
-| ConfirmModal | `components/ui/ConfirmModal.tsx` | Uses `bg-zinc-900`, `border-zinc-700`, `text-zinc-*` classes |
-| ToastContainer | `components/ui/ToastContainer.tsx` | Uses raw palette for status variants (acceptable, see 2.6) |
-| Spinner | `components/ui/Spinner.tsx` | Uses `border-zinc-600 border-t-zinc-300` |
-| ChatInput | `components/chat/ChatInput.tsx` | Uses `border-zinc-*`, `ring-zinc-*` |
+Known optional/tokenization follow-ups (acceptable as-is, not blocking):
 
-When touching these files, migrate them to semantic tokens.
+| Area | File | Note |
+|------|------|------|
+| Chart palette | `components/viz/ChartRenderer.tsx` | Chart.js color/grid/tick hex values duplicate theme colors; could be driven from CSS variables. |
+| Logo gradient | `components/ui/Logo.tsx` | SVG gradient stops hardcode brand hex; could read from `@theme`. |
+| On-accent text | various CTAs | `text-white` on accent buttons has no dedicated token; a `--color-on-accent` token could formalize it. |
+
+When touching these files, prefer migrating to CSS-variable-driven values.
 
 ---
 

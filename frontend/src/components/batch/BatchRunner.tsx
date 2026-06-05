@@ -6,6 +6,7 @@ import { api, type SavedNote } from "@/lib/api";
 import { useNotesStore } from "@/stores/notes-store";
 import { toast } from "@/stores/toast-store";
 import { useAppStore } from "@/stores/app-store";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { BatchResults } from "./BatchResults";
 
 interface QueryRow {
@@ -48,6 +49,17 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleDialogClose = useCallback(() => {
+    if (showNotePicker) {
+      setShowNotePicker(false);
+      return;
+    }
+    if (!isRunning) onClose();
+  }, [showNotePicker, isRunning, onClose]);
+
+  useDialogA11y({ open: true, onClose: handleDialogClose, panelRef });
 
   useEffect(() => {
     return () => {
@@ -163,7 +175,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}>
-      <div role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between">
           <div className="flex items-center gap-2">

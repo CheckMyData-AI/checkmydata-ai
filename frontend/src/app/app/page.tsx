@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -45,6 +45,7 @@ import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { useRestoreState } from "@/hooks/useRestoreState";
 import { useRefreshOnFocus } from "@/hooks/useRefreshOnFocus";
 import { useMobileLayout } from "@/hooks/useMobileLayout";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { NotificationBell } from "@/components/ui/NotificationBell";
@@ -63,6 +64,13 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showBatchRunner, setShowBatchRunner] = useState(false);
   const isMobile = useMobileLayout();
+  const notesDrawerRef = useRef<HTMLDivElement>(null);
+
+  useDialogA11y({
+    open: isMobile && notesOpen,
+    onClose: toggleNotes,
+    panelRef: notesDrawerRef,
+  });
 
   useGlobalEvents(!!user);
   useRestoreState(!!user);
@@ -132,9 +140,9 @@ export default function Home() {
                     <>
                       <div className="flex items-center gap-2 min-w-0">
                         <Icon name="folder-git" size={14} className="text-text-tertiary shrink-0" />
-                        <h2 className="text-sm font-medium text-text-primary truncate">
+                        <h1 className="text-sm font-medium text-text-primary truncate">
                           {activeProject.name}
-                        </h2>
+                        </h1>
                       </div>
                       {activeConnection && (
                         <>
@@ -152,9 +160,9 @@ export default function Home() {
                       )}
                     </>
                   ) : (
-                    <span className="text-sm text-text-tertiary">
+                    <h1 className="text-sm font-medium text-text-tertiary">
                       Select a project to get started
-                    </span>
+                    </h1>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -222,12 +230,19 @@ export default function Home() {
         {isMobile && notesOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
             <div
-              className="absolute inset-0 bg-black/60"
+              className="absolute inset-0 bg-black/60 animate-fade-in"
               onClick={toggleNotes}
+              aria-hidden="true"
             />
-            <div className="absolute bottom-0 left-0 right-0 max-h-[80vh] bg-surface-0 border-t border-border-subtle rounded-t-2xl overflow-hidden flex flex-col animate-slide-up">
+            <div
+              ref={notesDrawerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="mobile-notes-title"
+              className="absolute bottom-0 left-0 right-0 max-h-[80vh] bg-surface-0 border-t border-border-subtle rounded-t-2xl overflow-hidden flex flex-col animate-slide-up"
+            >
               <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
-                <h3 className="text-sm font-semibold text-text-primary">Saved Queries</h3>
+                <h3 id="mobile-notes-title" className="text-sm font-semibold text-text-primary">Saved Queries</h3>
                 <button
                   onClick={toggleNotes}
                   aria-label="Close notes"

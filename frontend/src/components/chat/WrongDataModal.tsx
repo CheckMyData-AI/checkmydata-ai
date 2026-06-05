@@ -155,8 +155,8 @@ export function WrongDataModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-xl border border-border-default/50 shadow-xl max-h-[80vh] overflow-y-auto focus:outline-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default/50 shadow-xl max-h-[80vh] overflow-y-auto focus:outline-none animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border-subtle">
           <h3 id="wrong-data-title" className="text-sm font-semibold text-text-primary">Report Incorrect Data</h3>
@@ -221,7 +221,7 @@ export function WrongDataModal({
               <button
                 onClick={handleStartInvestigation}
                 disabled={!complaintType || submitting}
-                className="w-full py-2 rounded-lg text-xs font-medium bg-warning text-white hover:bg-warning disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full py-2 rounded-lg text-xs font-medium bg-warning text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
               >
                 {submitting ? "Starting..." : "Start Investigation"}
               </button>
@@ -246,7 +246,7 @@ export function WrongDataModal({
                 <button
                   onClick={() => handleConfirmFix(true)}
                   disabled={confirming}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-success text-white hover:bg-success disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex-1 py-2 rounded-lg text-xs font-medium bg-success text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
                 >
                   {confirming ? "Saving..." : "Accept Fix"}
                 </button>

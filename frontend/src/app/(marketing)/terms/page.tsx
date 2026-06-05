@@ -26,7 +26,7 @@ const LAST_UPDATED = "March 19, 2026";
 
 export default function TermsPage() {
   return (
-    <article className="space-y-10">
+    <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24 space-y-10">
       {/* Page title */}
       <header className="space-y-3 pb-8 border-b border-border-subtle">
         <h1 className="text-2xl font-bold tracking-tight">
@@ -295,7 +295,7 @@ export default function TermsPage() {
 
       {/* 10. Disclaimer of Warranties */}
       <Section id="warranties" title="10. Disclaimer of Warranties">
-        <p className="uppercase text-xs text-text-secondary tracking-wide leading-relaxed">
+        <p className="leading-relaxed">
           The Service is provided &ldquo;as is&rdquo; and &ldquo;as
           available,&rdquo; without warranties of any kind, express or
           implied, including but not limited to implied warranties of
@@ -321,7 +321,7 @@ export default function TermsPage() {
 
       {/* 11. Limitation of Liability */}
       <Section id="liability" title="11. Limitation of Liability">
-        <p className="uppercase text-xs text-text-secondary tracking-wide leading-relaxed">
+        <p className="leading-relaxed">
           To the maximum extent permitted by applicable law, in no event
           shall the operators of CheckMyData.ai be liable for any indirect,
           incidental, special, consequential, or punitive damages, or any

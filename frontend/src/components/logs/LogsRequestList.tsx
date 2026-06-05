@@ -106,12 +106,14 @@ export function LogsRequestList({
               <button
                 key={t.id}
                 onClick={() => onSelectTrace(isSelected ? null : t.id)}
-                className={`w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors ${
-                  isSelected
-                    ? "bg-accent/5 border-l-2 border-l-accent"
-                    : "hover:bg-surface-1"
+                aria-current={isSelected ? "true" : undefined}
+                className={`relative w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors ${
+                  isSelected ? "bg-surface-1" : "hover:bg-surface-1"
                 }`}
               >
+                {isSelected && (
+                  <span className="absolute left-0.5 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" />
+                )}
                 <div className="flex items-start gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-text-primary truncate">

@@ -339,6 +339,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   placeholder="127.0.0.1"
+                  aria-label="Host"
+                  aria-required="true"
                   maxLength={255}
                 />
               </div>
@@ -349,6 +351,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={port}
                   onChange={(e) => setPort(e.target.value)}
                   placeholder={DEFAULT_PORTS[dbType]}
+                  aria-label="Port"
                   maxLength={5}
                 />
               </div>
@@ -363,6 +366,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={dbName}
                 onChange={(e) => setDbName(e.target.value)}
                 placeholder="my_database"
+                aria-label="Database name"
+                aria-required="true"
                 maxLength={128}
               />
             </div>
@@ -377,6 +382,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={dbUser}
                   onChange={(e) => setDbUser(e.target.value)}
                   placeholder="postgres"
+                  aria-label="Username"
                   maxLength={128}
                 />
               </div>
@@ -390,6 +396,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   value={dbPassword}
                   onChange={(e) => setDbPassword(e.target.value)}
                   placeholder="********"
+                  aria-label="Password"
                   maxLength={255}
                 />
               </div>
@@ -419,6 +426,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       value={sshHost}
                       onChange={(e) => setSshHost(e.target.value)}
                       placeholder="ssh.example.com"
+                      aria-label="SSH host"
                       maxLength={255}
                     />
                   </div>
@@ -431,6 +439,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       value={sshPort}
                       onChange={(e) => setSshPort(e.target.value)}
                       placeholder="22"
+                      aria-label="SSH port"
                       maxLength={5}
                     />
                   </div>
@@ -444,6 +453,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     value={sshUser}
                     onChange={(e) => setSshUser(e.target.value)}
                     placeholder="ubuntu"
+                    aria-label="SSH user"
                     maxLength={128}
                   />
                 </div>
@@ -456,6 +466,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       className={inputCls}
                       value={sshKeyId}
                       onChange={(e) => setSshKeyId(e.target.value)}
+                      aria-label="SSH key"
                     >
                       <option value="">None</option>
                       {sshKeys.map((k) => (
@@ -582,6 +593,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 placeholder="git@github.com:org/repo.git"
+                aria-label="Git repository URL"
                 maxLength={500}
               />
             </div>
@@ -594,6 +606,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   className={inputCls}
                   value={sshKeyId}
                   onChange={(e) => setSshKeyId(e.target.value)}
+                  aria-label="SSH key for repo access"
                 >
                   <option value="">None</option>
                   {sshKeys.map((k) => (
@@ -623,6 +636,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 placeholder="e.g. Show me revenue by month"
+                aria-label="Your question"
                 maxLength={2000}
               />
             </div>
@@ -675,8 +689,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-      <div ref={dialogRef} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboarding-title"
+        className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+      >
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center justify-center gap-2 mb-6">
             {Array.from({ length: TOTAL_STEPS }).map((_, i) => (

@@ -132,6 +132,8 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Dashboard title..."
+          aria-label="Dashboard title"
+          aria-required="true"
           maxLength={200}
           className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
         />

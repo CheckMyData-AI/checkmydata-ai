@@ -8,6 +8,7 @@ import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { FormModal } from "@/components/ui/FormModal";
+import { StatusDot } from "@/components/ui/StatusDot";
 
 const CRON_PRESETS: { label: string; value: string }[] = [
   { label: "Every hour", value: "0 * * * *" },
@@ -52,10 +53,13 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-function statusDot(schedule: ScheduledQuery) {
-  if (!schedule.is_active) return "bg-surface-3";
-  if (!schedule.last_run_at) return "bg-accent";
-  return "bg-success";
+function scheduleStatus(
+  schedule: ScheduledQuery,
+): { status: "idle" | "info" | "success"; label: string } {
+  if (!schedule.is_active) return { status: "idle", label: "Paused" };
+  if (!schedule.last_run_at)
+    return { status: "info", label: "Active, not run yet" };
+  return { status: "success", label: "Active" };
 }
 
 interface AlertCondition {
@@ -339,7 +343,10 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
       {schedules.map((s) => (
         <div key={s.id} className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
           <div className="px-2.5 py-2 flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot(s)}`} />
+            {(() => {
+              const st = scheduleStatus(s);
+              return <StatusDot status={st.status} title={st.label} />;
+            })()}
             <div className="flex-1 min-w-0">
               <p className="text-[11px] font-medium text-text-primary truncate">{s.title}</p>
               <p className="text-[10px] text-text-muted">
@@ -409,14 +416,15 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                     key={run.id}
                     className="flex items-center gap-2 text-[10px]"
                   >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    <StatusDot
+                      status={
                         run.status === "success"
-                          ? "bg-success"
+                          ? "success"
                           : run.status === "alert_triggered"
-                            ? "bg-warning"
-                            : "bg-error"
-                      }`}
+                            ? "warning"
+                            : "error"
+                      }
+                      title={`Run ${run.status}`}
                     />
                     <span className="text-text-secondary">{run.status}</span>
                     {run.duration_ms != null && (
@@ -445,6 +453,8 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Schedule title"
             maxLength={255}
+            aria-label="Schedule title"
+            aria-required="true"
             className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
 
@@ -454,6 +464,8 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             placeholder="SQL query"
             rows={3}
             maxLength={10000}
+            aria-label="SQL query"
+            aria-required="true"
             className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
           />
 
@@ -461,6 +473,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             <select
               value={connectionId}
               onChange={(e) => setConnectionId(e.target.value)}
+              aria-label="Connection"
               className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
             >
               {connections.map((c) => (
@@ -498,6 +511,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               <select
                 value={cronPreset}
                 onChange={(e) => setCronPreset(e.target.value)}
+                aria-label="Schedule frequency"
                 className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
               >
                 {CRON_PRESETS.map((p) => (
@@ -511,6 +525,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 value={cronCustom}
                 onChange={(e) => setCronCustom(e.target.value)}
                 placeholder="e.g. 0 */2 * * *"
+                aria-label="Custom cron expression"
                 className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
               />
             )}
@@ -532,11 +547,13 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   value={cond.column}
                   onChange={(e) => updateCondition(idx, "column", e.target.value)}
                   placeholder="column"
+                  aria-label={`Alert condition ${idx + 1} column`}
                   className="flex-1 text-[10px] bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
                 />
                 <select
                   value={cond.operator}
                   onChange={(e) => updateCondition(idx, "operator", e.target.value)}
+                  aria-label={`Alert condition ${idx + 1} operator`}
                   className="text-[10px] bg-surface-0 border border-border-default rounded px-1 py-1 text-text-primary focus:outline-none focus:border-accent"
                 >
                   {Object.entries(OPERATOR_LABELS).map(([k, v]) => (
@@ -550,10 +567,12 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   onChange={(e) => updateCondition(idx, "threshold", e.target.value)}
                   placeholder="value"
                   type="number"
+                  aria-label={`Alert condition ${idx + 1} threshold`}
                   className="w-16 text-[10px] bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
                 />
                 <button
                   onClick={() => removeCondition(idx)}
+                  aria-label={`Remove alert condition ${idx + 1}`}
                   className="p-0.5 text-text-muted hover:text-error"
                 >
                   <Icon name="x" size={10} />

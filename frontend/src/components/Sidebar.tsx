@@ -417,9 +417,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               <Icon name="zap" size={16} className="text-white" />
             </div>
             <div className="flex-1 min-w-0">
-              <h1 className="text-sm font-semibold text-text-primary leading-tight">
+              <p className="text-sm font-semibold text-text-primary leading-tight">
                 DB Agent
-              </h1>
+              </p>
               <p className="text-[10px] text-text-muted leading-tight">
                 AI Query Assistant
               </p>
@@ -596,9 +596,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0 animate-fade-in">
-            <h1 className="text-sm font-semibold text-text-primary leading-tight">
+            <p className="text-sm font-semibold text-text-primary leading-tight">
               DB Agent
-            </h1>
+            </p>
             <p className="text-[10px] text-text-muted leading-tight">
               AI Query Assistant
             </p>

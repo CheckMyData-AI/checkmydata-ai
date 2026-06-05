@@ -110,6 +110,8 @@ export function KnowledgeDocs() {
               onClick={() => handleView(d)}
               role="button"
               tabIndex={0}
+              aria-label={`View document: ${d.source_path.split("/").pop()}`}
+              aria-current={isViewing ? "true" : undefined}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();

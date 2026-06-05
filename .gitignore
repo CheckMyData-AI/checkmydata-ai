@@ -37,6 +37,9 @@ frontend/out/
 *.swp
 *.swo
 
+# Local agent skills / tooling (keep workflows + templates tracked)
+.github/skills/
+
 # Build artifacts
 *.tsbuildinfo
 
