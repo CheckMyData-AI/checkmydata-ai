@@ -10,6 +10,24 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### Marketing landing — cinematic 2.5D redesign
+
+- **Cinematic landing motion layer (`epic-design`).** The marketing landing now
+  has a dark, depth-layered "intelligence" treatment: a drifting technical
+  grid, parallax glow blobs, scroll-reveal entrances with stagger, word-lighting
+  shimmer on accent headings, and a rising showcase. All built from existing
+  semantic design tokens — no color reskin, no image assets, no GSAP.
+- **Animated "intelligence core" hero visual.** New `SchemaGraph` (pure SVG +
+  CSS) shows database/codebase sources streaming data into a pulsing core that
+  emits a verified, charted answer. (`components/marketing/SchemaGraph.tsx`)
+- **`CinematicEngine`** client component drives reveals (IntersectionObserver)
+  and depth parallax (rAF). Honors `prefers-reduced-motion` (snaps to final
+  state, no listeners) and disables parallax on touch (`pointer: coarse`).
+  A `<noscript>` failsafe keeps all content visible when JS is off.
+- **Design system:** new `cmd-*` cinematic animation catalog documented in
+  `DESIGN_SYSTEM.md` §3.2; GPU-safe properties only, all motion neutralized
+  under reduced-motion. Scoped to the landing — not for app UI.
+
 ### Re-audit remediation
 
 A meta-audit of the audit-remediation changeset surfaced a functional

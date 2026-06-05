@@ -396,6 +396,32 @@ All custom animations live in `globals.css`. Standard timing: `ease-out`.
 - Never add new `@keyframes` without documenting them here.
 - `transition-colors` on all interactive elements for hover/focus state changes. Use `transition-all duration-150` for buttons with multiple changing properties.
 
+#### Cinematic landing system (`cmd-*`)
+
+A separate, opt-in 2.5D motion layer used **only** on the marketing landing (`(marketing)/page.tsx`). All keyframes live in `globals.css`, are prefixed `cmd-` to avoid collisions, animate only GPU-safe properties (`transform`, `opacity`, `filter`, `clip-path`, `offset-distance`), and are fully neutralized by the global `prefers-reduced-motion` rule. Decorative layers are `aria-hidden`. Reveals are orchestrated by `components/marketing/CinematicEngine.tsx` (IntersectionObserver + rAF parallax; disabled on reduced-motion, parallax also disabled on `pointer: coarse`). A `<noscript>` failsafe in the marketing layout forces revealed state when JS is off.
+
+| Utility / class | Keyframe | Purpose |
+|-----------------|----------|---------|
+| `.cmd-reveal` (+ `-left` / `-right` / `-scale` / `-rise`) | (transition) | Scroll entrance, toggled by `.is-visible`. Stagger via `--cmd-i`. |
+| `.cmd-float` | `cmd-float` | Gentle 9s hover loop for hero/showcase elements |
+| `.cmd-glow` | `cmd-glow-pulse` | Blurred atmospheric blob (use a non-animated wrapper for positioning/parallax) |
+| `.cmd-grid` | `cmd-grid-drift` | Drifting masked technical grid (depth-0) |
+| `.cmd-flow` | `cmd-data-flow` | Flowing dashes along SVG edges. Speed via `--cmd-flow-dur` |
+| `.cmd-travel` | `cmd-travel` | Pulse traveling an `offset-path`. `--cmd-path` / `--cmd-travel-dur` / `--cmd-travel-delay` |
+| `.cmd-node-pulse` | `cmd-node-pulse` | Soft pulse for graph nodes / core. `--cmd-node-dur` |
+| `.cmd-ring` | `cmd-ring` | Expanding core rings. `--cmd-ring-dur` / `--cmd-ring-delay` |
+| `.cmd-bar` | `cmd-bar-grow` | Growing answer-chart bars. `--cmd-bar-delay` |
+| `.cmd-orbit` | `cmd-orbit` | Slow dashed orbit rotation. `--cmd-orbit-dur` |
+| `.cmd-shimmer-text` | `cmd-shimmer` | Gradient word-lighting sweep on accent headings |
+| `.cmd-scan` | `cmd-scan` | Vertical scan sweep over the showcase frame |
+| `.cmd-parallax` / `.cmd-stage` | (JS / perspective) | Parallax transform target / perspective container |
+
+**Cinematic rules:**
+- This layer is for the landing only — do not use `cmd-*` classes in app UI.
+- Parallax positioning and `cmd-glow`/`cmd-node-pulse` must not share an element (both write `transform`); put parallax/positioning on a wrapper and the animated class on a child.
+- Every decorative `cmd-*` element gets `aria-hidden="true"`.
+- Colors come from semantic tokens (incl. `color-mix(in srgb, var(--color-*) N%, transparent)` for glow tints).
+
 ### 3.3 Responsive Design
 
 **Breakpoint:** Single mobile breakpoint at `max-width: 767px`.
