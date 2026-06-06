@@ -825,9 +825,15 @@ class OrchestratorAgent(BaseAgent):
                         role="system",
                         content=(
                             "--- END OF CONVERSATION HISTORY ---\n"
-                            "The messages above are COMPLETED past exchanges for reference only. "
-                            "Do NOT re-execute any queries or tools from the history. "
-                            "Focus EXCLUSIVELY on the new user message below."
+                            "The messages above are COMPLETED, ALREADY-ANSWERED past "
+                            "exchanges, kept ONLY as read-only reference. Every request "
+                            "in that history is already done — none of it is pending work. "
+                            "Do NOT re-run, repeat, or reproduce any query, tool call, or "
+                            "task from those earlier turns, even if they look unfinished. "
+                            "The ONLY task is the single new user message below. Act solely "
+                            "on it. If it is a follow-up, reuse the data already present in "
+                            "the history instead of re-querying. Treat this as a normal "
+                            "back-and-forth conversation: answer just the latest message."
                         ),
                     )
                 )
@@ -846,6 +852,12 @@ class OrchestratorAgent(BaseAgent):
         last_sql_result: SQLAgentResult | None = None
         all_sql_results: list[SQLAgentResult] = []
         knowledge_sources: list[RAGSource] = []
+        # Per-turn dedup safety net: (tool_name, question) of data-retrieval
+        # calls that SUCCEEDED in earlier iterations of THIS turn. Gate-flagged
+        # or failed calls are intentionally NOT recorded so corrective re-queries
+        # are never blocked. Catches loop-level repeats that the per-batch
+        # ToolDispatcher.dedup_tool_calls cannot see.
+        executed_questions: list[tuple[str, str]] = []
         has_mcp_result = False
         used_provider = ""
         used_model = ""
@@ -901,7 +913,9 @@ class OrchestratorAgent(BaseAgent):
                             "EMERGENCY: You have used most of your analysis budget "
                             f"({reason}, {budget_pct:.0%} used). You MUST compose "
                             "your complete final answer NOW using the data you have "
-                            "gathered so far. Do NOT make any more tool calls."
+                            "gathered so far. Do NOT make any more tool calls. "
+                            "Write the answer in the SAME language as the user's "
+                            "most recent message."
                         ),
                     )
                 )
@@ -1057,6 +1071,16 @@ class OrchestratorAgent(BaseAgent):
 
             active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(llm_resp.tool_calls)
 
+            # Per-turn safety net: skip data-retrieval calls that repeat a query
+            # already SUCCESSFULLY executed in an earlier iteration of this turn.
+            # Gate-flagged / failed calls are never recorded in executed_questions,
+            # so legitimate corrective re-queries are preserved.
+            active_calls, turn_skipped = ToolDispatcher.filter_already_executed(
+                active_calls, executed_questions
+            )
+            if turn_skipped:
+                skipped_map.update(turn_skipped)
+
             has_process_data = any(tc.name == "process_data" for tc in active_calls)
 
             _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
@@ -1168,6 +1192,7 @@ class OrchestratorAgent(BaseAgent):
                     }
                 )
 
+                gate_flagged = False
                 if tc.name == "query_database":
                     query_db_count += 1
                 if isinstance(sub_result, SQLAgentResult):
@@ -1186,6 +1211,7 @@ class OrchestratorAgent(BaseAgent):
                     if tc.name == "query_database":
                         gate_directive = self._result_gate_directive(wf_id, sub_result)
                         if gate_directive:
+                            gate_flagged = True
                             result_text = f"{result_text}\n\n{gate_directive}"
                             await self._tracker.emit(
                                 wf_id,
@@ -1199,6 +1225,19 @@ class OrchestratorAgent(BaseAgent):
                     knowledge_sources.extend(sub_result.sources)
                 elif isinstance(sub_result, MCPSourceResult):
                     has_mcp_result = True
+
+                # Record successful data-retrieval questions for the per-turn
+                # dedup safety net. Skip gate-flagged / failed / deduped calls so
+                # corrective re-queries are never blocked on the next iteration.
+                if (
+                    tc.name in ToolDispatcher._DEDUP_TOOL_NAMES
+                    and tc.id not in skipped_map
+                    and sub_result is not None
+                    and not gate_flagged
+                ):
+                    recorded_q = ((tc.arguments or {}).get("question") or "").strip()
+                    if recorded_q:
+                        executed_questions.append((tc.name, recorded_q))
 
                 messages.append(
                     Message(

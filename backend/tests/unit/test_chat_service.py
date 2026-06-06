@@ -247,6 +247,39 @@ class TestGetHistoryAsMessages:
         assert "Sample data:" not in asst_msg.content
 
     @pytest.mark.asyncio
+    async def test_does_not_echo_raw_sql_into_history(self, db):
+        """Raw executed SQL must never be echoed back into orchestrator history.
+
+        Echoing the SQL was the strongest cue for the model to re-run queries
+        from earlier turns; the enrichment keeps only result shape metadata.
+        """
+        proj = await _make_project(db)
+        chat = await svc.create_session(db, project_id=proj.id)
+
+        meta = {
+            "viz_type": "bar",
+            "row_count": 3,
+            "raw_result": {
+                "columns": ["name", "age"],
+                "rows": [["Alice", 30]],
+                "query": "SELECT name, age FROM users WHERE active = TRUE",
+            },
+        }
+        await svc.add_message(db, chat.id, "user", "Show users")
+        await svc.add_message(db, chat.id, "assistant", "Here are the users", metadata=meta)
+
+        history = await svc.get_history_as_messages(db, chat.id)
+
+        asst_msg = history[1]
+        # Result-shape metadata is preserved...
+        assert "columns: name, age" in asst_msg.content
+        assert "3 rows" in asst_msg.content
+        # ...but the raw SQL text is gone.
+        assert "query:" not in asst_msg.content
+        assert "SELECT name, age FROM users" not in asst_msg.content
+        assert "WHERE active" not in asst_msg.content
+
+    @pytest.mark.asyncio
     async def test_respects_limit(self, db):
         proj = await _make_project(db)
         chat = await svc.create_session(db, project_id=proj.id)

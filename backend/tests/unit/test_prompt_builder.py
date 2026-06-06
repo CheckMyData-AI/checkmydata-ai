@@ -227,3 +227,37 @@ class TestOrchestratorRecentLearnings:
         )
         assert "Prefer joins on user_id" in prompt
         assert "verified patterns" in prompt
+
+
+class TestOrchestratorTurnFocus:
+    def test_current_turn_focus_block_present(self):
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "CURRENT TURN FOCUS:" in prompt
+        # History is read-only; earlier turns must not be re-executed.
+        assert "READ-ONLY reference" in prompt
+        assert "Never re-run" in prompt
+        assert "single latest user message" in prompt
+
+
+class TestOrchestratorLanguageRule:
+    def test_orchestrator_prompt_has_language_rule(self):
+        prompt = build_orchestrator_system_prompt(
+            has_connection=True,
+            db_type="postgres",
+        )
+        assert "LANGUAGE:" in prompt
+        assert "internally in English" in prompt
+        assert "SAME language" in prompt
+
+    def test_direct_response_prompt_has_language_rule(self):
+        from app.agents.prompts.orchestrator_prompt import (
+            build_direct_response_prompt,
+        )
+
+        prompt = build_direct_response_prompt(has_connection=True)
+        assert "LANGUAGE:" in prompt
+        assert "English" in prompt
+        assert "SAME language" in prompt

@@ -425,6 +425,80 @@ class TestDedupToolCalls:
         assert "2" in skipped
 
 
+class TestFilterAlreadyExecuted:
+    """Tests for ToolDispatcher.filter_already_executed (per-turn dedup)."""
+
+    def _tc(self, id: str, name: str = "query_database", question: str = "") -> ToolCall:
+        args = {"question": question} if question else {}
+        return ToolCall(id=id, name=name, arguments=args)
+
+    def test_no_executed_history_passes_through(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        calls = [self._tc("1", question="revenue last month")]
+        kept, skipped = ToolDispatcher.filter_already_executed(calls, [])
+        assert len(kept) == 1
+        assert skipped == {}
+
+    def test_repeated_question_skipped(self, monkeypatch):
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.services import text_similarity
+
+        # Force the word-overlap path for determinism.
+        monkeypatch.setattr(text_similarity, "encode_batch", lambda _texts: None)
+
+        calls = [self._tc("1", question="revenue by country")]
+        executed = [("query_database", "revenue by country")]
+        kept, skipped = ToolDispatcher.filter_already_executed(calls, executed)
+        assert kept == []
+        assert "1" in skipped
+        assert "already answered earlier in this turn" in skipped["1"]
+
+    def test_different_question_kept(self, monkeypatch):
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.services import text_similarity
+
+        monkeypatch.setattr(text_similarity, "encode_batch", lambda _texts: None)
+
+        calls = [self._tc("1", question="active users today")]
+        executed = [("query_database", "revenue by country")]
+        kept, skipped = ToolDispatcher.filter_already_executed(calls, executed)
+        assert len(kept) == 1
+        assert skipped == {}
+
+    def test_only_matches_same_tool(self, monkeypatch):
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.services import text_similarity
+
+        monkeypatch.setattr(text_similarity, "encode_batch", lambda _texts: None)
+
+        calls = [self._tc("1", name="search_codebase", question="revenue by country")]
+        executed = [("query_database", "revenue by country")]
+        kept, skipped = ToolDispatcher.filter_already_executed(calls, executed)
+        # Same question text but a different tool — not deduped.
+        assert len(kept) == 1
+        assert skipped == {}
+
+    def test_embedding_paraphrase_skipped(self, monkeypatch):
+        from app.agents.tool_dispatcher import ToolDispatcher
+        from app.services import text_similarity
+
+        def fake_encode(texts):
+            mapping = {
+                "five highest-revenue clients": [0.98, 0.199, 0.0],
+                "top 5 customers by revenue": [1.0, 0.0, 0.0],
+            }
+            return [mapping.get(t, [0.0, 0.0, 0.0]) for t in texts]
+
+        monkeypatch.setattr(text_similarity, "encode_batch", fake_encode)
+
+        calls = [self._tc("1", question="five highest-revenue clients")]
+        executed = [("query_database", "top 5 customers by revenue")]
+        kept, skipped = ToolDispatcher.filter_already_executed(calls, executed)
+        assert kept == []
+        assert "1" in skipped
+
+
 class TestHistoryBoundaryInPrompt:
     """Verify the orchestrator prompt builder includes focus directives."""
 
@@ -2071,6 +2145,20 @@ class TestBuildSynthesisMessagesEnhanced:
         user_msg = result[1].content
         assert "Do NOT mention step limits" in user_msg
         assert "complete answer" in user_msg.lower()
+
+    def test_synthesis_instructs_user_language(self):
+        messages = [
+            Message(role="system", content="You are a data assistant."),
+            Message(role="user", content="Покажи продажи"),
+        ]
+        result = ResponseBuilder.build_synthesis_messages(
+            messages,
+            None,
+            [],
+            32000,
+        )
+        user_msg = result[1].content
+        assert "SAME language as the original question" in user_msg
 
 
 class TestDispatcherRemainingWall:

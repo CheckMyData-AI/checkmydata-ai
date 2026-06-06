@@ -182,8 +182,11 @@ class ChatService:
                 raw = meta.get("raw_result")
                 if raw and raw.get("columns"):
                     context_parts.append(f"columns: {', '.join(raw['columns'])}")
-                if raw and raw.get("query"):
-                    context_parts.append(f"query: {raw['query'][:200]}")
+                # NOTE: raw SQL (raw["query"]) is intentionally NOT included here.
+                # Echoing the executed SQL back into the orchestrator's history was
+                # the strongest cue for the model to re-run queries from earlier
+                # turns. History is reference-only; the executed query is reproduced
+                # on demand by the SQL agent, not replayed from history.
                 if meta.get("insights"):
                     context_parts.append(f"insights: {len(meta['insights'])}")
                 if meta.get("suggested_followups"):
