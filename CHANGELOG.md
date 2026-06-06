@@ -10,6 +10,54 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### Conversational turn isolation & response language
+
+Makes the orchestrator behave like a normal chat partner: it acts only on the
+latest user message instead of re-running tasks from earlier turns, and it
+replies in the user's language.
+
+- **History is read-only, never re-executed.** The unified tool loop now keeps
+  full conversation history for reference but hard-isolates it: a strengthened
+  boundary system message states that prior turns are already answered and must
+  never be re-run, and a new `CURRENT TURN FOCUS` block in the orchestrator
+  prompt reinforces that only the latest message is the task.
+  (`backend/app/agents/orchestrator.py`,
+  `backend/app/agents/prompts/orchestrator_prompt.py`)
+- **Raw SQL stripped from history.** `ChatService.get_history_as_messages` no
+  longer echoes the executed `query: SELECT ...` text into assistant history —
+  the strongest cue for the model to re-run earlier queries. Result-shape
+  metadata (viz, row count, columns, insight/follow-up counts) is preserved.
+  (`backend/app/services/chat_service.py`)
+- **Per-turn dedup safety net.** New `ToolDispatcher.filter_already_executed`
+  skips a data-retrieval call whose question semantically matches one that
+  already *succeeded* earlier in the same turn. Gate-flagged and failed calls
+  are intentionally not recorded, so corrective re-queries are never blocked.
+  (`backend/app/agents/tool_dispatcher.py`, `backend/app/agents/orchestrator.py`)
+- **Think in English, answer in the user's language.** A language rule is
+  injected at every user-facing synthesis point — orchestrator `PRINCIPLES`,
+  direct-response prompt, step-limit synthesis (`build_synthesis_messages`),
+  emergency synthesis, and the complex-pipeline `_synthesize` — instructing the
+  model to reason internally in English but write the final answer in the same
+  language as the user's most recent message. Internal/intermediate prompts
+  (planner, router, SQL agent, analysis stage) stay English.
+
+### Google sign-in button disappearing on the login/register page
+
+- **Fixed an init race that hid the Google button.** The Google Identity
+  Services init effect on `/login` ran while the page was still in its
+  `restoring` state — during which the page renders only a spinner, so the
+  button container (`googleBtnRef`) is not mounted. The effect would call
+  `renderButton()` against a `null` ref and bail, and (since its deps did not
+  include `restoring`) never retry once restore finished. With the GIS script
+  already cached — e.g. landing → login warm navigation — the button silently
+  vanished. The effect now waits for `!restoring` and re-runs when restore
+  completes, so the button reliably renders. The build-time
+  `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and CSP were verified correct and were not the
+  cause. (`frontend/src/app/login/page.tsx`)
+- **Regression tests** cover the warm-navigation race (GIS preloaded + deferred
+  restore → button renders after restore) and the no-client-id case.
+  (`frontend/src/__tests__/components/LoginPage.test.tsx`)
+
 ### Marketing landing — cinematic 2.5D redesign
 
 - **Cinematic landing motion layer (`epic-design`).** The marketing landing now

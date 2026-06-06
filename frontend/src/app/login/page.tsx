@@ -70,7 +70,12 @@ export default function LoginPage() {
   );
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || user) return;
+    // Wait until auth restore finishes. While `restoring` is true the page
+    // renders only a spinner, so googleBtnRef is NOT mounted yet. Running the
+    // init here would call renderButton() against a null ref and silently bail
+    // (and, when the GIS script is already cached, never retry) — which made
+    // the Google button intermittently disappear on warm navigations.
+    if (restoring || !GOOGLE_CLIENT_ID || user) return;
 
     const csrfToken = generateRandomToken();
     setCookie("g_csrf_token", csrfToken);
@@ -106,7 +111,7 @@ export default function LoginPage() {
     return () => {
       script.remove();
     };
-  }, [user, handleGoogleResponse]);
+  }, [restoring, user, handleGoogleResponse]);
 
   if (restoring || user) {
     return (
