@@ -18,6 +18,7 @@ from app.agents.errors import (
     AgentFatalError,
     AgentRetryableError,
 )
+from app.agents.git_agent import GitAgent, GitAgentResult
 from app.agents.knowledge_agent import KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
@@ -58,10 +59,12 @@ class ToolDispatcher:
         tracker: WorkflowTracker,
         wf_sql_results: dict[str, list[SQLAgentResult]],
         wf_enriched: dict[str, tuple[SQLAgentResult, float]],
+        git_agent: GitAgent | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
         self._mcp_source = mcp_source_agent
+        self._git = git_agent
         self._validator = validator
         self._tracker = tracker
         self._wf_sql_results = wf_sql_results
@@ -91,6 +94,9 @@ class ToolDispatcher:
             "query_mcp_source": "MCP Source Agent",
             "ask_user": "Asking user for clarification",
             "process_data": "Data Processing",
+            "analyze_git": "Git Agent",
+            "get_release_timeline": "Git Agent",
+            "write_code_note": "Code Note",
         }
         brief = (tc.arguments or {}).get("question", "")[:80]
         label = tool_labels.get(tc.name, tc.name)
@@ -128,13 +134,22 @@ class ToolDispatcher:
             bucket = self._wf_sql_results.get(wf_id) or []
             pd_sub = bucket[-1] if bucket else None
             return pd_text, pd_sub
+        if tc.name == "analyze_git":
+            git_text, git_sub = await self._handle_analyze_git(tc, context, wf_id, total_usage)
+            self._emit_tool_result_thinking(wf_id, "Git Agent", git_sub)
+            return git_text, git_sub
+        if tc.name == "get_release_timeline":
+            return await self._handle_get_release_timeline(tc, context, wf_id), None
+        if tc.name == "write_code_note":
+            return await self._handle_write_code_note(tc, context), None
         if tc.name == "ask_user":
             return await self._handle_ask_user(tc, context, wf_id)
         logger.warning("Unknown meta-tool called: %s", tc.name)
         return (
             f"Error: unknown tool '{tc.name}'. Available tools: "
             "query_database, search_codebase, manage_rules, list_rules, "
-            "query_mcp_source, process_data, ask_user."
+            "query_mcp_source, process_data, analyze_git, get_release_timeline, "
+            "write_code_note, ask_user."
         ), None
 
     # ------------------------------------------------------------------
@@ -549,6 +564,19 @@ class ToolDispatcher:
             params["value"] = args["value"]
         if str(args.get("exclude_empty", "")).lower() in ("true", "1", "yes"):
             params["exclude_empty"] = True
+        # Advanced operations (e.g. cohort_window) carry structured params
+        # — lists of objects, numeric windows — that don't fit the flat
+        # string fields above. Accept them as a JSON blob and merge.
+        raw_json = args.get("params_json")
+        if raw_json:
+            import json as _json
+
+            try:
+                extra = _json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                if isinstance(extra, dict):
+                    params.update(extra)
+            except (ValueError, TypeError):
+                logger.warning("process_data: could not parse params_json")
         return params
 
     async def _handle_search_codebase(
@@ -627,6 +655,107 @@ class ToolDispatcher:
                 return f"Knowledge search failed: {e.user_message}", None
 
         return "Knowledge search failed after maximum retries.", None
+
+    async def _handle_analyze_git(
+        self,
+        tc: ToolCall,
+        context: AgentContext,
+        wf_id: str,
+        total_usage: dict[str, int],
+    ) -> tuple[str, GitAgentResult | None]:
+        if self._git is None:
+            return "Git analysis is not available for this project.", None
+
+        args = tc.arguments or {}
+        sub_question: str = args.get("question", context.user_question)
+        details: str = (args.get("details") or "").strip()
+        effective_question = (
+            f"{sub_question}\n\nAdditional context: {details}" if details else sub_question
+        )
+
+        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
+            try:
+                _sd_git: dict[str, Any] = {"input_preview": effective_question[:_PREVIEW_MAX]}
+                async with self._tracker.step(
+                    wf_id,
+                    "orchestrator:git_agent",
+                    f"Git Agent (attempt {attempt + 1})",
+                    step_data=_sd_git,
+                    span_type="sub_agent",
+                ):
+                    git_ctx = replace(
+                        context,
+                        chat_history=(
+                            context.chat_history[-settings.history_tail_messages :]
+                            if context.chat_history
+                            else []
+                        ),
+                    )
+                    git_result: GitAgentResult = await self._git.run(
+                        git_ctx, question=effective_question
+                    )
+                    _sd_git["output_preview"] = (git_result.answer or "")[:_PREVIEW_MAX]
+
+                _accum_usage(total_usage, git_result.token_usage)
+
+                if git_result.status == "no_result" and not git_result.answer:
+                    return "Git analysis returned no result.", git_result
+                return git_result.answer or "Git analysis produced no answer.", git_result
+
+            except AgentRetryableError as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Git agent retryable error (attempt %d): %s", attempt + 1, e)
+                    continue
+                return f"Git analysis failed after retries: {e}", None
+            except (AgentFatalError, AgentError) as e:
+                return f"Git analysis failed: {e}", None
+            except RETRYABLE_LLM_ERRORS as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Git agent LLM error (attempt %d): %s", attempt + 1, e)
+                    await asyncio.sleep(getattr(e, "retry_after_seconds", None) or 2.0)
+                    continue
+                return f"Git analysis failed: {e}", None
+
+        return "Git analysis failed after maximum retries.", None
+
+    async def _handle_get_release_timeline(
+        self,
+        tc: ToolCall,
+        context: AgentContext,
+        wf_id: str,
+    ) -> str:
+        if self._git is None:
+            return "Release timeline is not available for this project."
+        args = tc.arguments or {}
+        try:
+            max_count = int(args.get("max_count", 50))
+        except (TypeError, ValueError):
+            max_count = 50
+        async with self._tracker.step(
+            wf_id,
+            "orchestrator:git_release_timeline",
+            "Reading release timeline",
+            span_type="tool_call",
+        ):
+            return await self._git.get_release_timeline(
+                context.project_id,
+                tag_prefix=str(args.get("tag_prefix", "") or ""),
+                max_count=max_count,
+            )
+
+    async def _handle_write_code_note(
+        self,
+        tc: ToolCall,
+        context: AgentContext,
+    ) -> str:
+        if self._git is None:
+            return "Code notes are not available for this project."
+        args = tc.arguments or {}
+        return await self._git.write_code_note(
+            context.project_id,
+            args.get("subject") or "",
+            args.get("note") or "",
+        )
 
     async def _handle_manage_rules(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
         action: str = args.get("action", "")
@@ -933,6 +1062,9 @@ class ToolDispatcher:
         elif isinstance(sub_result, KnowledgeResult):
             n = len(sub_result.sources)
             detail = f"{label}: {n} source(s) found"
+        elif isinstance(sub_result, GitAgentResult):
+            n = len(sub_result.tool_call_log)
+            detail = f"{label}: {n} git operation(s)"
         task = asyncio.ensure_future(self._tracker.emit(wf_id, "thinking", "in_progress", detail))
 
         def _done(t: asyncio.Task) -> None:

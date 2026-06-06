@@ -35,6 +35,26 @@ class _SessionCM:
         pass
 
 
+class TestHasRepo:
+    def _loader(self) -> ContextLoader:
+        return ContextLoader(vector_store=MagicMock(), tracker=MagicMock(), mcp_cache={})
+
+    def test_true_when_git_dir_exists(self, tmp_path):
+        import app.config as _cfg
+
+        (tmp_path / "proj-1" / ".git").mkdir(parents=True)
+        loader = self._loader()
+        with patch.object(_cfg.settings, "repo_clone_base_dir", str(tmp_path)):
+            assert loader.has_repo("proj-1") is True
+
+    def test_false_when_missing(self, tmp_path):
+        import app.config as _cfg
+
+        loader = self._loader()
+        with patch.object(_cfg.settings, "repo_clone_base_dir", str(tmp_path)):
+            assert loader.has_repo("proj-x") is False
+
+
 class TestLoadRecentLearnings:
     def _loader(self) -> ContextLoader:
         return ContextLoader(

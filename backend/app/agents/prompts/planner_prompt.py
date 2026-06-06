@@ -32,12 +32,28 @@ question into a sequence of discrete stages that can be executed one at a time.
      Supported functions: count, count_distinct, sum, avg, min, max, median. \
      filter_data (requires "column"), e.g.: \
      {"operation": "filter_data", "column": "country_code", \
-     "op": "neq", "value": "", "exclude_empty": true}.
+     "op": "neq", "value": "", "exclude_empty": true}. \
+     cohort_window (correlate release dates with post-release metrics; \
+     requires "release_dates", "event_date_column", and either \
+     "value_column" (for revenue) or "id_column" (for retention)), e.g.: \
+     {"operation": "cohort_window", \
+     "release_dates": [{"tag": "v1.2.0", "date": "2026-01-15"}], \
+     "event_date_column": "created_at", "value_column": "amount", \
+     "windows": [7, 14], "metric": "revenue"}.
    - "analyze_results" — perform analysis or computation on data from \
      previous stages (no new DB query)
    - "query_mcp_source" — query an external data source connected via MCP \
      (Model Context Protocol). Use when the question requires data from \
      external APIs or services not in the primary database.
+   - "analyze_git" — inspect the project's local Git clone (read-only): \
+     commit history, diffs, blame, releases/tags, authorship, file churn, \
+     and commit-trailer review signals. Use the first stage to fetch a \
+     release timeline, then feed release dates into a "query_database" + \
+     "process_data" (cohort_window) chain. RELEASE→COHORT RECIPE: \
+     Stage 1 analyze_git ("list releases with dates") → Stage 2 \
+     query_database (pull per-row events with a date + value/id column) → \
+     Stage 3 process_data (cohort_window for 7/14-day retention/revenue) → \
+     Stage 4 synthesize.
    - "synthesize" — produce the final user-facing answer, combining \
      results from all previous stages
 4. The last stage should normally be "synthesize" or "analyze_results" \

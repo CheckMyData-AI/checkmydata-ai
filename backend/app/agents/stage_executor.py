@@ -78,6 +78,7 @@ class StageExecutor:
         validator: StageValidator | None = None,
         data_gate: DataGate | None = None,
         mcp_source_agent: BaseAgent | None = None,
+        git_agent: BaseAgent | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
@@ -86,6 +87,7 @@ class StageExecutor:
         self._validator = validator or StageValidator(llm_router=llm_router)
         self._data_gate = data_gate or DataGate()
         self._mcp_source = mcp_source_agent
+        self._git = git_agent
         self._staleness_warning: str | None = None
 
     # ------------------------------------------------------------------
@@ -312,6 +314,8 @@ class StageExecutor:
                     return await self._run_process_data_stage(stage, stage_ctx, context)
                 case "query_mcp_source":
                     return await self._run_mcp_stage(enriched_q, stage, context)
+                case "analyze_git":
+                    return await self._run_git_stage(enriched_q, stage, context)
                 case "synthesize":
                     return await self._synthesize_stage(stage, stage_ctx, context)
                 case _:
@@ -558,6 +562,52 @@ class StageExecutor:
             summary=answer,
             error=None if answer else "Knowledge agent returned empty answer",
             token_usage=kb_result.token_usage,
+        )
+
+    async def _run_git_stage(
+        self,
+        question: str,
+        stage: PlanStage,
+        context: AgentContext,
+    ) -> StageResult:
+        """Run a Git-history analysis stage via the GitAgent."""
+        if self._git is None:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error="Git analysis is not available (no GitAgent wired).",
+                error_category="fatal",
+            )
+        scoped = replace(
+            context,
+            chat_history=context.chat_history[-settings.history_tail_messages :]
+            if context.chat_history
+            else [],
+        )
+        try:
+            git_result = await self._git.run(scoped, question=question)
+        except (AgentRetryableError, AgentFatalError, AgentError) as e:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=_stage_error_message(e),
+                error_category=_classify_stage_error(e),
+            )
+        except LLMError as e:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=e.user_message,
+                error_category=_classify_stage_error(e),
+            )
+
+        answer = getattr(git_result, "answer", "")
+        return StageResult(
+            stage_id=stage.stage_id,
+            status="success" if answer else "error",
+            summary=answer,
+            error=None if answer else "Git agent returned empty answer",
+            token_usage=git_result.token_usage,
         )
 
     async def _run_analysis_stage(

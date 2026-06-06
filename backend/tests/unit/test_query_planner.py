@@ -67,6 +67,30 @@ class TestValidatePlanStructure:
         ]
         assert _validate_plan_structure(stages) == []
 
+    def test_analyze_git_is_valid_tool(self):
+        assert "analyze_git" in _VALID_TOOLS
+        enum = _CREATE_PLAN_TOOL["function"]["parameters"]["properties"]["stages"]["items"][
+            "properties"
+        ]["tool"]["enum"]
+        assert "analyze_git" in enum
+
+    def test_analyze_git_counts_as_retrieval(self):
+        """A git-only retrieval plan validates (release→cohort recipe head)."""
+        stages = [
+            {"stage_id": "s1", "tool": "analyze_git", "depends_on": []},
+            {"stage_id": "s2", "tool": "synthesize", "depends_on": ["s1"]},
+        ]
+        assert _validate_plan_structure(stages) == []
+
+    def test_release_cohort_recipe_plan_validates(self):
+        stages = [
+            {"stage_id": "s1", "tool": "analyze_git", "depends_on": []},
+            {"stage_id": "s2", "tool": "query_database", "depends_on": ["s1"]},
+            {"stage_id": "s3", "tool": "process_data", "depends_on": ["s2"]},
+            {"stage_id": "s4", "tool": "synthesize", "depends_on": ["s3"]},
+        ]
+        assert _validate_plan_structure(stages) == []
+
 
 class TestPlanSchema:
     def test_create_plan_tool_present(self):

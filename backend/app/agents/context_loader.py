@@ -26,6 +26,7 @@ class ContextData:
     has_connection: bool = False
     has_kb: bool = False
     has_mcp: bool = False
+    has_repo: bool = False
     table_map: str = ""
     db_type: str | None = None
     project_overview: str | None = None
@@ -113,6 +114,17 @@ class ContextLoader:
         try:
             collection = self._vector_store.get_or_create_collection(project_id)
             return collection.count() > 0
+        except Exception:
+            return False
+
+    def has_repo(self, project_id: str) -> bool:
+        """Fast check (no DB) for whether a local Git clone exists."""
+        try:
+            from pathlib import Path
+
+            from app.config import settings as _settings
+
+            return (Path(_settings.repo_clone_base_dir) / project_id / ".git").exists()
         except Exception:
             return False
 

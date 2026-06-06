@@ -58,6 +58,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 | [API.md](API.md) | REST API reference |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and module overview |
 | [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Deep-dive: orchestrator, memory, LLM routing, feedback loops |
+| [docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md](docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md) | Live Git access architecture audit + Phase 1–4 roadmap |
 | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | UI design system, tokens, and component guidelines |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
@@ -97,6 +98,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 │  │    SQLAgent:       schema + SQL gen + validation + execution   │   │
 │  │    VizAgent:       chart type + config (LLM-driven)           │   │
 │  │    KnowledgeAgent: RAG search + entity info + codebase Q&A    │   │
+│  │    GitAgent:       live read-only Git history + releases      │   │
 │  │  AdaptivePlanner:  quick/full plan generation + replan        │   │
 │  │  DataGate:         intermediate data-quality validation       │   │
 │  │  AgentResultValidator: validates before returning to user     │   │
@@ -145,7 +147,8 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 - **MCP server & client** -- expose the agent as MCP tools and consume external MCP servers; MCP sources are fully integrated into the multi-stage pipeline planner
 - **Multi-chat sessions** -- independent parallel chats per project with per-session message caching, connection binding, abort-on-switch safety, and background completion of in-progress queries (results persist even after navigating away or reloading)
 - **Session rotation** -- automatic context-preserving session continuation near token limits
-- **Data enrichment pipeline** -- IP-to-country, phone-to-country, aggregation, filtering between query steps with immutable result handling
+- **Data enrichment pipeline** -- IP-to-country, phone-to-country, aggregation, filtering, and release `cohort_window` (7/14-day retention/revenue) between query steps with immutable result handling
+- **Live Git access** -- read-only Git history specialist (`GitAgent` + `GitInspector`) the orchestrator can call to inspect commits, diffs, blame, releases/tags, authorship, file churn, and commit-trailer review signals on the project's local clone. Available both as single-loop meta-tools (`analyze_git`, `get_release_timeline`, `write_code_note`) and as a first-class `analyze_git` planner stage. Gated by a fast `has_repo` capability probe, security-hardened (read-only, explicit arg lists, path-traversal guard, output/count caps, no hooks), with a clone-freshness warning and opt-in auto-pull. Code findings are persisted as `code_finding` insights and recalled in future questions. Enables the release→cohort recipe: `analyze_git` → `query_database` → `process_data (cohort_window)` → `synthesize`.
 - **Robust error handling** -- try/except wrapping for pipeline execution, DB persistence, sub-agent LLM calls, and MCP adapter calls with graceful fallbacks. Centralized `llm_call_with_retry` helper provides exponential backoff for all LLM calls; `LLMAllProvidersFailedError` is non-retryable to prevent provider thrash.
 - **Unified knowledge freshness** -- `KnowledgeFreshnessService` combines DB-index age, code↔DB sync status, and Git HEAD vs indexed SHA into a single freshness warning surfaced in the orchestrator prompt.
 - **Insight memory & reconciliation** -- discovered anomalies are persisted with TTL-based expiry per severity; new query results auto-confirm reproduced insights and dismiss stale ones. Active insights are injected into the orchestrator context.
@@ -219,7 +222,7 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **4,048 total tests** (3,178 backend unit + 470 backend integration + 400 frontend)
+- **4,246 total tests** (3,366 backend unit + 478 backend integration + 402 frontend)
 - **72%+ backend coverage** (CI-enforced minimum; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
 - Zero flaky tests, zero skipped tests
 

@@ -98,6 +98,10 @@ PROCESS_DATA_TOOL = Tool(
         "functions: count, count_distinct, sum, avg, min, max, median\n"
         "• filter_data — filter rows by column value "
         "(requires 'column', optional 'op', 'value', 'exclude_empty')\n"
+        "• cohort_window — correlate release dates with post-release metrics "
+        "(7/14-day retention or revenue). Pass its structured params via "
+        "'params_json' (release_dates, event_date_column, value_column or "
+        "id_column, windows, metric)\n"
         "• passthrough — forward the rows unchanged (the default when no "
         "operation is given)\n"
         "Use after query_database when you need to transform or enrich raw "
@@ -114,6 +118,7 @@ PROCESS_DATA_TOOL = Tool(
                 "phone_to_country",
                 "aggregate_data",
                 "filter_data",
+                "cohort_window",
                 "passthrough",
             ],
             required=False,
@@ -186,10 +191,91 @@ PROCESS_DATA_TOOL = Tool(
             required=False,
         ),
         ToolParameter(
+            name="params_json",
+            type="string",
+            description=(
+                "JSON object with structured params for advanced operations "
+                "like cohort_window, e.g. "
+                '{"release_dates": [{"tag": "v1.2.0", "date": "2026-01-15"}], '
+                '"event_date_column": "created_at", "value_column": "amount", '
+                '"windows": [7, 14], "metric": "revenue"}.'
+            ),
+            required=False,
+        ),
+        ToolParameter(
             name="description",
             type="string",
             description="What you want to achieve with this processing step",
             required=False,
+        ),
+    ],
+)
+
+
+ANALYZE_GIT_TOOL = Tool(
+    name="analyze_git",
+    description=(
+        "Analyze the project's live Git repository: commit history, diffs, "
+        "blame/authorship, who introduced a change, release tags, and commit "
+        "review signals (Reviewed-by / Co-authored-by / merges). Use for "
+        "questions about how code evolved, when something changed, or who "
+        "changed it. Operates read-only on the local clone."
+    ),
+    parameters=[
+        ToolParameter(
+            name="question",
+            type="string",
+            description="The Git/history question to answer.",
+        ),
+        ToolParameter(
+            name="details",
+            type="string",
+            description="Optional extra context (paths, time ranges, SHAs of interest).",
+            required=False,
+        ),
+    ],
+)
+
+GET_RELEASE_TIMELINE_TOOL = Tool(
+    name="get_release_timeline",
+    description=(
+        "Return the repository's release tags as a structured timeline (tag, "
+        "commit SHA, date). Use this before correlating releases with database "
+        "metrics (e.g. 7/14-day retention/revenue cohorts after each release)."
+    ),
+    parameters=[
+        ToolParameter(
+            name="tag_prefix",
+            type="string",
+            description="Optional tag prefix filter, e.g. 'v' or 'release-'.",
+            required=False,
+        ),
+        ToolParameter(
+            name="max_count",
+            type="integer",
+            description="Maximum number of releases to return (default 50).",
+            required=False,
+        ),
+    ],
+)
+
+WRITE_CODE_NOTE_TOOL = Tool(
+    name="write_code_note",
+    description=(
+        "Persist a durable finding about the codebase so it is remembered and "
+        "surfaced in future questions (stored in project insight memory). Use "
+        "after studying code/history when you learn an important, lasting fact."
+    ),
+    parameters=[
+        ToolParameter(
+            name="subject",
+            type="string",
+            description="What the note is about, e.g. 'path/to/file.py:function' or a SHA.",
+        ),
+        ToolParameter(
+            name="note",
+            type="string",
+            description="The concise, factual finding to remember.",
         ),
     ],
 )
@@ -237,6 +323,7 @@ def get_orchestrator_tools(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
+    has_repo: bool = False,
 ) -> list[Tool]:
     """Return the meta-tools available to the orchestrator."""
     tools: list[Tool] = []
@@ -247,6 +334,10 @@ def get_orchestrator_tools(
         tools.append(LIST_RULES_TOOL)
     if has_knowledge_base:
         tools.append(SEARCH_CODEBASE_TOOL)
+    if has_repo:
+        tools.append(ANALYZE_GIT_TOOL)
+        tools.append(GET_RELEASE_TIMELINE_TOOL)
+        tools.append(WRITE_CODE_NOTE_TOOL)
     if has_mcp_sources:
         from app.agents.tools.mcp_tools import QUERY_MCP_SOURCE_TOOL
 

@@ -144,6 +144,48 @@ async def test_route_request_parses_llm_response():
     assert result.needs_multiple_data_sources is True
 
 
+def test_build_router_prompt_includes_git_when_has_repo():
+    prompt = _build_router_prompt(
+        has_connection=True,
+        has_knowledge_base=False,
+        has_mcp_sources=False,
+        has_repo=True,
+    )
+    assert '"git"' in prompt
+
+
+def test_build_router_prompt_omits_git_without_repo():
+    prompt = _build_router_prompt(
+        has_connection=True,
+        has_knowledge_base=False,
+        has_mcp_sources=False,
+        has_repo=False,
+    )
+    assert '"git"' not in prompt
+
+
+def test_parse_route_response_git_with_repo_kept():
+    result = _parse_route_response(
+        '{"route": "git", "complexity": "moderate"}',
+        has_connection=False,
+        has_knowledge_base=False,
+        has_mcp_sources=False,
+        has_repo=True,
+    )
+    assert result.route == "git"
+
+
+def test_parse_route_response_git_without_repo_downgrades():
+    result = _parse_route_response(
+        '{"route": "git", "complexity": "moderate"}',
+        has_connection=False,
+        has_knowledge_base=False,
+        has_mcp_sources=False,
+        has_repo=False,
+    )
+    assert result.route == "explore"
+
+
 def test_needs_multiple_data_sources_triggers_pipeline_when_not_complex():
     """A non-complex request that spans data sources still uses the pipeline."""
     from app.agents.router import RouteResult

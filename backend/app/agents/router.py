@@ -22,7 +22,7 @@ _ROUTER_MAX_TOKENS = 200
 
 @dataclass
 class RouteResult:
-    route: str  # "direct" | "query" | "knowledge" | "mcp" | "explore"
+    route: str  # "direct" | "query" | "knowledge" | "git" | "mcp" | "explore"
     complexity: str  # "simple" | "moderate" | "complex"
     approach: str
     estimated_queries: int
@@ -58,6 +58,7 @@ def _build_router_prompt(
     has_connection: bool,
     has_knowledge_base: bool,
     has_mcp_sources: bool,
+    has_repo: bool = False,
 ) -> str:
     capabilities: list[str] = []
     routes: list[str] = []
@@ -76,6 +77,12 @@ def _build_router_prompt(
     if has_knowledge_base:
         capabilities.append("A project knowledge base is indexed (code, docs, architecture).")
         routes.append('"knowledge" — questions about project code, architecture, or documentation')
+    if has_repo:
+        capabilities.append("A live Git repository clone is available (commit history, releases).")
+        routes.append(
+            '"git" — questions about commit history, code changes/diffs, who changed '
+            "what, release timelines, or commit review signals"
+        )
     if has_mcp_sources:
         capabilities.append("External MCP data sources are connected.")
         routes.append('"mcp" — questions requiring external MCP-connected service data')
@@ -144,7 +151,7 @@ def _extract_json(raw: str) -> dict | None:
     return None
 
 
-_VALID_ROUTES = {"direct", "query", "knowledge", "mcp", "explore"}
+_VALID_ROUTES = {"direct", "query", "knowledge", "git", "mcp", "explore"}
 _VALID_COMPLEXITY = {"simple", "moderate", "complex"}
 
 
@@ -154,6 +161,7 @@ def _parse_route_response(
     has_connection: bool,
     has_knowledge_base: bool,
     has_mcp_sources: bool,
+    has_repo: bool = False,
 ) -> RouteResult:
     data = _extract_json(raw)
     if data is None:
@@ -171,6 +179,8 @@ def _parse_route_response(
     if route == "query" and not has_connection:
         route = "explore"
     if route == "knowledge" and not has_knowledge_base:
+        route = "explore"
+    if route == "git" and not has_repo:
         route = "explore"
     if route == "mcp" and not has_mcp_sources:
         route = "explore"
@@ -200,6 +210,7 @@ async def route_request(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
+    has_repo: bool = False,
     chat_history: list[Message] | None = None,
     preferred_provider: str | None = None,
     model: str | None = None,
@@ -213,6 +224,7 @@ async def route_request(
         has_connection=has_connection,
         has_knowledge_base=has_knowledge_base,
         has_mcp_sources=has_mcp_sources,
+        has_repo=has_repo,
     )
 
     messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -243,6 +255,7 @@ async def route_request(
         has_connection=has_connection,
         has_knowledge_base=has_knowledge_base,
         has_mcp_sources=has_mcp_sources,
+        has_repo=has_repo,
     )
     logger.info(
         "Router: route=%s complexity=%s est_queries=%d approach=%s",

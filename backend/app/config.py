@@ -100,6 +100,22 @@ class Settings(BaseSettings):
 
     repo_clone_base_dir: str = "./data/repos"
 
+    # Live Git access (GitInspector / GitAgent). All operations are read-only.
+    # ``git_agent_auto_pull`` lets the GitAgent refresh the local clone before
+    # answering when it has fallen behind the indexed HEAD; off by default
+    # because a pull costs network IO + can block on auth.
+    git_agent_auto_pull: bool = False
+    git_clone_pull_timeout_s: int = 60
+    # Bounded iterations for the GitAgent tool-calling loop.
+    max_git_iterations: int = 6
+    # Output guards so a single huge file/diff cannot blow up memory or the
+    # LLM context window.
+    git_max_output_bytes: int = 100_000
+    git_max_log_count: int = 200
+    # Freshness: warn the agent when the local clone is this many commits (or
+    # more) behind the indexed HEAD.
+    git_staleness_warn_commits: int = 5
+
     include_sample_data: bool = False
 
     # Query validation loop settings

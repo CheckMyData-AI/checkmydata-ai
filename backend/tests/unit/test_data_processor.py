@@ -186,9 +186,12 @@ class TestOrchestratorToolRegistration:
             "phone_to_country",
             "aggregate_data",
             "filter_data",
+            "cohort_window",
             "passthrough",
         ]
         assert op_param.required is False
+        # cohort_window carries structured params via the params_json blob.
+        assert "params_json" in param_names
 
 
 class TestDataProcessorPhoneToCountry:
@@ -950,6 +953,140 @@ class TestPassthrough:
         # Stray params (e.g. a column the planner half-filled) must not error.
         result = proc.process(qr, "passthrough", {"column": "x", "value": 1})
         assert result.query_result.row_count == 1
+
+
+class TestCohortWindow:
+    """cohort_window: correlate release dates with 7/14-day metrics."""
+
+    @staticmethod
+    def _qr():
+        return QueryResult(
+            columns=["id", "created_at", "amount"],
+            rows=[
+                [1, "2026-01-16", 10.0],
+                [2, "2026-01-20", 5.0],
+                [1, "2026-01-25", 7.0],  # day 10 → only in 14d window
+                [3, "2026-02-10", 100.0],  # outside both windows
+                [4, "not-a-date", 1.0],  # unparseable → skipped
+                [5, "2026-01-30 12:00:00", 3.0],  # day 15 → outside both
+            ],
+            row_count=6,
+            execution_time_ms=1.0,
+        )
+
+    _RELEASES = [{"tag": "v1", "date": "2026-01-15"}]
+
+    def test_revenue_windows(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        out = proc.process(
+            self._qr(),
+            "cohort_window",
+            {
+                "release_dates": self._RELEASES,
+                "event_date_column": "created_at",
+                "value_column": "amount",
+                "windows": [7, 14],
+                "metric": "revenue",
+            },
+        )
+        rows = {(r[3]): r for r in out.query_result.rows}  # by window_days
+        assert rows[7][4] == 15.0 and rows[7][5] == 2
+        assert rows[14][4] == 22.0 and rows[14][5] == 3
+        assert "Skipped 1 row" in out.summary
+
+    def test_retention_windows(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        out = proc.process(
+            self._qr(),
+            "cohort_window",
+            {
+                "release_dates": self._RELEASES,
+                "event_date_column": "created_at",
+                "id_column": "id",
+                "windows": [7, 14],
+                "metric": "retention",
+            },
+        )
+        rows = {(r[3]): r for r in out.query_result.rows}
+        # 7d distinct ids {1,2}=2; 14d distinct {1,2}=2 (id 1 repeats)
+        assert rows[7][4] == 2
+        assert rows[14][4] == 2
+
+    def test_metric_inferred_from_value_column(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        out = proc.process(
+            self._qr(),
+            "cohort_window",
+            {
+                "release_dates": self._RELEASES,
+                "event_date_column": "created_at",
+                "value_column": "amount",
+                "windows": [7],
+            },
+        )
+        assert out.query_result.rows[0][2] == "revenue"
+
+    def test_empty_release_dates_raises(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        with pytest.raises(ValueError, match="release_dates"):
+            proc.process(
+                self._qr(),
+                "cohort_window",
+                {"release_dates": [], "event_date_column": "created_at", "value_column": "amount"},
+            )
+
+    def test_missing_event_date_column_raises(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        with pytest.raises(ValueError, match="event_date_column"):
+            proc.process(
+                self._qr(),
+                "cohort_window",
+                {"release_dates": self._RELEASES, "value_column": "amount"},
+            )
+
+    def test_unknown_value_column_raises(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        with pytest.raises(ValueError, match="value_column"):
+            proc.process(
+                self._qr(),
+                "cohort_window",
+                {
+                    "release_dates": self._RELEASES,
+                    "event_date_column": "created_at",
+                    "value_column": "nope",
+                    "metric": "revenue",
+                },
+            )
+
+    def test_all_release_dates_unparseable_raises(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        with pytest.raises(ValueError, match="could not parse any release dates"):
+            proc.process(
+                self._qr(),
+                "cohort_window",
+                {
+                    "release_dates": [{"tag": "bad", "date": "xyz"}],
+                    "event_date_column": "created_at",
+                    "value_column": "amount",
+                    "metric": "revenue",
+                },
+            )
+
+    def test_empty_window_yields_zero(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        out = proc.process(
+            self._qr(),
+            "cohort_window",
+            {
+                "release_dates": [{"tag": "future", "date": "2030-01-01"}],
+                "event_date_column": "created_at",
+                "value_column": "amount",
+                "windows": [7],
+                "metric": "revenue",
+            },
+        )
+        assert out.query_result.rows[0][4] == 0.0
+        assert out.query_result.rows[0][5] == 0
 
 
 class TestGetDataProcessor:

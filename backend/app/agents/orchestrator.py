@@ -22,6 +22,7 @@ from app.agents.data_gate import DataGate
 from app.agents.errors import (
     AgentFatalError,
 )
+from app.agents.git_agent import GitAgent
 from app.agents.knowledge_agent import KnowledgeAgent, KnowledgeResult
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.pipeline_learning import PipelineLearningExtractor
@@ -59,6 +60,7 @@ from app.core.types import RAGSource
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
+from app.knowledge.repo_analyzer import RepoAnalyzer
 from app.knowledge.vector_store import VectorStore
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
@@ -185,6 +187,8 @@ class OrchestratorAgent(BaseAgent):
         self._knowledge = knowledge_agent or KnowledgeAgent(
             vector_store=self._vector_store,
         )
+        self._repo_analyzer = RepoAnalyzer(settings.repo_clone_base_dir)
+        self._git = GitAgent(repo_analyzer=self._repo_analyzer)
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
         self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
         self._wf_sql_lock = asyncio.Lock()
@@ -208,6 +212,7 @@ class OrchestratorAgent(BaseAgent):
             tracker=self._tracker,
             wf_sql_results=self._wf_sql_results,
             wf_enriched=self._wf_enriched,
+            git_agent=self._git,
         )
         self._ctx_loader = ContextLoader(
             vector_store=self._vector_store,
@@ -410,6 +415,7 @@ class OrchestratorAgent(BaseAgent):
             # Lightweight capability checks (KB is local, MCP needs DB)
             has_kb = self._ctx_loader.has_knowledge_base(context.project_id)
             has_mcp = await self._ctx_loader.has_mcp_sources(context.project_id, wf_id)
+            has_repo = self._ctx_loader.has_repo(context.project_id)
 
             # --- LLM-driven routing ---
             await self._tracker.emit(wf_id, "thinking", "in_progress", "Routing request…")
@@ -429,6 +435,7 @@ class OrchestratorAgent(BaseAgent):
                     has_connection=has_connection,
                     has_knowledge_base=has_kb,
                     has_mcp_sources=has_mcp,
+                    has_repo=has_repo,
                     chat_history=context.chat_history,
                     preferred_provider=context.preferred_provider,
                     model=context.model,
@@ -454,6 +461,7 @@ class OrchestratorAgent(BaseAgent):
                     has_connection,
                     has_kb,
                     has_mcp,
+                    has_repo,
                 )
 
             # --- Complex pipeline for multi-stage analysis ---
@@ -480,6 +488,7 @@ class OrchestratorAgent(BaseAgent):
                     table_map,
                     db_type,
                     staleness_warning=staleness_complex,
+                    has_repo=has_repo,
                 )
 
             # --- Unified tool loop for everything else ---
@@ -490,6 +499,7 @@ class OrchestratorAgent(BaseAgent):
                 db_type,
                 has_kb,
                 has_mcp,
+                has_repo,
                 route_result=route_result,
             )
 
@@ -555,6 +565,7 @@ class OrchestratorAgent(BaseAgent):
         has_connection: bool,
         has_kb: bool,
         has_mcp: bool,
+        has_repo: bool = False,
     ) -> AgentResponse:
         """Handle conversational/meta questions with a single LLM call, no tools."""
         await self._tracker.emit(wf_id, "thinking", "in_progress", "Responding directly…")
@@ -564,6 +575,7 @@ class OrchestratorAgent(BaseAgent):
             has_connection=has_connection,
             has_knowledge_base=has_kb,
             has_mcp_sources=has_mcp,
+            has_repo=has_repo,
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -635,6 +647,7 @@ class OrchestratorAgent(BaseAgent):
         db_type: str | None,
         has_kb: bool,
         has_mcp: bool,
+        has_repo: bool = False,
         *,
         route_result: RouteResult,
     ) -> AgentResponse:
@@ -693,6 +706,7 @@ class OrchestratorAgent(BaseAgent):
             has_connection=has_connection,
             has_knowledge_base=has_kb,
             has_mcp_sources=has_mcp,
+            has_repo=has_repo,
         )
 
         return await self._run_tool_loop(
@@ -702,6 +716,7 @@ class OrchestratorAgent(BaseAgent):
             db_type=db_type,
             has_kb=has_kb,
             has_mcp=has_mcp,
+            has_repo=has_repo,
             table_map=table_map,
             project_overview=project_overview,
             recent_learnings=recent_learnings,
@@ -725,6 +740,7 @@ class OrchestratorAgent(BaseAgent):
         db_type: str | None,
         has_kb: bool,
         has_mcp: bool,
+        has_repo: bool = False,
         table_map: str,
         project_overview: str | None,
         recent_learnings: str | None,
@@ -748,6 +764,7 @@ class OrchestratorAgent(BaseAgent):
             has_connection=has_connection,
             has_knowledge_base=has_kb,
             has_mcp_sources=has_mcp,
+            has_repo=has_repo,
             table_map="",
             current_datetime=get_current_datetime_str(),
             project_overview="",
@@ -768,6 +785,7 @@ class OrchestratorAgent(BaseAgent):
             has_connection=has_connection,
             has_knowledge_base=has_kb,
             has_mcp_sources=has_mcp,
+            has_repo=has_repo,
             table_map=allocation.schema_text,
             current_datetime=get_current_datetime_str(),
             project_overview=allocation.overview_text,
@@ -1569,6 +1587,7 @@ class OrchestratorAgent(BaseAgent):
         table_map: str,
         db_type: str | None,
         staleness_warning: str | None,
+        has_repo: bool = False,
     ) -> AgentResponse:
         """Plan and execute a multi-stage pipeline for complex queries.
 
@@ -1665,6 +1684,7 @@ class OrchestratorAgent(BaseAgent):
             validator=StageValidator(),
             data_gate=data_gate,
             mcp_source_agent=self._mcp_source,
+            git_agent=self._git,
         )
 
         pipeline_ctx = replace(
@@ -2023,6 +2043,7 @@ class OrchestratorAgent(BaseAgent):
                 validator=StageValidator(),
                 data_gate=DataGate(),
                 mcp_source_agent=self._mcp_source,
+                git_agent=self._git,
             )
             resume_ctx = replace(
                 context,

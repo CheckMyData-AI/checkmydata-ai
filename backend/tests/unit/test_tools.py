@@ -75,3 +75,21 @@ class TestOrchestratorTools:
         names = [t.name for t in tools]
         assert "query_database" in names
         assert "manage_rules" in names
+
+    def test_includes_git_tools_when_has_repo(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_repo=True)
+        names = [t.name for t in tools]
+        assert "analyze_git" in names
+        assert "get_release_timeline" in names
+        assert "write_code_note" in names
+
+    def test_excludes_git_tools_without_repo(self):
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+
+        tools = get_orchestrator_tools(has_repo=False)
+        names = [t.name for t in tools]
+        assert "analyze_git" not in names
+        assert "get_release_timeline" not in names
+        assert "write_code_note" not in names

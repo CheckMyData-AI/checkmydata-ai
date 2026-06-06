@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.connectors.base import QueryResult
@@ -33,6 +34,7 @@ SUPPORTED_OPERATIONS = (
     "phone_to_country",
     "aggregate_data",
     "filter_data",
+    "cohort_window",
     "passthrough",
 )
 
@@ -68,6 +70,8 @@ class DataProcessor:
             return self._aggregate_data(query_result, params)
         if operation == "filter_data":
             return self._filter_data(query_result, params)
+        if operation == "cohort_window":
+            return self._cohort_window(query_result, params)
         if operation == "passthrough":
             return self._passthrough(query_result)
         raise ValueError(
@@ -439,6 +443,215 @@ class DataProcessor:
             allowed = [v.strip() for v in val_str.split(",")]
             return cell_str in allowed
         return True
+
+    # ------------------------------------------------------------------
+    # cohort_window  (release -> 7/14-day retention/revenue bridge)
+    # ------------------------------------------------------------------
+
+    # Common timestamp formats we try in order. ``fromisoformat`` covers the
+    # ISO-8601 family (incl. "YYYY-MM-DD HH:MM:SS" and offsets on 3.11+); the
+    # explicit patterns catch slash-style and compact dates.
+    _DATE_FORMATS = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d.%m.%Y",
+        "%Y%m%d",
+    )
+
+    @classmethod
+    def _parse_date(cls, value: Any) -> datetime | None:
+        """Best-effort parse of a date/datetime cell to a tz-naive datetime.
+
+        Returns ``None`` when the value cannot be parsed. Timezone-aware
+        inputs are normalized to naive (offset dropped) so all comparisons
+        happen on the same axis.
+        """
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        # ``date`` (not datetime) and any other type fall through to string.
+        text = str(value).strip()
+        if not text:
+            return None
+        # Normalize a trailing 'Z' (UTC) that older Pythons reject.
+        iso_text = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            return datetime.fromisoformat(iso_text).replace(tzinfo=None)
+        except ValueError:
+            pass
+        for fmt in cls._DATE_FORMATS:
+            try:
+                return datetime.strptime(text, fmt).replace(tzinfo=None)
+            except ValueError:
+                continue
+        return None
+
+    def _cohort_window(
+        self,
+        qr: QueryResult,
+        params: dict[str, Any],
+    ) -> ProcessedData:
+        """Correlate release dates with post-release metrics.
+
+        For each release and each window (days), bucket the rows whose event
+        date falls in ``[release_date, release_date + window]`` and compute
+        either summed revenue (``value_column``) or distinct-id retention
+        (``id_column``).
+
+        Params:
+            release_dates: list of ``{"tag": str, "date": <date>}``.
+            event_date_column: column holding each row's event timestamp.
+            value_column: numeric column to sum (metric="revenue").
+            id_column: identity column to count distinctly (metric="retention").
+            windows: list of day offsets (default ``[7, 14]``).
+            metric: "revenue" | "retention" (inferred from columns if omitted).
+        """
+        release_dates = params.get("release_dates") or []
+        event_date_column: str = params.get("event_date_column", "")
+        value_column: str = params.get("value_column", "") or ""
+        id_column: str = params.get("id_column", "") or ""
+        windows_raw = params.get("windows") or [7, 14]
+        metric: str = (params.get("metric") or "").lower()
+
+        if not release_dates:
+            raise ValueError("cohort_window requires a non-empty 'release_dates' list")
+        if not event_date_column:
+            raise ValueError("cohort_window requires an 'event_date_column' parameter")
+        if event_date_column not in qr.columns:
+            raise ValueError(
+                f"event_date_column '{event_date_column}' not found. "
+                f"Available: {', '.join(qr.columns)}"
+            )
+
+        # Infer metric from provided columns when not stated explicitly.
+        if not metric:
+            metric = "revenue" if value_column else "retention"
+        if metric not in ("revenue", "retention"):
+            raise ValueError(
+                f"cohort_window 'metric' must be 'revenue' or 'retention', got '{metric}'"
+            )
+
+        if metric == "revenue":
+            if not value_column:
+                raise ValueError("cohort_window metric='revenue' requires a 'value_column'")
+            if value_column not in qr.columns:
+                raise ValueError(
+                    f"value_column '{value_column}' not found. Available: {', '.join(qr.columns)}"
+                )
+        else:  # retention
+            if not id_column:
+                raise ValueError("cohort_window metric='retention' requires an 'id_column'")
+            if id_column not in qr.columns:
+                raise ValueError(
+                    f"id_column '{id_column}' not found. Available: {', '.join(qr.columns)}"
+                )
+
+        try:
+            windows = sorted({int(w) for w in windows_raw if int(w) > 0})
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"cohort_window 'windows' must be a list of positive ints: {exc}"
+            ) from exc
+        if not windows:
+            raise ValueError("cohort_window 'windows' resolved to an empty set")
+
+        # Parse + normalize the release list up front.
+        parsed_releases: list[tuple[str, datetime]] = []
+        bad_releases: list[str] = []
+        for rel in release_dates:
+            tag = str(rel.get("tag", "") or "untagged")
+            rel_dt = self._parse_date(rel.get("date"))
+            if rel_dt is None:
+                bad_releases.append(tag)
+                continue
+            parsed_releases.append((tag, rel_dt))
+        if not parsed_releases:
+            raise ValueError(
+                "cohort_window could not parse any release dates; "
+                "ensure each entry has a parseable 'date'."
+            )
+
+        date_idx = qr.columns.index(event_date_column)
+        value_idx = qr.columns.index(value_column) if metric == "revenue" else -1
+        id_idx = qr.columns.index(id_column) if metric == "retention" else -1
+
+        # Pre-parse rows once: (event_dt, value_or_id).
+        parsed_rows: list[tuple[datetime, Any]] = []
+        unparsed_rows = 0
+        for row in qr.rows:
+            ev_dt = self._parse_date(row[date_idx])
+            if ev_dt is None:
+                unparsed_rows += 1
+                continue
+            payload = row[value_idx] if metric == "revenue" else row[id_idx]
+            parsed_rows.append((ev_dt, payload))
+
+        out_columns = [
+            "tag",
+            "release_date",
+            "metric",
+            "window_days",
+            "value",
+            "rows_in_window",
+        ]
+        out_rows: list[list[Any]] = []
+
+        for tag, rel_dt in parsed_releases:
+            for window in windows:
+                end_dt = rel_dt + timedelta(days=window)
+                rows_in_window = 0
+                revenue_sum = 0.0
+                distinct_ids: set[Any] = set()
+                for ev_dt, payload in parsed_rows:
+                    if rel_dt <= ev_dt <= end_dt:
+                        rows_in_window += 1
+                        if metric == "revenue":
+                            if payload is not None:
+                                try:
+                                    revenue_sum += float(payload)
+                                except (ValueError, TypeError):
+                                    pass
+                        else:
+                            if payload is not None:
+                                distinct_ids.add(payload)
+                value: Any = round(revenue_sum, 4) if metric == "revenue" else len(distinct_ids)
+                out_rows.append(
+                    [
+                        tag,
+                        rel_dt.date().isoformat(),
+                        metric,
+                        window,
+                        value,
+                        rows_in_window,
+                    ]
+                )
+
+        result_qr = QueryResult(
+            columns=out_columns,
+            rows=out_rows,
+            row_count=len(out_rows),
+            execution_time_ms=qr.execution_time_ms,
+        )
+
+        summary_parts = [
+            f"Computed {metric} for {len(parsed_releases)} release(s) "
+            f"across windows {windows} day(s) "
+            f"({len(out_rows)} release/window cells)."
+        ]
+        if unparsed_rows:
+            summary_parts.append(f"Skipped {unparsed_rows} row(s) with unparseable dates.")
+        if bad_releases:
+            summary_parts.append(
+                f"Skipped {len(bad_releases)} release(s) with unparseable dates: "
+                f"{', '.join(bad_releases[:10])}."
+            )
+        return ProcessedData(query_result=result_qr, summary=" ".join(summary_parts))
 
 
 _processor_instance: DataProcessor | None = None

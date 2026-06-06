@@ -10,6 +10,89 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### Live Git access + release cohort analysis
+
+Gives the orchestrator live, read-only access to the project's local Git clone
+(commit history, diffs, blame, releases, authorship, churn, and commit-trailer
+review signals) and a release→cohort bridge so it can correlate releases with
+post-release retention/revenue.
+
+- **`GitInspector` service** (`backend/app/knowledge/git_inspector.py`) — async,
+  read-only GitPython wrapper: `log`, `show`, `diff`, `blame`, `list_releases`,
+  `authors_stats`, `file_churn`, `commits_touching`, `review_signals`. Security
+  hardened: explicit arg lists (never `shell`), path-traversal guard
+  (`is_relative_to`), output/count limits, no hook execution, binary/non-UTF-8
+  safe, and a typed error taxonomy (`RepoNotClonedError`, `InvalidRefError`,
+  `PathOutsideRepoError`, `GitCommandFailedError`). Empty/unborn-HEAD repos and
+  bad refs are handled explicitly.
+- **`GitAgent` sub-agent** (`backend/app/agents/git_agent.py` + `prompts/git_prompt.py`
+  + `tools/git_tools.py`) — mirrors `KnowledgeAgent`'s bounded tool-calling loop,
+  with a clone-freshness warning (commits ahead of the last indexed SHA), an
+  opt-in auto clone-or-pull (`git_agent_auto_pull`), a deterministic
+  `get_release_timeline`, and `write_code_note`.
+- **Single-loop wiring.** New orchestrator meta-tools `analyze_git`,
+  `get_release_timeline`, and `write_code_note` (gated by a `has_repo` capability
+  flag threaded through the router, context loader, tool definitions, and
+  prompts, exactly like `has_kb`); dispatched to the `GitAgent` via
+  `ToolDispatcher`. The router gains a `git` route that downgrades to `explore`
+  when no clone is present.
+- **Full pipeline wiring.** `analyze_git` is now a first-class planner stage tool
+  (`query_planner` validation + `stage_executor._run_git_stage`), enabling the
+  release→cohort recipe: `analyze_git` → `query_database` → `process_data`
+  (cohort_window) → `synthesize`.
+- **`cohort_window` data operation** (`backend/app/services/data_processor.py`) —
+  buckets rows into each release's `[release, release+window]` and computes summed
+  revenue or distinct-id retention at 7/14-day (configurable) windows. Robust
+  date parsing (unparseable rows skipped and counted), empty-window safe, column
+  validation. Structured params reach the single-loop `process_data` tool via a
+  new `params_json` blob.
+- **Code findings persisted to Insight Memory.** Added the `code_finding` insight
+  type; `write_code_note` stores durable findings that the context loader already
+  auto-injects into future prompts.
+- **Bug fix:** `ContextLoader.has_repo` referenced `Path` without importing it,
+  so the capability probe always returned `False` (caught by the new unit test).
+- **Tests.** New `test_git_inspector.py` (temp-repo + edge cases),
+  `test_git_agent.py`, `test_tool_dispatcher_git.py`, plus git-route/plan/stage/
+  cohort_window/has_repo cases added to the router, planner, stage-executor,
+  data-processor, tools, and context-loader suites.
+
+### Marketing site — narrative, conversion & SEO refine
+
+Repositions the landing and marketing pages around the product's real moat —
+correct answers grounded in your schema *and* codebase, self-healing queries,
+and institutional memory — and replaces unverifiable social proof with honest,
+verifiable trust signals. The cinematic 2.5D system is unchanged; this is a
+copy/structure/SEO refine.
+
+- **Hero repositioned to correctness.** H1 now leads with "Correct answers from
+  your database — on the first try"; the "Like ChatGPT, but for your database"
+  hook is demoted to a small secondary line, and the subhead explains *why* the
+  answers are correct (schema + codebase context).
+  (`frontend/src/app/(marketing)/page.tsx`)
+- **Honest trust signals.** The social-proof bar's unverifiable claims and the
+  "Most loved feature" badge are replaced with true signals (MIT open source,
+  read-only by default, credentials encrypted at rest, self-host or hosted,
+  transparent SQL) plus an optional live GitHub star count that renders only
+  when it truly resolves (server-fetched, 1h revalidate, hidden on failure/zero).
+- **Moat-first features.** Codebase-aware context is promoted to first; new
+  Self-healing queries and Institutional memory cards surface vision-level
+  differentiators; all descriptions tightened to benefit-first.
+- **New "why the answers are correct" section** (context engine: schema + code +
+  rules + memory → validated, dialect-aware SQL) with an honest comparison vs. a
+  plain SQL editor and vs. a generic chatbot.
+- **Landing FAQ** with objection handling (safety/read-only, vs. ChatGPT, no SQL
+  required, what codebase indexing sends, self-host vs. hosted), reusing the
+  support accordion pattern.
+- **SEO schema & metadata.** Landing JSON-LD now emits `Organization`,
+  `SoftwareApplication`, and `FAQPage`; support adds `FAQPage` + `BreadcrumbList`;
+  about/contact add `BreadcrumbList`. Meta/OG/Twitter descriptions across the
+  landing, about, and root layout are unified around the correctness narrative
+  while keeping text-to-SQL / natural-language keywords.
+- **Cross-page consistency.** About hero/mission and the footer tagline are
+  re-threaded around context/correctness/memory; subtle `cmd-reveal` cohesion
+  added to about/support headers (each mounts `CinematicEngine` so reveals
+  resolve, with the existing reduced-motion + `<noscript>` failsafes intact).
+
 ### Conversational turn isolation & response language
 
 Makes the orchestrator behave like a normal chat partner: it acts only on the

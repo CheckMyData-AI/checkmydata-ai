@@ -572,6 +572,117 @@ class TestHistoryScoping:
         assert call_ctx.chat_history == []
 
 
+def _git_stage(stage_id: str = "g1") -> PlanStage:
+    return PlanStage(
+        stage_id=stage_id,
+        description=f"Git stage {stage_id}",
+        tool="analyze_git",
+    )
+
+
+class TestGitStage:
+    """analyze_git stage dispatch via the injected GitAgent."""
+
+    @pytest.fixture
+    def mock_git_agent(self):
+        agent = AsyncMock()
+        agent.run = AsyncMock()
+        return agent
+
+    @pytest.fixture
+    def git_executor(
+        self,
+        mock_sql_agent,
+        mock_knowledge_agent,
+        mock_llm,
+        mock_tracker,
+        mock_validator,
+        mock_git_agent,
+    ):
+        return StageExecutor(
+            sql_agent=mock_sql_agent,
+            knowledge_agent=mock_knowledge_agent,
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            validator=mock_validator,
+            git_agent=mock_git_agent,
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatches_analyze_git(self, git_executor, context, mock_git_agent):
+        git_result = MagicMock()
+        git_result.answer = "v1.2.0 released 2026-01-15"
+        git_result.token_usage = {}
+        mock_git_agent.run.return_value = git_result
+
+        stage = _git_stage("g1")
+        plan = _make_plan(stage)
+        stage_ctx = StageContext(plan=plan)
+
+        result = await git_executor._execute_stage(stage, stage_ctx, context)
+
+        assert result.status == "success"
+        assert "v1.2.0" in result.summary
+        mock_git_agent.run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_is_error(self, git_executor, context, mock_git_agent):
+        git_result = MagicMock()
+        git_result.answer = ""
+        git_result.token_usage = {}
+        mock_git_agent.run.return_value = git_result
+
+        stage = _git_stage("g1")
+        plan = _make_plan(stage)
+        stage_ctx = StageContext(plan=plan)
+
+        result = await git_executor._execute_stage(stage, stage_ctx, context)
+
+        assert result.status == "error"
+        assert "empty" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_git_agent_returns_error(self, executor, context):
+        """The default executor (no git_agent) reports git is unavailable."""
+        stage = _git_stage("g1")
+        plan = _make_plan(stage)
+        stage_ctx = StageContext(plan=plan)
+
+        result = await executor._execute_stage(stage, stage_ctx, context)
+
+        assert result.status == "error"
+        assert "not available" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_stage_receives_scoped_history(
+        self, git_executor, mock_git_agent, mock_llm, mock_tracker
+    ):
+        from app.llm.base import Message
+
+        git_result = MagicMock()
+        git_result.answer = "ok"
+        git_result.token_usage = {}
+        mock_git_agent.run.return_value = git_result
+
+        history = [Message(role="user", content=f"q{i}") for i in range(10)]
+        ctx = AgentContext(
+            project_id="proj-1",
+            connection_config=ConnectionConfig(db_type="postgres"),
+            user_question="test",
+            chat_history=history,
+            llm_router=mock_llm,
+            tracker=mock_tracker,
+            workflow_id="wf-test",
+        )
+
+        await git_executor._run_git_stage("test q", _git_stage("g1"), ctx)
+
+        from app.config import settings as _s
+
+        call_ctx = mock_git_agent.run.call_args[0][0]
+        assert len(call_ctx.chat_history) == _s.history_tail_messages
+
+
 class TestStalenessInjection:
     """V3 — vision §7 #7: complex pipeline must inject freshness warning into
     every LLM-touching surface (planner, stage prompts, synthesis)."""

@@ -14,6 +14,7 @@ def build_orchestrator_system_prompt(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
+    has_repo: bool = False,
     table_map: str = "",
     current_datetime: str | None = None,
     project_overview: str | None = None,
@@ -54,6 +55,11 @@ def build_orchestrator_system_prompt(
             "median. Optional: sort_by (column), order (asc/desc)\n"
             "  • filter_data — filter rows by column value (requires 'column', "
             "optional 'op', 'value', 'exclude_empty')\n"
+            "  • cohort_window — correlate release dates with post-release "
+            "metrics (retention/revenue at 7/14 days). Pass structured params "
+            "via 'params_json': release_dates (list of {tag,date}), "
+            "event_date_column, value_column (revenue) or id_column "
+            "(retention), windows (e.g. [7,14]), metric.\n"
             "  You can chain multiple process_data calls sequentially: first "
             "enrich (e.g. ip_to_country), then filter (e.g. exclude Unknown), "
             "then aggregate. Each call operates on the result of the previous "
@@ -76,6 +82,26 @@ def build_orchestrator_system_prompt(
             "- **query_mcp_source**: External data sources are connected via MCP. "
             "Use this for questions that require data from external APIs or "
             "services not available in the primary database."
+        )
+
+    if has_repo:
+        sections.append(
+            "- **analyze_git**: A local clone of the project's Git repository is "
+            "available (read-only). Delegate questions about commit history, "
+            "diffs, blame, releases/tags, authorship, file churn, and "
+            "commit-trailer review signals (co-authors, reviewers, sign-offs, "
+            "merge commits) here."
+        )
+        sections.append(
+            "- **get_release_timeline**: Return a structured list of releases "
+            "(tags) with dates and commit SHAs. Use this as the first stage when "
+            "correlating releases with database metrics (e.g. release → SQL → "
+            "cohort_window → synthesis for 7/14-day retention/revenue)."
+        )
+        sections.append(
+            "- **write_code_note**: Persist a durable code finding to project "
+            "memory (e.g. 'function X caches IP lookups in Redis'). Use after "
+            "investigating the codebase so the insight is reused in future runs."
         )
 
     sections.append(
@@ -171,6 +197,7 @@ def build_direct_response_prompt(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
+    has_repo: bool = False,
 ) -> str:
     """Build a minimal system prompt for direct conversational responses."""
     project_label = f' for the project "{project_name}"' if project_name else ""
@@ -182,6 +209,8 @@ def build_direct_response_prompt(
         caps.append("search indexed project code and documentation")
     if has_mcp_sources:
         caps.append("query external MCP data sources")
+    if has_repo:
+        caps.append("analyze the project's Git history (commits, diffs, releases)")
     if not caps:
         caps.append("have general conversations")
 

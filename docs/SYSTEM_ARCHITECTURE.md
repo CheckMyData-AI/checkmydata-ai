@@ -403,10 +403,13 @@ The orchestrator's LLM sees these meta-tools (defined in `backend/app/agents/too
 | `search_codebase` | KB indexed | `KnowledgeAgent` | RAG search over indexed code/docs |
 | `manage_rules` | DB connected | Direct (RuleService) | CRUD for project rules |
 | `query_mcp_source` | MCP connections | `MCPSourceAgent` | Query external MCP data sources |
-| `process_data` | DB connected | `DataProcessor` | In-memory data enrichment (IP→country, phone→country, aggregate, filter) |
+| `process_data` | DB connected | `DataProcessor` | In-memory data enrichment (IP→country, phone→country, aggregate, filter, cohort_window) |
+| `analyze_git` | Local clone present (`has_repo`) | `GitAgent` | Read-only Git history analysis (commits, diffs, blame, releases, review signals) |
+| `get_release_timeline` | Local clone present (`has_repo`) | `GitAgent` (deterministic) | Structured release/tag timeline as a markdown table — feeds cohort analysis |
+| `write_code_note` | Local clone present (`has_repo`) | `GitAgent` → Insight Memory | Persist a durable `code_finding` recalled in future questions |
 | `ask_user` | Always available | None (raises exception) | Structured clarification question |
 
-Tools are assembled dynamically by `get_orchestrator_tools()` based on what the project has configured.
+Tools are assembled dynamically by `get_orchestrator_tools()` based on what the project has configured. The `has_repo` capability flag (a fast `.git`-exists probe in `ContextLoader.has_repo`) is threaded through the router, prompts, and tool list exactly like `has_kb`.
 
 ### 2.8 Sub-Agent Retry Logic
 
@@ -1195,6 +1198,47 @@ Links ORM models found in the codebase to actual database tables:
 - Brain icon button on each assistant message (`ChatMessage.tsx`) toggles the panel
 - Displays: plan summary, thinking log, step timeline with icons and durations
 
+### 7.9 Live Git Access
+
+While §7.2 indexes a *snapshot* of the repo into ChromaDB for semantic search,
+**Live Git Access** lets the agent read the actual Git history of the local clone
+at query time — the live commit graph, not a stale embedding.
+
+- **`GitInspector`** (`backend/app/knowledge/git_inspector.py`): an async,
+  strictly read-only GitPython wrapper. Every method runs via
+  `asyncio.to_thread` and returns plain dicts/strings (never raw GitPython
+  objects): `log`, `show`, `diff`, `blame`, `list_releases`, `authors_stats`,
+  `file_churn`, `commits_touching`, `review_signals`. Hardening: explicit
+  argument lists (never a shell), a path-traversal guard
+  (`(repo_dir / path).resolve().is_relative_to(repo_dir)`), output/count caps
+  (`git_max_output_bytes`, `git_max_log_count`), no hook execution, binary and
+  non-UTF-8 safe, and a typed error taxonomy. Empty/unborn-HEAD repos and bad
+  refs degrade gracefully.
+- **`GitAgent`** (`backend/app/agents/git_agent.py`): a sub-agent mirroring
+  `KnowledgeAgent`'s bounded tool-calling loop, backed by `GitInspector`. It
+  surfaces a **clone-freshness warning** when the local clone is many commits
+  ahead of the last indexed SHA (Git history is live, but the semantic KB may
+  lag), supports an **opt-in auto clone-or-pull** (`git_agent_auto_pull`,
+  default off), and exposes two deterministic helpers used directly by the
+  dispatcher and pipeline: `get_release_timeline` and `write_code_note`.
+- **Capability gating.** `ContextLoader.has_repo(project_id)` is a fast
+  `.git`-exists probe (no DB). The `has_repo` flag is threaded through the router
+  (which gains a `git` route, downgraded to `explore` when absent), the
+  orchestrator prompts, and `get_orchestrator_tools()` — the same pattern as
+  `has_kb`.
+- **Both execution paths.** In the single-agent loop, `analyze_git` /
+  `get_release_timeline` / `write_code_note` are meta-tools dispatched by
+  `ToolDispatcher`. In the complex pipeline, `analyze_git` is a first-class
+  planner stage tool executed by `StageExecutor._run_git_stage`.
+- **Review analysis (Phase 1)** is derived from commit metadata —
+  merge-commit detection, co-authors, reviewers, and `Signed-off-by` trailers —
+  via `review_signals`. Hosting-platform PR/review APIs (GitHub/GitLab) are a
+  Phase 3 follow-up.
+- **Code findings** are persisted as `code_finding` insights (Insight Memory,
+  §3.4), which the context loader already auto-injects into future prompts — so a
+  finding learned while exploring a function is recalled later without re-reading
+  the repo.
+
 ---
 
 ## 8. Data Flow Diagrams
@@ -1366,6 +1410,31 @@ flowchart TB
     UH -.-> HC -.->|"recovered"| FC
 ```
 
+### 8.6 Git-Driven Cohort Analysis (release → retention/revenue)
+
+The release→cohort recipe correlates Git releases with post-release metrics. The
+planner emits a four-stage pipeline; the `cohort_window` data operation buckets
+each per-row event into every release's `[release, release + N days]` window and
+computes summed revenue or distinct-id retention.
+
+```mermaid
+flowchart TB
+    U["User: 'How did 7- and 14-day retention move\nafter each release?'"]
+    QP["AdaptivePlanner:\nrelease→cohort plan"]
+    S1["Stage 1 — analyze_git\nGitAgent.get_release_timeline\n→ [{tag, date, sha}]"]
+    S2["Stage 2 — query_database\nSQLAgent: per-row events with a\ndate column + value/id column"]
+    S3["Stage 3 — process_data (cohort_window)\nDataProcessor: bucket rows per release\n× window [7, 14] → revenue / retention"]
+    S4["Stage 4 — synthesize\nLLM: narrative + table per release"]
+
+    U --> QP --> S1 --> S2 --> S3 --> S4
+```
+
+In the single-agent loop the same outcome is reachable without a plan: the LLM
+calls `get_release_timeline`, then `query_database`, then `process_data` with
+`operation="cohort_window"` and the structured `params_json` blob
+(`release_dates`, `event_date_column`, `value_column`/`id_column`, `windows`,
+`metric`).
+
 ---
 
 ## Appendix: Configuration Reference
@@ -1387,3 +1456,8 @@ Key settings from `backend/app/config.py` that affect system behavior:
 | `history_summary_model` | — | Model for history summarization |
 | `model_cache_ttl_seconds` | `3600` | How long to cache OpenRouter model list |
 | `max_pie_categories` | varies | Threshold for pie chart → bar chart fallback |
+| `git_agent_auto_pull` | `false` | Opt-in `git fetch`/pull of the local clone before Git analysis |
+| `max_git_iterations` | `6` | GitAgent tool-calling loop ceiling |
+| `git_max_output_bytes` | `100000` | Per-call truncation cap for diffs/blame/show |
+| `git_max_log_count` | `200` | Default/maximum commits returned by `git log` |
+| `git_clone_pull_timeout_s` | `60` | Timeout (s) for the optional auto clone-or-pull |
