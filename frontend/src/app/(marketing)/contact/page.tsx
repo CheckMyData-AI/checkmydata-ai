@@ -38,6 +38,29 @@ const CHANNELS = [
 export default function ContactPage() {
   return (
     <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            itemListElement: [
+              {
+                "@type": "ListItem",
+                position: 1,
+                name: "Home",
+                item: "https://checkmydata.ai",
+              },
+              {
+                "@type": "ListItem",
+                position: 2,
+                name: "Contact",
+                item: "https://checkmydata.ai/contact",
+              },
+            ],
+          }),
+        }}
+      />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           Contact Us

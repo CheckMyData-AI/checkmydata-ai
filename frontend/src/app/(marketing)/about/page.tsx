@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 
 export const metadata: Metadata = {
   title: "About",
   description:
-    "Learn about CheckMyData.ai — the open-source AI database agent built for developers and data teams.",
+    "Learn about CheckMyData.ai — the open-source AI database agent that reads your schema and codebase as context to turn plain-English questions into correct SQL.",
   openGraph: {
     title: "About | CheckMyData.ai",
     description:
-      "Learn about CheckMyData.ai — the open-source AI database agent built for developers and data teams.",
+      "The open-source AI database agent that understands your schema and codebase, so plain-English questions become correct, trustworthy SQL.",
     url: "https://checkmydata.ai/about",
     siteName: "CheckMyData.ai",
     type: "website",
@@ -17,7 +18,7 @@ export const metadata: Metadata = {
     card: "summary",
     title: "About | CheckMyData.ai",
     description:
-      "Learn about CheckMyData.ai — the open-source AI database agent built for developers and data teams.",
+      "The open-source AI database agent that understands your schema and codebase, so plain-English questions become correct, trustworthy SQL.",
   },
   alternates: { canonical: "https://checkmydata.ai/about" },
 };
@@ -34,23 +35,49 @@ const TECH_STACK = [
 export default function AboutPage() {
   return (
     <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <CinematicEngine />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            itemListElement: [
+              {
+                "@type": "ListItem",
+                position: 1,
+                name: "Home",
+                item: "https://checkmydata.ai",
+              },
+              {
+                "@type": "ListItem",
+                position: 2,
+                name: "About",
+                item: "https://checkmydata.ai/about",
+              },
+            ],
+          }),
+        }}
+      />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
-        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+        <h1 className="cmd-reveal text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           About CheckMyData.ai
         </h1>
-        <p className="text-lg text-text-secondary leading-relaxed">
-          An open-source AI database agent that helps developers and data teams
-          understand, query, and visualize their data using natural language.
+        <p className="cmd-reveal text-lg text-text-secondary leading-relaxed">
+          An open-source AI database agent that reads your schema and codebase as
+          context — so plain-English questions become correct, trustworthy SQL
+          for developers and data teams.
         </p>
       </header>
 
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">Our Mission</h2>
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">Our Mission</h2>
         <p className="text-sm text-text-secondary leading-relaxed">
-          We believe every developer and data professional should be able to
-          explore their databases without writing complex SQL from scratch.
-          CheckMyData.ai bridges the gap between natural language and database
-          queries, making data accessible to everyone on the team.
+          We believe the hard part of working with data isn&rsquo;t writing SQL —
+          it&rsquo;s knowing the context to query it correctly. CheckMyData.ai
+          captures that context — your schema, your codebase, your conventions —
+          and learns it over time, so anyone on the team can ask a question and
+          trust the answer.
         </p>
         <p className="text-sm text-text-secondary leading-relaxed">
           As an open-source project, we are committed to full transparency.
@@ -61,7 +88,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           How It Works
         </h2>
         <div className="space-y-4 text-sm text-text-secondary leading-relaxed">
@@ -87,7 +114,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           Technology Stack
         </h2>
         <div className="grid gap-4">
@@ -106,7 +133,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           Open Source
         </h2>
         <p className="text-sm text-text-secondary leading-relaxed">
@@ -133,7 +160,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-4">
-        <h2 className="text-xl font-semibold text-text-primary">Contact</h2>
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">Contact</h2>
         <p className="text-sm text-text-secondary leading-relaxed">
           Have questions or want to get in touch? Reach out at{" "}
           <a

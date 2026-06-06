@@ -30,7 +30,7 @@ export const metadata: Metadata = {
     template: "%s | CheckMyData.ai",
   },
   description:
-    "Open-source AI-powered database agent. Query PostgreSQL, MySQL, ClickHouse, and MongoDB with natural language.",
+    "Open-source AI database agent. Ask in plain English and get correct SQL — it understands your schema and codebase. Works with PostgreSQL, MySQL, ClickHouse, and MongoDB.",
   manifest: "/manifest.json",
   icons: {
     icon: [
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
     siteName: "CheckMyData.ai",
     title: "CheckMyData.ai — Open-Source AI Database Agent",
     description:
-      "Query your databases with natural language. Open-source, privacy-first, self-hostable.",
+      "Correct answers from your database in plain English — grounded in your schema and codebase. Open-source, privacy-first, self-hostable.",
     url: "https://checkmydata.ai",
     images: [
       {
@@ -61,7 +61,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "CheckMyData.ai — Open-Source AI Database Agent",
     description:
-      "Query your databases with natural language. Open-source, privacy-first, self-hostable.",
+      "Correct answers from your database in plain English — grounded in your schema and codebase. Open-source, privacy-first, self-hostable.",
     images: ["/og-image.png"],
   },
   appleWebApp: {

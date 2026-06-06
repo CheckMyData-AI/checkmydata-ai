@@ -121,8 +121,8 @@ export default function MarketingLayout({
                 </span>
               </Link>
               <p className="text-xs text-text-tertiary leading-relaxed">
-                AI analyst for your database. Ask questions like a human, get
-                answers like a data scientist.
+                AI analyst for your database. It understands your schema and
+                codebase, so plain-English questions become correct SQL.
               </p>
             </div>
 

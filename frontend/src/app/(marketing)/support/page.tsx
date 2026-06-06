@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 
 export const metadata: Metadata = {
   title: "Support",
@@ -56,18 +57,55 @@ const FAQS = [
 export default function SupportPage() {
   return (
     <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <CinematicEngine />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": "FAQPage",
+                "@id": "https://checkmydata.ai/support#faq",
+                mainEntity: FAQS.map((faq) => ({
+                  "@type": "Question",
+                  name: faq.q,
+                  acceptedAnswer: { "@type": "Answer", text: faq.a },
+                })),
+              },
+              {
+                "@type": "BreadcrumbList",
+                itemListElement: [
+                  {
+                    "@type": "ListItem",
+                    position: 1,
+                    name: "Home",
+                    item: "https://checkmydata.ai",
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 2,
+                    name: "Support",
+                    item: "https://checkmydata.ai/support",
+                  },
+                ],
+              },
+            ],
+          }),
+        }}
+      />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
-        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+        <h1 className="cmd-reveal text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           Support
         </h1>
-        <p className="text-lg text-text-secondary leading-relaxed">
+        <p className="cmd-reveal text-lg text-text-secondary leading-relaxed">
           Find answers to common questions or reach out to our team for help.
         </p>
       </header>
 
       {/* Contact channels */}
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           Get in Touch
         </h2>
         <div className="grid sm:grid-cols-2 gap-4">
@@ -106,7 +144,7 @@ export default function SupportPage() {
 
       {/* Documentation links */}
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           Documentation
         </h2>
         <div className="grid sm:grid-cols-2 gap-4">
@@ -150,7 +188,7 @@ export default function SupportPage() {
 
       {/* FAQ */}
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
           Frequently Asked Questions
         </h2>
         <div className="space-y-4">

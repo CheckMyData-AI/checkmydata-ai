@@ -9,11 +9,11 @@ import { SchemaGraph } from "@/components/marketing/SchemaGraph";
 export const metadata: Metadata = {
   title: "CheckMyData.ai — AI Analyst for Your Database",
   description:
-    "Like ChatGPT, but for your database. Query PostgreSQL, MySQL, ClickHouse, and MongoDB in plain English. Get insights, charts, and explanations instantly. Open-source, self-hostable, privacy-first.",
+    "Ask your database in plain English and get correct answers. CheckMyData reads your schema and codebase, writes the SQL, and explains the result — natural-language text-to-SQL for PostgreSQL, MySQL, ClickHouse, and MongoDB. Open-source, self-hostable, privacy-first.",
   openGraph: {
     title: "CheckMyData.ai — AI Analyst for Your Database",
     description:
-      "Your data already has answers. Query any database in plain English. Open-source, self-hostable, privacy-first.",
+      "Correct answers from your database on the first try. CheckMyData understands your schema and codebase, so plain-English questions become trustworthy SQL. Open-source, self-hostable, privacy-first.",
     url: "https://checkmydata.ai",
     siteName: "CheckMyData.ai",
     images: [
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "CheckMyData.ai — AI Analyst for Your Database",
     description:
-      "Your data already has answers. Query any database in plain English. Open-source & privacy-first.",
+      "Correct answers from your database on the first try. Plain-English questions become trustworthy SQL. Open-source & privacy-first.",
     images: ["/og-image.png"],
   },
   alternates: { canonical: "https://checkmydata.ai" },
@@ -53,10 +53,43 @@ const GitHubIcon = ({ size = 18 }: { size?: number }) => (
 const FEATURES = [
   {
     icon: (
+      <>
+        <path d="M6 3v12" />
+        <circle cx="18" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <path d="M18 9a9 9 0 0 1-9 9" />
+      </>
+    ),
+    title: "Codebase-aware context",
+    desc: "It indexes your repository, so answers reflect your real business logic — soft-deletes, enums, money-in-cents — not just raw column names. That context is the difference between a correct answer and a confident wrong one.",
+    highlight: true,
+  },
+  {
+    icon: (
+      <>
+        <polyline points="1 4 1 10 7 10" />
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+      </>
+    ),
+    title: "Self-healing queries",
+    desc: "When a query errors, it reads the failure, pulls in the missing context, and repairs itself — so you get a working answer instead of a stack trace.",
+  },
+  {
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <polyline points="12 7 12 12 15 14" />
+      </>
+    ),
+    title: "Institutional memory",
+    desc: "It learns the patterns of each connection over time, confirms what's right, and lets go of stale assumptions — so the more you use it, the sharper it gets.",
+  },
+  {
+    icon: (
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     ),
-    title: "Natural Language Queries",
-    desc: "Ask in plain English and get generated SQL, results, and an explanation of what each query does.",
+    title: "Natural-language queries",
+    desc: "Ask in plain English and get back the SQL, the result, and an explanation — so anyone on the team can answer their own data questions.",
   },
   {
     icon: (
@@ -66,8 +99,8 @@ const FEATURES = [
         <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" />
       </>
     ),
-    title: "Multi-Database Support",
-    desc: "Connect PostgreSQL, MySQL, ClickHouse, and MongoDB directly or through an SSH tunnel.",
+    title: "Multi-database support",
+    desc: "Connect PostgreSQL, MySQL, ClickHouse, and MongoDB — directly or over an SSH tunnel — and query them all the same way.",
   },
   {
     icon: (
@@ -77,21 +110,8 @@ const FEATURES = [
         <line x1="6" y1="20" x2="6" y2="14" />
       </>
     ),
-    title: "Data Visualization",
-    desc: "Charts, tables, and exports are generated automatically, with no dashboard setup required.",
-  },
-  {
-    icon: (
-      <>
-        <path d="M6 3v12" />
-        <circle cx="18" cy="6" r="3" />
-        <circle cx="6" cy="18" r="3" />
-        <path d="M18 9a9 9 0 0 1-9 9" />
-      </>
-    ),
-    title: "Codebase Knowledge",
-    desc: "It indexes your repository, so answers reflect your actual business logic, not just raw table names. This context is what separates a useful answer from a misleading one.",
-    highlight: true,
+    title: "Automatic visualization",
+    desc: "Charts, tables, and exports are generated for you, so you see the shape of the answer without building a dashboard.",
   },
   {
     icon: (
@@ -102,17 +122,108 @@ const FEATURES = [
         <line x1="6" y1="18" x2="6.01" y2="18" />
       </>
     ),
-    title: "Self-Hostable",
-    desc: "Deploy anywhere with Docker and keep full control of your environment, with no vendor lock-in.",
+    title: "Self-hostable",
+    desc: "Deploy anywhere with Docker and keep full control of your environment — no vendor lock-in, no data leaving your infrastructure.",
   },
   {
     icon: (
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     ),
-    title: "Privacy-First",
-    desc: "No tracking and no telemetry. You can verify exactly how your data is handled in the source code.",
+    title: "Privacy-first by design",
+    desc: "No tracking, no telemetry, read-only by default — and the source is open, so you can verify exactly how your data is handled.",
   },
 ] as { icon: React.ReactNode; title: string; desc: string; highlight?: boolean }[];
+
+const TRUST_SIGNALS = [
+  "MIT open source",
+  "Read-only by default",
+  "Credentials encrypted at rest",
+  "Self-host or hosted",
+  "Transparent SQL you can inspect",
+] as const;
+
+const CONTEXT_INPUTS = [
+  {
+    title: "Your schema",
+    desc: "Tables, columns, types, and relationships — read directly from your database.",
+  },
+  {
+    title: "Your codebase",
+    desc: "Business logic from your repository: what \u201cactive\u201d, \u201camount\u201d, or \u201cdeleted\u201d really mean.",
+  },
+  {
+    title: "Your rules",
+    desc: "Conventions and guardrails you set, applied to every query it writes.",
+  },
+  {
+    title: "Its memory",
+    desc: "Patterns it has confirmed on this connection over time, reused on the next question.",
+  },
+] as const;
+
+const COMPARISONS = [
+  {
+    title: "vs. a plain SQL editor",
+    points: [
+      { ok: false, text: "Has no idea what your columns mean — you supply all the context." },
+      { ok: false, text: "You hand-write and debug every query yourself." },
+      { ok: true, text: "CheckMyData knows your schema and code, then writes the SQL for you." },
+    ],
+  },
+  {
+    title: "vs. a generic chatbot",
+    points: [
+      { ok: false, text: "Guesses your schema and invents table and column names." },
+      { ok: false, text: "Can't run the query or check whether the result is right." },
+      { ok: true, text: "CheckMyData grounds every answer in your real schema, then runs and validates it." },
+    ],
+  },
+] as const;
+
+const LANDING_FAQS = [
+  {
+    q: "Is it safe to connect my production database?",
+    a: "Yes. CheckMyData is read-only by default, your credentials are encrypted at rest, and you can connect over an SSH tunnel. The entire project is open source, so you can audit exactly how connections are handled — or self-host it so nothing leaves your infrastructure.",
+  },
+  {
+    q: "How is this different from asking ChatGPT to write SQL?",
+    a: "A generic chatbot guesses your schema and can't run the query. CheckMyData reads your real schema and your codebase first, writes SQL grounded in that context, then executes and validates the result — and repairs itself if a query fails.",
+  },
+  {
+    q: "Do I need to know SQL to use it?",
+    a: "No. Ask your question in plain English and you get the answer, a chart, and an explanation. The generated SQL is always shown if you want to inspect, copy, or tweak it.",
+  },
+  {
+    q: "What does connecting my codebase actually send?",
+    a: "It indexes structural metadata — file names, entity and function names, and signatures — to learn what your data means. It is used to write better, more correct queries, and you stay in control of which repository is connected.",
+  },
+  {
+    q: "Can I self-host, or is it only hosted?",
+    a: "Both. Use the hosted version to start in minutes, or clone the repository and run the Docker setup for full control. The same open-source code powers both.",
+  },
+  {
+    q: "Which databases and LLM providers are supported?",
+    a: "Databases: PostgreSQL, MySQL, ClickHouse, and MongoDB. LLM providers: OpenAI, Anthropic, and OpenRouter, with automatic fallback if one is unavailable.",
+  },
+] as const;
+
+async function getGitHubStars(): Promise<number | null> {
+  try {
+    const res = await fetch(
+      "https://api.github.com/repos/CheckMyData-AI/checkmydata-ai",
+      {
+        next: { revalidate: 3600 },
+        headers: { Accept: "application/vnd.github+json" },
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { stargazers_count?: number };
+    const stars = data?.stargazers_count;
+    return typeof stars === "number" && stars > 0 ? stars : null;
+  } catch {
+    return null;
+  }
+}
 
 const USE_CASES = [
   "Find why revenue dropped last week",
@@ -140,7 +251,9 @@ const STEPS = [
   },
 ] as const;
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const stars = await getGitHubStars();
+
   return (
     <>
       <AuthRedirect />
@@ -150,20 +263,48 @@ export default function LandingPage() {
         dangerouslySetInnerHTML={{
           __html: JSON.stringify({
             "@context": "https://schema.org",
-            "@type": "SoftwareApplication",
-            name: "CheckMyData.ai",
-            applicationCategory: "DeveloperApplication",
-            operatingSystem: "Web, Docker, Linux, macOS",
-            description:
-              "Open-source AI analyst for your database. Query PostgreSQL, MySQL, ClickHouse, and MongoDB with natural language. Get insights, charts, and explanations instantly.",
-            url: "https://checkmydata.ai",
-            downloadUrl: GITHUB_URL,
-            license: "https://opensource.org/licenses/MIT",
-            offers: {
-              "@type": "Offer",
-              price: "0",
-              priceCurrency: "USD",
-            },
+            "@graph": [
+              {
+                "@type": "Organization",
+                "@id": "https://checkmydata.ai/#organization",
+                name: "CheckMyData.ai",
+                url: "https://checkmydata.ai",
+                logo: "https://checkmydata.ai/icon-512.png",
+                description:
+                  "Open-source AI database agent that turns plain-English questions into correct, validated SQL using your schema and codebase as context.",
+                sameAs: [GITHUB_URL],
+              },
+              {
+                "@type": "SoftwareApplication",
+                "@id": "https://checkmydata.ai/#software",
+                name: "CheckMyData.ai",
+                applicationCategory: "DeveloperApplication",
+                operatingSystem: "Web, Docker, Linux, macOS",
+                description:
+                  "Open-source AI analyst for your database. Ask in plain English and get correct, validated SQL grounded in your schema and codebase — for PostgreSQL, MySQL, ClickHouse, and MongoDB.",
+                url: "https://checkmydata.ai",
+                downloadUrl: GITHUB_URL,
+                license: "https://opensource.org/licenses/MIT",
+                publisher: { "@id": "https://checkmydata.ai/#organization" },
+                offers: {
+                  "@type": "Offer",
+                  price: "0",
+                  priceCurrency: "USD",
+                },
+              },
+              {
+                "@type": "FAQPage",
+                "@id": "https://checkmydata.ai/#faq",
+                mainEntity: LANDING_FAQS.map((faq) => ({
+                  "@type": "Question",
+                  name: faq.q,
+                  acceptedAnswer: {
+                    "@type": "Answer",
+                    text: faq.a,
+                  },
+                })),
+              },
+            ],
           }),
         }}
       />
@@ -248,19 +389,20 @@ export default function LandingPage() {
               className="cmd-reveal text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1] text-balance"
               style={{ ["--cmd-i"]: 2 } as React.CSSProperties}
             >
-              Your data already
+              Correct answers from
               <br />
-              has answers.
+              your database.
               <br />
-              <span className="text-text-tertiary">You just don&rsquo;t know how to ask.</span>
+              <span className="text-text-tertiary">On the first try.</span>
             </h1>
 
             <p
               className="cmd-reveal mt-8 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed text-pretty"
               style={{ ["--cmd-i"]: 3 } as React.CSSProperties}
             >
-              Query any database in plain English. Get insights, charts, and
-              explanations instantly.
+              CheckMyData reads your schema <em className="not-italic text-text-primary">and</em>{" "}
+              your codebase, so it knows your cents-vs-dollars, soft-deletes, and
+              enums. Ask in plain English; get SQL and answers you can trust.
             </p>
 
             <div
@@ -327,19 +469,194 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── SOCIAL PROOF BAR ── */}
+      {/* ── TRUST SIGNALS BAR ── */}
       <section className="border-y border-border-subtle bg-surface-1/50">
-        <div className="cmd-reveal max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-3 text-sm text-text-secondary">
-          <span className="inline-flex items-center gap-2">
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" className="text-warning" aria-hidden="true">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-            </svg>
-            Open-source community growing fast
-          </span>
-          <span className="text-border-default hidden sm:inline">&middot;</span>
-          <span>Used by data teams &amp; founders</span>
-          <span className="text-border-default hidden sm:inline">&middot;</span>
-          <span>Privacy-first architecture</span>
+        <div className="cmd-reveal max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-text-secondary">
+          {stars !== null && (
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-text-primary hover:text-accent transition-colors"
+            >
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" className="text-warning" aria-hidden="true">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+              <span className="font-semibold tabular-nums">{stars.toLocaleString("en-US")}</span>
+              <span className="text-text-tertiary">stars on GitHub</span>
+            </a>
+          )}
+          {TRUST_SIGNALS.map((signal) => (
+            <span key={signal} className="inline-flex items-center gap-1.5">
+              <svg
+                width={15}
+                height={15}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-accent shrink-0"
+                aria-hidden="true"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              {signal}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {/* ── WHY CORRECT — context engine + comparison ── */}
+      <section className="py-20 sm:py-28 border-t border-border-subtle" id="why-correct">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="cmd-reveal text-center mb-4">
+            <p className="text-sm font-medium text-accent mb-3">The context engine</p>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+              Why the answers are{" "}
+              <span className="cmd-shimmer-text">actually correct</span>
+            </h2>
+          </div>
+          <p
+            className="cmd-reveal text-center text-text-secondary max-w-2xl mx-auto mb-16 leading-relaxed text-pretty"
+            style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
+          >
+            Data is abundant. The context needed to query it correctly is scarce.
+            CheckMyData assembles that context before it writes a single line of SQL.
+          </p>
+
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-12 items-center">
+            <ul className="space-y-4">
+              {CONTEXT_INPUTS.map((input, i) => (
+                <li
+                  key={input.title}
+                  style={{ ["--cmd-i"]: i + 1 } as React.CSSProperties}
+                  className="cmd-reveal cmd-reveal-left flex items-start gap-4 bg-surface-1 border border-border-subtle rounded-xl p-4 sm:p-5"
+                >
+                  <span className="mt-0.5 w-8 h-8 shrink-0 rounded-lg bg-accent-muted text-accent font-mono text-xs font-semibold flex items-center justify-center">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      {input.title}
+                    </h3>
+                    <p className="text-sm text-text-secondary leading-relaxed mt-0.5">
+                      {input.desc}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div
+              className="cmd-reveal cmd-reveal-right relative overflow-hidden rounded-2xl border border-accent/40 ring-1 ring-accent/10 bg-surface-1 p-8 text-center"
+              style={{ ["--cmd-i"]: 2 } as React.CSSProperties}
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute"
+                style={{
+                  top: -100,
+                  left: "50%",
+                  width: 360,
+                  height: 240,
+                  transform: "translateX(-50%)",
+                }}
+              >
+                <div
+                  className="cmd-glow"
+                  style={{
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    background:
+                      "color-mix(in srgb, var(--color-accent) 24%, transparent)",
+                  }}
+                />
+              </div>
+              <div className="relative">
+                <svg
+                  width={28}
+                  height={28}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-accent mx-auto mb-4"
+                  aria-hidden="true"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <p className="text-base font-semibold text-text-primary">
+                  Validated, dialect-aware SQL
+                </p>
+                <p className="mt-2 text-sm text-text-secondary leading-relaxed text-pretty">
+                  The query is checked against your real schema and run for you —
+                  and if it fails, it self-heals and tries again. You get an answer
+                  you can trust, with the SQL shown so you can verify it.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* comparison */}
+          <div className="mt-16 sm:mt-20 grid sm:grid-cols-2 gap-6">
+            {COMPARISONS.map((c, i) => (
+              <div
+                key={c.title}
+                style={{ ["--cmd-i"]: i } as React.CSSProperties}
+                className="cmd-reveal cmd-reveal-scale bg-surface-1 border border-border-subtle rounded-xl p-6"
+              >
+                <h3 className="text-base font-semibold text-text-primary mb-4">
+                  {c.title}
+                </h3>
+                <ul className="space-y-3">
+                  {c.points.map((p) => (
+                    <li key={p.text} className="flex items-start gap-3 text-sm leading-relaxed">
+                      {p.ok ? (
+                        <svg
+                          width={18}
+                          height={18}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="text-success shrink-0 mt-0.5"
+                          aria-hidden="true"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width={18}
+                          height={18}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="text-text-muted shrink-0 mt-0.5"
+                          aria-hidden="true"
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      )}
+                      <span className={p.ok ? "text-text-primary" : "text-text-secondary"}>
+                        {p.text}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -357,8 +674,8 @@ export default function LandingPage() {
             className="cmd-reveal text-center text-text-secondary max-w-xl mx-auto mb-16 leading-relaxed text-pretty"
             style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
           >
-            Readable SQL, exportable charts, and plain-English explanations of
-            what the numbers actually mean.
+            Context-aware answers, self-healing queries, and explanations you can
+            trust — backed by readable SQL and exportable charts.
           </p>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -391,7 +708,7 @@ export default function LandingPage() {
                   <div>
                     {f.highlight && (
                       <span className="mb-1 inline-block text-xs font-medium text-accent">
-                        Most loved feature
+                        Core differentiator
                       </span>
                     )}
                     <h3 className="text-base font-semibold text-text-primary mb-1">
@@ -586,6 +903,66 @@ export default function LandingPage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section className="py-20 sm:py-28 border-t border-border-subtle" id="faq">
+        <div className="max-w-3xl mx-auto px-6">
+          <div className="cmd-reveal text-center mb-12">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+              Questions, <span className="cmd-shimmer-text">answered</span>
+            </h2>
+          </div>
+          <div className="space-y-4">
+            {LANDING_FAQS.map((faq, i) => (
+              <details
+                key={faq.q}
+                style={{ ["--cmd-i"]: i % 3 } as React.CSSProperties}
+                className="cmd-reveal group bg-surface-1 border border-border-subtle rounded-xl"
+              >
+                <summary className="cursor-pointer p-5 text-sm font-semibold text-text-primary list-none flex items-center justify-between gap-4">
+                  {faq.q}
+                  <svg
+                    width={16}
+                    height={16}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-text-muted shrink-0 transition-transform group-open:rotate-180"
+                    aria-hidden="true"
+                  >
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </summary>
+                <div className="px-5 pb-5 text-sm text-text-secondary leading-relaxed">
+                  {faq.a}
+                </div>
+              </details>
+            ))}
+          </div>
+          <p className="cmd-reveal mt-8 text-center text-sm text-text-tertiary">
+            More questions? Visit{" "}
+            <Link
+              href="/support"
+              className="text-accent hover:text-accent-hover transition-colors underline underline-offset-2"
+            >
+              Support
+            </Link>{" "}
+            or{" "}
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:text-accent-hover transition-colors underline underline-offset-2"
+            >
+              ask on GitHub
+            </a>
+            .
+          </p>
         </div>
       </section>
 
