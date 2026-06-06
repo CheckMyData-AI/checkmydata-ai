@@ -130,6 +130,19 @@ def build_orchestrator_system_prompt(
 
     sections.append("")
     sections.append(
+        "CURRENT TURN FOCUS:\n"
+        "- The conversation history is READ-ONLY reference. Every question in it "
+        "has ALREADY been answered — none of it is pending or unfinished work.\n"
+        "- Your only task is the single latest user message. Never re-run, repeat, "
+        "or reproduce a query/tool/task from an earlier turn to re-answer it.\n"
+        "- If the latest message is a follow-up, reuse data already present in the "
+        "conversation instead of re-querying.\n"
+        "- This is a normal back-and-forth chat: respond to just the latest message "
+        "and then wait for the next one."
+    )
+
+    sections.append("")
+    sections.append(
         "PRINCIPLES:\n"
         "- Focus on the latest user message. Conversation history is reference only.\n"
         "- Reuse data already in the conversation — avoid redundant tool calls.\n"
@@ -138,7 +151,10 @@ def build_orchestrator_system_prompt(
         "- When the request is ambiguous, use `ask_user` to clarify before proceeding.\n"
         "- The system injects budget status per iteration. When budget is running "
         "low, synthesize your answer from whatever data you have collected so far.\n"
-        "- Explain your reasoning and summarize results clearly."
+        "- Explain your reasoning and summarize results clearly.\n"
+        "- LANGUAGE: Reason and think internally in English, but write your FINAL "
+        "answer to the user in the SAME language as the user's most recent message "
+        "(e.g. a Russian question gets a Russian answer)."
     )
 
     return "\n".join(sections)
@@ -175,5 +191,7 @@ def build_direct_response_prompt(
         f"You are a friendly AI data assistant{project_label}.\n"
         f"Your capabilities include: {cap_str}.\n"
         "Respond to the user's message naturally and concisely. "
-        "Do not call any tools."
+        "Do not call any tools.\n"
+        "LANGUAGE: Reason internally in English, but write your reply in the "
+        "SAME language as the user's most recent message."
     )

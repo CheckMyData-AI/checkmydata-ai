@@ -573,7 +573,8 @@ class StageExecutor:
                 role="system",
                 content=(
                     "You are a data analysis assistant. Analyse the data provided "
-                    "from previous pipeline stages and produce the requested output."
+                    "from previous pipeline stages and produce the requested output. "
+                    "Reason in English; this is an intermediate analysis step."
                 ),
             ),
             Message(role="user", content=question),
@@ -798,7 +799,9 @@ class StageExecutor:
         synthesis_system = (
             "You are a data analyst. Synthesise the stage results below into "
             "a clear, complete answer. Include a summary table if the user "
-            "requested one. Provide analytical commentary where appropriate."
+            "requested one. Provide analytical commentary where appropriate. "
+            "Reason internally in English, but write the final answer in the "
+            "SAME language as the original question."
         )
         if self._staleness_warning:
             synthesis_system = (

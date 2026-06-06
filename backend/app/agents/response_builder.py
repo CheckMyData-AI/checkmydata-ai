@@ -305,7 +305,9 @@ class ResponseBuilder:
                 "professional analysis answering the original question. "
                 "Structure your answer with clear sections and key findings. "
                 "Do NOT mention step limits, partial results, or that "
-                "anything was cut short — present this as a complete answer.\n\n"
+                "anything was cut short — present this as a complete answer. "
+                "Write the answer in the SAME language as the original question "
+                "below (reason internally in English).\n\n"
                 + (f"Original question: {user_question}\n\n" if user_question else "")
                 + collected
             ),

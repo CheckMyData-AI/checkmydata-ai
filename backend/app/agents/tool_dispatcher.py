@@ -216,6 +216,73 @@ class ToolDispatcher:
             logger.info("Tool-call dedup: kept %d, skipped %d", len(kept), len(skipped))
         return kept, skipped
 
+    @staticmethod
+    def filter_already_executed(
+        tool_calls: list[ToolCall],
+        executed: list[tuple[str, str]],
+    ) -> tuple[list[ToolCall], dict[str, str]]:
+        """Skip data-retrieval calls already executed earlier in the SAME turn.
+
+        ``executed`` is a list of ``(tool_name, question)`` signatures for
+        calls that SUCCEEDED in earlier iterations of the current orchestrator
+        turn. Unlike :meth:`dedup_tool_calls` (which only inspects a single LLM
+        response batch), this catches loop-level repeats — the model re-issuing
+        an identical or paraphrased query across iterations to re-answer work it
+        already completed this turn. Uses the same semantic / word-overlap
+        thresholds as the batch dedup.
+
+        Returns ``(kept_calls, skipped_map)`` where *skipped_map* maps
+        ``tool_call.id`` to a synthetic result string for skipped calls.
+        """
+        if not executed or not tool_calls:
+            return tool_calls, {}
+
+        from app.services import text_similarity
+
+        semantic_threshold = settings.tool_dedup_semantic_threshold
+        word_threshold = settings.tool_dedup_word_overlap_threshold
+
+        skipped: dict[str, str] = {}
+        for tc in tool_calls:
+            if tc.name not in ToolDispatcher._DEDUP_TOOL_NAMES:
+                continue
+            q = ((tc.arguments or {}).get("question") or "").strip()
+            if not q:
+                continue
+            priors = [pq for (pn, pq) in executed if pn == tc.name and pq]
+            if not priors:
+                continue
+
+            is_dup = False
+            embeddings = text_similarity.encode_batch([q, *priors])
+            if embeddings is not None:
+                new_emb = embeddings[0]
+                for i in range(1, len(embeddings)):
+                    if text_similarity.cosine_similarity(new_emb, embeddings[i]) >= (
+                        semantic_threshold
+                    ):
+                        is_dup = True
+                        break
+            else:
+                for prev_q in priors:
+                    if text_similarity.jaccard_overlap(q, prev_q) > word_threshold:
+                        is_dup = True
+                        break
+
+            if is_dup:
+                skipped[tc.id] = (
+                    "Duplicate request — this question was already answered "
+                    "earlier in this turn. Reuse that result instead of "
+                    "re-querying."
+                )
+                logger.info("Per-turn dedup: skipped repeated %s call: %s", tc.name, q[:80])
+
+        if not skipped:
+            return tool_calls, {}
+
+        kept = [tc for tc in tool_calls if tc.id not in skipped]
+        return kept, skipped
+
     # ------------------------------------------------------------------
     # Formatting
     # ------------------------------------------------------------------
