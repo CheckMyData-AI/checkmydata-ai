@@ -530,9 +530,7 @@ class TestMergeNonleadingSystem:
     def test_leading_system_preserved(self):
         from app.llm.openrouter_adapter import _merge_nonleading_system
 
-        out = _merge_nonleading_system(
-            [_msg("system", "sys"), _msg("user", "hi")]
-        )
+        out = _merge_nonleading_system([_msg("system", "sys"), _msg("user", "hi")])
         assert [m.role for m in out] == ["system", "user"]
         assert out[0].content == "sys"
 

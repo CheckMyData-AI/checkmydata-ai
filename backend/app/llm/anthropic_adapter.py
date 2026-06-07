@@ -137,9 +137,7 @@ class AnthropicAdapter(BaseLLMProvider):
                     {
                         "name": fn["name"],
                         "description": fn.get("description", ""),
-                        "input_schema": fn.get(
-                            "parameters", {"type": "object", "properties": {}}
-                        ),
+                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
                     }
                 )
                 continue
