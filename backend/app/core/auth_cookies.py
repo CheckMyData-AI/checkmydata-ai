@@ -75,6 +75,23 @@ def set_session_cookies(response: Response, token: str) -> str:
 
 
 def clear_session_cookies(response: Response) -> None:
+    """Expire the session + CSRF cookies on the client.
+
+    Deletes them at both the configured parent-domain scope and the host-only
+    scope. The host-only deletion clears any legacy cookies set before
+    ``auth_cookie_domain`` was configured, so a stale host-only ``cmd_session``
+    cannot linger alongside a new domain-scoped one.
+    """
     domain = settings.auth_cookie_domain or None
-    response.delete_cookie(SESSION_COOKIE, path="/", domain=domain)
-    response.delete_cookie(CSRF_COOKIE, path="/", domain=domain)
+    secure = settings.auth_cookie_secure
+    samesite = _samesite()
+    scopes = {domain, None}  # configured domain + host-only (dedup if equal)
+    for cookie in (SESSION_COOKIE, CSRF_COOKIE):
+        for scope in scopes:
+            response.delete_cookie(
+                cookie,
+                path="/",
+                domain=scope,
+                secure=secure,
+                samesite=samesite,
+            )

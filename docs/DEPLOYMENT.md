@@ -53,7 +53,14 @@ No local `git push heroku` is needed; deploy is fully CI-driven.
 - GitHub vars (names only, with defaults in deploy.yml): `BACKEND_APP`,
   `FRONTEND_APP`, `BACKEND_API_URL`, `BACKEND_WS_URL`, `FRONTEND_URL`.
 - Heroku runtime config (names only): `DATABASE_URL`, `MASTER_ENCRYPTION_KEY`,
-  `JWT_SECRET`, `OPENAI_API_KEY`, `CORS_ORIGINS`, etc.
+  `JWT_SECRET`, `OPENAI_API_KEY`, `CORS_ORIGINS`, `AUTH_COOKIE_DOMAIN`, etc.
+- `AUTH_COOKIE_DOMAIN` **must** be set to the shared parent domain
+  (`.checkmydata.ai`) because the SPA (`checkmydata.ai`) and API
+  (`api.checkmydata.ai`) live on different subdomains. With a host-only cookie
+  (empty value) the non-httpOnly CSRF cookie set by the API is unreadable by the
+  SPA, so the double-submit check fails on every cookie-authenticated mutation
+  (including `POST /auth/refresh` on session restore) and users bounce back to
+  `/login`. Set via `heroku config:set AUTH_COOKIE_DOMAIN=.checkmydata.ai -a checkmydata-api`.
 
 ## Migrations / release-phase commands
 - DB migrations run on backend boot via the `Procfile` web command:

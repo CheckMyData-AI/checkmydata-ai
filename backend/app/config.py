@@ -1,6 +1,7 @@
 import base64
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -536,6 +537,41 @@ class Settings(BaseSettings):
         if "*" in self.cors_origins:
             raise ValueError(
                 "CORS_ORIGINS may not contain '*' in production. List concrete origins instead."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_split_domain_cookie(self) -> "Settings":
+        """Warn when the CSRF cookie will be unreadable across subdomains.
+
+        The double-submit CSRF token (T-SEC-3) requires the SPA's JavaScript to
+        read the ``cmd_csrf`` cookie and echo it in a header. A host-only cookie
+        (empty ``auth_cookie_domain``) set by, e.g., ``api.example.com`` cannot
+        be read by a SPA on ``example.com``, which silently breaks every
+        cookie-authenticated mutation. This guardrail surfaces that exact
+        misconfiguration (the cause of the split-domain login outage) at startup
+        without affecting single-host local dev.
+        """
+        if not (self.auth_cookie_enabled and self.auth_cookie_secure):
+            return self
+        if self.auth_cookie_domain:
+            return self
+        remote_hosts = []
+        for origin in self.cors_origins:
+            parsed = urlparse(origin)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not host:
+                continue
+            if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost"):
+                continue
+            remote_hosts.append(host)
+        if remote_hosts:
+            _config_logger.warning(
+                "AUTH_COOKIE_DOMAIN is empty while serving cross-origin SPA origins %s. "
+                "The CSRF cookie will be host-only and unreadable by a SPA on a different "
+                "subdomain, breaking cookie-authenticated mutations. Set AUTH_COOKIE_DOMAIN "
+                "to the shared parent domain (e.g. '.example.com').",
+                remote_hosts,
             )
         return self
 

@@ -10,6 +10,21 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### Fixed
+
+- **Split-domain cookie auth outage (post T-SEC-3).** Browser login broke in
+  production because the SPA (`checkmydata.ai`) and API (`api.checkmydata.ai`)
+  run on different subdomains while `AUTH_COOKIE_DOMAIN` was empty (host-only).
+  The non-httpOnly CSRF cookie set by the API was unreadable by the SPA, so the
+  double-submit header was never sent and every cookie-authenticated mutation
+  (notably `POST /auth/refresh` during session restore) returned 403, bouncing
+  users back to `/login` after a successful Google/email login. Fixed by scoping
+  the session + CSRF cookies to the shared parent domain
+  (`AUTH_COOKIE_DOMAIN=.checkmydata.ai`). Added a startup guardrail that warns
+  when `AUTH_COOKIE_DOMAIN` is empty while serving cross-origin HTTPS SPA
+  origins, hardened `clear_session_cookies` to also expire legacy host-only
+  cookies, and documented the parent-domain requirement.
+
 ### P0 security & reliability (S1/S2 launch-blockers)
 
 Implements the first remediation sprint from the production audit

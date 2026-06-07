@@ -1,5 +1,6 @@
 """Unit tests for app.config Settings validators."""
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -107,6 +108,50 @@ class TestNumericRangeValidation:
     def test_negative_result_corrections_rejected(self):
         with pytest.raises(Exception, match="ORCHESTRATOR_MAX_RESULT_CORRECTIONS"):
             Settings(orchestrator_max_result_corrections=-1)
+
+
+class TestSplitDomainCookieGuardrail:
+    """The startup warning that catches the split-domain cookie outage."""
+
+    def test_warns_when_domain_empty_with_remote_https_origin(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.config"):
+            Settings(
+                auth_cookie_enabled=True,
+                auth_cookie_secure=True,
+                auth_cookie_domain="",
+                cors_origins=["https://app.example.com"],
+            )
+        assert any("AUTH_COOKIE_DOMAIN is empty" in r.message for r in caplog.records)
+
+    def test_silent_for_localhost_only_origins(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.config"):
+            Settings(
+                auth_cookie_enabled=True,
+                auth_cookie_secure=True,
+                auth_cookie_domain="",
+                cors_origins=["http://localhost:3000", "http://127.0.0.1:3100"],
+            )
+        assert not any("AUTH_COOKIE_DOMAIN is empty" in r.message for r in caplog.records)
+
+    def test_silent_when_domain_configured(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.config"):
+            Settings(
+                auth_cookie_enabled=True,
+                auth_cookie_secure=True,
+                auth_cookie_domain=".example.com",
+                cors_origins=["https://app.example.com"],
+            )
+        assert not any("AUTH_COOKIE_DOMAIN is empty" in r.message for r in caplog.records)
+
+    def test_silent_when_cookies_disabled(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.config"):
+            Settings(
+                auth_cookie_enabled=False,
+                auth_cookie_secure=True,
+                auth_cookie_domain="",
+                cors_origins=["https://app.example.com"],
+            )
+        assert not any("AUTH_COOKIE_DOMAIN is empty" in r.message for r in caplog.records)
 
 
 # Internal helpers / properties that are not user-tunable env vars and
