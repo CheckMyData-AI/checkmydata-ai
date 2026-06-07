@@ -18,6 +18,7 @@ GIT_LOG_TOOL = Tool(
             type="array",
             description="Optional list of repo-relative file paths to filter commits by.",
             required=False,
+            items={"type": "string"},
         ),
         ToolParameter(
             name="author",
@@ -83,6 +84,7 @@ GIT_DIFF_TOOL = Tool(
             type="array",
             description="Optional list of repo-relative paths to scope the diff.",
             required=False,
+            items={"type": "string"},
         ),
     ],
 )

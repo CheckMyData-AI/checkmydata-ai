@@ -12,6 +12,28 @@ self-learning/memory system.
 
 ### Fixed
 
+- **LLM agent outage: Anthropic mid-conversation `system` 400.** Every
+  multi-turn chat (and any session with an auto-welcome message) failed with
+  `LLMAllProvidersFailedError` -> `400 Bad Request` from OpenRouter for
+  `anthropic/*` models. The orchestrator inserted an `--- END OF CONVERSATION
+  HISTORY ---` marker as a `Message(role="system", ...)` after the chat history;
+  Anthropic (and Bedrock via OpenRouter) reject a `system` role that does not
+  immediately follow a user message. Fixed by folding the history-framing
+  guidance and the continuation summary into the final user turn instead of
+  emitting mid-conversation `system` messages. Added a defensive normalizer in
+  the OpenRouter adapter (`_merge_nonleading_system`) that merges any non-leading
+  `system` message into the adjacent user turn, making the whole class of bug
+  unreachable from any future caller.
+- **Planner dict-tool `AttributeError` log spam.** `AdaptivePlanner` passed
+  `_CREATE_PLAN_TOOL` (a raw OpenAI function-schema `dict`) where a `Tool`
+  dataclass was expected, raising `'dict' object has no attribute 'parameters'`
+  on every plan attempt (silenced by a fallback but noisy in logs). Hardened
+  `_tools_to_schema`/`_tools_to_anthropic` to accept dict tool specs
+  (pass-through / mapped to Anthropic shape) via a new `ToolSpec` type, emit a
+  valid `items` clause for `array` parameters (and `properties` for `object`),
+  added an optional `ToolParameter.items` field, set explicit array `items` on
+  the `git_tools` path params, and dropped the `# type: ignore[list-item]` hacks
+  in the planner.
 - **Split-domain cookie auth outage (post T-SEC-3).** Browser login broke in
   production because the SPA (`checkmydata.ai`) and API (`api.checkmydata.ai`)
   run on different subdomains while `AUTH_COOKIE_DOMAIN` was empty (host-only).

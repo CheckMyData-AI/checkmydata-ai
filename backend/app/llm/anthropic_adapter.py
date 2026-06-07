@@ -1,12 +1,12 @@
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import anthropic
 from anthropic import AsyncAnthropic
 
 from app.config import settings
-from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from app.llm.errors import (
     LLMAuthError,
     LLMBillingError,
@@ -126,15 +126,33 @@ class AnthropicAdapter(BaseLLMProvider):
                 formatted.append({"role": m.role, "content": m.content})
         return system_prompt.strip(), formatted
 
-    def _tools_to_anthropic(self, tools: list[Tool]) -> list[dict]:
+    def _tools_to_anthropic(self, tools: Sequence[ToolSpec]) -> list[dict]:
         result = []
         for tool in tools:
+            if isinstance(tool, dict):
+                # Accept an already-formatted OpenAI function-schema dict (e.g. the
+                # planner's ``_CREATE_PLAN_TOOL``) and map it to Anthropic's shape.
+                fn = tool.get("function", tool)
+                result.append(
+                    {
+                        "name": fn["name"],
+                        "description": fn.get("description", ""),
+                        "input_schema": fn.get(
+                            "parameters", {"type": "object", "properties": {}}
+                        ),
+                    }
+                )
+                continue
             properties = {}
             required = []
             for p in tool.parameters:
                 prop: dict = {"type": p.type, "description": p.description}
                 if p.enum:
                     prop["enum"] = p.enum
+                if p.type == "array":
+                    prop["items"] = p.items or {"type": "string"}
+                elif p.type == "object":
+                    prop["properties"] = p.items or {}
                 properties[p.name] = prop
                 if p.required:
                     required.append(p.name)
@@ -154,7 +172,7 @@ class AnthropicAdapter(BaseLLMProvider):
     async def complete(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -212,7 +230,7 @@ class AnthropicAdapter(BaseLLMProvider):
     async def stream(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,

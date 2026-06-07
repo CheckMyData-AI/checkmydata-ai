@@ -823,41 +823,44 @@ class OrchestratorAgent(BaseAgent):
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
         continuation_summary = context.extra.get("_continuation_summary")
+        # History-framing guidance and the continuation summary are PREPENDED to
+        # the final user turn rather than sent as separate mid-conversation
+        # ``system`` messages. Anthropic (and Bedrock via OpenRouter) reject a
+        # ``system`` role that does not immediately follow a user message, which
+        # 400s every multi-turn chat. Folding the guidance into the user turn is
+        # valid for every provider while preserving its recency/positional cue.
+        user_preamble: list[str] = []
         if context.chat_history:
             messages.extend(context.chat_history)
             if continuation_summary:
-                messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            "--- END OF CONVERSATION HISTORY ---\n"
-                            "The messages above are past exchanges. The LAST assistant message "
-                            "was a partial result cut short by the step limit. The next system "
-                            "message contains the full context of work already done."
-                        ),
-                    )
+                user_preamble.append(
+                    "--- END OF CONVERSATION HISTORY ---\n"
+                    "The messages above are past exchanges. The LAST assistant message "
+                    "was a partial result cut short by the step limit. The context block "
+                    "below contains the full context of work already done."
                 )
             else:
-                messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            "--- END OF CONVERSATION HISTORY ---\n"
-                            "The messages above are COMPLETED, ALREADY-ANSWERED past "
-                            "exchanges, kept ONLY as read-only reference. Every request "
-                            "in that history is already done — none of it is pending work. "
-                            "Do NOT re-run, repeat, or reproduce any query, tool call, or "
-                            "task from those earlier turns, even if they look unfinished. "
-                            "The ONLY task is the single new user message below. Act solely "
-                            "on it. If it is a follow-up, reuse the data already present in "
-                            "the history instead of re-querying. Treat this as a normal "
-                            "back-and-forth conversation: answer just the latest message."
-                        ),
-                    )
+                user_preamble.append(
+                    "--- END OF CONVERSATION HISTORY ---\n"
+                    "The messages above are COMPLETED, ALREADY-ANSWERED past "
+                    "exchanges, kept ONLY as read-only reference. Every request "
+                    "in that history is already done — none of it is pending work. "
+                    "Do NOT re-run, repeat, or reproduce any query, tool call, or "
+                    "task from those earlier turns, even if they look unfinished. "
+                    "The ONLY task is the new user message at the end of this "
+                    "message. Act solely on it. If it is a follow-up, reuse the data "
+                    "already present in the history instead of re-querying. Treat this "
+                    "as a normal back-and-forth conversation: answer just the latest "
+                    "message."
                 )
         if continuation_summary:
-            messages.append(Message(role="system", content=continuation_summary))
-        messages.append(Message(role="user", content=question))
+            user_preamble.append(continuation_summary)
+
+        if user_preamble:
+            user_content = "\n\n".join([*user_preamble, f"NEW USER MESSAGE:\n{question}"])
+        else:
+            user_content = question
+        messages.append(Message(role="user", content=user_content))
 
         total_usage: dict[str, int] = {
             "prompt_tokens": 0,

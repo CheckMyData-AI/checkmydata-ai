@@ -518,3 +518,148 @@ class TestLLMErrorUserMessage:
     def test_base_error_retry_after(self):
         err = LLMError("fail", retry_after=10.0)
         assert err.retry_after_seconds == 10.0
+
+
+class TestMergeNonleadingSystem:
+    """Safety net: non-leading ``system`` roles must be folded into a user turn.
+
+    Anthropic/Bedrock via OpenRouter reject a ``system`` role mid-conversation,
+    which previously 400'd every multi-turn chat.
+    """
+
+    def test_leading_system_preserved(self):
+        from app.llm.openrouter_adapter import _merge_nonleading_system
+
+        out = _merge_nonleading_system(
+            [_msg("system", "sys"), _msg("user", "hi")]
+        )
+        assert [m.role for m in out] == ["system", "user"]
+        assert out[0].content == "sys"
+
+    def test_midconversation_system_merged_into_next_user(self):
+        from app.llm.openrouter_adapter import _merge_nonleading_system
+
+        out = _merge_nonleading_system(
+            [
+                _msg("system", "sys"),
+                _msg("user", "first"),
+                _msg("assistant", "answer"),
+                _msg("system", "MARKER"),
+                _msg("user", "second"),
+            ]
+        )
+        assert [m.role for m in out] == ["system", "user", "assistant", "user"]
+        # No mid-conversation system role survives.
+        assert all(m.role != "system" for m in out[1:])
+        assert out[-1].content == "MARKER\n\nsecond"
+
+    def test_trailing_system_with_no_user_becomes_user(self):
+        from app.llm.openrouter_adapter import _merge_nonleading_system
+
+        out = _merge_nonleading_system(
+            [
+                _msg("system", "sys"),
+                _msg("user", "first"),
+                _msg("assistant", "answer"),
+                _msg("system", "MARKER"),
+            ]
+        )
+        assert out[-1].role == "user"
+        assert out[-1].content == "MARKER"
+        assert all(m.role != "system" for m in out[1:])
+
+    def test_openrouter_format_messages_collapses_system(self):
+        with patch("app.llm.openrouter_adapter.settings") as s:
+            s.openrouter_api_key = "test-key"
+            from app.llm.openrouter_adapter import OpenRouterAdapter
+
+            adapter = OpenRouterAdapter()
+        formatted = adapter._format_messages(
+            [
+                _msg("system", "sys"),
+                _msg("user", "first"),
+                _msg("assistant", "answer"),
+                _msg("system", "MARKER"),
+                _msg("user", "second"),
+            ]
+        )
+        roles = [m["role"] for m in formatted]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert formatted[-1]["content"] == "MARKER\n\nsecond"
+
+
+class TestToolSchema:
+    """_tools_to_schema must accept dict tools and emit valid array/object items."""
+
+    @pytest.fixture
+    def adapter(self):
+        with patch("app.llm.openai_adapter.settings") as mock_s:
+            mock_s.openai_api_key = "test-key"
+            from app.llm.openai_adapter import OpenAIAdapter
+
+            return OpenAIAdapter()
+
+    def test_dict_tool_passthrough(self, adapter):
+        from app.agents.query_planner import _CREATE_PLAN_TOOL
+
+        out = adapter._tools_to_schema([_CREATE_PLAN_TOOL])
+        assert out == [_CREATE_PLAN_TOOL]
+
+    def test_array_param_emits_items(self, adapter):
+        from app.llm.base import Tool, ToolParameter
+
+        tool = Tool(
+            name="t",
+            description="d",
+            parameters=[
+                ToolParameter(name="paths", type="array", description="list"),
+            ],
+        )
+        out = adapter._tools_to_schema([tool])
+        prop = out[0]["function"]["parameters"]["properties"]["paths"]
+        assert prop["items"] == {"type": "string"}
+
+    def test_array_param_custom_items(self, adapter):
+        from app.llm.base import Tool, ToolParameter
+
+        tool = Tool(
+            name="t",
+            description="d",
+            parameters=[
+                ToolParameter(
+                    name="nums",
+                    type="array",
+                    description="ints",
+                    items={"type": "integer"},
+                ),
+            ],
+        )
+        out = adapter._tools_to_schema([tool])
+        prop = out[0]["function"]["parameters"]["properties"]["nums"]
+        assert prop["items"] == {"type": "integer"}
+
+    def test_object_param_emits_properties(self, adapter):
+        from app.llm.base import Tool, ToolParameter
+
+        tool = Tool(
+            name="t",
+            description="d",
+            parameters=[
+                ToolParameter(name="cfg", type="object", description="obj"),
+            ],
+        )
+        out = adapter._tools_to_schema([tool])
+        prop = out[0]["function"]["parameters"]["properties"]["cfg"]
+        assert prop["properties"] == {}
+
+    def test_anthropic_accepts_dict_tool(self):
+        from app.agents.query_planner import _CREATE_PLAN_TOOL
+
+        with patch("app.llm.anthropic_adapter.settings") as mock_s:
+            mock_s.anthropic_api_key = "test-key"
+            from app.llm.anthropic_adapter import AnthropicAdapter
+
+            adapter = AnthropicAdapter()
+        out = adapter._tools_to_anthropic([_CREATE_PLAN_TOOL])
+        assert out[0]["name"] == "create_execution_plan"
+        assert out[0]["input_schema"]["type"] == "object"

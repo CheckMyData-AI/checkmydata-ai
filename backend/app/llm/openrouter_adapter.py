@@ -1,11 +1,11 @@
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import httpx
 
 from app.config import settings
-from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from app.llm.errors import (
     LLMAuthError,
     LLMBillingError,
@@ -30,6 +30,47 @@ _OPENROUTER_TOKEN_LIMIT_MESSAGES: tuple[str, ...] = (
     "max_tokens",
     "too many tokens",
 )
+
+
+def _merge_nonleading_system(messages: list[Message]) -> list[Message]:
+    """Fold non-leading ``system`` messages into the adjacent user turn.
+
+    Anthropic (and Amazon Bedrock) routed through OpenRouter reject a ``system``
+    role that does not immediately follow a user message or a tool result:
+    ``role 'system' must follow a 'user' message``. Some callers historically
+    inserted mid-conversation ``system`` markers (e.g. an end-of-history
+    delimiter), which 400s every multi-turn chat. This normalizes the payload by
+    keeping only the leading run of ``system`` messages and merging any later
+    ``system`` content into the next user message (or a trailing user turn),
+    leaving OpenAI-style providers unaffected.
+    """
+    result: list[Message] = []
+    leading = True
+    pending: list[str] = []
+    for m in messages:
+        if m.role == "system":
+            if leading:
+                result.append(m)
+            elif m.content:
+                pending.append(m.content)
+            continue
+        leading = False
+        if pending and m.role == "user":
+            prefix = "\n\n".join(pending)
+            m = Message(
+                role="user",
+                content=f"{prefix}\n\n{m.content}" if m.content else prefix,
+                tool_call_id=m.tool_call_id,
+                name=m.name,
+                tool_calls=m.tool_calls,
+            )
+            pending = []
+        result.append(m)
+    if pending:
+        # No trailing user turn to attach to — emit one so the guidance survives
+        # without an invalid mid-conversation system role.
+        result.append(Message(role="user", content="\n\n".join(pending)))
+    return result
 
 
 def _parse_openrouter_body(response: httpx.Response) -> dict | None:
@@ -125,7 +166,7 @@ class OpenRouterAdapter(BaseLLMProvider):
 
     def _format_messages(self, messages: list[Message]) -> list[dict]:
         result = []
-        for m in messages:
+        for m in _merge_nonleading_system(messages):
             msg: dict = {"role": m.role, "content": m.content}
             if m.tool_call_id:
                 msg["tool_call_id"] = m.tool_call_id
@@ -149,7 +190,7 @@ class OpenRouterAdapter(BaseLLMProvider):
     async def complete(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -205,7 +246,7 @@ class OpenRouterAdapter(BaseLLMProvider):
     async def stream(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,

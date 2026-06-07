@@ -128,7 +128,7 @@ class AdaptivePlanner:
                         Message(role="system", content=system_content),
                         Message(role="user", content=prompt),
                     ],
-                    tools=[_CREATE_PLAN_TOOL],  # type: ignore[list-item]
+                    tools=[_CREATE_PLAN_TOOL],
                     preferred_provider=preferred_provider,
                     model=model,
                 )
@@ -275,7 +275,7 @@ class AdaptivePlanner:
         try:
             resp = await self._llm.complete(
                 messages=messages,
-                tools=[_CREATE_PLAN_TOOL],  # type: ignore[list-item]
+                tools=[_CREATE_PLAN_TOOL],
                 preferred_provider=preferred_provider,
                 model=model,
             )

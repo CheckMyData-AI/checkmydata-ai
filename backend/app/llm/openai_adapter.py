@@ -1,12 +1,12 @@
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import openai
 from openai import AsyncOpenAI
 
 from app.config import settings
-from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool, ToolCall
+from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from app.llm.errors import (
     LLMAuthError,
     LLMBillingError,
@@ -166,7 +166,7 @@ class OpenAIAdapter(BaseLLMProvider):
     async def complete(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -217,7 +217,7 @@ class OpenAIAdapter(BaseLLMProvider):
     async def stream(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,

@@ -2337,6 +2337,97 @@ class TestSqlAgentTimeBudget:
         assert config.query_timeout_seconds >= 5
 
 
+class TestToolLoopMessageRoles:
+    """Anthropic outage regression: the tool loop must never build a non-leading
+    ``system`` message, even with chat history and a continuation summary.
+
+    Anthropic/Bedrock via OpenRouter 400 on a mid-conversation ``system`` role,
+    which previously broke every multi-turn chat.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_midconversation_system_message(self):
+        from app.agents.base import AgentContext
+        from app.core.workflow_tracker import WorkflowTracker
+
+        mock_router = MagicMock()
+        mock_tracker = MagicMock(spec=WorkflowTracker)
+        mock_tracker.emit = AsyncMock()
+        mock_tracker.step = MagicMock()
+        mock_tracker.step.return_value.__aenter__ = AsyncMock()
+        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        mock_tracker.start = AsyncMock(return_value="wf-roles")
+        mock_tracker.end = AsyncMock()
+
+        # First (and only) LLM call returns a plain answer -> loop exits at once.
+        final_response = LLMResponse(
+            content="Here is the answer.",
+            tool_calls=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        )
+        mock_router.complete = AsyncMock(return_value=final_response)
+        mock_router.get_context_window = MagicMock(return_value=128_000)
+
+        agent = OrchestratorAgent(
+            llm_router=mock_router,
+            workflow_tracker=mock_tracker,
+        )
+
+        history = [
+            Message(role="user", content="previous question"),
+            Message(role="assistant", content="previous answer"),
+        ]
+        ctx = AgentContext(
+            project_id="p1",
+            connection_config=None,
+            user_question="follow-up question",
+            chat_history=history,
+            llm_router=mock_router,
+            tracker=mock_tracker,
+            workflow_id="wf-roles",
+            extra={
+                "_skip_complexity": True,
+                "_continuation_summary": "PRIOR WORK SUMMARY",
+            },
+        )
+
+        with (
+            patch.object(agent._ctx_loader, "has_mcp_sources", new=AsyncMock(return_value=False)),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+            patch("app.agents.orchestrator.time") as mock_time,
+        ):
+            mock_settings.max_orchestrator_iterations = 10
+            mock_settings.max_simple_query_steps = 4
+            mock_settings.max_parallel_tool_calls = 1
+            mock_settings.history_tail_messages = 4
+            mock_settings.agent_wall_clock_timeout_seconds = 600
+            mock_settings.max_context_tokens = 128_000
+            mock_settings.max_history_tokens = 25_000
+            mock_settings.viz_timeout_seconds = 15
+            mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.orchestrator_final_synthesis = False
+            mock_settings.orchestrator_pipeline_table_threshold = 3
+            mock_settings.answer_validator_enabled = False
+            mock_settings.answer_validator_min_chars = 80
+
+            mock_time.monotonic = MagicMock(return_value=0.0)
+
+            await agent.run(ctx)
+
+        assert mock_router.complete.call_count >= 1
+        first_messages = mock_router.complete.call_args_list[0].kwargs["messages"]
+        # Leading message is the only system role.
+        assert first_messages[0].role == "system"
+        assert all(m.role != "system" for m in first_messages[1:])
+        # The final user turn carries the folded marker + continuation summary.
+        last = first_messages[-1]
+        assert last.role == "user"
+        assert "END OF CONVERSATION HISTORY" in last.content
+        assert "PRIOR WORK SUMMARY" in last.content
+        assert "NEW USER MESSAGE" in last.content
+        assert "follow-up question" in last.content
+
+
 class TestUnifiedResultGate:
     """R5-3: orchestrator-level result-quality gate on the unified tool loop."""
 

@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from app.config import settings
 from app.llm.anthropic_adapter import AnthropicAdapter
-from app.llm.base import BaseLLMProvider, LLMResponse, Message, Tool
+from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolSpec
 from app.llm.errors import (
     RETRYABLE_LLM_ERRORS,
     LLMAllProvidersFailedError,
@@ -171,7 +171,7 @@ class LLMRouter:
         provider: BaseLLMProvider,
         provider_name: str,
         messages: list[Message],
-        tools: list[Tool] | None,
+        tools: Sequence[ToolSpec] | None,
         model: str | None,
         temperature: float,
         max_tokens: int,
@@ -235,7 +235,7 @@ class LLMRouter:
     async def complete(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -286,7 +286,7 @@ class LLMRouter:
     async def stream(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: Sequence[ToolSpec] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
