@@ -68,12 +68,17 @@ jobs:
         run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
 
       - name: Unit tests (with coverage)
+        # --cov-fail-under=0 disables per-step enforcement: the 72% floor is a
+        # property of the COMBINED unit+integration run, not of unit-only
+        # (~71%). The single authoritative gate is the "Coverage gate" step
+        # below; this step only collects coverage.
         run: |
           pytest tests/unit/ \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage-unit.xml \
-            --cov-context=test
+            --cov-context=test \
+            --cov-fail-under=0
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
@@ -84,15 +89,18 @@ jobs:
             --cov=app \
             --cov-append \
             --cov-report=term-missing \
-            --cov-report=xml:coverage-combined.xml
+            --cov-report=xml:coverage-combined.xml \
+            --cov-fail-under=0
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
       - name: Coverage gate (combined unit + integration)
-        # Enforced threshold matches `fail_under` in pyproject.toml so CI
-        # and `pytest --cov` agree locally and in CI (T36). Raised 40 -> 72 to
-        # match the real, documented floor (T-QA-1); current coverage ~73%.
+        # Authoritative coverage gate. Enforced threshold (72) matches
+        # `fail_under` in pyproject.toml and the value documented in
+        # README/CONTRIBUTING/DEPLOYMENT (T-QA-1). It runs on the COMBINED
+        # unit+integration data (~73%); the per-step pytest runs above pass
+        # --cov-fail-under=0 so a partial run never trips the gate early.
         run: |
           python -m coverage report --fail-under=72
 
