@@ -233,12 +233,42 @@ async def _value_error_handler(request: Request, exc: ValueError):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    @staticmethod
+    def _is_https(request: Request) -> bool:
+        """True when the original client request was HTTPS.
+
+        Behind Heroku's router / a reverse proxy the app sees plain HTTP, so we
+        also honor the ``X-Forwarded-Proto`` header the proxy sets.
+        """
+        if request.url.scheme == "https":
+            return True
+        forwarded = request.headers.get("x-forwarded-proto", "")
+        return forwarded.split(",")[0].strip().lower() == "https"
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+        if settings.security_csp_enabled and settings.security_csp:
+            header_name = (
+                "Content-Security-Policy-Report-Only"
+                if settings.security_csp_report_only
+                else "Content-Security-Policy"
+            )
+            response.headers[header_name] = settings.security_csp
+
+        # HSTS is only meaningful — and only honored by browsers — over HTTPS.
+        if settings.security_hsts_enabled and self._is_https(request):
+            directives = [f"max-age={settings.security_hsts_max_age}"]
+            if settings.security_hsts_include_subdomains:
+                directives.append("includeSubDomains")
+            if settings.security_hsts_preload:
+                directives.append("preload")
+            response.headers["Strict-Transport-Security"] = "; ".join(directives)
+
         return response
 
 

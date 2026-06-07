@@ -24,6 +24,28 @@ export function getAuthHeaders(): Record<string, string> {
   }
 }
 
+const CSRF_COOKIE = "cmd_csrf";
+
+/** Read the non-httpOnly CSRF cookie set by the backend (T-SEC-3). */
+export function getCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  for (const part of document.cookie.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === CSRF_COOKIE) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+/**
+ * Header bundle for state-changing requests: echoes the CSRF cookie back so the
+ * server's double-submit check passes. Safe methods never need it.
+ */
+export function getCsrfHeaders(method?: string): Record<string, string> {
+  if (isSafeMethod(method)) return {};
+  const token = getCsrfToken();
+  return token ? { "X-CSRF-Token": token } : {};
+}
+
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_RETRIES = 2;
 const RETRY_BACKOFF_MS = [600, 1500];
@@ -64,10 +86,13 @@ export async function request<T>(
     try {
       res = await fetch(`${API_BASE}${path}`, {
         ...restOptions,
+        // Send/receive the httpOnly session + CSRF cookies (T-SEC-3).
+        credentials: "include",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           ...getAuthHeaders(),
+          ...getCsrfHeaders(restOptions.method),
           ...(optHeaders instanceof Headers
             ? Object.fromEntries(optHeaders.entries())
             : Array.isArray(optHeaders)

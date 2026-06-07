@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.deps import get_current_user, get_db
+from app.core.auth_cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 
 # ── get_current_user ───────────────────────────────────────────────────
 
@@ -15,17 +16,28 @@ def _fake_user(*, user_id="u1", email="a@b.com", is_active=True):
     return SimpleNamespace(id=user_id, email=email, is_active=is_active)
 
 
+def _req(method: str = "GET", cookies: dict | None = None, headers: dict | None = None):
+    """Build a minimal Request stand-in for the dependency under test."""
+    cookies = cookies or {}
+    headers = {k.lower(): v for k, v in (headers or {}).items()}
+    return SimpleNamespace(
+        method=method,
+        cookies=cookies,
+        headers=SimpleNamespace(get=lambda k, d=None: headers.get(k.lower(), d)),
+    )
+
+
 class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_missing_header_raises_401(self):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(authorization=None, db=AsyncMock())
+            await get_current_user(_req(), authorization=None, db=AsyncMock())
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_non_bearer_header_raises_401(self):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(authorization="Basic abc", db=AsyncMock())
+            await get_current_user(_req(), authorization="Basic abc", db=AsyncMock())
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -33,7 +45,7 @@ class TestGetCurrentUser:
         with patch("app.services.auth_service.AuthService") as mock_auth_cls:
             mock_auth_cls.return_value.decode_token.return_value = None
             with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(authorization="Bearer bad", db=AsyncMock())
+                await get_current_user(_req(), authorization="Bearer bad", db=AsyncMock())
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -41,7 +53,7 @@ class TestGetCurrentUser:
         with patch("app.services.auth_service.AuthService") as mock_auth_cls:
             mock_auth_cls.return_value.decode_token.return_value = None
             with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(authorization="Bearer expired", db=AsyncMock())
+                await get_current_user(_req(), authorization="Bearer expired", db=AsyncMock())
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -49,7 +61,7 @@ class TestGetCurrentUser:
         with patch("app.services.auth_service.AuthService") as mock_auth_cls:
             mock_auth_cls.return_value.decode_token.return_value = {"email": "a@b.com"}
             with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(authorization="Bearer tok", db=AsyncMock())
+                await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -59,7 +71,7 @@ class TestGetCurrentUser:
             instance.decode_token.return_value = {"sub": "u1"}
             instance.get_by_id = AsyncMock(return_value=None)
             with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(authorization="Bearer tok", db=AsyncMock())
+                await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -69,7 +81,7 @@ class TestGetCurrentUser:
             instance.decode_token.return_value = {"sub": "u1"}
             instance.get_by_id = AsyncMock(return_value=_fake_user(is_active=False))
             with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(authorization="Bearer tok", db=AsyncMock())
+                await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -78,7 +90,62 @@ class TestGetCurrentUser:
             instance = mock_auth_cls.return_value
             instance.decode_token.return_value = {"sub": "u1"}
             instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1", email="a@b.com"))
-            result = await get_current_user(authorization="Bearer tok", db=AsyncMock())
+            result = await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
+            assert result == {"user_id": "u1", "email": "a@b.com"}
+
+    # ── cookie session + CSRF (T-SEC-3) ──────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_cookie_session_get_returns_dict(self):
+        req = _req(method="GET", cookies={SESSION_COOKIE: "tok"})
+        with patch("app.services.auth_service.AuthService") as mock_auth_cls:
+            instance = mock_auth_cls.return_value
+            instance.decode_token.return_value = {"sub": "u1"}
+            instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1"))
+            result = await get_current_user(req, authorization=None, db=AsyncMock())
+            assert result == {"user_id": "u1", "email": "a@b.com"}
+
+    @pytest.mark.asyncio
+    async def test_cookie_mutation_without_csrf_raises_403(self):
+        req = _req(method="POST", cookies={SESSION_COOKIE: "tok"})
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(req, authorization=None, db=AsyncMock())
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_cookie_mutation_with_mismatched_csrf_raises_403(self):
+        req = _req(
+            method="POST",
+            cookies={SESSION_COOKIE: "tok", CSRF_COOKIE: "aaa"},
+            headers={CSRF_HEADER: "bbb"},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(req, authorization=None, db=AsyncMock())
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_cookie_mutation_with_matching_csrf_succeeds(self):
+        req = _req(
+            method="POST",
+            cookies={SESSION_COOKIE: "tok", CSRF_COOKIE: "same"},
+            headers={CSRF_HEADER: "same"},
+        )
+        with patch("app.services.auth_service.AuthService") as mock_auth_cls:
+            instance = mock_auth_cls.return_value
+            instance.decode_token.return_value = {"sub": "u1"}
+            instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1"))
+            result = await get_current_user(req, authorization=None, db=AsyncMock())
+            assert result == {"user_id": "u1", "email": "a@b.com"}
+
+    @pytest.mark.asyncio
+    async def test_bearer_mutation_skips_csrf(self):
+        # API clients use bearer and must not be forced through CSRF.
+        req = _req(method="POST")
+        with patch("app.services.auth_service.AuthService") as mock_auth_cls:
+            instance = mock_auth_cls.return_value
+            instance.decode_token.return_value = {"sub": "u1"}
+            instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1"))
+            result = await get_current_user(req, authorization="Bearer tok", db=AsyncMock())
             assert result == {"user_id": "u1", "email": "a@b.com"}
 
 

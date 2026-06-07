@@ -15,7 +15,11 @@ from httpx import AsyncClient
 from tests.integration.conftest import auth_headers, register_user
 
 MAX_HEALTH_MS = 200
-MAX_AUTH_MS = 500
+# Auth endpoints are bcrypt-bound (intentional CPU cost). Under `coverage`
+# line-tracing in CI the hash runs several times slower than in production, so
+# this budget is generous on purpose: it still catches accidental O(n^2) work or
+# a blocking call added to the hot path, without flaking on the password KDF.
+MAX_AUTH_MS = 1500
 MAX_CRUD_MS = 300
 MAX_LIST_MS = 300
 MAX_EXTERNAL_LIST_MS = 2000

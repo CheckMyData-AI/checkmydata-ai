@@ -4,7 +4,14 @@
 // via this index so no existing code has to change.
 
 export * from "./types";
-export { handleSessionExpired, API_BASE, request, getAuthHeaders } from "./_client";
+export {
+  handleSessionExpired,
+  API_BASE,
+  request,
+  getAuthHeaders,
+  getCsrfToken,
+  getCsrfHeaders,
+} from "./_client";
 
 import { auth } from "./auth";
 import { projects } from "./projects";

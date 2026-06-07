@@ -93,10 +93,15 @@ class ClickHouseConnector(BaseConnector):
 
             truncated = len(all_rows) > MAX_RESULT_ROWS
             rows = all_rows[:MAX_RESULT_ROWS] if truncated else all_rows
+            # Byte-level backstop alongside the row cap (wide rows / BLOBs).
+            from app.connectors.base import cap_rows_by_bytes
+
+            rows, byte_truncated = cap_rows_by_bytes(rows)
+            truncated = truncated or byte_truncated
             return QueryResult(
                 columns=columns,
                 rows=rows,
-                row_count=len(all_rows),
+                row_count=len(rows),
                 execution_time_ms=elapsed,
                 truncated=truncated,
             )

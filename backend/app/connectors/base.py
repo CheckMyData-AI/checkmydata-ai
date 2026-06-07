@@ -149,6 +149,40 @@ class SchemaInfo:
 
 MAX_RESULT_ROWS = 10_000
 
+# Hard cap on the estimated serialized size of a single result payload. The row
+# cap (``MAX_RESULT_ROWS``) bounds row *count*, but a bounded number of very wide
+# rows (large TEXT/BLOB/JSON columns) can still blow the heap. This is the
+# byte-level backstop applied after the row cap.
+MAX_RESULT_BYTES = 50_000_000  # 50 MB
+
+
+def _estimate_value_bytes(value: Any) -> int:
+    """Cheap, deterministic byte-size estimate for a single cell value."""
+    if value is None:
+        return 0
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return len(value)
+    if isinstance(value, str):
+        return len(value.encode("utf-8", "ignore"))
+    return len(str(value).encode("utf-8", "ignore"))
+
+
+def cap_rows_by_bytes(
+    rows: list[list[Any]], max_bytes: int = MAX_RESULT_BYTES
+) -> tuple[list[list[Any]], bool]:
+    """Trim ``rows`` so their estimated serialized size stays under ``max_bytes``.
+
+    Returns ``(possibly_trimmed_rows, truncated)``. ``truncated`` is ``True`` when
+    at least one row was dropped to honor the byte budget. The first row is always
+    kept so a single oversized row still returns something rather than an empty set.
+    """
+    total = 0
+    for index, row in enumerate(rows):
+        total += sum(_estimate_value_bytes(v) for v in row)
+        if total > max_bytes and index > 0:
+            return rows[:index], True
+    return rows, False
+
 
 @dataclass
 class QueryResult:

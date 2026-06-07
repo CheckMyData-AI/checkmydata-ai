@@ -22,9 +22,15 @@ interface AuthState {
   restore: () => Promise<void>;
 }
 
+// T-SEC-3: the JWT now lives in an httpOnly cookie the browser cannot read.
+// We persist only the non-sensitive user profile for instant UI paint, and keep
+// the token in memory solely to schedule a proactive refresh before expiry.
 function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; user: AuthUser }) {
-  storage.setItem("auth_token", res.token);
-  storage.setItem("auth_user", JSON.stringify(res.user));
+  try {
+    storage.setItem("auth_user", JSON.stringify(res.user));
+  } catch {
+    /* storage quota / unavailable */
+  }
   set({ user: res.user, token: res.token, isLoading: false });
 }
 
@@ -47,9 +53,8 @@ function getTokenExpMs(token: string): number | null {
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
+function scheduleRefresh(set: (s: Partial<AuthState>) => void, token: string | null) {
   if (refreshTimer) clearTimeout(refreshTimer);
-  const token = storage.getItem("auth_token");
   if (!token) return;
 
   const expMs = getTokenExpMs(token);
@@ -68,7 +73,7 @@ function scheduleRefresh(set: (s: Partial<AuthState>) => void) {
     try {
       const res = await api.auth.refresh();
       storeAuth(set, res);
-      scheduleRefresh(set);
+      scheduleRefresh(set, res.token);
     } catch {
       toast("Your session has expired. Please log in again.", "error");
       useAuthStore.getState().logout();
@@ -85,8 +90,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email, password) => {
     set({ isLoading: true, error: null });
     try {
-      storeAuth(set, await api.auth.login(email, password));
-      scheduleRefresh(set);
+      const res = await api.auth.login(email, password);
+      storeAuth(set, res);
+      scheduleRefresh(set, res.token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Login failed";
       set({ error: msg, isLoading: false });
@@ -97,8 +103,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   register: async (email, password, displayName) => {
     set({ isLoading: true, error: null });
     try {
-      storeAuth(set, await api.auth.register(email, password, displayName));
-      scheduleRefresh(set);
+      const res = await api.auth.register(email, password, displayName);
+      storeAuth(set, res);
+      scheduleRefresh(set, res.token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Registration failed";
       set({ error: msg, isLoading: false });
@@ -109,8 +116,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   googleLogin: async (credential, nonce, csrfToken) => {
     set({ isLoading: true, error: null });
     try {
-      storeAuth(set, await api.auth.googleLogin(credential, nonce, csrfToken));
-      scheduleRefresh(set);
+      const res = await api.auth.googleLogin(credential, nonce, csrfToken);
+      storeAuth(set, res);
+      scheduleRefresh(set, res.token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Google sign-in failed";
       set({ error: msg, isLoading: false });
@@ -126,6 +134,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window !== "undefined" && window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
+    // Clear the httpOnly session + CSRF cookies server-side (best effort).
+    void api.auth.logout().catch(() => {});
     storage.removeItem("auth_token");
     storage.removeItem("auth_user");
     storage.removeItem("active_project_id");
@@ -154,32 +164,27 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   restore: async () => {
     if (typeof window === "undefined") return;
-    const token = storage.getItem("auth_token");
+    // Optimistic paint from the cached (non-sensitive) profile, then validate
+    // the session against the httpOnly cookie via a refresh. The refresh rotates
+    // the token and returns a fresh exp we can schedule against; no token is
+    // ever read from storage (T-SEC-3).
     const userStr = storage.getItem("auth_user");
-    if (token && userStr) {
+    if (userStr) {
       try {
-        const expMs = getTokenExpMs(token);
-        if (expMs && expMs < Date.now()) {
-          storage.removeItem("auth_token");
-          storage.removeItem("auth_user");
-          return;
-        }
-        set({ user: JSON.parse(userStr), token });
-        scheduleRefresh(set);
-
-        try {
-          const fresh = await api.auth.me();
-          try { storage.setItem("auth_user", JSON.stringify(fresh)); } catch { /* quota */ }
-          set({ user: fresh });
-        } catch {
-          storage.removeItem("auth_token");
-          storage.removeItem("auth_user");
-          set({ user: null, token: null });
-        }
+        set({ user: JSON.parse(userStr) });
       } catch {
-        storage.removeItem("auth_token");
         storage.removeItem("auth_user");
       }
+    }
+
+    try {
+      const res = await api.auth.refresh();
+      storeAuth(set, res);
+      scheduleRefresh(set, res.token);
+    } catch {
+      storage.removeItem("auth_token");
+      storage.removeItem("auth_user");
+      set({ user: null, token: null });
     }
   },
 }));

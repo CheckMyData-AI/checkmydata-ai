@@ -11,14 +11,30 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
 
+from app.mcp_server import auth, tools
 from app.mcp_server import resources as res
-from app.mcp_server import tools
 
 logger = logging.getLogger(__name__)
+
+
+async def _with_principal(run: Callable[[dict], Awaitable[str]]) -> str:
+    """Resolve the caller's identity, then run a tool bound to that principal.
+
+    Every tool goes through here so no tool can execute without an
+    authenticated, authorized principal. Auth failures are returned as a JSON
+    error rather than raised, matching the tools' error contract.
+    """
+    try:
+        principal = await auth.authenticate()
+    except auth.MCPAuthError as exc:
+        return json.dumps({"error": str(exc)})
+    return await run(principal)
 
 
 def create_mcp_server() -> FastMCP:
@@ -45,28 +61,30 @@ def create_mcp_server() -> FastMCP:
 
         Returns the answer, SQL query, results, and visualization config.
         """
-        return await tools.query_database(project_id, question, connection_id)
+        return await _with_principal(
+            lambda p: tools.query_database(p, project_id, question, connection_id)
+        )
 
     @mcp.tool()
     async def search_codebase(project_id: str, question: str) -> str:
         """Search the indexed project codebase for information about
         code structure, ORM models, architecture, and documentation."""
-        return await tools.search_codebase(project_id, question)
+        return await _with_principal(lambda p: tools.search_codebase(p, project_id, question))
 
     @mcp.tool()
     async def list_projects() -> str:
-        """List all accessible projects with their IDs and names."""
-        return await tools.list_projects()
+        """List the projects the authenticated caller can access."""
+        return await _with_principal(tools.list_projects)
 
     @mcp.tool()
     async def list_connections(project_id: str) -> str:
         """List database connections configured for a project."""
-        return await tools.list_connections(project_id)
+        return await _with_principal(lambda p: tools.list_connections(p, project_id))
 
     @mcp.tool()
     async def get_schema(connection_id: str) -> str:
         """Get the indexed database schema (tables, columns) for a connection."""
-        return await tools.get_schema(connection_id)
+        return await _with_principal(lambda p: tools.get_schema(p, connection_id))
 
     @mcp.tool()
     async def execute_raw_query(connection_id: str, query: str) -> str:
@@ -74,7 +92,7 @@ def create_mcp_server() -> FastMCP:
 
         Only works on connections with is_read_only=True.
         """
-        return await tools.execute_raw_query(connection_id, query)
+        return await _with_principal(lambda p: tools.execute_raw_query(p, connection_id, query))
 
     # ------------------------------------------------------------------
     # Resources

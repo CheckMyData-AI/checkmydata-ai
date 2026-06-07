@@ -310,6 +310,73 @@ class TestGoogleAuth:
 
 
 @pytest.mark.asyncio
+class TestCookieSession:
+    """T-SEC-3: httpOnly session cookie + double-submit CSRF."""
+
+    @pytest.fixture(autouse=True)
+    def _insecure_cookies(self, monkeypatch):
+        # httpx won't store Secure cookies over http://test, so relax for tests.
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "auth_cookie_secure", False)
+
+    async def test_register_sets_session_and_csrf_cookies(self, client):
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        assert resp.status_code == 200
+        set_cookies = resp.headers.get_list("set-cookie")
+        session_line = next(c for c in set_cookies if c.startswith("cmd_session="))
+        csrf_line = next(c for c in set_cookies if c.startswith("cmd_csrf="))
+        # Session cookie must be httpOnly; CSRF cookie must be readable by JS.
+        assert "httponly" in session_line.lower()
+        assert "httponly" not in csrf_line.lower()
+        assert "samesite" in session_line.lower()
+
+    async def test_cookie_auth_allows_get_without_bearer(self, client):
+        # Register populates the client cookie jar; no Authorization header set.
+        await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        assert "Authorization" not in client.headers
+        resp = await client.get("/api/auth/me")
+        assert resp.status_code == 200
+
+    async def test_cookie_mutation_without_csrf_is_rejected(self, client):
+        await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        # refresh is a POST authenticated by cookie -> needs CSRF header.
+        resp = await client.post("/api/auth/refresh")
+        assert resp.status_code == 403
+
+    async def test_cookie_mutation_with_csrf_succeeds(self, client):
+        await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        csrf = client.cookies.get("cmd_csrf")
+        assert csrf
+        resp = await client.post("/api/auth/refresh", headers={"X-CSRF-Token": csrf})
+        assert resp.status_code == 200
+
+    async def test_logout_clears_cookies(self, client):
+        await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        resp = await client.post("/api/auth/logout")
+        assert resp.status_code == 200
+        # Deletion is signalled via Set-Cookie with an empty/expired value.
+        set_cookies = " ".join(resp.headers.get_list("set-cookie")).lower()
+        assert "cmd_session=" in set_cookies
+        assert "cmd_csrf=" in set_cookies
+
+
+@pytest.mark.asyncio
 class TestChangePassword:
     async def test_change_password_success(self, client):
         email = _email()

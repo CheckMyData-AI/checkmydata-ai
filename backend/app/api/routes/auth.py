@@ -1,11 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.config import settings
 from app.core.audit import audit_log
+from app.core.auth_cookies import clear_session_cookies, set_session_cookies
 from app.core.rate_limit import limiter
 from app.services.auth_service import AuthService
 from app.services.email_service import EmailService
@@ -58,7 +60,12 @@ class UserResponse(BaseModel):
 
 @router.post("/register", response_model=AuthResponse)
 @limiter.limit("5/minute")
-async def register(request: Request, body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(
+    request: Request,
+    body: RegisterRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     try:
         user = await _auth.register(db, body.email, body.password, body.display_name)
     except ValueError as e:
@@ -75,6 +82,8 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
         user_id=user.id, email=user.email, display_name=user.display_name
     )
     token = _auth.create_token(user.id, user.email)
+    if settings.auth_cookie_enabled:
+        set_session_cookies(response, token)
     return AuthResponse(
         token=token,
         user={
@@ -91,13 +100,20 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
 
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("10/minute")
-async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    body: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     user = await _auth.authenticate(db, body.email, body.password)
     if not user:
         audit_log("auth.login_failed", detail=body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     audit_log("auth.login", user_id=user.id, detail=user.email)
     token = _auth.create_token(user.id, user.email)
+    if settings.auth_cookie_enabled:
+        set_session_cookies(response, token)
     return AuthResponse(
         token=token,
         user={
@@ -117,6 +133,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
 async def google_login(
     request: Request,
     body: GoogleLoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     if body.g_csrf_token:
@@ -146,6 +163,8 @@ async def google_login(
             user_id=user.id, email=user.email, display_name=user.display_name
         )
     token = _auth.create_token(user.id, user.email)
+    if settings.auth_cookie_enabled:
+        set_session_cookies(response, token)
     return AuthResponse(
         token=token,
         user={
@@ -184,6 +203,7 @@ async def change_password(
 
 @router.post("/refresh", response_model=AuthResponse)
 async def refresh_token(
+    response: Response,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -192,6 +212,8 @@ async def refresh_token(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     token = _auth.create_token(user.id, user.email)
+    if settings.auth_cookie_enabled:
+        set_session_cookies(response, token)
     return AuthResponse(
         token=token,
         user={
@@ -204,6 +226,17 @@ async def refresh_token(
             "can_create_projects": user.can_create_projects,
         },
     )
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Clear the browser session + CSRF cookies.
+
+    Safe to call unauthenticated (idempotent) so the SPA can always reach a
+    clean logged-out state even with an expired session.
+    """
+    clear_session_cookies(response)
+    return {"ok": True}
 
 
 @router.get("/me", response_model=UserResponse)

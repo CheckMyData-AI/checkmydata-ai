@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
+    # Browser session cookies (T-SEC-3). The JWT is delivered to browsers as an
+    # httpOnly/Secure/SameSite cookie so it is never readable from JS/storage,
+    # paired with a non-httpOnly CSRF cookie (double-submit) for mutations.
+    # ``Authorization: Bearer`` still works for non-browser API clients.
+    auth_cookie_enabled: bool = True
+    auth_cookie_secure: bool = True  # set False only for local http dev
+    auth_cookie_samesite: str = "lax"  # lax | strict | none
+    auth_cookie_domain: str = ""  # empty = host-only cookie
+
     google_client_id: str = ""
 
     # Resend transactional email
@@ -373,8 +382,41 @@ class Settings(BaseSettings):
     max_concurrent_agent_calls: int = 3
     max_agent_calls_per_hour: int = 100
 
+    # Security headers (T-SEC-6). CSP is configurable so the frontend's inline
+    # scripts, analytics, Google Identity, and the Swagger UI CDN can be
+    # allowlisted without code changes. Report-only mode lets the policy be
+    # rolled out and observed before it is enforced.
+    security_csp_enabled: bool = True
+    security_csp_report_only: bool = False
+    security_csp: str = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "object-src 'none'; "
+        "img-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "script-src 'self' https://accounts.google.com https://apis.google.com "
+        "https://cdn.jsdelivr.net; "
+        "connect-src 'self' https://accounts.google.com; "
+        "frame-src https://accounts.google.com; "
+        "worker-src 'self' blob:; "
+        "form-action 'self'"
+    )
+    # HSTS — only emitted over HTTPS; max-age in seconds (default 1 year).
+    security_hsts_enabled: bool = True
+    security_hsts_max_age: int = 31_536_000
+    security_hsts_include_subdomains: bool = True
+    security_hsts_preload: bool = False
+
     # Redis (enables shared cache + ARQ task queue; empty = in-process fallback)
     redis_url: str = ""
+
+    # MCP server (T-SEC-1). Off by default: the network-exposed MCP surface
+    # must not run until a credential is configured. ``mcp_api_key_user_id``
+    # binds the server's API key to a real platform user so MCP tool calls are
+    # scoped/authorized exactly like that user's HTTP requests.
+    mcp_enabled: bool = False
+    mcp_api_key_user_id: str = ""
 
     # GeoIP cache settings
     geoip_cache_enabled: bool = True

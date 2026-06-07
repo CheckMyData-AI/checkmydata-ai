@@ -25,7 +25,7 @@ Backend (`backend/`, Python 3.12):
 - Type check: `mypy app/ --ignore-missing-imports`
 - Tests: `pytest tests/unit/ && pytest tests/integration/`
   - Env: `DATABASE_URL=sqlite+aiosqlite:///:memory:`, `MASTER_ENCRYPTION_KEY=<fernet key>`
-- Coverage gate: `coverage report --fail-under=40` (combined unit + integration)
+- Coverage gate: `coverage report --fail-under=72` (combined unit + integration)
 
 Frontend (`frontend/`, Node 20):
 - Type check: `npx tsc --noEmit`

@@ -101,38 +101,54 @@ class MySQLConnector(BaseConnector):
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
         if not self._pool:
             return QueryResult(error="Not connected")
+        pool = self._pool
 
         start = time.monotonic()
+        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
+
         try:
             exec_params: Any = params
             exec_query = query
             if isinstance(params, dict):
                 exec_query, exec_params = self._dict_to_positional(query, params)
-            async with self._pool.acquire() as conn:
-                async with conn.cursor(aiomysql.DictCursor) as cur:
-                    await asyncio.wait_for(
-                        cur.execute(exec_query, exec_params),
-                        timeout=self._QUERY_TIMEOUT_S,
-                    )
-                    rows = await cur.fetchall()
-                    elapsed = (time.monotonic() - start) * 1000
 
-                    if not rows:
-                        return QueryResult(row_count=0, execution_time_ms=elapsed)
+            async def _run() -> list[dict[str, Any]]:
+                async with pool.acquire() as conn:
+                    # R2/F-ARCH-5: stream via a server-side (unbuffered) cursor and
+                    # pull at most ``MAX_RESULT_ROWS + 1`` rows. ``fetchall()`` on a
+                    # buffered cursor materialises the entire (potentially
+                    # millions-of-rows) result set in client memory before we cap it
+                    # — the OOM bug. ``SSDictCursor`` keeps rows on the server; the
+                    # ``+1`` sentinel detects truncation. Closing the cursor drains
+                    # any unread rows over the wire one block at a time (bounded
+                    # memory) so the pooled connection stays in sync.
+                    async with conn.cursor(aiomysql.SSDictCursor) as cur:
+                        await cur.execute(exec_query, exec_params)
+                        return await cur.fetchmany(MAX_RESULT_ROWS + 1)
 
-                    columns = list(rows[0].keys())
-                    from app.connectors.base import MAX_RESULT_ROWS
+            rows = await asyncio.wait_for(_run(), timeout=self._QUERY_TIMEOUT_S)
+            elapsed = (time.monotonic() - start) * 1000
 
-                    truncated = len(rows) > MAX_RESULT_ROWS
-                    capped = rows[:MAX_RESULT_ROWS] if truncated else rows
-                    data = [list(r.values()) for r in capped]
-                    return QueryResult(
-                        columns=columns,
-                        rows=data,
-                        row_count=len(rows),
-                        execution_time_ms=elapsed,
-                        truncated=truncated,
-                    )
+            if not rows:
+                return QueryResult(row_count=0, execution_time_ms=elapsed)
+
+            columns = list(rows[0].keys())
+            truncated = len(rows) > MAX_RESULT_ROWS
+            capped = rows[:MAX_RESULT_ROWS] if truncated else rows
+            data = [list(r.values()) for r in capped]
+
+            # Byte-level backstop: a bounded row count can still be a huge payload
+            # (wide rows / BLOBs). Trim further if the estimate exceeds the cap.
+            data, byte_truncated = cap_rows_by_bytes(data)
+            truncated = truncated or byte_truncated
+
+            return QueryResult(
+                columns=columns,
+                rows=data,
+                row_count=len(data),
+                execution_time_ms=elapsed,
+                truncated=truncated,
+            )
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(

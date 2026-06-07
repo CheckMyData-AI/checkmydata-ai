@@ -59,6 +59,9 @@ function createSSEStream(
   const token = getToken();
 
   fetch(url, {
+    // Browser auth rides on the httpOnly session cookie (T-SEC-3); the bearer
+    // header is only set when an API client persisted a token.
+    credentials: "include",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     signal: ctrl.signal,
   })

@@ -36,6 +36,21 @@ def main() -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    from app.config import settings
+
+    # T-SEC-1: the MCP surface is off by default. Refuse to start unless an
+    # operator has explicitly enabled it AND configured the user binding, so a
+    # misconfigured deployment can never expose unauthenticated tools.
+    if not settings.mcp_enabled:
+        raise SystemExit(
+            "MCP server is disabled. Set MCP_ENABLED=true (and MCP_API_KEY_USER_ID "
+            "+ CHECKMYDATA_API_KEY) to run it."
+        )
+    if not settings.mcp_api_key_user_id:
+        raise SystemExit(
+            "MCP_API_KEY_USER_ID must be set so MCP tool calls are scoped to a real user."
+        )
+
     from app.mcp_server.server import create_mcp_server
 
     mcp = create_mcp_server()

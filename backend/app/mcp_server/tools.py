@@ -18,6 +18,7 @@ from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
+from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,35 @@ logger = logging.getLogger(__name__)
 _project_svc = ProjectService()
 _connection_svc = ConnectionService()
 _db_index_svc = DbIndexService()
+_membership_svc = MembershipService()
+
+
+def _principal_user_id(principal: dict) -> str:
+    """Extract the authenticated user id from a resolved MCP principal.
+
+    Defends against a tool being called without a real identity: an empty /
+    missing ``user_id`` can never own a project, so access checks below will
+    deny it rather than silently acting as a privileged user.
+    """
+    return (principal or {}).get("user_id") or ""
+
+
+class _AccessDeniedError(Exception):
+    """Raised internally when a principal may not touch a project/connection."""
+
+
+async def _require_project_access(session, project_id: str, user_id: str) -> None:
+    if not user_id or not await _membership_svc.can_access(session, project_id, user_id):
+        raise _AccessDeniedError(f"Access denied to project '{project_id}'")
+
+
+async def _require_connection_access(session, connection_id: str, user_id: str):
+    """Return the connection only if the principal can access its project."""
+    conn = await _connection_svc.get(session, connection_id)
+    if not conn:
+        raise _AccessDeniedError(f"Connection '{connection_id}' not found")
+    await _require_project_access(session, conn.project_id, user_id)
+    return conn
 
 
 def _get_trace_svc():
@@ -78,6 +108,7 @@ def _agent_response_to_dict(resp: AgentResponse) -> dict[str, Any]:
 
 
 async def query_database(
+    principal: dict,
     project_id: str,
     question: str,
     connection_id: str | None = None,
@@ -86,10 +117,16 @@ async def query_database(
 
     Returns the answer, SQL query, results, and visualization config.
     """
+    user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
         project = await _project_svc.get(session, project_id)
         if not project:
             return json.dumps({"error": f"Project '{project_id}' not found"})
+
+        try:
+            await _require_project_access(session, project_id, user_id)
+        except _AccessDeniedError as exc:
+            return json.dumps({"error": str(exc)})
 
         connections = await _connection_svc.list_by_project(session, project_id)
         if not connections:
@@ -98,7 +135,9 @@ async def query_database(
         conn = None
         if connection_id:
             conn = await _connection_svc.get(session, connection_id)
-            if not conn:
+            # A connection_id must both exist and belong to the named project,
+            # otherwise a caller could read across projects by id.
+            if not conn or conn.project_id != project_id:
                 return json.dumps({"error": f"Connection '{connection_id}' not found"})
         else:
             conn = connections[0]
@@ -108,7 +147,7 @@ async def query_database(
 
     wf_id = await _singleton_tracker.begin(
         "mcp_query_database",
-        context={"project_id": project_id, "user_id": "mcp-user"},
+        context={"project_id": project_id, "user_id": user_id},
     )
 
     ctx = AgentContext(
@@ -119,7 +158,7 @@ async def query_database(
         llm_router=LLMRouter(),
         tracker=_singleton_tracker,
         workflow_id=wf_id,
-        user_id="mcp-user",
+        user_id=user_id,
         project_name=project.name if project else None,
     )
 
@@ -132,7 +171,7 @@ async def query_database(
             await trace_svc.finalize_trace(
                 wf_id,
                 project_id=project_id,
-                user_id="mcp-user",
+                user_id=user_id,
                 question=question,
                 response_type=resp.response_type or "text",
                 status="failed" if resp.error else "completed",
@@ -144,16 +183,21 @@ async def query_database(
     return json.dumps(_agent_response_to_dict(resp), default=str)
 
 
-async def search_codebase(project_id: str, question: str) -> str:
+async def search_codebase(principal: dict, project_id: str, question: str) -> str:
     """Search the indexed project codebase for information."""
+    user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
         project = await _project_svc.get(session, project_id)
         if not project:
             return json.dumps({"error": f"Project '{project_id}' not found"})
+        try:
+            await _require_project_access(session, project_id, user_id)
+        except _AccessDeniedError as exc:
+            return json.dumps({"error": str(exc)})
 
     wf_id = await _singleton_tracker.begin(
         "mcp_search_codebase",
-        context={"project_id": project_id, "user_id": "mcp-user"},
+        context={"project_id": project_id, "user_id": user_id},
     )
 
     ctx = AgentContext(
@@ -164,7 +208,7 @@ async def search_codebase(project_id: str, question: str) -> str:
         llm_router=LLMRouter(),
         tracker=_singleton_tracker,
         workflow_id=wf_id,
-        user_id="mcp-user",
+        user_id=user_id,
         project_name=project.name if project else None,
     )
 
@@ -177,7 +221,7 @@ async def search_codebase(project_id: str, question: str) -> str:
             await trace_svc.finalize_trace(
                 wf_id,
                 project_id=project_id,
-                user_id="mcp-user",
+                user_id=user_id,
                 question=question,
                 response_type=resp.response_type or "text",
                 status="failed" if resp.error else "completed",
@@ -189,10 +233,13 @@ async def search_codebase(project_id: str, question: str) -> str:
     return json.dumps(_agent_response_to_dict(resp), default=str)
 
 
-async def list_projects() -> str:
-    """List all accessible projects."""
+async def list_projects(principal: dict) -> str:
+    """List only the projects the authenticated principal can access."""
+    user_id = _principal_user_id(principal)
+    if not user_id:
+        return json.dumps({"projects": []})
     async with async_session_factory() as session:
-        projects = await _project_svc.list_all(session)
+        projects = await _membership_svc.list_accessible(session, user_id)
     return json.dumps(
         {
             "projects": [
@@ -203,9 +250,14 @@ async def list_projects() -> str:
     )
 
 
-async def list_connections(project_id: str) -> str:
-    """List connections for a project."""
+async def list_connections(principal: dict, project_id: str) -> str:
+    """List connections for a project the principal can access."""
+    user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
+        try:
+            await _require_project_access(session, project_id, user_id)
+        except _AccessDeniedError as exc:
+            return json.dumps({"error": str(exc)})
         connections = await _connection_svc.list_by_project(session, project_id)
     return json.dumps(
         {
@@ -223,9 +275,14 @@ async def list_connections(project_id: str) -> str:
     )
 
 
-async def get_schema(connection_id: str) -> str:
-    """Get the indexed database schema for a connection."""
+async def get_schema(principal: dict, connection_id: str) -> str:
+    """Get the indexed database schema for a connection the principal can access."""
+    user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
+        try:
+            await _require_connection_access(session, connection_id, user_id)
+        except _AccessDeniedError as exc:
+            return json.dumps({"error": str(exc)})
         entries = await _db_index_svc.get_index(session, connection_id)
 
     if not entries:
@@ -254,17 +311,19 @@ async def get_schema(connection_id: str) -> str:
     return json.dumps({"tables": tables}, default=str)
 
 
-async def execute_raw_query(connection_id: str, query: str) -> str:
-    """Execute a raw SQL query against a connection.
+async def execute_raw_query(principal: dict, connection_id: str, query: str) -> str:
+    """Execute a raw SQL query against a connection the principal can access.
 
     Requires the connection to be in read-only mode for safety.
     """
     from app.core.safety import SafetyGuard, SafetyLevel
 
+    user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
-        conn = await _connection_svc.get(session, connection_id)
-        if not conn:
-            return json.dumps({"error": f"Connection '{connection_id}' not found"})
+        try:
+            conn = await _require_connection_access(session, connection_id, user_id)
+        except _AccessDeniedError as exc:
+            return json.dumps({"error": str(exc)})
 
         if not conn.is_read_only:
             return json.dumps(

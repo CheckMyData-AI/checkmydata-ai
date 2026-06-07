@@ -15,12 +15,26 @@ import pytest
 
 class TestMCPAuth:
     @pytest.mark.asyncio
-    async def test_api_key_valid(self):
-        from app.mcp_server.auth import resolve_user_from_api_key
+    async def test_api_key_valid_binds_to_configured_user(self):
+        from app.mcp_server import auth as auth_mod
 
-        with patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "secret-key-123"}):
-            user = await resolve_user_from_api_key("secret-key-123")
-        assert user["user_id"] == "mcp-api-key-user"
+        with (
+            patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "secret-key-123"}),
+            patch.object(auth_mod.settings, "mcp_api_key_user_id", "real-user-1"),
+        ):
+            user = await auth_mod.resolve_user_from_api_key("secret-key-123")
+        assert user["user_id"] == "real-user-1"
+
+    @pytest.mark.asyncio
+    async def test_api_key_without_user_binding_is_rejected(self):
+        from app.mcp_server import auth as auth_mod
+
+        with (
+            patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "secret-key-123"}),
+            patch.object(auth_mod.settings, "mcp_api_key_user_id", ""),
+        ):
+            with pytest.raises(auth_mod.MCPAuthError, match="MCP_API_KEY_USER_ID"):
+                await auth_mod.resolve_user_from_api_key("secret-key-123")
 
     @pytest.mark.asyncio
     async def test_api_key_invalid(self):
@@ -70,22 +84,29 @@ class TestMCPAuth:
                 await resolve_user_from_jwt("bad-token")
 
     @pytest.mark.asyncio
-    async def test_authenticate_no_credentials_no_key(self):
-        from app.mcp_server.auth import authenticate
+    async def test_authenticate_no_credentials_no_key_fails_closed(self):
+        """No per-call credential and no server key => hard failure (no
+        anonymous fallback)."""
+        from app.mcp_server.auth import MCPAuthError, authenticate
 
         excluded = ("CHECKMYDATA_API_KEY", "MCP_API_KEY")
         env = {k: v for k, v in os.environ.items() if k not in excluded}
         with patch.dict(os.environ, env, clear=True):
-            user = await authenticate()
-        assert user["user_id"] == "mcp-anonymous"
+            with pytest.raises(MCPAuthError, match="authentication required"):
+                await authenticate()
 
     @pytest.mark.asyncio
-    async def test_authenticate_no_credentials_key_required(self):
-        from app.mcp_server.auth import MCPAuthError, authenticate
+    async def test_authenticate_uses_server_key_to_bind_user(self):
+        """With a server API key + user binding, a credential-less call resolves
+        to the bound platform user."""
+        from app.mcp_server import auth as auth_mod
 
-        with patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "key"}):
-            with pytest.raises(MCPAuthError, match="Authentication required"):
-                await authenticate()
+        with (
+            patch.dict(os.environ, {"CHECKMYDATA_API_KEY": "key"}),
+            patch.object(auth_mod.settings, "mcp_api_key_user_id", "bound-user"),
+        ):
+            user = await auth_mod.authenticate()
+        assert user["user_id"] == "bound-user"
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +114,12 @@ class TestMCPAuth:
 # ---------------------------------------------------------------------------
 
 
+_PRINCIPAL = {"user_id": "owner-1", "email": "owner@test.local"}
+
+
 class TestMCPTools:
     @pytest.mark.asyncio
-    async def test_list_projects(self):
+    async def test_list_projects_scoped_to_caller(self):
         mock_project = MagicMock()
         mock_project.id = "p1"
         mock_project.name = "Test Project"
@@ -106,19 +130,27 @@ class TestMCPTools:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.tools._project_svc") as mock_svc:
-                mock_svc.list_all = AsyncMock(return_value=[mock_project])
+            with patch("app.mcp_server.tools._membership_svc") as mock_msvc:
+                mock_msvc.list_accessible = AsyncMock(return_value=[mock_project])
                 from app.mcp_server.tools import list_projects
 
-                result = await list_projects()
+                result = await list_projects(_PRINCIPAL)
 
         data = json.loads(result)
         assert len(data["projects"]) == 1
         assert data["projects"][0]["id"] == "p1"
-        assert data["projects"][0]["name"] == "Test Project"
+        # Scoping must use the caller-aware query, not list_all.
+        mock_msvc.list_accessible.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_list_connections(self):
+    async def test_list_projects_anonymous_returns_empty(self):
+        from app.mcp_server.tools import list_projects
+
+        result = await list_projects({"user_id": ""})
+        assert json.loads(result)["projects"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_connections_authorized(self):
         mock_conn = MagicMock()
         mock_conn.id = "c1"
         mock_conn.name = "Prod DB"
@@ -131,16 +163,42 @@ class TestMCPTools:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.tools._connection_svc") as mock_svc:
+            with (
+                patch("app.mcp_server.tools._connection_svc") as mock_svc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 mock_svc.list_by_project = AsyncMock(return_value=[mock_conn])
                 from app.mcp_server.tools import list_connections
 
-                result = await list_connections("p1")
+                result = await list_connections(_PRINCIPAL, "p1")
 
         data = json.loads(result)
         assert len(data["connections"]) == 1
         assert data["connections"][0]["id"] == "c1"
-        assert data["connections"][0]["db_type"] == "postgres"
+
+    @pytest.mark.asyncio
+    async def test_list_connections_cross_tenant_denied(self):
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.tools._connection_svc") as mock_svc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                mock_svc.list_by_project = AsyncMock(return_value=[MagicMock()])
+                from app.mcp_server.tools import list_connections
+
+                result = await list_connections(_PRINCIPAL, "someone-elses-project")
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "Access denied" in data["error"]
+        # We must never have listed another tenant's connections.
+        mock_svc.list_by_project.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_schema_no_index(self):
@@ -149,14 +207,47 @@ class TestMCPTools:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.tools._db_index_svc") as mock_svc:
+            mock_conn = MagicMock()
+            mock_conn.project_id = "p1"
+            with (
+                patch("app.mcp_server.tools._db_index_svc") as mock_svc,
+                patch("app.mcp_server.tools._connection_svc") as mock_csvc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_csvc.get = AsyncMock(return_value=mock_conn)
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 mock_svc.get_index = AsyncMock(return_value=[])
                 from app.mcp_server.tools import get_schema
 
-                result = await get_schema("c-missing")
+                result = await get_schema(_PRINCIPAL, "c-missing")
 
         data = json.loads(result)
         assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_get_schema_cross_tenant_denied(self):
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_conn = MagicMock()
+            mock_conn.project_id = "other-project"
+            with (
+                patch("app.mcp_server.tools._db_index_svc") as mock_svc,
+                patch("app.mcp_server.tools._connection_svc") as mock_csvc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_csvc.get = AsyncMock(return_value=mock_conn)
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                mock_svc.get_index = AsyncMock(return_value=[MagicMock()])
+                from app.mcp_server.tools import get_schema
+
+                result = await get_schema(_PRINCIPAL, "c1")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
+        mock_svc.get_index.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_schema_with_entries(self):
@@ -172,11 +263,19 @@ class TestMCPTools:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.tools._db_index_svc") as mock_svc:
+            mock_conn = MagicMock()
+            mock_conn.project_id = "p1"
+            with (
+                patch("app.mcp_server.tools._db_index_svc") as mock_svc,
+                patch("app.mcp_server.tools._connection_svc") as mock_csvc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_csvc.get = AsyncMock(return_value=mock_conn)
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 mock_svc.get_index = AsyncMock(return_value=[entry])
                 from app.mcp_server.tools import get_schema
 
-                result = await get_schema("c1")
+                result = await get_schema(_PRINCIPAL, "c1")
 
         data = json.loads(result)
         assert len(data["tables"]) == 1
@@ -194,16 +293,45 @@ class TestMCPTools:
                 mock_svc.get = AsyncMock(return_value=None)
                 from app.mcp_server.tools import query_database
 
-                result = await query_database("missing-id", "how many users?")
+                result = await query_database(_PRINCIPAL, "missing-id", "how many users?")
 
         data = json.loads(result)
         assert "error" in data
         assert "not found" in data["error"]
 
     @pytest.mark.asyncio
+    async def test_query_database_cross_tenant_denied(self):
+        mock_project = MagicMock()
+        mock_project.id = "p1"
+        mock_project.name = "Other"
+
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.tools._project_svc") as mock_svc,
+                patch("app.mcp_server.tools._connection_svc") as mock_csvc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_svc.get = AsyncMock(return_value=mock_project)
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                mock_csvc.list_by_project = AsyncMock(return_value=[MagicMock()])
+                from app.mcp_server.tools import query_database
+
+                result = await query_database(_PRINCIPAL, "p1", "how many users?")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
+        # Denied before touching connections / running the orchestrator.
+        mock_csvc.list_by_project.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_execute_raw_query_not_readonly(self):
         mock_conn = MagicMock()
         mock_conn.id = "c1"
+        mock_conn.project_id = "p1"
         mock_conn.is_read_only = False
 
         with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
@@ -211,15 +339,44 @@ class TestMCPTools:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.tools._connection_svc") as mock_svc:
+            with (
+                patch("app.mcp_server.tools._connection_svc") as mock_svc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
                 mock_svc.get = AsyncMock(return_value=mock_conn)
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 from app.mcp_server.tools import execute_raw_query
 
-                result = await execute_raw_query("c1", "DELETE FROM users")
+                result = await execute_raw_query(_PRINCIPAL, "c1", "DELETE FROM users")
 
         data = json.loads(result)
         assert "error" in data
         assert "read-only" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_execute_raw_query_cross_tenant_denied(self):
+        mock_conn = MagicMock()
+        mock_conn.id = "c1"
+        mock_conn.project_id = "other-project"
+        mock_conn.is_read_only = True
+
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.tools._connection_svc") as mock_svc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_svc.get = AsyncMock(return_value=mock_conn)
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                from app.mcp_server.tools import execute_raw_query
+
+                result = await execute_raw_query(_PRINCIPAL, "c1", "SELECT 1")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
 
 
 # ---------------------------------------------------------------------------

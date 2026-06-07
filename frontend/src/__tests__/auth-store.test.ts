@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 describe("auth store", () => {
-  it("login stores user and token", async () => {
+  it("login stores user in memory but never persists the token (T-SEC-3)", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({
@@ -24,7 +24,10 @@ describe("auth store", () => {
     const state = useAuthStore.getState();
     expect(state.user?.email).toBe("a@b.com");
     expect(state.token).toBe("jwt-123");
-    expect(localStorage.getItem("auth_token")).toBe("jwt-123");
+    // The JWT now rides in an httpOnly cookie — it must NOT touch storage.
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    // Only the non-sensitive profile is cached for instant UI paint.
+    expect(localStorage.getItem("auth_user")).toContain("a@b.com");
   });
 
   it("login sets error on failure", async () => {
@@ -95,7 +98,9 @@ describe("auth store", () => {
     expect(body.g_csrf_token).toBe("my-csrf");
   });
 
-  it("logout clears state and localStorage", async () => {
+  it("logout clears state and storage and calls the logout endpoint", async () => {
+    // logout() fires a best-effort POST /auth/logout to clear server cookies.
+    fetchMock.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
     localStorage.setItem("auth_token", "jwt");
     localStorage.setItem("auth_user", '{"id":"u1"}');
     useAuthStore.setState({ user: { id: "u1", email: "a@b.com", display_name: "A" }, token: "jwt" });
@@ -103,25 +108,24 @@ describe("auth store", () => {
     useAuthStore.getState().logout();
     expect(useAuthStore.getState().user).toBeNull();
     expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("auth_user")).toBeNull();
   });
 
-  it("restore reads from localStorage and validates via /me", async () => {
+  it("restore validates the cookie session via refresh", async () => {
     const user = { id: "u1", email: "saved@b.com", display_name: "S" };
-    localStorage.setItem("auth_token", "jwt-saved");
     localStorage.setItem("auth_user", JSON.stringify(user));
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve(user),
+      json: () => Promise.resolve({ token: "jwt-fresh", user }),
     });
 
-    useAuthStore.getState().restore();
+    await useAuthStore.getState().restore();
     expect(useAuthStore.getState().user?.email).toBe("saved@b.com");
-    expect(useAuthStore.getState().token).toBe("jwt-saved");
+    expect(useAuthStore.getState().token).toBe("jwt-fresh");
   });
 
-  it("restore clears state when /me fails", async () => {
-    localStorage.setItem("auth_token", "jwt-expired");
+  it("restore clears state when refresh fails", async () => {
     localStorage.setItem("auth_user", JSON.stringify({ id: "u1", email: "x@b.com", display_name: "X" }));
 
     fetchMock.mockResolvedValueOnce({
@@ -130,12 +134,9 @@ describe("auth store", () => {
       json: () => Promise.resolve({ detail: "Invalid or expired token" }),
     });
 
-    useAuthStore.getState().restore();
-    expect(useAuthStore.getState().token).toBe("jwt-expired");
-
-    await vi.waitFor(() => {
-      expect(useAuthStore.getState().user).toBeNull();
-    });
-    expect(localStorage.getItem("auth_token")).toBeNull();
+    await useAuthStore.getState().restore();
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(useAuthStore.getState().token).toBeNull();
+    expect(localStorage.getItem("auth_user")).toBeNull();
   });
 });

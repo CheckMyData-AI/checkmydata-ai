@@ -388,7 +388,7 @@ class TestMySQLConnector:
     async def test_execute_query_returns_rows(self, connector):
         mock_cur = AsyncMock()
         mock_cur.execute = AsyncMock()
-        mock_cur.fetchall = AsyncMock(
+        mock_cur.fetchmany = AsyncMock(
             return_value=[
                 {"id": 1, "name": "alice"},
                 {"id": 2, "name": "bob"},
@@ -404,7 +404,7 @@ class TestMySQLConnector:
     async def test_execute_query_empty(self, connector):
         mock_cur = AsyncMock()
         mock_cur.execute = AsyncMock()
-        mock_cur.fetchall = AsyncMock(return_value=[])
+        mock_cur.fetchmany = AsyncMock(return_value=[])
         connector._pool = self._make_pool(mock_cur)
 
         result = await connector.execute_query("SELECT * FROM empty")
@@ -421,13 +421,66 @@ class TestMySQLConnector:
     async def test_execute_query_with_dict_params(self, connector):
         mock_cur = AsyncMock()
         mock_cur.execute = AsyncMock()
-        mock_cur.fetchall = AsyncMock(return_value=[{"id": 1}])
+        mock_cur.fetchmany = AsyncMock(return_value=[{"id": 1}])
         connector._pool = self._make_pool(mock_cur)
 
         result = await connector.execute_query("SELECT * FROM t WHERE id = :id", {"id": 1})
         assert result.error is None
         call_args = mock_cur.execute.call_args
         assert "%s" in call_args[0][0]
+
+    async def test_execute_query_uses_server_side_cursor(self, connector):
+        """F-ARCH-5: the data path must use the unbuffered SSDictCursor and bound
+        the fetch to MAX_RESULT_ROWS + 1 instead of fetchall()."""
+        import aiomysql
+
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        mock_cur = AsyncMock()
+        mock_cur.execute = AsyncMock()
+        mock_cur.fetchmany = AsyncMock(return_value=[{"id": 1}])
+        mock_conn = MagicMock()
+        mock_conn.cursor = MagicMock(return_value=_MySQLCursorACM(mock_cur))
+        pool = MagicMock()
+        pool.acquire.return_value = _ACM(mock_conn)
+        connector._pool = pool
+
+        await connector.execute_query("SELECT * FROM users")
+
+        # Streaming cursor requested, and we never call fetchall().
+        mock_conn.cursor.assert_called_once_with(aiomysql.SSDictCursor)
+        mock_cur.fetchmany.assert_awaited_once_with(MAX_RESULT_ROWS + 1)
+        assert not mock_cur.fetchall.called
+
+    async def test_execute_query_caps_and_reports_truncated(self, connector):
+        """A result of MAX_RESULT_ROWS + 1 rows is capped and flagged truncated."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        rows = [{"id": i} for i in range(MAX_RESULT_ROWS + 1)]
+        mock_cur = AsyncMock()
+        mock_cur.execute = AsyncMock()
+        mock_cur.fetchmany = AsyncMock(return_value=rows)
+        connector._pool = self._make_pool(mock_cur)
+
+        result = await connector.execute_query("SELECT * FROM big")
+        assert result.truncated is True
+        assert result.row_count == MAX_RESULT_ROWS
+        assert len(result.rows) == MAX_RESULT_ROWS
+
+    async def test_execute_query_byte_guard_truncates(self, connector):
+        """A small row count whose payload exceeds the byte cap is trimmed."""
+        from app.connectors.base import MAX_RESULT_BYTES
+
+        big = "x" * (MAX_RESULT_BYTES // 2 + 1)
+        rows = [{"blob": big}, {"blob": big}, {"blob": big}]
+        mock_cur = AsyncMock()
+        mock_cur.execute = AsyncMock()
+        mock_cur.fetchmany = AsyncMock(return_value=rows)
+        connector._pool = self._make_pool(mock_cur)
+
+        result = await connector.execute_query("SELECT blob FROM wide")
+        assert result.truncated is True
+        assert len(result.rows) < 3
 
     async def test_introspect_schema_not_connected(self, connector):
         schema = await connector.introspect_schema()
@@ -704,3 +757,42 @@ class TestClickHouseConnector:
 
     async def test_disconnect_noop(self, connector):
         await connector.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Result byte guard (shared across connectors)
+# ---------------------------------------------------------------------------
+
+
+class TestCapRowsByBytes:
+    def test_under_budget_returns_all(self):
+        from app.connectors.base import cap_rows_by_bytes
+
+        rows = [["a", 1], ["b", 2]]
+        capped, truncated = cap_rows_by_bytes(rows, max_bytes=1000)
+        assert capped == rows
+        assert truncated is False
+
+    def test_over_budget_trims_and_flags(self):
+        from app.connectors.base import cap_rows_by_bytes
+
+        rows = [["x" * 10], ["y" * 10], ["z" * 10]]
+        capped, truncated = cap_rows_by_bytes(rows, max_bytes=15)
+        assert truncated is True
+        assert len(capped) < len(rows)
+
+    def test_single_oversized_row_is_kept(self):
+        from app.connectors.base import cap_rows_by_bytes
+
+        rows = [["x" * 100]]
+        capped, truncated = cap_rows_by_bytes(rows, max_bytes=10)
+        assert capped == rows
+        assert truncated is False
+
+    def test_handles_bytes_and_none(self):
+        from app.connectors.base import _estimate_value_bytes
+
+        assert _estimate_value_bytes(None) == 0
+        assert _estimate_value_bytes(b"abcd") == 4
+        assert _estimate_value_bytes("abc") == 3
+        assert _estimate_value_bytes(123) == 3

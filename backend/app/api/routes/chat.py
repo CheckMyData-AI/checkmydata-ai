@@ -26,6 +26,7 @@ from app.core.agent_limiter import agent_limiter
 from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import WorkflowEvent, tracker
+from app.core.ws_tickets import ws_ticket_store
 from app.services.chat_service import ChatService, SessionBusyError, session_processing_lock
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -2207,32 +2208,70 @@ async def ask_stream(
     )
 
 
+class WsTicketRequest(BaseModel):
+    """Body for minting a single-use WebSocket ticket."""
+
+    project_id: str
+    connection_id: str = "_none"
+
+
+class WsTicketResponse(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+@router.post("/ws-ticket", response_model=WsTicketResponse)
+async def issue_ws_ticket(
+    body: WsTicketRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> WsTicketResponse:
+    """Issue a short-lived, single-use ticket for the chat WebSocket (T-SEC-2).
+
+    The browser calls this authenticated endpoint, then passes the returned
+    ticket to the WS handshake via ``Sec-WebSocket-Protocol`` so no credential
+    ever appears in a URL. The ticket is bound to this user and the exact
+    project/connection it is issued for.
+    """
+    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+    ticket, ttl = await ws_ticket_store.issue(
+        user_id=user["user_id"],
+        project_id=body.project_id,
+        connection_id=body.connection_id,
+    )
+    return WsTicketResponse(ticket=ticket, expires_in=ttl)
+
+
 @router.websocket("/ws/{project_id}/{connection_id}")
 async def chat_websocket(
     websocket: WebSocket,
     project_id: str,
     connection_id: str,
-    token: str | None = None,
 ):
     import asyncio
 
     from sqlalchemy import or_, select
 
     from app.core.workflow_tracker import tracker
+    from app.core.ws_tickets import TICKET_SUBPROTOCOL_PREFIX, ws_ticket_store
     from app.models.base import async_session_factory
     from app.models.project import Project
     from app.models.project_member import ProjectMember
-    from app.services.auth_service import AuthService
 
-    auth_svc = AuthService()
+    # T-SEC-2: authenticate via a single-use ticket carried in
+    # Sec-WebSocket-Protocol, never via a token in the URL query string.
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    ticket: str | None = None
+    accept_subprotocol: str | None = None
+    for proto in (p.strip() for p in offered.split(",") if p.strip()):
+        if proto.startswith(TICKET_SUBPROTOCOL_PREFIX):
+            ticket = proto[len(TICKET_SUBPROTOCOL_PREFIX) :]
+            accept_subprotocol = proto
+            break
+
     user_id: str | None = None
-    if token:
-        payload = auth_svc.decode_token(token)
-        if payload:
-            async with async_session_factory() as db:
-                u = await auth_svc.get_by_id(db, payload["sub"])
-                if u and u.is_active:
-                    user_id = u.id
+    if ticket:
+        user_id = await ws_ticket_store.redeem(ticket, project_id, connection_id)
     if not user_id:
         await websocket.close(code=4001, reason="Authentication required")
         return
@@ -2253,7 +2292,11 @@ async def chat_websocket(
             await websocket.close(code=4003, reason="Access denied")
             return
 
-    await websocket.accept()
+    # Echo the ticket subprotocol so the browser handshake completes.
+    if accept_subprotocol:
+        await websocket.accept(subprotocol=accept_subprotocol)
+    else:
+        await websocket.accept()
 
     session_id: str | None = None
     config = None

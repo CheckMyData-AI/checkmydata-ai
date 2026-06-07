@@ -91,9 +91,10 @@ jobs:
 
       - name: Coverage gate (combined unit + integration)
         # Enforced threshold matches `fail_under` in pyproject.toml so CI
-        # and `pytest --cov` agree locally and in CI (T36).
+        # and `pytest --cov` agree locally and in CI (T36). Raised 40 -> 72 to
+        # match the real, documented floor (T-QA-1); current coverage ~73%.
         run: |
-          python -m coverage report --fail-under=40
+          python -m coverage report --fail-under=72
 
       - name: Upload coverage artifact
         if: always()

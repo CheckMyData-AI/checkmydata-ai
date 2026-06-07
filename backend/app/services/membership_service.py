@@ -1,7 +1,7 @@
 """Service for project membership (role-based access control)."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -140,6 +140,52 @@ class MembershipService:
             select(Project)
             .join(ProjectMember, ProjectMember.project_id == Project.id)
             .where(ProjectMember.user_id == user_id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    def _accessible_filter(user_id: str):
+        """Shared predicate: a project the user owns OR is a member of.
+
+        Single source of truth for the access rule used by the HTTP API
+        (``chat`` WebSocket gate) and the MCP tools so they cannot drift.
+        """
+        return or_(
+            Project.owner_id == user_id,
+            Project.id.in_(
+                select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+            ),
+        )
+
+    async def can_access(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
+    ) -> bool:
+        """True when the user owns or is a member of the project."""
+        if not user_id:
+            return False
+        result = await db.execute(
+            select(Project.id).where(
+                Project.id == project_id,
+                self._accessible_filter(user_id),
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def list_accessible(
+        self,
+        db: AsyncSession,
+        user_id: str,
+    ) -> list[Project]:
+        """All projects the user owns or is a member of (owner-inclusive)."""
+        if not user_id:
+            return []
+        result = await db.execute(
+            select(Project)
+            .where(self._accessible_filter(user_id))
+            .order_by(Project.created_at.desc())
         )
         return list(result.scalars().all())
 

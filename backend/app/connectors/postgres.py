@@ -134,12 +134,17 @@ class PostgresConnector(BaseConnector):
             truncated = len(rows) > MAX_RESULT_ROWS
             capped = rows[:MAX_RESULT_ROWS] if truncated else rows
             data = [list(r.values()) for r in capped]
+            # Byte-level backstop alongside the row cap (wide rows / BLOBs).
+            from app.connectors.base import cap_rows_by_bytes
+
+            data, byte_truncated = cap_rows_by_bytes(data)
+            truncated = truncated or byte_truncated
             # When truncated we only know "> MAX_RESULT_ROWS"; report the
             # returned count and rely on ``truncated`` to signal more.
             return QueryResult(
                 columns=columns,
                 rows=data,
-                row_count=len(capped),
+                row_count=len(data),
                 execution_time_ms=elapsed,
                 truncated=truncated,
             )

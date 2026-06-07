@@ -1,4 +1,4 @@
-import { API_BASE, getAuthHeaders, handleSessionExpired, request } from "./_client";
+import { API_BASE, getAuthHeaders, getCsrfHeaders, handleSessionExpired, request } from "./_client";
 import type {
   AppNotification,
   BatchQueryDTO,
@@ -190,7 +190,12 @@ export const viz = {
   export: async (columns: string[], rows: unknown[][], format: string) => {
     const res = await fetch(`${API_BASE}/visualizations/export`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+        ...getCsrfHeaders("POST"),
+      },
       body: JSON.stringify({ columns, rows, format }),
     });
     if (res.status === 401 && typeof window !== "undefined") {
@@ -286,7 +291,12 @@ export const batch = {
   export: async (id: string) => {
     const res = await fetch(`${API_BASE}/batch/${id}/export`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+        ...getCsrfHeaders("POST"),
+      },
     });
     if (res.status === 401 && typeof window !== "undefined") {
       handleSessionExpired();

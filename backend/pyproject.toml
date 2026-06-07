@@ -106,7 +106,7 @@ omit = ["app/mcp_server/__main__.py"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
-fail_under = 40
+fail_under = 72
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

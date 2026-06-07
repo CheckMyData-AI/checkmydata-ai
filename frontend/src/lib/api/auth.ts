@@ -26,6 +26,7 @@ export const auth = {
       }),
     }),
   refresh: () => request<AuthResponse>("/auth/refresh", { method: "POST" }),
+  logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () => request<AuthUser>("/auth/me"),
   deleteAccount: () => request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
   completeOnboarding: () =>

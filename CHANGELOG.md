@@ -10,6 +10,46 @@ Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.
 
+### P0 security & reliability (S1/S2 launch-blockers)
+
+Implements the first remediation sprint from the production audit
+(`docs/production-plan/00-AUDIT-FINDINGS.md`): the pure-code security and
+reliability fixes that unblock any public/paid launch.
+
+- **Query result bounding / MySQL OOM fix (T-ARCH-5).** `MySQLConnector.execute_query`
+  now streams via a server-side cursor (`aiomysql.SSDictCursor` + `fetchmany`)
+  instead of materializing the full result with `fetchall()`. A shared byte guard
+  (`cap_rows_by_bytes`, `MAX_RESULT_BYTES=50MB` in `connectors/base.py`) backstops
+  the row cap for wide rows/BLOBs and is applied consistently across the MySQL,
+  Postgres, and ClickHouse connectors. `truncated` is reported accurately.
+- **CSP + HSTS headers (T-SEC-6).** `SecurityHeadersMiddleware` now emits a
+  configurable `Content-Security-Policy` (report-only capable) and
+  `Strict-Transport-Security` (HSTS, applied only over HTTPS, proxy-aware via
+  `X-Forwarded-Proto`). New `SECURITY_CSP_*` / `SECURITY_HSTS_*` settings.
+- **MCP authentication & tenancy (T-SEC-1).** Every MCP tool now requires an
+  authenticated principal (no more `mcp-user`/`mcp-anonymous`); project/connection
+  ownership is enforced via `MembershipService.can_access` / `list_accessible`,
+  `list_projects` is scoped to the caller, the API key is bound to a real platform
+  user (`MCP_API_KEY_USER_ID`, compared with `hmac.compare_digest`), and the server
+  is off by default (`MCP_ENABLED`), refusing to start unconfigured.
+- **WebSocket ticket auth (T-SEC-2).** The chat WS no longer accepts a JWT in the
+  URL query string. Clients call an authenticated `POST /api/chat/ws-ticket` to
+  mint a short-lived, single-use ticket (`app/core/ws_tickets.py`) and pass it via
+  `Sec-WebSocket-Protocol` — credentials never appear in a URL/log.
+- **httpOnly cookie session + CSRF (T-SEC-3).** Login/register/Google/refresh now
+  set the JWT as an `httpOnly`/`Secure`/`SameSite` cookie plus a readable CSRF
+  cookie (`app/core/auth_cookies.py`); `get_current_user` accepts the cookie and
+  enforces a double-submit CSRF check on cookie-authenticated mutations. Added
+  `POST /api/auth/logout`. `Authorization: Bearer` still works for API clients.
+  Frontend stops persisting the token in `localStorage`, sends cookies
+  (`credentials: "include"`) + the `X-CSRF-Token` header, and restores sessions
+  via refresh.
+- **Coverage gate aligned with reality (T-QA-1).** The CI/`pyproject` coverage
+  floor is raised from `--fail-under=40` to `72` to match the documented value in
+  `README.md`/`CONTRIBUTING.md` (actual combined coverage ~73%); `docs/DEPLOYMENT.md`
+  updated to match. New tests cover all of the above (connector bounding + byte
+  guard, security headers, MCP auth/tenancy, WS tickets, cookie/CSRF).
+
 ### Live Git access + release cohort analysis
 
 Gives the orchestrator live, read-only access to the project's local Git clone
