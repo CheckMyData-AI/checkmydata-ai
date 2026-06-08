@@ -1,11 +1,15 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { Suspense, useState, useCallback, useRef, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
+import { ProjectOverview } from "@/components/projects/ProjectOverview";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { ConnectionsPanel } from "@/components/connections/ConnectionsPanel";
 import { useAppStore } from "@/stores/app-store";
+import { useAppPanel } from "@/hooks/useAppPanel";
 
 const LogPanel = dynamic(
   () => import("@/components/log/LogPanel").then((m) => m.LogPanel),
@@ -51,20 +55,22 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { NotificationBell } from "@/components/ui/NotificationBell";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 
-export default function Home() {
+function AppPageContent() {
   const activeProject = useAppStore((s) => s.activeProject);
   const activeConnection = useAppStore((s) => s.activeConnection);
+  const activeSession = useAppStore((s) => s.activeSession);
+  const messages = useAppStore((s) => s.messages);
   const projects = useAppStore((s) => s.projects);
   const user = useAuthStore((s) => s.user);
   const notesOpen = useNotesStore((s) => s.isOpen);
   const toggleNotes = useNotesStore((s) => s.toggleOpen);
   const notesCount = useNotesStore((s) => s.notes.length);
-  const logsOpen = useAppStore((s) => s.logsOpen);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showBatchRunner, setShowBatchRunner] = useState(false);
   const isMobile = useMobileLayout();
   const notesDrawerRef = useRef<HTMLDivElement>(null);
+  const { panel, setPanel } = useAppPanel();
 
   useDialogA11y({
     open: isMobile && notesOpen,
@@ -76,6 +82,27 @@ export default function Home() {
   useRestoreState(!!user);
   useRefreshOnFocus(!!user);
 
+  const effectivePanel = useMemo(() => {
+    if (panel === "logs") return "logs";
+    if (panel === "settings") return "settings";
+    if (panel === "connections") return "connections";
+    if (panel === "overview") return "overview";
+    if (panel === "chat") return "chat";
+
+    if (!activeProject) return null;
+    if (activeSession || messages.length > 0) return "chat";
+    return "overview";
+  }, [panel, activeProject, activeSession, messages.length]);
+
+  useEffect(() => {
+    const store = useAppStore.getState();
+    if (effectivePanel === "logs" && !store.logsOpen) {
+      store.setLogsOpen(true);
+    } else if (effectivePanel !== "logs" && store.logsOpen) {
+      store.setLogsOpen(false);
+    }
+  }, [effectivePanel]);
+
   const showOnboarding =
     !!user && !user.is_onboarded && projects.length === 0 && !onboardingDismissed;
 
@@ -83,12 +110,55 @@ export default function Home() {
     setOnboardingDismissed(true);
   }, []);
 
+  const closePanel = useCallback(() => {
+    if (activeSession || messages.length > 0) {
+      setPanel("chat");
+    } else {
+      setPanel(null);
+    }
+  }, [activeSession, messages.length, setPanel]);
+
+  const renderCenterPanel = () => {
+    if (effectivePanel === "logs") {
+      return (
+        <SectionErrorBoundary sectionName="Request History">
+          <LogsScreen onClose={closePanel} />
+        </SectionErrorBoundary>
+      );
+    }
+    if (effectivePanel === "settings") {
+      return (
+        <SectionErrorBoundary sectionName="Settings">
+          <SettingsPanel onClose={closePanel} onNavigate={setPanel} />
+        </SectionErrorBoundary>
+      );
+    }
+    if (effectivePanel === "connections") {
+      return (
+        <SectionErrorBoundary sectionName="Connections">
+          <ConnectionsPanel />
+        </SectionErrorBoundary>
+      );
+    }
+    if (effectivePanel === "overview") {
+      return (
+        <SectionErrorBoundary sectionName="Overview">
+          <ProjectOverview />
+        </SectionErrorBoundary>
+      );
+    }
+    return (
+      <SectionErrorBoundary sectionName="Chat">
+        <ChatPanel />
+      </SectionErrorBoundary>
+    );
+  };
+
   return (
-    <AuthGate>
+    <>
       {showOnboarding && <OnboardingWizard onComplete={handleOnboardingComplete} />}
       <main className="min-h-screen bg-surface-0 text-text-primary">
         <div className="flex h-screen flex-col">
-          {/* Mobile header bar */}
           {isMobile && (
             <div className="sticky top-0 z-40 flex items-center justify-between border-b border-border-subtle bg-surface-0 px-3 py-2.5 md:hidden">
               <button
@@ -133,7 +203,6 @@ export default function Home() {
               )}
             </SectionErrorBoundary>
             <div id="main-content" className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
-              {/* Desktop content header - hidden on mobile */}
               <header className="hidden md:flex border-b border-border-subtle px-6 py-2.5 items-center justify-between bg-surface-0">
                 <div className="flex items-center gap-3 min-w-0">
                   {activeProject ? (
@@ -144,7 +213,7 @@ export default function Home() {
                           {activeProject.name}
                         </h1>
                       </div>
-                      {activeConnection && (
+                      {activeConnection && effectivePanel === "chat" && (
                         <>
                           <span className="text-text-muted">/</span>
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -158,6 +227,15 @@ export default function Home() {
                           </div>
                         </>
                       )}
+                      {effectivePanel === "overview" && (
+                        <span className="text-xs text-text-muted">Overview</span>
+                      )}
+                      {effectivePanel === "settings" && (
+                        <span className="text-xs text-text-muted">Settings</span>
+                      )}
+                      {effectivePanel === "logs" && (
+                        <span className="text-xs text-text-muted">Request History</span>
+                      )}
                     </>
                   ) : (
                     <h1 className="text-sm font-medium text-text-tertiary">
@@ -169,6 +247,32 @@ export default function Home() {
                   <ActiveTasksWidget />
                   {activeProject && (
                     <>
+                      <Tooltip label="Project overview" position="bottom">
+                        <button
+                          onClick={() => setPanel("overview")}
+                          aria-label="Open project overview"
+                          className={`p-1.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                            effectivePanel === "overview"
+                              ? "text-accent bg-accent-muted"
+                              : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
+                          }`}
+                        >
+                          <Icon name="layout-dashboard" size={16} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Settings" position="bottom">
+                        <button
+                          onClick={() => setPanel("settings")}
+                          aria-label="Open settings"
+                          className={`p-1.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                            effectivePanel === "settings"
+                              ? "text-accent bg-accent-muted"
+                              : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
+                          }`}
+                        >
+                          <Icon name="settings" size={16} />
+                        </button>
+                      </Tooltip>
                       <Tooltip label="Batch query runner" position="bottom">
                         <button
                           onClick={() => setShowBatchRunner(true)}
@@ -200,14 +304,9 @@ export default function Home() {
                   )}
                 </div>
               </header>
-              <SectionErrorBoundary sectionName="Chat">
-                <ChatPanel />
-              </SectionErrorBoundary>
-              {logsOpen && (
-                <SectionErrorBoundary sectionName="Logs">
-                  <LogsScreen />
-                </SectionErrorBoundary>
-              )}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                {renderCenterPanel()}
+              </div>
               <PersistentLogToggle />
             </div>
             {!isMobile && (
@@ -226,7 +325,6 @@ export default function Home() {
         {showBatchRunner && (
           <BatchRunner onClose={() => setShowBatchRunner(false)} />
         )}
-        {/* Mobile Notes Drawer */}
         {isMobile && notesOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
             <div
@@ -260,6 +358,22 @@ export default function Home() {
           </div>
         )}
       </main>
+    </>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthGate>
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+            <p className="text-sm text-text-muted animate-pulse">Loading...</p>
+          </div>
+        }
+      >
+        <AppPageContent />
+      </Suspense>
     </AuthGate>
   );
 }

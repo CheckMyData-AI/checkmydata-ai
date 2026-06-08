@@ -1,4 +1,5 @@
 import type { Connection } from "@/lib/api";
+import { inputBaseCls } from "@/components/ui/Input";
 
 export const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"] as const;
 
@@ -44,8 +45,7 @@ export const EMPTY_FORM = {
 
 export type FormState = typeof EMPTY_FORM;
 
-export const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
+export const inputCls = inputBaseCls;
 export const halfInputCls =
   "bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 

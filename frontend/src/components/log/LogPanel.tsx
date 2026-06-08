@@ -144,7 +144,7 @@ export function LogToggleButton() {
         title={isConnected ? "Live updates connected" : "Disconnected"}
       />
       <Icon name="activity" size={12} />
-      Activity Log
+      Live Activity
       {unreadCount > 0 && (
         <span className="bg-accent text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
           {unreadCount > 99 ? "99+" : unreadCount}
@@ -164,7 +164,7 @@ export function PersistentLogToggle() {
       <button
         onClick={toggle}
         className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-lg"
-        title="Open Activity Log"
+        title="Open Live Activity"
       >
         <StatusDot
           status={isConnected ? "success" : "idle"}
@@ -223,7 +223,7 @@ export function LogPanel() {
         />
         <Icon name="activity" size={12} className="text-text-tertiary" />
         <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider">
-          Activity Log
+          Live Activity
         </span>
         <span className="text-[10px] text-text-muted tabular-nums">
           {entries.length} entries

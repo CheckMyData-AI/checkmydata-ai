@@ -255,6 +255,13 @@ class StageExecutor:
                 )
             result = retried
 
+        await self._tracker.emit(
+            wf_id,
+            "data_gate",
+            "checking",
+            "Validating stage output…",
+            stage_id=stage.stage_id,
+        )
         gate_outcome = self._data_gate.check(stage, result, stage_ctx)
         await self._emit_data_gate(wf_id, stage, gate_outcome)
 

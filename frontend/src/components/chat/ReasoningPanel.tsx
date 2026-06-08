@@ -1,6 +1,10 @@
 "use client";
 
+import { useRef } from "react";
 import { useReasoningStore, type ReasoningStep } from "@/stores/reasoning-store";
+import { Icon } from "@/components/ui/Icon";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { useMobileLayout } from "@/hooks/useMobileLayout";
 
 const STEP_ICONS: Record<string, string> = {
   "orchestrator:llm_call": "brain",
@@ -17,46 +21,26 @@ const STEP_ICONS: Record<string, string> = {
   "knowledge:llm_call": "brain",
 };
 
-function getIcon(step: string): string {
-  if (STEP_ICONS[step]) return STEP_ICONS[step];
-  if (step.includes("llm")) return "brain";
+function getIconName(step: string): "activity" | "database" | "book-open" | "bar-chart-2" | "file-text" | "layout" | "layers" | "search" | "zap" | "settings" | "circle" {
+  const mapped = STEP_ICONS[step];
+  if (mapped === "brain") return "activity";
+  if (mapped === "book") return "book-open";
+  if (mapped === "chart") return "bar-chart-2";
+  if (mapped === "scroll") return "file-text";
+  if (mapped === "map") return "layout";
+  if (mapped === "table") return "layers";
+  if (mapped === "list") return "layers";
+  if (mapped === "lightbulb") return "zap";
+  if (mapped === "database") return "database";
+  if (mapped === "search") return "search";
+  if (step.includes("llm")) return "activity";
   if (step.includes("sql") || step.includes("query")) return "database";
-  if (step.includes("tool")) return "wrench";
+  if (step.includes("tool")) return "settings";
   return "circle";
 }
 
-function IconSvg({ icon, className }: { icon: string; className?: string }) {
-  const cls = className ?? "h-3.5 w-3.5";
-  switch (icon) {
-    case "brain":
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 0-6.23.693L5 14.5m14.8.8 1.402 1.402c1.232 1.232.65 3.318-1.067 3.611l-.772.129a9 9 0 0 1-9.726 0l-.772-.13c-1.718-.292-2.3-2.378-1.067-3.61L5 14.5" />
-        </svg>
-      );
-    case "database":
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-        </svg>
-      );
-    case "lightbulb":
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
-        </svg>
-      );
-    default:
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-      );
-  }
-}
-
 function StepRow({ step, isLast }: { step: ReasoningStep; isLast: boolean }) {
-  const icon = getIcon(step.step);
+  const icon = getIconName(step.step);
   const label = step.detail || step.step.replace(/:/g, " ").trim() || "Step";
   const isCompleted = step.status === "completed";
   const isFailed = step.status === "failed";
@@ -76,59 +60,45 @@ function StepRow({ step, isLast }: { step: ReasoningStep; isLast: boolean }) {
                   : "bg-surface-3 text-text-muted"
           }`}
         >
-          <IconSvg icon={icon} />
+          <Icon name={icon} className="h-3.5 w-3.5" />
         </div>
-        {!isLast && <div className="w-px h-full min-h-3 bg-border" />}
+        {!isLast && <div className="w-px flex-1 min-h-4 bg-border-subtle mt-1" />}
       </div>
       <div className="flex-1 min-w-0 pb-3">
-        <div className="flex items-center gap-2">
-          <span
-            className={`text-[11px] font-medium truncate ${
-              isFailed ? "text-error" : isStarted ? "text-text-primary" : "text-text-secondary"
-            }`}
-          >
-            {label}
-          </span>
-          {step.elapsed_ms != null && step.elapsed_ms > 0 && (
-            <span className="text-[10px] text-text-muted shrink-0">
-              {step.elapsed_ms < 1000
-                ? `${step.elapsed_ms}ms`
-                : `${(step.elapsed_ms / 1000).toFixed(1)}s`}
-            </span>
-          )}
-        </div>
+        <p className="text-xs text-text-primary leading-snug">{label}</p>
         {step.agent && (
-          <span className="text-[10px] text-text-tertiary">{step.agent}</span>
+          <span className="text-xs text-text-tertiary">{step.agent}</span>
         )}
       </div>
     </div>
   );
 }
 
-export function ReasoningPanel() {
-  const panelOpen = useReasoningStore((s) => s.panelOpen);
+function ReasoningPanelBody({ onClose }: { onClose: () => void }) {
   const activeMessageId = useReasoningStore((s) => s.activeMessageId);
   const traces = useReasoningStore((s) => s.traces);
-  const closePanel = useReasoningStore((s) => s.closePanel);
 
-  if (!panelOpen || !activeMessageId) return null;
+  if (!activeMessageId) return null;
 
   const trace = traces[activeMessageId];
   if (!trace) {
     return (
-      <aside className="hidden md:flex flex-col w-80 border-l border-border bg-surface-0 animate-in slide-in-from-right-2 duration-200">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+      <>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
           <h3 className="text-sm font-semibold text-text-primary">Agent Reasoning</h3>
-          <button onClick={closePanel} className="text-text-muted hover:text-text-primary transition-colors" aria-label="Close">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-text-muted hover:text-text-primary transition-colors p-1"
+            aria-label="Close reasoning panel"
+          >
+            <Icon name="x" className="h-4 w-4" />
           </button>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-sm text-text-muted">No reasoning data available for this message.</p>
         </div>
-      </aside>
+      </>
     );
   }
 
@@ -142,30 +112,33 @@ export function ReasoningPanel() {
   );
 
   return (
-    <aside className="hidden md:flex flex-col w-80 border-l border-border bg-surface-0 animate-in slide-in-from-right-2 duration-200 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+    <>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-text-primary">Agent Reasoning</h3>
           {elapsed && (
-            <span className="text-[10px] text-text-muted font-mono bg-surface-2 px-1.5 py-0.5 rounded">
+            <span className="text-xs text-text-muted font-mono bg-surface-2 px-1.5 py-0.5 rounded">
               {elapsed}
             </span>
           )}
         </div>
-        <button onClick={closePanel} className="text-text-muted hover:text-text-primary transition-colors" aria-label="Close">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-muted hover:text-text-primary transition-colors p-1"
+          aria-label="Close reasoning panel"
+        >
+          <Icon name="x" className="h-4 w-4" />
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-3 space-y-4">
         {plan && (
           <section>
-            <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
               Plan
             </h4>
-            <div className="space-y-1.5 text-[11px]">
+            <div className="space-y-1.5 text-xs">
               {plan.tables.length > 0 && (
                 <div>
                   <span className="text-text-muted">Tables: </span>
@@ -199,12 +172,12 @@ export function ReasoningPanel() {
 
         {trace.thinkingLog.length > 0 && (
           <section>
-            <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
               Thinking ({trace.thinkingLog.length})
             </h4>
             <div className="space-y-0.5 max-h-40 overflow-y-auto scrollbar-thin">
               {trace.thinkingLog.map((line, idx) => (
-                <div key={idx} className="text-[10px] text-text-tertiary font-mono leading-tight break-words">
+                <div key={idx} className="text-xs text-text-tertiary font-mono leading-tight break-words">
                   {line}
                 </div>
               ))}
@@ -214,7 +187,7 @@ export function ReasoningPanel() {
 
         {significantSteps.length > 0 && (
           <section>
-            <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
               Steps ({significantSteps.length})
             </h4>
             <div>
@@ -229,6 +202,50 @@ export function ReasoningPanel() {
           </section>
         )}
       </div>
+    </>
+  );
+}
+
+export function ReasoningPanel() {
+  const panelOpen = useReasoningStore((s) => s.panelOpen);
+  const activeMessageId = useReasoningStore((s) => s.activeMessageId);
+  const closePanel = useReasoningStore((s) => s.closePanel);
+  const isMobile = useMobileLayout();
+  const mobileRef = useRef<HTMLDivElement>(null);
+
+  useDialogA11y({
+    open: isMobile && panelOpen && !!activeMessageId,
+    onClose: closePanel,
+    panelRef: mobileRef,
+  });
+
+  if (!panelOpen || !activeMessageId) return null;
+
+  if (isMobile) {
+    return (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          aria-label="Close reasoning panel"
+          onClick={closePanel}
+        />
+        <div
+          ref={mobileRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Agent reasoning"
+          className="fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] rounded-t-xl border border-border-subtle bg-surface-0 checkpoint-reveal md:hidden"
+        >
+          <ReasoningPanelBody onClose={closePanel} />
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <aside className="hidden md:flex flex-col w-80 border-l border-border-subtle bg-surface-0 animate-in slide-in-from-right-2 duration-200 overflow-hidden">
+      <ReasoningPanelBody onClose={closePanel} />
     </aside>
   );
 }

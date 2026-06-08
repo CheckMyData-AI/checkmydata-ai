@@ -59,7 +59,7 @@ Open `http://localhost:3100` to see the landing page, then click **Get Started**
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and module overview |
 | [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Deep-dive: orchestrator, memory, LLM routing, feedback loops |
 | [docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md](docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md) | Live Git access architecture audit + Phase 1–4 roadmap |
-| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | UI design system, tokens, and component guidelines |
+| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | UI design system, tokens, pipeline primitives, and component guidelines |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [ROADMAP.md](ROADMAP.md) | Future plans and priorities |

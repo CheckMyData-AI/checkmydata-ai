@@ -26,9 +26,12 @@ export function ThinkingLog({ entries, startTime }: ThinkingLogProps) {
   if (entries.length === 0) return null;
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" role="status" aria-live="polite" aria-label="Agent thinking log">
+      <div className="text-xs font-semibold text-text-muted uppercase tracking-wider">
+        Thinking
+      </div>
       {elapsed && (
-        <div className="text-[10px] text-text-muted font-mono text-right">
+        <div className="text-xs text-text-muted font-mono text-right">
           {elapsed} elapsed
         </div>
       )}
@@ -42,7 +45,7 @@ export function ThinkingLog({ entries, startTime }: ThinkingLogProps) {
           return (
             <div
               key={idx}
-              className={`flex items-start gap-1.5 text-[11px] leading-tight font-mono animate-in fade-in duration-200 ${
+              className={`flex items-start gap-1.5 text-xs leading-tight font-mono animate-in fade-in duration-200 ${
                 isLatest ? "text-text-primary" : "text-text-tertiary"
               }`}
             >

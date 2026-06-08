@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] - Audit remediation
 
+### Added
+
+- **Pipeline + Admin UX upgrade (Phases 0–4).** Redesigned live pipeline progress
+  (`StageProgress`) with `ProgressBar`, icon-based `StatusBadge`, progressive
+  disclosure, and `CheckpointCard` data preview. Wired `ToolCallIndicator` during
+  active stages; `data_gate` is a first-class SSE event (backend frozenset +
+  frontend handler with validating sub-state). Mobile reasoning opens in a bottom
+  sheet. Shared UI primitives (`Button`, `Input`, `Card`, `Badge`, `ProgressBar`).
+  App shell IA: Setup / Workspace / Operations sidebar groups, deep-linkable
+  `?panel=` routes, Project Overview default panel, consolidated Settings, Live
+  Activity vs Request History naming, Knowledge hub for Insights/Metrics.
+  Custom motion easing tokens in `globals.css` (see DESIGN_SYSTEM §3.2).
+
 Fixes a batch of correctness and lifecycle issues found in a full
 business-logic audit of the orchestrator, data integration/storage, and the
 self-learning/memory system.

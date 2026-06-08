@@ -113,11 +113,72 @@ describe("pipelineEventToTransition", () => {
     expect(updated.error).toBe("boom");
   });
 
-  it("stage_validation passing returns null (no transition)", () => {
+  it("stage_validation passing with warnings attaches warnings", () => {
+    const t = pipelineEventToTransition("stage_validation", {
+      extra: { stage_id: "s1", passed: true, warnings: ["slow query"] },
+    });
+    const [updated] = t?.mapStages?.([stage("s1", "running")]) ?? [];
+    expect(updated.warnings).toEqual(["slow query"]);
+  });
+
+  it("stage_validation passing without warnings returns null", () => {
     const t = pipelineEventToTransition("stage_validation", {
       extra: { stage_id: "s1", passed: true },
     });
     expect(t).toBeNull();
+  });
+
+  it("checkpoint persists preview metadata", () => {
+    const t = pipelineEventToTransition("checkpoint", {
+      extra: {
+        stage_id: "s2",
+        columns: ["id"],
+        sample_rows: [[1]],
+        summary: "ok",
+        row_count: 1,
+      },
+    });
+    const [, s2] = t?.mapStages?.([stage("s1", "passed"), stage("s2", "running")]) ?? [];
+    expect(s2.checkpointPreview).toEqual({
+      columns: ["id"],
+      sampleRows: [[1]],
+      summary: "ok",
+      rowCount: 1,
+    });
+  });
+
+  it("data_gate checking sets validating sub-state", () => {
+    const t = pipelineEventToTransition("data_gate", {
+      status: "checking",
+      detail: "Validating stage output…",
+      extra: { stage_id: "s1" },
+    });
+    const [updated] = t?.mapStages?.([stage("s1", "running")]) ?? [];
+    expect(updated.status).toBe("validating");
+    expect(updated.dataGateDetail).toContain("Validating");
+  });
+
+  it("data_gate passed clears validating sub-state", () => {
+    const t = pipelineEventToTransition("data_gate", {
+      status: "passed",
+      extra: { stage_id: "s1", warnings: ["dup rows"] },
+    });
+    const [updated] = t?.mapStages?.([
+      { ...stage("s1", "validating"), dataGateDetail: "Validating…" },
+    ]) ?? [];
+    expect(updated.status).toBe("running");
+    expect(updated.warnings).toEqual(["dup rows"]);
+  });
+
+  it("data_gate failed marks stage failed", () => {
+    const t = pipelineEventToTransition("data_gate", {
+      status: "failed",
+      detail: "Empty result set",
+      extra: { stage_id: "s1", errors: ["no rows"] },
+    });
+    const [updated] = t?.mapStages?.([stage("s1", "validating")]) ?? [];
+    expect(updated.status).toBe("failed");
+    expect(updated.error).toBe("Empty result set");
   });
 
   it("stage_validation failing fails the stage with errors joined", () => {

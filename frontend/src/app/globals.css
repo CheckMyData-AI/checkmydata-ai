@@ -55,6 +55,68 @@ select:focus-visible {
   --color-error-muted: #f8717120;
   --color-info: #60a5fa;
   --color-info-muted: #60a5fa20;
+
+  /* Motion easings (emil-design-eng / pipeline UI) */
+  --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root {
+  --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ease-out-quart {
+  transition-timing-function: var(--ease-out-quart);
+}
+
+.ease-in-out-strong {
+  transition-timing-function: var(--ease-in-out-strong);
+}
+
+.ease-drawer {
+  transition-timing-function: var(--ease-drawer);
+}
+
+/* Pipeline stage row entrance (GPU-safe; reduced-motion handled globally) */
+.pipeline-stage-enter {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 200ms var(--ease-out-quart),
+    transform 200ms var(--ease-out-quart);
+}
+
+.pipeline-stage-enter.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pipeline-progress-fill {
+  transform-origin: left center;
+  transition: transform 300ms var(--ease-out-quart);
+}
+
+.checkpoint-reveal {
+  animation: checkpoint-reveal 240ms var(--ease-drawer) both;
+}
+
+@keyframes checkpoint-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ui-pressable:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 140ms var(--ease-out-quart);
 }
 
 @keyframes slideIn {

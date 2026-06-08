@@ -250,6 +250,25 @@ or `p-6` for larger panels. Internal content uses `space-y-4` for vertical stack
 
 Cards sit on `bg-surface-0` backgrounds. No shadow on cards — elevation is conveyed by the surface color step.
 
+Shared React primitives (import from `@/components/ui/`):
+
+| Component | Path | Notes |
+|-----------|------|-------|
+| `Button` | `Button.tsx` | `primary` / `secondary` / `destructive` / `ghost`; `:active` uses `.ui-pressable` |
+| `Input` | `Input.tsx` | Export `inputBaseCls` for legacy forms; prefer `<Input />` for new code |
+| `Card` | `Card.tsx` | `Card`, `CardHeader`, `CardBody` |
+| `Badge` | `Badge.tsx` | Neutral status chips |
+| `ProgressBar` | `ProgressBar.tsx` | GPU `scaleX` fill; `role="progressbar"` |
+| `StatusBadge` | `StatusBadge.tsx` | Pipeline stage status → `Icon` + `aria-label` |
+
+Pipeline-specific chat components (`@/components/chat/`):
+
+| Component | Purpose |
+|-----------|---------|
+| `StageRow` | Collapsed/expanded stage line with tool pill |
+| `CheckpointCard` | Checkpoint preview table + Continue / Modify / Retry |
+| `StageProgress` | Header progress bar, progressive disclosure, composes the above |
+
 ### 2.4 Modals
 
 **Overlay:**
@@ -389,8 +408,20 @@ All custom animations live in `globals.css`. Standard timing: `ease-out`.
 | Onboarding forward | 0.2s | `onboarding-slide-right` | `.animate-onboarding-forward` | Wizard step forward |
 | Onboarding back | 0.2s | `onboarding-slide-left` | `.animate-onboarding-back` | Wizard step backward |
 | Standard spin | built-in | `animate-spin` | Tailwind built-in | Spinner |
+| Checkpoint reveal | 0.24s | `checkpoint-reveal` | `.checkpoint-reveal` | Checkpoint card entrance |
+| Pipeline stage enter | 0.2s | (transition) | `.pipeline-stage-enter.is-visible` | Staggered stage rows |
+| Progress fill | 0.3s | (transition) | `.pipeline-progress-fill` | Pipeline progress bar (scaleX) |
+| Press feedback | 0.14s | (transition) | `.ui-pressable:active` | Button scale(0.97) |
 
-**Rules:**
+**Custom easing tokens** (defined in `@theme` and `:root` in `globals.css`):
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--ease-out-quart` | `cubic-bezier(0.23, 1, 0.32, 1)` | UI enter, feedback, progress fill |
+| `--ease-in-out-strong` | `cubic-bezier(0.77, 0, 0.175, 1)` | On-screen morph |
+| `--ease-drawer` | `cubic-bezier(0.32, 0.72, 0, 1)` | Checkpoint / drawer reveal |
+
+Utility classes: `.ease-out-quart`, `.ease-in-out-strong`, `.ease-drawer` set `transition-timing-function`.
 - UI transitions: 0.15s-0.25s `ease-out`.
 - Looping indicators: 1.5s+ `ease-in-out infinite`.
 - Never add new `@keyframes` without documenting them here.

@@ -10,8 +10,7 @@ import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { FormModal } from "@/components/ui/FormModal";
 
-const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
+import { inputBaseCls as inputCls } from "@/components/ui/Input";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);

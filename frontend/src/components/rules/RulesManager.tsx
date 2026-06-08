@@ -10,6 +10,7 @@ import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { usePermission } from "@/hooks/usePermission";
 import { FormModal } from "@/components/ui/FormModal";
+import { inputBaseCls as inputCls } from "@/components/ui/Input";
 
 interface Rule {
   id: string;
@@ -19,9 +20,6 @@ interface Rule {
   format: string;
   is_default: boolean;
 }
-
-const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 
 function sortRules(rules: Rule[]): Rule[] {
   return [...rules].sort((a, b) => {

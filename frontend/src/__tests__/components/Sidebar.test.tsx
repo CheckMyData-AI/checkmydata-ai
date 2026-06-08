@@ -55,6 +55,14 @@ vi.mock("@/components/knowledge/KnowledgeDocs", () => ({
   KnowledgeDocs: () => <div data-testid="knowledge-docs" />,
 }));
 
+vi.mock("@/components/knowledge/KnowledgeHub", () => ({
+  KnowledgeHub: () => <div data-testid="knowledge-hub" />,
+}));
+
+vi.mock("@/hooks/useAppPanel", () => ({
+  useAppPanel: () => ({ panel: null, setPanel: vi.fn() }),
+}));
+
 vi.mock("@/components/workflow/WorkflowProgress", () => ({
   WorkflowProgress: () => <div data-testid="workflow-progress" />,
 }));

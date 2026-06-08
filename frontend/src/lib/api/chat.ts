@@ -19,6 +19,7 @@ const PIPELINE_EVENTS = new Set([
   "stage_complete",
   "checkpoint",
   "stage_retry",
+  "data_gate",
 ]);
 
 export interface AskStreamInput {

@@ -7,6 +7,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { RequestAccessModal } from "@/components/projects/RequestAccessModal";
+import { inputBaseCls as inputCls } from "@/components/ui/Input";
 
 const TOTAL_STEPS = 5;
 
@@ -23,9 +24,6 @@ const DB_TYPE_LABELS: Record<string, string> = {
   clickhouse: "ClickHouse",
   mongodb: "MongoDB",
 };
-
-const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 
 const btnPrimary =
   "px-5 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";

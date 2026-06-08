@@ -1891,6 +1891,7 @@ async def ask_stream(
                         "stage_complete",
                         "checkpoint",
                         "stage_retry",
+                        "data_gate",
                     }
                 )
 

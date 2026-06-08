@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import type { Dashboard, DashboardCard, SavedNote } from "@/lib/api";
 import { api } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import { toast } from "@/stores/toast-store";
 import { DashboardBuilder } from "@/components/dashboards/DashboardBuilder";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
+import { AuthGate } from "@/components/auth/AuthGate";
 
 function parseCards(json: string | null): DashboardCard[] {
   if (!json) return [];
@@ -83,6 +85,14 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
 }
 
 export default function DashboardPage() {
+  return (
+    <AuthGate>
+      <DashboardPageContent />
+    </AuthGate>
+  );
+}
+
+function DashboardPageContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -188,7 +198,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <Icon name="loader" className="h-6 w-6 text-accent animate-spin" aria-hidden />
       </div>
     );
   }
@@ -201,7 +211,7 @@ export default function DashboardPage() {
           onClick={() => router.push("/app")}
           className="text-xs text-accent hover:text-accent-hover transition-colors"
         >
-          Back to home
+          Back to app
         </button>
       </div>
     );
@@ -227,13 +237,13 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-surface-0 flex flex-col">
       <header className="shrink-0 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-surface-0">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/app")}
-            aria-label="Back to home"
+          <Link
+            href="/app"
             className="p-1.5 rounded text-text-muted hover:text-text-secondary hover:bg-surface-2 transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+            aria-label="Back to app"
           >
             <Icon name="arrow-left" size={16} />
-          </button>
+          </Link>
           <div>
             <h1 className="text-sm font-semibold text-text-primary">{dashboard.title}</h1>
             {dashboard.updated_at && (

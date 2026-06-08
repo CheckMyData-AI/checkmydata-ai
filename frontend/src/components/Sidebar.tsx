@@ -8,7 +8,10 @@ import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
 import { ChatSessionList } from "./chat/ChatSessionList";
 import { ChatSearch } from "./chat/ChatSearch";
 import { RulesManager } from "./rules/RulesManager";
-import { KnowledgeDocs } from "./knowledge/KnowledgeDocs";
+import { KnowledgeHub } from "./knowledge/KnowledgeHub";
+import { SidebarGroup, useSidebarGroupCollapse } from "./ui/SidebarGroup";
+import { SidebarNavLauncher } from "./ui/SidebarNavLauncher";
+import { useAppPanel } from "@/hooks/useAppPanel";
 import { WorkflowProgress } from "./workflow/WorkflowProgress";
 import { PendingInvites } from "./invites/PendingInvites";
 import { useAppStore } from "@/stores/app-store";
@@ -199,6 +202,16 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const knowledgeCollapse = useSectionCollapse("knowledge", false);
   const usageCollapse = useSectionCollapse("usage", false);
   const analyticsCollapse = useSectionCollapse("analytics", false);
+
+  const { setPanel } = useAppPanel();
+  const setupGroup = useSidebarGroupCollapse("setup");
+  const workspaceGroup = useSidebarGroupCollapse("workspace");
+  const operationsGroup = useSidebarGroupCollapse("operations");
+
+  const openRequestHistory = useCallback(() => {
+    setPanel("logs");
+    onClose?.();
+  }, [setPanel, onClose]);
 
   const [projCreateReq, setProjCreateReq] = useState(false);
   const [connCreateReq, setConnCreateReq] = useState(false);
@@ -461,93 +474,97 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               </div>
             )}
 
-            <div className="px-4 pt-3 pb-1">
-              <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">Setup</span>
-            </div>
-
-            <SidebarSection icon="key" title="SSH Keys" open={sshCollapse.open} onToggle={sshCollapse.toggle} count={sshKeys.length} collapsed={false}>
-              <SshKeyManager />
-            </SidebarSection>
-
-            <div ref={projectsRef}>
-              <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
-                <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
+            <SidebarGroup
+              label="Setup"
+              collapsed={setupGroup.collapsed}
+              onToggle={setupGroup.toggle}
+            >
+              <SidebarSection icon="key" title="SSH Keys" open={sshCollapse.open} onToggle={sshCollapse.toggle} count={sshKeys.length} collapsed={false}>
+                <SshKeyManager />
               </SidebarSection>
-            </div>
+
+              <div ref={projectsRef}>
+                <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
+                  <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
+                </SidebarSection>
+              </div>
+            </SidebarGroup>
 
             {activeProject && (
               <>
-                <div className="px-4 pt-3 pb-1">
-                  <div className="border-t border-border-subtle/50 mb-3" />
-                  <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">Workspace</span>
-                </div>
+                <SidebarGroup
+                  label="Workspace"
+                  collapsed={workspaceGroup.collapsed}
+                  onToggle={workspaceGroup.toggle}
+                >
+                  {activeProject.repo_url && (
+                    <div ref={repoRef}>
+                      <SidebarSection icon="git-branch" title="Repository" open={repoCollapse.open} onToggle={repoCollapse.toggle} collapsed={false}>
+                        {repoSection}
+                      </SidebarSection>
+                    </div>
+                  )}
 
-                {activeProject.repo_url && (
-                  <div ref={repoRef}>
-                    <SidebarSection icon="git-branch" title="Repository" open={repoCollapse.open} onToggle={repoCollapse.toggle} collapsed={false}>
-                      {repoSection}
+                  <div ref={connRef}>
+                    <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}>
+                      <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
+                      <SyncStatusIndicator />
                     </SidebarSection>
                   </div>
-                )}
 
-                <div ref={connRef}>
-                  <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}>
-                    <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
-                    <SyncStatusIndicator />
+                  <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false} action={{ label: "New chat", onClick: () => { setChatCreateReq(true); setPanel("chat"); } }}>
+                    {restoringState ? (
+                      <div className="px-3 py-2 space-y-1.5">
+                        {[1, 2, 3].map((i) => (
+                          <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        {activeProject && <ChatSearch />}
+                        <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
+                      </>
+                    )}
                   </SidebarSection>
-                </div>
 
-                <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false} action={{ label: "New chat", onClick: () => setChatCreateReq(true) }}>
-                  {restoringState ? (
-                    <div className="px-3 py-2 space-y-1.5">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      {activeProject && <ChatSearch />}
-                      <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
-                    </>
-                  )}
-                </SidebarSection>
+                  <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
+                    <KnowledgeHub />
+                  </SidebarSection>
 
-                <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}>
-                  <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
-                </SidebarSection>
+                  <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}>
+                    <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
+                  </SidebarSection>
 
-                <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}>
-                  <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
-                </SidebarSection>
+                  <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}>
+                    <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
+                  </SidebarSection>
 
-                <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}>
-                  <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
-                </SidebarSection>
-
-                <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
-                  <KnowledgeDocs />
-                </SidebarSection>
+                  <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}>
+                    <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
+                  </SidebarSection>
+                </SidebarGroup>
 
                 {isOwner && (
-                  <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
-                    <UsageStatsPanel />
-                  </SidebarSection>
-                )}
+                  <SidebarGroup
+                    label="Operations"
+                    collapsed={operationsGroup.collapsed}
+                    onToggle={operationsGroup.toggle}
+                  >
+                    <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
+                      <UsageStatsPanel />
+                    </SidebarSection>
 
-                {isOwner && (
-                  <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
-                    <FeedbackAnalyticsPanel projectId={activeProject.id} />
-                  </SidebarSection>
-                )}
+                    <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
+                      <FeedbackAnalyticsPanel projectId={activeProject.id} />
+                    </SidebarSection>
 
-                {isOwner && (
-                  <SidebarSection icon="terminal" title="Request Logs" open={false} onToggle={() => {
-                    useAppStore.getState().setLogsOpen(true);
-                  }} collapsed={false}>
-                    <div className="px-2 py-1 text-[10px] text-text-tertiary">
-                      View detailed request traces
-                    </div>
-                  </SidebarSection>
+                    <SidebarNavLauncher
+                      icon="terminal"
+                      title="Request History"
+                      subtitle="Traces"
+                      onClick={openRequestHistory}
+                    />
+                  </SidebarGroup>
                 )}
               </>
             )}
@@ -676,189 +693,176 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
           </div>
         )}
 
-        {/* SETUP group */}
-        {!collapsed && (
-          <div className="px-4 pt-3 pb-1">
-            <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">
-              Setup
-            </span>
-          </div>
-        )}
-
-        <SidebarSection
-          icon="key"
-          title="SSH Keys"
-          open={sshCollapse.open}
-          onToggle={sshCollapse.toggle}
-          count={sshKeys.length}
-          collapsed={collapsed}
+        <SidebarGroup
+          label="Setup"
+          collapsed={setupGroup.collapsed}
+          onToggle={setupGroup.toggle}
+          sidebarCollapsed={collapsed}
         >
-          <SshKeyManager />
-        </SidebarSection>
-
-        <div ref={projectsRef}>
           <SidebarSection
-            icon="folder-git"
-            title="Projects"
-            open={projectsCollapse.open}
-            onToggle={projectsCollapse.toggle}
-            count={projects.length}
+            icon="key"
+            title="SSH Keys"
+            open={sshCollapse.open}
+            onToggle={sshCollapse.toggle}
+            count={sshKeys.length}
             collapsed={collapsed}
-            action={{ label: "New project", onClick: () => setProjCreateReq(true) }}
           >
-            <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
+            <SshKeyManager />
           </SidebarSection>
-        </div>
+
+          <div ref={projectsRef}>
+            <SidebarSection
+              icon="folder-git"
+              title="Projects"
+              open={projectsCollapse.open}
+              onToggle={projectsCollapse.toggle}
+              count={projects.length}
+              collapsed={collapsed}
+              action={{ label: "New project", onClick: () => setProjCreateReq(true) }}
+            >
+              <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
+            </SidebarSection>
+          </div>
+        </SidebarGroup>
 
         {activeProject && (
           <>
-            {/* WORKSPACE group */}
-            {!collapsed && (
-              <div className="px-4 pt-3 pb-1">
-                <div className="border-t border-border-subtle/50 mb-3" />
-                <span className="text-[10px] text-text-muted/60 uppercase tracking-wider">
-                  Workspace
-                </span>
-              </div>
-            )}
-            {collapsed && (
-              <div className="px-4 py-1">
-                <div className="border-t border-border-subtle/50" />
-              </div>
-            )}
+            <SidebarGroup
+              label="Workspace"
+              collapsed={workspaceGroup.collapsed}
+              onToggle={workspaceGroup.toggle}
+              sidebarCollapsed={collapsed}
+            >
+              {activeProject.repo_url && (
+                <div ref={repoRef}>
+                  <SidebarSection
+                    icon="git-branch"
+                    title="Repository"
+                    open={repoCollapse.open}
+                    onToggle={repoCollapse.toggle}
+                    collapsed={collapsed}
+                  >
+                    {repoSection}
+                  </SidebarSection>
+                </div>
+              )}
 
-            {activeProject.repo_url && (
-              <div ref={repoRef}>
+              <div ref={connRef}>
                 <SidebarSection
-                  icon="git-branch"
-                  title="Repository"
-                  open={repoCollapse.open}
-                  onToggle={repoCollapse.toggle}
+                  icon="database"
+                  title="Connections"
+                  open={connCollapse.open}
+                  onToggle={connCollapse.toggle}
+                  count={connections.length}
                   collapsed={collapsed}
+                  action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}
                 >
-                  {repoSection}
+                  <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
+                  <SyncStatusIndicator />
                 </SidebarSection>
               </div>
-            )}
 
-            <div ref={connRef}>
               <SidebarSection
-                icon="database"
-                title="Connections"
-                open={connCollapse.open}
-                onToggle={connCollapse.toggle}
-                count={connections.length}
+                icon="message-square"
+                title="Chat History"
+                open={chatCollapse.open}
+                onToggle={chatCollapse.toggle}
                 collapsed={collapsed}
-                action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}
+                action={{ label: "New chat", onClick: () => { setChatCreateReq(true); setPanel("chat"); } }}
               >
-                <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
-                <SyncStatusIndicator />
+                {restoringState ? (
+                  <div className="px-3 py-2 space-y-1.5">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    {!collapsed && activeProject && <ChatSearch />}
+                    <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
+                  </>
+                )}
               </SidebarSection>
-            </div>
 
-            <SidebarSection
-              icon="message-square"
-              title="Chat History"
-              open={chatCollapse.open}
-              onToggle={chatCollapse.toggle}
-              collapsed={collapsed}
-              action={{ label: "New chat", onClick: () => setChatCreateReq(true) }}
-            >
-              {restoringState ? (
-                <div className="px-3 py-2 space-y-1.5">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-4 rounded bg-surface-2 animate-pulse" style={{ width: `${80 - i * 15}%` }} />
-                  ))}
-                </div>
-              ) : (
-                <>
-                  {!collapsed && activeProject && <ChatSearch />}
-                  <ChatSessionList createRequested={chatCreateReq} onCreateHandled={onChatCreated} />
-                </>
-              )}
-            </SidebarSection>
+              <SidebarSection
+                icon="book-open"
+                title="Knowledge"
+                open={knowledgeCollapse.open}
+                onToggle={knowledgeCollapse.toggle}
+                collapsed={collapsed}
+              >
+                <KnowledgeHub />
+              </SidebarSection>
 
-            <SidebarSection
-              icon="file-text"
-              title="Custom Rules"
-              open={rulesCollapse.open}
-              onToggle={rulesCollapse.toggle}
-              collapsed={collapsed}
-              action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}
-            >
-              <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
-            </SidebarSection>
+              <SidebarSection
+                icon="file-text"
+                title="Custom Rules"
+                open={rulesCollapse.open}
+                onToggle={rulesCollapse.toggle}
+                collapsed={collapsed}
+                action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}
+              >
+                <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
+              </SidebarSection>
 
-            <SidebarSection
-              icon="clock"
-              title="Schedules"
-              open={schedulesCollapse.open}
-              onToggle={schedulesCollapse.toggle}
-              collapsed={collapsed}
-              action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}
-            >
-              <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
-            </SidebarSection>
+              <SidebarSection
+                icon="clock"
+                title="Schedules"
+                open={schedulesCollapse.open}
+                onToggle={schedulesCollapse.toggle}
+                collapsed={collapsed}
+                action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}
+              >
+                <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
+              </SidebarSection>
 
-            <SidebarSection
-              icon="layout"
-              title="Dashboards"
-              open={dashboardsCollapse.open}
-              onToggle={dashboardsCollapse.toggle}
-              collapsed={collapsed}
-              action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}
-            >
-              <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
-            </SidebarSection>
-
-            <SidebarSection
-              icon="book-open"
-              title="Knowledge"
-              open={knowledgeCollapse.open}
-              onToggle={knowledgeCollapse.toggle}
-              collapsed={collapsed}
-            >
-              <KnowledgeDocs />
-            </SidebarSection>
+              <SidebarSection
+                icon="layout"
+                title="Dashboards"
+                open={dashboardsCollapse.open}
+                onToggle={dashboardsCollapse.toggle}
+                collapsed={collapsed}
+                action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}
+              >
+                <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
+              </SidebarSection>
+            </SidebarGroup>
 
             {isOwner && (
-              <SidebarSection
-                icon="activity"
-                title="Usage"
-                open={usageCollapse.open}
-                onToggle={usageCollapse.toggle}
-                collapsed={collapsed}
+              <SidebarGroup
+                label="Operations"
+                collapsed={operationsGroup.collapsed}
+                onToggle={operationsGroup.toggle}
+                sidebarCollapsed={collapsed}
               >
-                <UsageStatsPanel />
-              </SidebarSection>
-            )}
+                <SidebarSection
+                  icon="activity"
+                  title="Usage"
+                  open={usageCollapse.open}
+                  onToggle={usageCollapse.toggle}
+                  collapsed={collapsed}
+                >
+                  <UsageStatsPanel />
+                </SidebarSection>
 
-            {isOwner && (
-              <SidebarSection
-                icon="bar-chart-2"
-                title="Analytics"
-                open={analyticsCollapse.open}
-                onToggle={analyticsCollapse.toggle}
-                collapsed={collapsed}
-              >
-                <FeedbackAnalyticsPanel projectId={activeProject.id} />
-              </SidebarSection>
-            )}
+                <SidebarSection
+                  icon="bar-chart-2"
+                  title="Analytics"
+                  open={analyticsCollapse.open}
+                  onToggle={analyticsCollapse.toggle}
+                  collapsed={collapsed}
+                >
+                  <FeedbackAnalyticsPanel projectId={activeProject.id} />
+                </SidebarSection>
 
-            {isOwner && (
-              <SidebarSection
-                icon="terminal"
-                title="Request Logs"
-                open={false}
-                onToggle={() => {
-                  useAppStore.getState().setLogsOpen(true);
-                }}
-                collapsed={collapsed}
-              >
-                <div className="px-2 py-1 text-[10px] text-text-tertiary">
-                  View detailed request traces
-                </div>
-              </SidebarSection>
+                <SidebarNavLauncher
+                  icon="terminal"
+                  title="Request History"
+                  subtitle="Traces"
+                  onClick={openRequestHistory}
+                  collapsed={collapsed}
+                />
+              </SidebarGroup>
             )}
           </>
         )}

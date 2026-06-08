@@ -82,7 +82,7 @@ export function LogsTraceDetail({ projectId, traceId, onClose }: Props) {
         >
           <Icon name="x" size={14} />
         </button>
-        <span className="text-xs font-medium text-text-primary">Trace Detail</span>
+        <span className="text-xs font-medium text-text-primary">Request Trace</span>
         <span className="text-[10px] text-text-muted font-mono">{trace.workflow_id.slice(0, 8)}</span>
         <span
           className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded ${

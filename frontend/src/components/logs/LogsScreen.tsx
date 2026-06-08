@@ -15,9 +15,21 @@ import { LogsRequestList } from "./LogsRequestList";
 import { LogsTraceDetail } from "./LogsTraceDetail";
 import { LogsDateFilter } from "./LogsDateFilter";
 
-export function LogsScreen() {
+interface LogsScreenProps {
+  onClose?: () => void;
+}
+
+export function LogsScreen({ onClose }: LogsScreenProps) {
   const activeProject = useAppStore((s) => s.activeProject);
   const setLogsOpen = useAppStore((s) => s.setLogsOpen);
+
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      setLogsOpen(false);
+    }
+  };
 
   const [days, setDays] = useState(7);
   const [summary, setSummary] = useState<LogSummary | null>(null);
@@ -91,14 +103,14 @@ export function LogsScreen() {
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle bg-surface-0 shrink-0">
         <button
-          onClick={() => setLogsOpen(false)}
+          onClick={handleClose}
           className="p-1.5 rounded-md hover:bg-surface-2 transition-colors text-text-muted"
           aria-label="Close logs"
         >
           <Icon name="arrow-left" size={16} />
         </button>
         <Icon name="activity" size={16} className="text-text-tertiary" />
-        <h2 className="text-sm font-semibold text-text-primary">Request Logs</h2>
+        <h2 className="text-sm font-semibold text-text-primary">Request History</h2>
         <LogsDateFilter days={days} onChange={handleDaysChange} />
         <button
           onClick={loadData}

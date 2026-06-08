@@ -18,6 +18,7 @@ import { ThinkingLog } from "./ThinkingLog";
 import { PlanSummaryCard, type PlanSummaryData } from "./PlanSummaryCard";
 
 import { StageProgress, type PipelineStage } from "./StageProgress";
+import { ToolCallIndicator } from "./ToolCallIndicator";
 import { pipelineEventToTransition } from "./pipeline-event-handlers";
 import { parseWorkflowEvent } from "@/lib/schemas/workflow-event";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
@@ -45,6 +46,7 @@ export function ChatPanel() {
   const setLoading = useAppStore((s) => s.setLoading);
   const addToolCall = useAppStore((s) => s.addToolCall);
   const clearToolCalls = useAppStore((s) => s.clearToolCalls);
+  const activeToolCalls = useAppStore((s) => s.activeToolCalls);
   const bumpRulesVersion = useAppStore((s) => s.bumpRulesVersion);
   const addSessionUsage = useAppStore((s) => s.addSessionUsage);
   const resetSessionUsage = useAppStore((s) => s.resetSessionUsage);
@@ -310,7 +312,7 @@ export function ChatPanel() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, pipelineStages, streamingText, isThinking]);
 
   useEffect(() => {
     if (
@@ -850,6 +852,7 @@ export function ChatPanel() {
               stages={pipelineStages}
               pipelineRunId={pipelineRunId}
               checkpointStageId={checkpointStageId}
+              toolActivity={<ToolCallIndicator events={activeToolCalls} />}
               onContinue={
                 checkpointStageId ? () => sendPipelineAction("continue") : undefined
               }

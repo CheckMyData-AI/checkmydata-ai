@@ -1,18 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ProgressBar } from "@/components/ui/ProgressBar";
+import { CheckpointCard } from "@/components/chat/CheckpointCard";
+import { StageRow } from "@/components/chat/StageRow";
+import type { PipelineStage } from "@/components/chat/pipeline-types";
+import { cn } from "@/lib/utils";
 
-export interface PipelineStage {
-  id: string;
-  description: string;
-  tool: string;
-  checkpoint: boolean;
-  status: "pending" | "running" | "passed" | "failed" | "checkpoint" | "skipped";
-  rowCount?: number;
-  columns?: string[];
-  error?: string;
-  warnings?: string[];
-}
+export type { PipelineStage, PipelineStageStatus, CheckpointPreview } from "@/components/chat/pipeline-types";
 
 interface StageProgressProps {
   stages: PipelineStage[];
@@ -22,192 +17,164 @@ interface StageProgressProps {
   onRetry?: () => void;
   checkpointStageId?: string;
   compact?: boolean;
+  /** Live tool-call labels rendered under the active stage */
+  toolActivity?: React.ReactNode;
 }
 
-const STATUS_ICON: Record<string, string> = {
-  pending: "○",
-  running: "◎",
-  passed: "✓",
-  failed: "✗",
-  checkpoint: "◉",
-  skipped: "–",
-};
+function countDone(stages: PipelineStage[]): number {
+  return stages.filter((s) => s.status === "passed" || s.status === "skipped").length;
+}
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: "text-text-tertiary",
-  running: "text-accent",
-  passed: "text-success",
-  failed: "text-error",
-  checkpoint: "text-warning",
-  skipped: "text-text-muted",
-};
-
-const STATUS_BG: Record<string, string> = {
-  pending: "bg-surface-2",
-  running: "bg-accent-muted border-border-default",
-  passed: "bg-success-muted border-border-default",
-  failed: "bg-error-muted border-border-default",
-  checkpoint: "bg-warning-muted border-border-default",
-  skipped: "bg-surface-2/50",
-};
+function currentStageIndex(stages: PipelineStage[]): number {
+  const running = stages.findIndex(
+    (s) =>
+      s.status === "running" ||
+      s.status === "checkpoint" ||
+      s.status === "validating" ||
+      s.status === "failed",
+  );
+  if (running >= 0) return running + 1;
+  const done = countDone(stages);
+  return done > 0 ? Math.min(done, stages.length) : 1;
+}
 
 export function StageProgress({
   stages,
-  pipelineRunId,
   onContinue,
   onModify,
   onRetry,
   checkpointStageId,
   compact = false,
+  toolActivity,
 }: StageProgressProps) {
-  const [modifyText, setModifyText] = useState("");
-  const [showModify, setShowModify] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  const { total, done, currentIdx, activeId, hasFailed } = useMemo(() => {
+    const t = stages.length;
+    const d = countDone(stages);
+    const idx = currentStageIndex(stages);
+    const active =
+      stages.find(
+        (s) =>
+          s.status === "running" ||
+          s.status === "checkpoint" ||
+          s.status === "validating" ||
+          s.status === "failed",
+      )?.id ?? stages[Math.min(d, t - 1)]?.id;
+    return {
+      total: t,
+      done: d,
+      currentIdx: idx,
+      activeId: active,
+      hasFailed: stages.some((s) => s.status === "failed"),
+    };
+  }, [stages]);
 
   if (!stages.length) return null;
 
-  const total = stages.length;
-  const done = stages.filter((s) => s.status === "passed" || s.status === "skipped").length;
+  const checkpointStage = checkpointStageId
+    ? stages.find((s) => s.id === checkpointStageId)
+    : undefined;
+  const actionStage =
+    checkpointStage ?? stages.find((s) => s.status === "failed" || s.status === "checkpoint");
+  const showCheckpointActions =
+    Boolean(checkpointStageId) || hasFailed;
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-text-secondary mb-1">
-        <span className="font-medium">Pipeline Progress</span>
-        <span>
-          {done}/{total} stages
+    <div
+      className="space-y-3"
+      role="status"
+      aria-live="polite"
+      aria-label={`Pipeline progress: stage ${currentIdx} of ${total}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-text-primary">Pipeline</span>
+        <span className="text-xs text-text-secondary shrink-0">
+          Stage {currentIdx} of {total}
         </span>
       </div>
 
+      <ProgressBar
+        value={done}
+        max={total}
+        tone={hasFailed ? "error" : done === total ? "success" : "accent"}
+        label={`${done} of ${total} stages complete`}
+      />
+
       <div className="space-y-1.5">
-        {stages.map((stage, idx) => (
-          <div
-            key={stage.id}
-            className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-sm ${STATUS_BG[stage.status] || "bg-surface-2"}`}
-          >
-            <div className="flex flex-col items-center pt-0.5">
-              <span className={`text-base leading-none font-mono ${STATUS_COLOR[stage.status]}`}>
-                {stage.status === "running" ? (
-                  <span className="inline-block animate-spin">⟳</span>
-                ) : (
-                  STATUS_ICON[stage.status]
-                )}
-              </span>
-              {idx < stages.length - 1 && (
-                <div className="w-px h-3 bg-surface-3 mt-1" />
-              )}
+        {stages.map((stage, index) => {
+          const isCurrent = stage.id === activeId;
+          const expanded = showAll || isCurrent;
+          const isLast = index === stages.length - 1;
+
+          if (!showAll && !isCurrent && stage.status !== "checkpoint") {
+            if (stage.status === "pending") {
+              return null;
+            }
+            if (stage.status === "passed" || stage.status === "skipped") {
+              return (
+                <StageRow
+                  key={stage.id}
+                  stage={stage}
+                  index={index}
+                  isCurrent={false}
+                  expanded={false}
+                  showConnector={!isLast}
+                />
+              );
+            }
+          }
+
+          return (
+            <div key={stage.id}>
+              <StageRow
+                stage={stage}
+                index={index}
+                isCurrent={isCurrent}
+                expanded={expanded}
+                showConnector={!isLast}
+                onToggle={
+                  !compact && stage.description.length > 80
+                    ? () => setShowAll((v) => !v)
+                    : undefined
+                }
+              />
+              {isCurrent && toolActivity ? (
+                <div className="ml-7 mt-1 mb-1">{toolActivity}</div>
+              ) : null}
             </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`font-medium truncate ${
-                    stage.status === "pending" ? "text-text-tertiary" : "text-text-primary"
-                  }`}
-                  title={stage.description}
-                >
-                  {stage.description}
-                </span>
-                {!compact && (
-                  <span className="text-[10px] text-text-muted shrink-0">{stage.tool}</span>
-                )}
-              </div>
-
-              {stage.status === "passed" && (stage.rowCount !== undefined || stage.columns) && !compact && (
-                <div className="text-xs text-text-tertiary mt-0.5">
-                  {stage.rowCount !== undefined && <span>{stage.rowCount} rows</span>}
-                  {stage.columns && (
-                    <span className="ml-2 truncate">
-                      ({stage.columns.slice(0, 4).join(", ")}
-                      {stage.columns.length > 4 && ` +${stage.columns.length - 4}`})
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {stage.status === "failed" && stage.error && (
-                <div className="text-xs text-error/80 mt-0.5 truncate" title={stage.error}>{stage.error}</div>
-              )}
-
-              {stage.warnings && stage.warnings.length > 0 && (
-                <div className="text-xs text-warning/70 mt-0.5 break-words">
-                  {stage.warnings.join("; ")}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Checkpoint / failed action buttons */}
-      {(checkpointStageId || stages.some((s) => s.status === "failed")) && (
-        <div className="mt-3 flex flex-col gap-2">
-          {!showModify ? (
-            <div className="flex gap-2">
-              {onContinue && checkpointStageId && (
-                <button
-                  onClick={onContinue}
-                  className="px-3 py-1.5 text-xs font-medium bg-success hover:bg-success text-white rounded-md transition-colors"
-                >
-                  Continue
-                </button>
-              )}
-              {onModify && (
-                <button
-                  onClick={() => setShowModify(true)}
-                  className="px-3 py-1.5 text-xs font-medium bg-warning hover:bg-warning text-white rounded-md transition-colors"
-                >
-                  Modify
-                </button>
-              )}
-              {onRetry && (
-                <button
-                  onClick={onRetry}
-                  className="px-3 py-1.5 text-xs font-medium bg-surface-3 hover:bg-surface-3/80 text-white rounded-md transition-colors"
-                >
-                  Retry
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={modifyText}
-                onChange={(e) => setModifyText(e.target.value)}
-                placeholder="Describe what to change…"
-                className="flex-1 px-3 py-1.5 text-xs bg-surface-2 border border-border-default rounded-md text-text-primary placeholder-text-muted focus:outline-none focus:border-warning"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && modifyText.trim()) {
-                    onModify?.(modifyText.trim());
-                    setModifyText("");
-                    setShowModify(false);
-                  }
-                }}
-              />
-              <button
-                onClick={() => {
-                  if (modifyText.trim()) {
-                    onModify?.(modifyText.trim());
-                    setModifyText("");
-                    setShowModify(false);
-                  }
-                }}
-                className="px-3 py-1.5 text-xs font-medium bg-warning hover:bg-warning text-white rounded-md transition-colors"
-              >
-                Send
-              </button>
-              <button
-                onClick={() => {
-                  setShowModify(false);
-                  setModifyText("");
-                }}
-                className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+      {stages.some((s) => s.status === "pending") ? (
+        <button
+          type="button"
+          className="text-xs text-accent hover:text-accent-hover transition-colors ui-pressable"
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll ? "Collapse stages" : `Show all ${total} stages`}
+        </button>
+      ) : null}
+
+      {showCheckpointActions && actionStage ? (
+        <CheckpointCard
+          stage={actionStage}
+          preview={{
+            columns: actionStage.checkpointPreview?.columns ?? actionStage.columns,
+            sampleRows: actionStage.checkpointPreview?.sampleRows,
+            summary: actionStage.checkpointPreview?.summary,
+            rowCount: actionStage.rowCount,
+          }}
+          onContinue={onContinue && checkpointStageId ? onContinue : undefined}
+          onModify={
+            onModify && (checkpointStageId || hasFailed)
+              ? onModify
+              : undefined
+          }
+          onRetry={onRetry && hasFailed ? onRetry : undefined}
+        />
+      ) : null}
     </div>
   );
 }

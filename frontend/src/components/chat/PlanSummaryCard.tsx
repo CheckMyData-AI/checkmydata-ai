@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Icon } from "@/components/ui/Icon";
 
 export interface PlanSummaryData {
   tables: string[];
@@ -30,32 +31,28 @@ export function PlanSummaryCard({ data, collapsed }: PlanSummaryCardProps) {
     data.strategy === "pipeline" ? "Multi-stage pipeline" : "Single query";
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1 px-3 py-2 text-[11px] font-mono animate-in fade-in slide-in-from-top-1 duration-300">
+    <div className="rounded-lg border border-border-subtle bg-surface-1 px-3 py-2 text-xs font-mono animate-in fade-in slide-in-from-top-1 duration-300">
       <button
         onClick={() => setIsOpen((o) => !o)}
         className="flex items-center gap-1.5 w-full text-left text-text-secondary hover:text-text-primary transition-colors"
+        aria-expanded={isOpen}
       >
-        <svg
+        <Icon
+          name="chevron-right"
           className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
+        />
         <span className="font-semibold text-text-primary">Plan</span>
         <span className="text-text-muted">
           {strategyLabel}
           {data.tables.length > 0 && ` · ${data.tables.length} table${data.tables.length !== 1 ? "s" : ""}`}
         </span>
         {data.has_warnings && (
-          <span className="ml-auto text-warning text-[10px]">has warnings</span>
+          <span className="ml-auto text-warning text-xs">has warnings</span>
         )}
       </button>
 
       {isOpen && (
-        <div className="mt-1.5 space-y-1 pl-4.5">
+        <div className="mt-2 space-y-1.5 pl-4 border-l border-border-subtle ml-1">
           {data.tables.length > 0 && (
             <div className="flex items-start gap-1">
               <span className="text-text-muted shrink-0">Tables:</span>
