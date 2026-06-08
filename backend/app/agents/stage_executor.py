@@ -934,9 +934,11 @@ class StageExecutor:
         )
 
     async def _emit_stage_result(self, wf_id: str, stage: PlanStage, result: StageResult) -> None:
+        # ``status`` is delivered as the positional ``status`` arg of ``emit`` (and
+        # surfaced as the top-level ``WorkflowEvent.status``); never put it in
+        # ``extra`` too, or ``**extra`` collides with the positional parameter.
         extra: dict[str, Any] = {
             "stage_id": stage.stage_id,
-            "status": result.status,
         }
         if result.query_result:
             extra["row_count"] = result.query_result.row_count

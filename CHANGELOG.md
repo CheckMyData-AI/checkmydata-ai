@@ -12,6 +12,22 @@ self-learning/memory system.
 
 ### Fixed
 
+- **Multi-stage chat crash: `WorkflowTracker.emit() got multiple values for
+  argument 'status'`.** Every orchestrated request that produced a multi-stage
+  execution plan failed with `An unexpected error occurred`. `StageExecutor.
+  _emit_stage_result` built an `extra` dict containing a `"status"` key and ALSO
+  passed `result.status` positionally to `emit(workflow_id, step, status, ...,
+  **extra)`, so `**extra` collided with the positional `status` parameter
+  (Python raises a `TypeError` at argument binding). Fixed by dropping the
+  redundant `"status"` key from `extra` (the value is already conveyed as the
+  positional `status` -> top-level `WorkflowEvent.status` and the SSE payload),
+  and updating the frontend `stage_result`/`stage_complete` handler to read the
+  top-level `event.status` instead of `extra.status` (value-identical). Closed
+  the test gap that let it ship: the `StageExecutor` test tracker now uses
+  `create_autospec(WorkflowTracker)` so the real `emit` call signature is
+  enforced (plain `AsyncMock(spec=...)` does not), plus a regression test for
+  `_emit_stage_result` (success + error). No backend consumer relied on
+  `extra.status` (trace persistence uses the top-level `evt.status`).
 - **LLM agent outage: Anthropic mid-conversation `system` 400.** Every
   multi-turn chat (and any session with an auto-welcome message) failed with
   `LLMAllProvidersFailedError` -> `400 Bad Request` from OpenRouter for

@@ -78,8 +78,10 @@ describe("pipelineEventToTransition", () => {
   });
 
   it("stage_complete with error marks stage as failed", () => {
+    // status lives on the top-level event, not in extra
     const t = pipelineEventToTransition("stage_complete", {
-      extra: { stage_id: "s1", status: "error", error: "boom" },
+      status: "error",
+      extra: { stage_id: "s1", error: "boom" },
     });
     const [updated] = t?.mapStages?.([stage("s1", "running")]) ?? [];
     expect(updated.status).toBe("failed");
@@ -88,9 +90,9 @@ describe("pipelineEventToTransition", () => {
 
   it("stage_complete success copies row metadata", () => {
     const t = pipelineEventToTransition("stage_complete", {
+      status: "ok",
       extra: {
         stage_id: "s1",
-        status: "ok",
         row_count: 42,
         columns: ["id"],
       },
@@ -99,6 +101,16 @@ describe("pipelineEventToTransition", () => {
     expect(updated.status).toBe("passed");
     expect(updated.rowCount).toBe(42);
     expect(updated.columns).toEqual(["id"]);
+  });
+
+  it("stage_result reads status from the top-level event", () => {
+    const t = pipelineEventToTransition("stage_result", {
+      status: "error",
+      extra: { stage_id: "s1", error: "boom" },
+    });
+    const [updated] = t?.mapStages?.([stage("s1", "running")]) ?? [];
+    expect(updated.status).toBe("failed");
+    expect(updated.error).toBe("boom");
   });
 
   it("stage_validation passing returns null (no transition)", () => {

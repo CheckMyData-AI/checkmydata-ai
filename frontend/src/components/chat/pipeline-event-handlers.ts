@@ -59,7 +59,10 @@ export function pipelineEventToTransition(
     case "stage_result":
     case "stage_complete": {
       const sid = extra.stage_id as string;
-      const status = extra.status as string;
+      // Stage status is carried on the top-level event (event.status), not in
+      // extra. The backend stopped duplicating it into extra to avoid an
+      // emit() kwarg collision.
+      const status = event.status as string;
       return {
         mapStages: (prev) =>
           prev.map((s) =>

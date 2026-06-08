@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
@@ -26,9 +26,11 @@ from app.llm.base import LLMResponse
 
 @pytest.fixture
 def mock_tracker():
-    t = MagicMock(spec=WorkflowTracker)
-    t.emit = AsyncMock()
-    return t
+    # ``create_autospec`` enforces the real ``emit`` call signature (plain
+    # ``AsyncMock(spec=...)`` does NOT), so an invalid emit() call - e.g. passing
+    # ``status`` both positionally and via ``**extra`` - fails the test instead of
+    # slipping through to production.
+    return create_autospec(WorkflowTracker, instance=True)
 
 
 @pytest.fixture
@@ -770,3 +772,34 @@ class TestStalenessInjection:
             )
 
         assert executor._staleness_warning == "KB stale (7 days)."
+
+
+class TestEmitStageResult:
+    """Regression: _emit_stage_result must not pass ``status`` both positionally
+    and via ``**extra`` (would raise ``emit() got multiple values for argument
+    'status'`` and crash every multi-stage plan)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["success", "error"])
+    async def test_emit_stage_result_no_status_collision(self, executor, mock_tracker, status):
+        stage = _sql_stage("s1")
+        result = StageResult(
+            stage_id="s1",
+            status=status,
+            summary="done",
+            query_result=QueryResult(columns=["a"], rows=[[1]], row_count=1),
+        )
+
+        # With the autospec'd tracker this raises TypeError if status is passed twice.
+        await executor._emit_stage_result("wf-test", stage, result)
+
+        mock_tracker.emit.assert_awaited_once()
+        call = mock_tracker.emit.await_args
+        # status delivered as the positional arg (top-level WorkflowEvent.status)
+        assert call.args[0] == "wf-test"
+        assert call.args[1] == "stage_result"
+        assert call.args[2] == status
+        # and NOT duplicated inside extra kwargs
+        assert "status" not in call.kwargs
+        assert call.kwargs["stage_id"] == "s1"
+        assert call.kwargs["row_count"] == 1
