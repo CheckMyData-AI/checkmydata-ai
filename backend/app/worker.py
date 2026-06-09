@@ -153,6 +153,19 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
             logger.debug("Failed to update sync_status", exc_info=True)
 
 
+async def run_repo_index(ctx: dict, *, project_id: str, force_full: bool = False) -> None:  # noqa: ARG001
+    """Background repository index for a single project (Phase 2 trigger target).
+
+    Enqueued by the git webhook / cron poll / manual route when ARQ is active.
+    Delegates to the shared in-process runner so checkpoint/resume, doc/BM25
+    generation, overview regeneration, and the auto index→sync chain all match
+    the non-ARQ path exactly.
+    """
+    from app.api.routes.repos import run_repo_index_task
+
+    await run_repo_index_task(project_id, force_full=force_full)
+
+
 async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: str) -> None:  # noqa: ARG001
     """Background batch query execution."""
     from app.services.batch_service import BatchService
@@ -207,6 +220,7 @@ class WorkerSettings:  # pragma: no cover
     functions = [
         run_db_index,
         run_code_db_sync,
+        run_repo_index,
         run_batch,
     ]
     on_startup = startup

@@ -337,6 +337,7 @@ class OrchestratorAgent(BaseAgent):
         table_map: str,
         custom_rules: str,
         recent_learnings: str,
+        route_result: RouteResult | None = None,
     ) -> None:
         """Emit a plan_summary event so the frontend can display context."""
         import re as _re
@@ -359,11 +360,21 @@ class OrchestratorAgent(BaseAgent):
                             learning_subjects.append(subj)
             learning_subjects = learning_subjects[:10]
 
-        strategy = (
-            "pipeline"
-            if len(tables) > settings.orchestrator_pipeline_table_threshold
-            else "single_query"
-        )
+        # Strategy label must mirror the *actual* routing decision made in
+        # ``run()`` (``RouteResult.use_complex_pipeline``), which is driven by
+        # planner signals (complexity + needs_multiple_data_sources). The old
+        # table-count heuristic (``orchestrator_pipeline_table_threshold``)
+        # could disagree with the real decision and mislead the reasoning
+        # panel (BACKLOG 10.1). Fall back to the table-count heuristic only
+        # when no router result is available (legacy / continuation paths).
+        if route_result is not None:
+            strategy = "pipeline" if route_result.use_complex_pipeline else "single_query"
+        else:
+            strategy = (
+                "pipeline"
+                if len(tables) > settings.orchestrator_pipeline_table_threshold
+                else "single_query"
+            )
 
         await tracker.emit(
             wf_id,
@@ -819,6 +830,7 @@ class OrchestratorAgent(BaseAgent):
             table_map=allocation.schema_text,
             custom_rules=allocation.rules_text,
             recent_learnings=allocation.learnings_text,
+            route_result=route_result,
         )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]

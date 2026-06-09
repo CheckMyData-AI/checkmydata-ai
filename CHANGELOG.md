@@ -8,6 +8,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Knowledge Architecture roadmap — Phase 0 & Phase 1.** Foundation work toward
+  a unified Knowledge Fabric (see `docs/KNOWLEDGE_CATALOG.md`).
+  - *Phase 0 (Stabilize & Unify):* the plan-summary routing label now mirrors the
+    actual router decision (`RouteResult.use_complex_pipeline` from planner
+    signals) instead of the cosmetic table-count heuristic (BACKLOG 10.1); DB
+    indexing is dispatched through a single `_dispatch_db_index` helper that uses
+    `task_queue.enqueue` (ARQ) when Redis is configured and falls back to
+    in-process `asyncio` otherwise, with an ARQ-aware status endpoint that no
+    longer false-resets worker-managed runs to `failed`; new `task_queue.is_arq_active()`
+    helper; new `docs/KNOWLEDGE_CATALOG.md` artifact-schema & `ContextPack` contract.
+  - *Phase 1 (Knowledge Catalog):* new `KnowledgeCatalogService` read-facade and
+    `Artifact`/`ContextPack` DTOs (`backend/app/knowledge/context_pack.py`) that
+    assemble a structured, traceable bundle (tables+sync notes, lineage,
+    learnings, insights, rules, RAG chunks, freshness) from the existing stores
+    with per-section graceful degradation. `KnowledgeFreshnessService` now emits
+    structured `FreshnessWarningDetail`s carrying a machine-readable
+    `recommended_action` (reindex_db / reindex_repo / resync). New
+    `GET /api/projects/{id}/knowledge-health` endpoint and a **Knowledge Health**
+    UI panel in Project Overview showing artifact counts and one-click
+    re-index/re-sync buttons wired to the consolidated execution path.
+  - *Phase 2 (Event-Driven Smart Ingestion):* knowledge now refreshes itself
+    after a `git push` without user action. All triggers ship OFF by default
+    (opt-in flags). New `POST /api/repos/{id}/webhook` endpoint verifies
+    GitHub-style `X-Hub-Signature-256` HMAC (and GitLab `X-Gitlab-Token`),
+    debounces push bursts (`WEBHOOK_DEBOUNCE_SECONDS`), and enqueues a re-index
+    via the consolidated `_spawn_repo_index` dispatcher. A new ARQ task
+    `run_repo_index` runs out-of-process when Redis is configured (mirrors the
+    in-process path: checkpoint/resume, docs/BM25, overview, auto-sync). A cron
+    poll loop (`GIT_POLL_ENABLED` / `GIT_POLL_INTERVAL_MINUTES`) covers repos
+    without webhooks by `git fetch` + HEAD comparison. The repo index→sync chain
+    is automatic (`AUTO_SYNC_AFTER_INDEX`) via `maybe_autostart_sync`, closing
+    the lineage-lag gap. A `FreshnessReconciler` (`FRESHNESS_RECONCILER_ENABLED`)
+    in the maintenance loop evaluates `KnowledgeFreshness` per connection and
+    auto-dispatches DB re-index / resync / repo re-index when stale. RAG chunks
+    now carry temporal metadata (`commit_sha`, `indexed_at`, `source_path`),
+    closing the retrieval temporal gap. New `_dispatch_code_db_sync` /
+    `maybe_autostart_db_index` consolidate the sync/index dispatch paths.
+  - *Phase 3 (Retrieval Stack):* optional cross-encoder reranker
+    (`backend/app/knowledge/reranker.py`) as a second stage over fused
+    hybrid/schema candidates — lazy model load, graceful no-op when
+    `sentence-transformers` is absent (`RERANKER_ENABLED`, `RERANKER_MODEL`,
+    `RERANKER_CANDIDATES`). Wired into `HybridRetriever`, `KnowledgeAgent`,
+    `ContextLoader`, and a new async `SchemaRetriever.aquery` used by
+    `SQLAgent`. New deterministic, LLM-free retrieval-eval harness
+    (`backend/app/eval/`: golden set, `hit@k`/`MRR`/context precision·recall/
+    `nDCG@k`, threshold gate) with a golden dataset and a CI gate
+    (`.github/workflows/ci.yml`).
+  - *Phase 4 (Context Planner):* `ContextPlanner`
+    (`backend/app/agents/context_planner.py`) turns eager context loading into
+    query-aware lazy loading — a `ContextPlan` (needs + per-category limits)
+    derived from the question and router signals (`CONTEXT_PLANNER_ENABLED`,
+    `CONTEXT_PLANNER_MODE` heuristic|llm, `CONTEXT_PLANNER_BUDGET_TOKENS`).
+    `KnowledgeCatalogService.get_context_pack` honours the plan and enriches
+    each `Artifact` with a `trust` block (confidence + freshness) via the trust
+    layer; `ContextPack` gains `plan`, `all_artifacts()`, and a
+    `provenance_summary()` for per-block reasoning transparency.
+    `ContextLoader.build_context_pack` is the orchestrator's single entry point.
+  - *Phase 5 (Proactive & Cross-Source Intelligence):* proactive
+    `schema_change` insights — a DB re-index that detects added/removed/changed
+    tables vs the last persisted fingerprint stores an actionable insight
+    (`SchemaChangeDetector`, `SchemaChangeAlertsEnabled`), wired into
+    `DbIndexPipeline` and surfaced through the existing freshness/insight loops.
+    New cross-source foundations (`backend/app/knowledge/cross_source.py`):
+    `CrossSourceJoinPlanner` proposes explainable join keys across *different*
+    connections (multi-DB JOIN), and `CrossSourceCausalGraph` unions intra-DB
+    FK edges with code↔DB lineage into one directed graph answering
+    "what feeds / consumes X?" across the code/DB boundary.
+
 - **Pipeline + Admin UX upgrade (Phases 0–4).** Redesigned live pipeline progress
   (`StageProgress`) with `ProgressBar`, icon-based `StatusBadge`, progressive
   disclosure, and `CheckpointCard` data preview. Wired `ToolCallIndicator` during

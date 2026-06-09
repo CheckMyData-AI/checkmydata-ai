@@ -1,5 +1,5 @@
 import { request } from "./_client";
-import type { Project, ProjectReadiness } from "./types";
+import type { KnowledgeHealth, Project, ProjectReadiness } from "./types";
 
 export const projects = {
   list: () => request<Project[]>("/projects"),
@@ -11,6 +11,12 @@ export const projects = {
   delete: (id: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
   readiness: (id: string) => request<ProjectReadiness>(`/projects/${id}/readiness`),
+  knowledgeHealth: (id: string, connectionId?: string | null) =>
+    request<KnowledgeHealth>(
+      `/projects/${id}/knowledge-health${
+        connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""
+      }`,
+    ),
   requestAccess: (data: { email: string; description: string; message: string }) =>
     request<{ ok: boolean }>("/projects/access-requests", {
       method: "POST",

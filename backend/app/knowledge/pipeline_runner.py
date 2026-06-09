@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from git import Repo
@@ -1033,8 +1034,14 @@ class IndexingPipelineRunner:
                         edoc.file_path,
                     )
 
+                    # Phase 2 (temporal chunk metadata): stamp each chunk with
+                    # ``commit_sha`` + ``indexed_at`` so retrieval can reason about
+                    # freshness and the orchestrator can tell *when* a RAG chunk
+                    # was produced (closes the RAG temporal gap, plan §1.1/§Quick
+                    # win #3). ``source_path`` is already added by ``chunk_document``.
                     extra_meta: dict[str, str] = {
                         "commit_sha": state.head_sha,
+                        "indexed_at": datetime.now(UTC).isoformat(),
                         "models": ",".join(edoc.models),
                         "tables": ",".join(edoc.tables),
                     }
@@ -1130,7 +1137,10 @@ class IndexingPipelineRunner:
                                 content=retry_out,
                                 file_path=edoc.file_path,
                                 doc_type=edoc.doc_type,
-                                extra_metadata={"commit_sha": state.head_sha},
+                                extra_metadata={
+                                    "commit_sha": state.head_sha,
+                                    "indexed_at": datetime.now(UTC).isoformat(),
+                                },
                             )
                             if chunks:
                                 chunk_ids = [

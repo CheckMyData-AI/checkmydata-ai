@@ -9,6 +9,7 @@ from app.core.task_queue import (
     close_task_queue,
     enqueue,
     init_task_queue,
+    is_arq_active,
     is_task_running,
 )
 
@@ -92,3 +93,59 @@ async def test_cleanup_on_task_completion():
     await asyncio.sleep(0.05)
     assert not is_task_running("done1")
     assert "done1" not in _fallback_tasks
+
+
+@pytest.mark.asyncio
+async def test_is_arq_active_false_in_fallback():
+    """Without Redis the queue runs in-process and ARQ is never active."""
+    await init_task_queue(None)
+    assert is_arq_active() is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_db_index_uses_enqueue_when_arq_active(monkeypatch):
+    """Phase 0 consolidation: in ARQ mode the DB index goes through the worker
+    (task_queue.enqueue) and no in-process task handle is registered."""
+    from app.api.routes import connections as conn_routes
+
+    captured: dict = {}
+
+    async def fake_enqueue(task_name, coro_factory=None, *, task_id=None, **kwargs):
+        captured["task_name"] = task_name
+        captured["task_id"] = task_id
+        captured["kwargs"] = kwargs
+        return "job-1"
+
+    monkeypatch.setattr(conn_routes.task_queue, "is_arq_active", lambda: True)
+    monkeypatch.setattr(conn_routes.task_queue, "enqueue", fake_enqueue)
+    conn_routes._db_index_tasks.clear()
+
+    await conn_routes._dispatch_db_index("conn123", object(), "proj456")
+
+    assert captured["task_name"] == "run_db_index"
+    assert captured["task_id"] == "db_index:conn123"
+    assert captured["kwargs"] == {"connection_id": "conn123", "project_id": "proj456"}
+    # No local handle in ARQ mode — persisted status is authoritative.
+    assert "conn123" not in conn_routes._db_index_tasks
+
+
+@pytest.mark.asyncio
+async def test_dispatch_db_index_falls_back_in_process(monkeypatch):
+    """Without ARQ the DB index runs in-process and is tracked for the status
+    endpoint / 409 guard (unchanged dev behaviour)."""
+    from app.api.routes import connections as conn_routes
+
+    ran: dict = {}
+
+    async def fake_bg(connection_id, config, project_id):
+        ran["connection_id"] = connection_id
+
+    monkeypatch.setattr(conn_routes.task_queue, "is_arq_active", lambda: False)
+    monkeypatch.setattr(conn_routes, "_run_db_index_background", fake_bg)
+    conn_routes._db_index_tasks.clear()
+
+    await conn_routes._dispatch_db_index("connA", object(), "projB")
+
+    assert "connA" in conn_routes._db_index_tasks
+    await asyncio.sleep(0.05)
+    assert ran["connection_id"] == "connA"

@@ -249,6 +249,36 @@ class Settings(BaseSettings):
     # decoupled from the backup cron so decay runs even when backups are off.
     maintenance_interval_hours: int = 24
 
+    # --- Phase 2: Event-driven smart ingestion ---------------------------------
+    # All triggers are OFF by default so existing deployments keep their manual
+    # POST /index behaviour; flip individually to opt into automation.
+    #
+    # Git push webhook (POST /api/repos/{id}/webhook). When enabled, a verified
+    # push event enqueues a (debounced) repo re-index. ``git_webhook_secret`` is
+    # the shared HMAC secret used to verify GitHub-style ``X-Hub-Signature-256``
+    # (and GitLab ``X-Gitlab-Token``) headers; an empty secret rejects all calls.
+    git_webhook_enabled: bool = False
+    git_webhook_secret: str = ""
+    # Collapse a burst of pushes into a single re-index: a new trigger within this
+    # window after the last one is ignored (the running/queued index already
+    # covers it).
+    webhook_debounce_seconds: int = 30
+
+    # Cron poll fallback for repos without a webhook: the periodic loop runs
+    # ``git fetch`` for each project's repo and enqueues a re-index when the
+    # remote HEAD has advanced. ``0`` disables.
+    git_poll_enabled: bool = False
+    git_poll_interval_minutes: int = 15
+
+    # Auto-chain code↔DB sync after a successful repo index completes (closes the
+    # index→sync gap so lineage never silently lags the freshly indexed code).
+    auto_sync_after_index: bool = False
+
+    # FreshnessReconciler: when stale knowledge crosses the staleness threshold,
+    # enqueue a background re-index instead of waiting for a user. Runs inside the
+    # maintenance loop. ``0`` disables.
+    freshness_reconciler_enabled: bool = False
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
@@ -348,6 +378,13 @@ class Settings(BaseSettings):
     hybrid_min_score: float = 0.01
     hybrid_k: int = 20
 
+    # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
+    # OFF by default — requires `sentence-transformers` + a model download.
+    # Degrades to a no-op when the library/model is unavailable at runtime.
+    reranker_enabled: bool = False
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_candidates: int = 30
+
     # M4: question-aware schema retrieval (BM25 + embeddings over DbIndex).
     schema_retrieval_enabled: bool = False
     sql_agent_max_context_tables: int = 15
@@ -359,6 +396,19 @@ class Settings(BaseSettings):
     # M6: functional clustering (Louvain) + LLM-labeled cluster names.
     clustering_enabled: bool = False
     cluster_llm_label_enabled: bool = True
+
+    # Phase 4: orchestrator Context Planner. When enabled, the orchestrator
+    # plans which knowledge categories to load (query-aware lazy loading) and
+    # assembles a single traceable ContextPack instead of 6+ eager loads.
+    # OFF by default — opt-in. mode: "heuristic" (zero-cost) or "llm".
+    context_planner_enabled: bool = False
+    context_planner_mode: str = "heuristic"
+    context_planner_budget_tokens: int = 8000
+
+    # Phase 5: proactive schema-drift alerts. When enabled, a DB re-index that
+    # detects added/removed/changed tables vs the last fingerprint stores a
+    # `schema_change` insight (surfaced + actionable). OFF by default.
+    schema_change_alerts_enabled: bool = False
 
     # Streaming settings
     stream_timeout_seconds: int = 360

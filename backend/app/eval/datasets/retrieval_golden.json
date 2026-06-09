@@ -1,0 +1,72 @@
+[
+  {
+    "id": "orders-status",
+    "question": "How do we track the status of a customer order?",
+    "relevant_ids": ["orders", "order_status"],
+    "category": "schema",
+    "tags": ["orders", "status"]
+  },
+  {
+    "id": "user-auth",
+    "question": "Where is user authentication and password hashing handled?",
+    "relevant_ids": ["auth", "users"],
+    "category": "codebase",
+    "tags": ["auth", "security"]
+  },
+  {
+    "id": "payments-refunds",
+    "question": "What tables store payment transactions and refunds?",
+    "relevant_ids": ["payments", "refunds", "transactions"],
+    "category": "schema",
+    "tags": ["payments"]
+  },
+  {
+    "id": "revenue-report",
+    "question": "How is monthly recurring revenue calculated?",
+    "relevant_ids": ["subscriptions", "invoices", "mrr"],
+    "category": "schema",
+    "tags": ["revenue", "billing"]
+  },
+  {
+    "id": "product-inventory",
+    "question": "Where do we keep product inventory and stock levels?",
+    "relevant_ids": ["products", "inventory", "stock"],
+    "category": "schema",
+    "tags": ["inventory"]
+  },
+  {
+    "id": "api-rate-limit",
+    "question": "How is API rate limiting implemented?",
+    "relevant_ids": ["rate_limit", "middleware", "throttle"],
+    "category": "codebase",
+    "tags": ["api", "throttling"]
+  },
+  {
+    "id": "email-notifications",
+    "question": "Which module sends transactional email notifications?",
+    "relevant_ids": ["email", "notifications", "mailer"],
+    "category": "codebase",
+    "tags": ["email"]
+  },
+  {
+    "id": "customer-churn",
+    "question": "How do we identify customers at risk of churning?",
+    "relevant_ids": ["customers", "churn", "subscriptions"],
+    "category": "schema",
+    "tags": ["churn", "analytics"]
+  },
+  {
+    "id": "cart-checkout",
+    "question": "What handles the shopping cart and checkout flow?",
+    "relevant_ids": ["cart", "checkout", "orders"],
+    "category": "codebase",
+    "tags": ["checkout"]
+  },
+  {
+    "id": "audit-logging",
+    "question": "Where are user actions audit-logged?",
+    "relevant_ids": ["audit", "audit_log", "events"],
+    "category": "schema",
+    "tags": ["audit", "compliance"]
+  }
+]

@@ -139,3 +139,14 @@ def is_task_running(task_id: str) -> bool:
     """Check whether a fallback task is still running (ARQ has its own status API)."""
     t = _fallback_tasks.get(task_id)
     return t is not None and not t.done()
+
+
+def is_arq_active() -> bool:
+    """Return ``True`` when tasks are dispatched to the ARQ/Redis worker.
+
+    Callers use this to decide whether an in-process asyncio task handle will
+    exist locally (fallback mode) or whether the work runs out-of-process in
+    the worker (ARQ mode). In ARQ mode the persisted DB status — not an
+    in-memory task handle — is the authoritative signal of progress.
+    """
+    return _arq_pool is not None

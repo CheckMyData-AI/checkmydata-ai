@@ -1009,10 +1009,13 @@ class TestSQLAgentSchemaRetrieval:
         with patch("app.knowledge.schema_retriever.SchemaRetriever") as mock_cls:
             instance = MagicMock()
             instance.has_index.return_value = True
-            instance.query.return_value = [
-                {"id": "orders", "metadata": {"table_name": "orders"}},
-                {"id": "payments", "metadata": {"table_name": "payments"}},
-            ]
+            # aquery is the async entry point (BM25 off-thread + optional rerank).
+            instance.aquery = AsyncMock(
+                return_value=[
+                    {"id": "orders", "metadata": {"table_name": "orders"}},
+                    {"id": "payments", "metadata": {"table_name": "payments"}},
+                ]
+            )
             mock_cls.return_value = instance
 
             result = await agent._retrieve_tables_for_question(

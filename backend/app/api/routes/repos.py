@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+import hmac
 import logging
+import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -10,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings
+from app.core import task_queue
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.core.workflow_tracker import tracker
@@ -47,6 +51,10 @@ _repo_svc = RepositoryService()
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
 _index_start_locks: dict[str, asyncio.Lock] = {}
+# Phase 2: monotonic timestamp of the last index trigger per project, used to
+# debounce webhook/poll bursts (several pushes in quick succession collapse into
+# a single re-index).
+_last_index_trigger_at: dict[str, float] = {}
 
 _pipeline_runner = IndexingPipelineRunner(
     ssh_key_svc=_ssh_key_svc,
@@ -148,35 +156,109 @@ async def index_repo(
             detail="Project has no repository URL configured",
         )
 
+    result = await _spawn_repo_index(
+        db,
+        project_id,
+        project,
+        force_full=body.force_full,
+        trigger="manual",
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Indexing already in progress for this project",
+        )
+
+    return JSONResponse(status_code=202, content=result)
+
+
+def _make_index_done_cb(project_id: str):
+    def _on_index_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error(
+                "Repo index %s failed: %s",
+                project_id,
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    return _on_index_done
+
+
+async def _spawn_repo_index(
+    db: AsyncSession,
+    project_id: str,
+    project,
+    *,
+    force_full: bool,
+    trigger: str = "manual",
+    debounce: bool = False,
+) -> dict | None:
+    """Consolidated entry point for starting a repo index run (Phase 2).
+
+    Handles dedup (one run per project), optional webhook/poll *debounce*, the
+    checkpoint resume/force decisions, workflow creation, and dispatch. When an
+    ARQ/Redis worker is configured the run is enqueued out-of-process via
+    ``run_repo_index``; otherwise it runs in-process and is tracked in
+    ``_indexing_tasks`` so the status endpoint and the 409 guard keep working.
+
+    Returns a result dict (``{status, workflow_id, resumed}``) when a run was
+    started/resumed/queued, or ``None`` when skipped (already running or
+    debounced) — callers decide whether that is a 409 (manual) or a soft skip
+    (webhook/poll).
+    """
     start_lock = _index_start_locks.setdefault(project_id, asyncio.Lock())
     async with start_lock:
         existing_task = _indexing_tasks.get(project_id)
         if existing_task and not existing_task.done():
-            raise HTTPException(
-                status_code=409,
-                detail="Indexing already in progress for this project",
-            )
+            return None
+
+        if debounce:
+            now = time.monotonic()
+            last = _last_index_trigger_at.get(project_id)
+            if last is not None and (now - last) < settings.webhook_debounce_seconds:
+                logger.info(
+                    "Repo index debounced (trigger=%s): project=%s",
+                    trigger,
+                    project_id[:8],
+                )
+                return None
 
         lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
 
         existing_cp = await _checkpoint_svc.get_active(db, project_id)
         resumed = False
-
-        if existing_cp and not body.force_full:
+        if existing_cp and not force_full:
             if existing_cp.status == "running":
                 existing_cp.status = "interrupted"
                 await db.commit()
             resumed = True
-        elif existing_cp and body.force_full:
+        elif existing_cp and force_full:
             await _checkpoint_svc.delete(db, existing_cp.id)
             existing_cp = None
 
         logger.info(
-            "Index started: project=%s force=%s resumed=%s",
+            "Index started: project=%s force=%s resumed=%s trigger=%s",
             project_id[:8],
-            body.force_full,
+            force_full,
             resumed,
+            trigger,
         )
+        _last_index_trigger_at[project_id] = time.monotonic()
+
+        # ARQ mode: hand off to the worker. The persisted checkpoint is
+        # authoritative for status; no in-memory handle is kept.
+        if task_queue.is_arq_active():
+            await task_queue.enqueue(
+                "run_repo_index",
+                task_id=f"repo_index:{project_id}",
+                project_id=project_id,
+                force_full=force_full,
+            )
+            return {"status": "queued", "workflow_id": None, "resumed": resumed}
 
         wf_id = await tracker.begin(
             "index_repo",
@@ -184,35 +266,177 @@ async def index_repo(
                 "project_id": project_id,
                 "repo_url": project.repo_url,
                 "resumed": resumed,
+                "trigger": trigger,
             },
         )
-
-        def _on_index_done(t: asyncio.Task) -> None:
-            if t.cancelled():
-                return
-            exc = t.exception()
-            if exc:
-                logger.error(
-                    "Repo index %s failed: %s",
-                    project_id,
-                    exc,
-                    exc_info=(type(exc), exc, exc.__traceback__),
-                )
-
+        body = IndexRequest(force_full=force_full)
         task = asyncio.create_task(
             _run_index_background(project_id, project, body, wf_id, lock),
         )
-        task.add_done_callback(_on_index_done)
+        task.add_done_callback(_make_index_done_cb(project_id))
         _indexing_tasks[project_id] = task
 
-    return JSONResponse(
-        status_code=202,
-        content={
-            "status": "resumed" if resumed else "started",
-            "workflow_id": wf_id,
-            "resumed": resumed,
-        },
+    return {
+        "status": "resumed" if resumed else "started",
+        "workflow_id": wf_id,
+        "resumed": resumed,
+    }
+
+
+async def run_repo_index_task(project_id: str, force_full: bool = False) -> None:
+    """Queue/worker entrypoint for a repo index run (no HTTP context).
+
+    Mirrors the in-process background path but loads its own project + workflow.
+    Invoked by the ARQ worker's ``run_repo_index`` task.
+    """
+    async with async_session_factory() as db:
+        project = await _project_svc.get(db, project_id)
+        if not project or not project.repo_url:
+            logger.error(
+                "run_repo_index_task: project %s missing or has no repo_url",
+                project_id[:8],
+            )
+            return
+        wf_id = await tracker.begin(
+            "index_repo",
+            {"project_id": project_id, "repo_url": project.repo_url, "trigger": "queue"},
+        )
+
+    lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
+    body = IndexRequest(force_full=force_full)
+    await _run_index_background(project_id, project, body, wf_id, lock)
+
+
+def _verify_webhook_signature(secret: str, raw_body: bytes, headers) -> bool:
+    """Verify a git provider webhook signature against the shared secret.
+
+    Supports GitHub-style HMAC-SHA256 (``X-Hub-Signature-256``) and GitLab-style
+    plain token (``X-Gitlab-Token``). Returns ``False`` when no recognised header
+    is present or the secret is empty (fail-closed).
+    """
+    if not secret:
+        return False
+    gh_sig = headers.get("x-hub-signature-256")
+    if gh_sig and gh_sig.startswith("sha256="):
+        expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(gh_sig, expected)
+    gl_token = headers.get("x-gitlab-token")
+    if gl_token:
+        return hmac.compare_digest(gl_token, secret)
+    return False
+
+
+@router.post("/{project_id}/webhook", status_code=202)
+@limiter.limit("30/minute")
+async def repo_webhook(
+    request: Request,
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Git push webhook (Phase 2): verified push → debounced auto re-index.
+
+    Authenticated by HMAC signature (no user session). Enabled via
+    ``GIT_WEBHOOK_ENABLED`` + ``GIT_WEBHOOK_SECRET``. Bursts of pushes are
+    collapsed into a single re-index by the debounce window.
+    """
+    if not settings.git_webhook_enabled:
+        raise HTTPException(status_code=404, detail="Webhook ingestion disabled")
+    if not settings.git_webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+
+    raw = await request.body()
+    if not _verify_webhook_signature(settings.git_webhook_secret, raw, request.headers):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # GitHub sends an event type header; ack pings and ignore non-push events.
+    event = request.headers.get("x-github-event")
+    if event == "ping":
+        return JSONResponse(status_code=202, content={"status": "pong"})
+    if event and event != "push":
+        return JSONResponse(status_code=202, content={"status": "ignored", "event": event})
+
+    from app.api.deps import validate_safe_id
+
+    validate_safe_id(project_id, "project_id")
+    project = await _project_svc.get(db, project_id)
+    if not project or not project.repo_url:
+        raise HTTPException(status_code=404, detail="Project not found or no repository")
+
+    result = await _spawn_repo_index(
+        db,
+        project_id,
+        project,
+        force_full=False,
+        trigger="webhook",
+        debounce=True,
     )
+    if result is None:
+        return JSONResponse(
+            status_code=202,
+            content={"status": "skipped", "reason": "debounced_or_running"},
+        )
+    audit_log(
+        "repo.webhook_index",
+        user_id="webhook",
+        project_id=project_id,
+        resource_type="repository",
+        resource_id=project_id,
+    )
+    return JSONResponse(status_code=202, content=result)
+
+
+async def poll_and_index_changed_repos() -> int:
+    """Cron poll (Phase 2): re-index repos whose remote HEAD advanced.
+
+    For each project with a cloned repo, ``git fetch`` and compare the remote
+    HEAD to the last indexed SHA; trigger a debounced re-index when behind.
+    Returns the number of projects for which a re-index was triggered. Gated by
+    ``settings.git_poll_enabled`` at the call site.
+    """
+    triggered = 0
+    try:
+        async with async_session_factory() as db:
+            projects = await _project_svc.list_all(db)
+            for project in projects:
+                if not getattr(project, "repo_url", None):
+                    continue
+                repo_dir = _repo_analyzer.get_repo_dir(project.id)
+                if not repo_dir.exists():
+                    continue
+                try:
+                    await asyncio.to_thread(_git_fetch, repo_dir)
+                    last_sha = await _git_tracker.get_last_indexed_sha(
+                        db, project.id, branch=project.repo_branch
+                    )
+                    if not last_sha:
+                        continue
+                    head_sha = await asyncio.to_thread(_git_tracker.get_head_sha, repo_dir)
+                    if head_sha and head_sha != last_sha:
+                        result = await _spawn_repo_index(
+                            db,
+                            project.id,
+                            project,
+                            force_full=False,
+                            trigger="poll",
+                            debounce=True,
+                        )
+                        if result is not None:
+                            triggered += 1
+                            logger.info(
+                                "Git poll: re-index triggered for project=%s (head=%s last=%s)",
+                                project.id[:8],
+                                head_sha[:10],
+                                last_sha[:10],
+                            )
+                except Exception:
+                    logger.debug(
+                        "Git poll check failed for project %s",
+                        project.id[:8],
+                        exc_info=True,
+                    )
+    except Exception:
+        logger.warning("Git poll loop iteration failed", exc_info=True)
+    return triggered
 
 
 async def _regenerate_overview(project_id: str) -> None:
@@ -226,6 +450,33 @@ async def _regenerate_overview(project_id: str) -> None:
         logger.info("Project overview regenerated after repo index: project=%s", project_id[:8])
     except Exception:
         logger.warning("Failed to regenerate project overview", exc_info=True)
+
+
+async def _maybe_autostart_sync_chain(project_id: str) -> None:
+    """Phase 2 index→sync chain: kick off code↔DB sync after a successful index.
+
+    Gated by ``settings.auto_sync_after_index``. Triggers a sync on the first
+    active, DB-indexed connection of the project (the common single-connection
+    case). All failures are swallowed so the chain never fails the index.
+    """
+    if not settings.auto_sync_after_index:
+        return
+    try:
+        from app.api.routes.connections import maybe_autostart_sync
+
+        async with async_session_factory() as db:
+            connections = await _connection_svc.list_by_project(db, project_id)
+        for conn in connections:
+            if getattr(conn, "is_active", True):
+                started = await maybe_autostart_sync(conn.id, project_id)
+                if started:
+                    break
+    except Exception:
+        logger.warning(
+            "Auto index→sync chain failed for project %s",
+            project_id[:8],
+            exc_info=True,
+        )
 
 
 async def _run_index_background(
@@ -269,6 +520,7 @@ async def _run_index_background(
                         live_table_names=live_table_names,
                     )
                     await _regenerate_overview(project_id)
+                    await _maybe_autostart_sync_chain(project_id)
                 except Exception as exc:
                     logger.exception("Indexing pipeline failed for project %s", project_id)
                     try:

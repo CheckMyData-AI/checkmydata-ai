@@ -12,6 +12,7 @@ from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
 from app.services.email_service import EmailService
+from app.services.knowledge_catalog_service import KnowledgeCatalogService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rule_service import RuleService
@@ -26,6 +27,7 @@ _conn_svc = ConnectionService()
 _db_index_svc = DbIndexService()
 _sync_svc = CodeDbSyncService()
 _email_svc = EmailService()
+_catalog_svc = KnowledgeCatalogService()
 
 
 class AccessRequestBody(BaseModel):
@@ -395,3 +397,46 @@ async def project_readiness(
         "commits_behind": commits_behind,
         "is_stale": is_stale,
     }
+
+
+@router.get("/{project_id}/knowledge-health")
+async def project_knowledge_health(
+    project_id: str,
+    connection_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Knowledge Health panel data: actionable freshness + artifact counts.
+
+    Phase 1 (Knowledge Catalog). Read-only facade over the existing stores via
+    :class:`KnowledgeCatalogService`. ``connection_id`` is optional — when omitted
+    the first connection on the project is used so the panel works right after a
+    DB is added. The returned ``freshness.warnings`` carry a structured
+    ``recommended_action`` the UI renders as one-click re-index/re-sync buttons
+    that hit the consolidated ``task_queue`` execution path.
+    """
+    from pathlib import Path
+
+    from app.config import settings
+
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    project = await _svc.get(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Resolve the connection to evaluate: explicit query param wins; otherwise
+    # fall back to the first connection on the project (mirrors readiness).
+    resolved_conn_id = connection_id
+    if resolved_conn_id is None:
+        connections = await _conn_svc.list_by_project(db, project_id)
+        if connections:
+            resolved_conn_id = connections[0].id
+
+    repo_clone_dir = Path(settings.repo_clone_base_dir) / project_id
+
+    return await _catalog_svc.get_knowledge_health(
+        db,
+        project_id=project_id,
+        connection_id=resolved_conn_id,
+        repo_clone_dir=repo_clone_dir,
+    )

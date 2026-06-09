@@ -68,11 +68,12 @@ _backup_task: asyncio.Task[None] | None = None
 _scheduler_task: asyncio.Task[None] | None = None
 _health_check_task: asyncio.Task[None] | None = None
 _maintenance_task: asyncio.Task[None] | None = None
+_git_poll_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
+    global _backup_task, _scheduler_task, _health_check_task, _maintenance_task, _git_poll_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -107,6 +108,7 @@ async def lifespan(app: FastAPI):
     _scheduler_task = asyncio.create_task(_scheduler_loop())
     _health_check_task = asyncio.create_task(_health_check_loop())
     _maintenance_task = asyncio.create_task(_maintenance_loop())
+    _git_poll_task = asyncio.create_task(_git_poll_loop())
 
     from app.core.workflow_tracker import tracker as _wf_tracker
     from app.services.trace_persistence_service import TracePersistenceService
@@ -126,7 +128,13 @@ async def lifespan(app: FastAPI):
 
     await _trace_svc.stop()
 
-    for task in (_backup_task, _scheduler_task, _health_check_task, _maintenance_task):
+    for task in (
+        _backup_task,
+        _scheduler_task,
+        _health_check_task,
+        _maintenance_task,
+        _git_poll_task,
+    ):
         if task and not task.done():
             task.cancel()
             try:
@@ -556,6 +564,91 @@ async def _periodic_learning_decay() -> None:
         logger.warning("Periodic note decay failed", exc_info=True)
 
 
+async def _freshness_reconcile() -> None:
+    """Phase 2 FreshnessReconciler: auto re-index stale knowledge.
+
+    For each project + first connection, evaluate :class:`KnowledgeFreshness`
+    and dispatch the matching background job (DB re-index / resync) when stale.
+    Repo (git) staleness is handled by the dedicated git-poll loop; when that
+    loop is disabled this also runs an inline repo fetch+reindex so a single flag
+    still closes the loop. Gated by ``settings.freshness_reconciler_enabled``.
+    """
+    if not settings.freshness_reconciler_enabled:
+        return
+    try:
+        from pathlib import Path
+
+        from app.api.routes.connections import (
+            maybe_autostart_db_index,
+            maybe_autostart_sync,
+        )
+        from app.api.routes.repos import poll_and_index_changed_repos
+        from app.services.connection_service import ConnectionService
+        from app.services.knowledge_freshness_service import KnowledgeFreshnessService
+        from app.services.project_service import ProjectService
+
+        proj_svc = ProjectService()
+        conn_svc = ConnectionService()
+        fresh_svc = KnowledgeFreshnessService()
+        triggered = 0
+
+        async with async_session_factory() as session:
+            projects = await proj_svc.list_all(session)
+            for project in projects:
+                connections = await conn_svc.list_by_project(session, project.id)
+                conn_id = connections[0].id if connections else None
+                repo_dir = Path(settings.repo_clone_base_dir) / project.id
+                fresh = await fresh_svc.evaluate(
+                    session,
+                    project_id=project.id,
+                    connection_id=conn_id,
+                    repo_clone_dir=repo_dir if repo_dir.exists() else None,
+                )
+                if not fresh.overall_stale:
+                    continue
+                if conn_id and fresh.db_index_stale:
+                    if await maybe_autostart_db_index(conn_id, project.id):
+                        triggered += 1
+                if conn_id and fresh.sync_stale:
+                    if await maybe_autostart_sync(conn_id, project.id):
+                        triggered += 1
+
+        # Avoid double-triggering repo re-index when the dedicated poll loop runs.
+        if not settings.git_poll_enabled:
+            triggered += await poll_and_index_changed_repos()
+
+        if triggered:
+            logger.info(
+                "Cron: freshness reconciler triggered %d background job(s)",
+                triggered,
+            )
+    except Exception:
+        logger.warning("Freshness reconciler failed", exc_info=True)
+
+
+async def _git_poll_loop() -> None:
+    """Phase 2 cron poll: periodically fetch repos and re-index on new commits.
+
+    Disabled unless ``settings.git_poll_enabled``. Complements the webhook path
+    for repos that cannot push events to this instance.
+    """
+    if not settings.git_poll_enabled:
+        return
+    interval_seconds = max(1, settings.git_poll_interval_minutes) * 60
+    from app.api.routes.repos import poll_and_index_changed_repos
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            count = await poll_and_index_changed_repos()
+            if count:
+                logger.info("Git poll: triggered %d repo re-index(es)", count)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Git poll loop iteration failed; will retry next cycle")
+
+
 async def _cleanup_pipeline_runs() -> None:
     """Delete pipeline_runs older than PIPELINE_RUN_TTL_DAYS."""
     try:
@@ -805,6 +898,7 @@ async def _maintenance_loop() -> None:
             await asyncio.sleep(interval_seconds)
             await _periodic_learning_decay()
             await _periodic_insight_maintenance()
+            await _freshness_reconcile()
         except asyncio.CancelledError:
             break
         except Exception:

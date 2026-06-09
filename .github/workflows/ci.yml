@@ -95,6 +95,17 @@ jobs:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
+      - name: Retrieval eval gate (golden-set / RAGAS-style metrics)
+        # Phase 3 regression gate: runs the deterministic golden-set harness
+        # (app.eval) so a retrieval-quality regression fails CI. LLM-free and
+        # network-free — validates the golden set, metric math, and that an
+        # oracle retriever clears the thresholds.
+        run: |
+          pytest tests/unit/test_retrieval_eval.py tests/unit/test_reranker.py -q
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
+
       - name: Coverage gate (combined unit + integration)
         # Authoritative coverage gate. Enforced threshold (72) matches
         # `fail_under` in pyproject.toml and the value documented in

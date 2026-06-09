@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core import task_queue
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.agent_learning_service import AgentLearningService
@@ -51,6 +52,157 @@ def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], No
             )
 
     return _cb
+
+
+async def _dispatch_db_index(
+    connection_id: str,
+    config: ConnectionConfig,
+    project_id: str,
+) -> None:
+    """Single entry point for starting a DB index run.
+
+    Consolidates the previously divergent execution paths (Phase 0): when an
+    ARQ/Redis worker is configured the run is enqueued out-of-process via
+    :func:`task_queue.enqueue` (the worker's ``run_db_index`` mirrors the
+    in-process logic, so post-index steps and status transitions match). When
+    no Redis is configured the work runs in-process and is tracked in
+    ``_db_index_tasks`` so the status endpoint and the 409 conflict guard keep
+    working exactly as before.
+
+    Callers must already hold the per-connection start lock and have set the
+    persisted ``indexing_status`` to ``running``.
+    """
+    if task_queue.is_arq_active():
+        await task_queue.enqueue(
+            "run_db_index",
+            task_id=f"db_index:{connection_id}",
+            connection_id=connection_id,
+            project_id=project_id,
+        )
+        # No local handle in ARQ mode — the persisted status is authoritative.
+        return
+
+    task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
+    task.add_done_callback(_log_task_error("DB index", connection_id))
+    _db_index_tasks[connection_id] = task
+
+
+async def _dispatch_code_db_sync(
+    connection_id: str,
+    project_id: str,
+) -> None:
+    """Single entry point for starting a code↔DB sync run.
+
+    Mirrors :func:`_dispatch_db_index` (Phase 0 consolidation): enqueue to the
+    ARQ worker's ``run_code_db_sync`` when Redis is configured, otherwise run
+    in-process and track in ``_sync_tasks`` so the status endpoint and 409 guard
+    keep working. Also used by the Phase 2 auto index→sync chain.
+
+    Callers must already hold the per-connection sync start lock and have set the
+    persisted ``sync_status`` to ``running``.
+    """
+    if task_queue.is_arq_active():
+        await task_queue.enqueue(
+            "run_code_db_sync",
+            task_id=f"code_db_sync:{connection_id}",
+            connection_id=connection_id,
+            project_id=project_id,
+        )
+        return
+
+    task = asyncio.create_task(_run_sync_background(connection_id, project_id))
+    task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
+    _sync_tasks[connection_id] = task
+
+
+async def maybe_autostart_db_index(connection_id: str, project_id: str) -> bool:
+    """Best-effort kick off a DB index run (Phase 2 FreshnessReconciler).
+
+    Acquires the same start lock + dedup guards as the manual index route so a
+    concurrent user-initiated index is never double-run. Returns ``True`` when an
+    index was dispatched. All failures are swallowed (logged).
+    """
+    from app.models.base import async_session_factory
+
+    try:
+        start_lock = _db_index_start_locks.setdefault(connection_id, asyncio.Lock())
+        async with start_lock:
+            existing = _db_index_tasks.get(connection_id)
+            if existing and not existing.done():
+                return False
+
+            async with async_session_factory() as session:
+                if await _db_index_svc.get_indexing_status(session, connection_id) == "running":
+                    return False
+                conn = await _svc.get(session, connection_id)
+                if not conn:
+                    return False
+                config = await _svc.to_config(session, conn)
+                await _db_index_svc.set_indexing_status(session, connection_id, "running")
+                await session.commit()
+
+            await _dispatch_db_index(connection_id, config, project_id)
+            logger.info(
+                "Reconciler DB re-index started: connection=%s project=%s",
+                connection_id[:8],
+                project_id[:8],
+            )
+            return True
+    except Exception:
+        logger.warning(
+            "Reconciler DB re-index dispatch failed for connection=%s",
+            connection_id[:8],
+            exc_info=True,
+        )
+        return False
+
+
+async def maybe_autostart_sync(connection_id: str, project_id: str) -> bool:
+    """Best-effort kick off a code↔DB sync after a repo index completes.
+
+    Used by the Phase 2 index→sync chain (``auto_sync_after_index``). Acquires
+    the same start lock and dedup guards as the manual ``trigger_sync`` path so a
+    concurrent user-initiated sync is never double-run. Returns ``True`` when a
+    sync was dispatched.
+
+    Safe to call from any background task: all failures are swallowed (logged)
+    because the auto-chain must never crash the index that triggered it.
+    """
+    from app.models.base import async_session_factory
+
+    try:
+        sync_start_lock = _sync_start_locks.setdefault(connection_id, asyncio.Lock())
+        async with sync_start_lock:
+            existing = _sync_tasks.get(connection_id)
+            if existing and not existing.done():
+                return False
+
+            async with async_session_factory() as session:
+                if await _sync_svc.get_sync_status(session, connection_id) == "running":
+                    return False
+                if not await _db_index_svc.is_indexed(session, connection_id):
+                    logger.info(
+                        "Auto index→sync skipped: connection=%s not DB-indexed yet",
+                        connection_id[:8],
+                    )
+                    return False
+                await _sync_svc.set_sync_status(session, connection_id, "running")
+                await session.commit()
+
+            await _dispatch_code_db_sync(connection_id, project_id)
+            logger.info(
+                "Auto index→sync started: connection=%s project=%s",
+                connection_id[:8],
+                project_id[:8],
+            )
+            return True
+    except Exception:
+        logger.warning(
+            "Auto index→sync dispatch failed for connection=%s",
+            connection_id[:8],
+            exc_info=True,
+        )
+        return False
 
 
 async def cancel_background_tasks() -> None:
@@ -318,11 +470,7 @@ async def test_connection(
                         config = await _svc.to_config(db, conn, user_id=user["user_id"])
                         await _db_index_svc.set_indexing_status(db, connection_id, "running")
                         await db.commit()
-                        task = asyncio.create_task(
-                            _run_db_index_background(connection_id, config, conn.project_id)
-                        )
-                        task.add_done_callback(_log_task_error("DB index", connection_id))
-                        _db_index_tasks[connection_id] = task
+                        await _dispatch_db_index(connection_id, config, conn.project_id)
                         result["auto_indexing"] = True
                         logger.info(
                             "Auto-indexing triggered after test: connection=%s",
@@ -471,9 +619,7 @@ async def index_database(
         await _db_index_svc.set_indexing_status(db, connection_id, "running")
         await db.commit()
 
-        task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
-        task.add_done_callback(_log_task_error("DB index", connection_id))
-        _db_index_tasks[connection_id] = task
+        await _dispatch_db_index(connection_id, config, project_id)
 
     logger.info(
         "DB index started: connection=%s type=%s project=%s",
@@ -506,7 +652,11 @@ async def index_db_status(
     in_memory_running = existing is not None and not existing.done()
     db_running = status.get("indexing_status") == "running"
 
-    if db_running and not in_memory_running:
+    # In ARQ mode the run executes out-of-process in the worker, so there is no
+    # local task handle — the persisted status is authoritative and must not be
+    # reset. Only the in-process fallback path can have an orphaned 'running'
+    # status (e.g. after an API restart that lost the asyncio task).
+    if db_running and not in_memory_running and not task_queue.is_arq_active():
         logger.warning(
             "Stale indexing_status='running' with no in-memory task: "
             "connection=%s — resetting to 'failed'",
@@ -614,9 +764,7 @@ async def _maybe_start_db_index(
         await _db_index_svc.set_indexing_status(db, connection_id, "running")
         await db.commit()
 
-        task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
-        task.add_done_callback(_log_task_error("DB index", connection_id))
-        _db_index_tasks[connection_id] = task
+        await _dispatch_db_index(connection_id, config, project_id)
 
     logger.info("Auto DB re-index started: connection=%s", connection_id[:8])
     return True
@@ -780,9 +928,7 @@ async def trigger_sync(
         await db.commit()
 
         project_id = conn.project_id
-        task = asyncio.create_task(_run_sync_background(connection_id, project_id))
-        task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
-        _sync_tasks[connection_id] = task
+        await _dispatch_code_db_sync(connection_id, project_id)
 
     logger.info(
         "Code-DB sync started: connection=%s project=%s",

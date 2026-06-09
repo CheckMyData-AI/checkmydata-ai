@@ -1223,9 +1223,17 @@ class SQLAgent(BaseAgent):
         ``_build_query_context`` can fall through to the safety net unharmed.
         """
         try:
+            from app.knowledge.reranker import build_reranker
             from app.knowledge.schema_retriever import SchemaRetriever
 
-            retriever = SchemaRetriever(data_dir=settings.bm25_data_dir)
+            retriever = SchemaRetriever(
+                data_dir=settings.bm25_data_dir,
+                reranker=build_reranker(
+                    enabled=settings.reranker_enabled,
+                    model_name=settings.reranker_model,
+                ),
+                rerank_candidates=settings.reranker_candidates,
+            )
             if not retriever.has_index(connection_id):
                 logger.debug(
                     "Schema retriever has no index for connection %s; "
@@ -1234,9 +1242,9 @@ class SQLAgent(BaseAgent):
                 )
                 return []
 
-            # BM25 query is CPU-bound; offload off the event loop.
-            hits = await asyncio.to_thread(
-                retriever.query,
+            # aquery offloads BM25 (CPU-bound) off the loop and adds the
+            # optional cross-encoder rerank stage when enabled.
+            hits = await retriever.aquery(
                 connection_id,
                 question,
                 k=k,

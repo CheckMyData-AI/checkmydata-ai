@@ -8,14 +8,20 @@ column notes, query_hints), tokenizes them with the same code-aware tokenizer
 used by the codebase retriever, and ranks tables by lexical relevance to the
 user's question.
 
-We intentionally do **not** wire Chroma into this path for now:
+We intentionally do **not** wire Chroma into this path:
 
 * Schema docs are short (a few hundred tokens) and identifier-heavy, where
-  BM25 dominates.
+  BM25 dominates and embeddings add little lexical recall.
 * Eliminating Chroma keeps the build cheap (no embedding API calls per table)
   and lets us roll out the feature behind a flag without an embedding budget.
-* If we later want semantic recall too, ``SchemaRetriever`` is the obvious
-  injection point -- the rest of the pipeline doesn't care.
+
+Phase 3 adds the *semantic* leg as an optional **cross-encoder rerank** stage
+instead: BM25 over-fetches a wider candidate set, then a cross-encoder jointly
+scores ``(question, schema_doc)`` pairs to reorder by true relevance. This is
+the "hybrid" form best suited to short identifier-heavy schema text — it gets
+semantic ranking without paying to embed and store every table. The reranker is
+optional and degrades to a no-op when disabled or unavailable, so the rest of
+the pipeline doesn't care.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from app.knowledge.bm25_index import BM25Index
 
 if TYPE_CHECKING:
+    from app.knowledge.reranker import Reranker
     from app.models.db_index import DbIndex
 
 logger = logging.getLogger(__name__)
@@ -44,10 +51,20 @@ class SchemaRetriever:
     cheap).
     """
 
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path,
+        *,
+        reranker: Reranker | None = None,
+        rerank_candidates: int = 30,
+    ) -> None:
         # Snapshots live next to the codebase BM25 snapshots but under a
         # ``schema_`` prefix so they can be cleaned independently.
         self._bm25 = BM25Index(Path(data_dir))
+        # Phase 3: optional cross-encoder rerank over BM25 candidates. When
+        # None, query() returns pure BM25 order (unchanged behaviour).
+        self._reranker = reranker
+        self._rerank_candidates = max(1, rerank_candidates)
 
     @staticmethod
     def _project_key(connection_id: str) -> str:
@@ -155,10 +172,38 @@ class SchemaRetriever:
         """
         if not question or not question.strip():
             return []
-        hits = self._bm25.query(self._project_key(connection_id), question, k)
+        # When a reranker is wired we over-fetch BM25 candidates so the
+        # cross-encoder has a wider pool to reorder; aquery() trims back to k.
+        fetch = max(k, self._rerank_candidates) if self._reranker is not None else k
+        hits = self._bm25.query(self._project_key(connection_id), question, fetch)
         if only_active:
             hits = [h for h in hits if h.get("metadata", {}).get("is_active", True)]
         return hits
+
+    async def aquery(
+        self,
+        connection_id: str,
+        question: str,
+        *,
+        k: int = 15,
+        only_active: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Async query: BM25 (off-thread) + optional cross-encoder rerank.
+
+        Falls back to pure BM25 order when no reranker is configured. This is
+        the preferred entry point from async call sites; :meth:`query` remains
+        for synchronous/threaded callers and BM25-only use.
+        """
+        import asyncio
+
+        hits = await asyncio.to_thread(
+            self.query, connection_id, question, k=k, only_active=only_active
+        )
+        if self._reranker is None or len(hits) <= 1:
+            return hits[:k]
+        candidates = hits[: self._rerank_candidates]
+        reranked = await self._reranker.rerank(question, candidates, top_k=k)
+        return list(reranked)[:k]
 
     def delete(self, connection_id: str) -> None:
         """Drop the snapshot for ``connection_id``."""

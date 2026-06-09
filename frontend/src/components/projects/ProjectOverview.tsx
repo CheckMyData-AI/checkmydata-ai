@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
 import { SyncStatusIndicator } from "@/components/connections/SyncStatusIndicator";
+import { KnowledgeHealthPanel } from "@/components/knowledge/KnowledgeHealthPanel";
 import { UsageStatsPanel } from "@/components/usage/UsageStatsPanel";
 import { useAppStore } from "@/stores/app-store";
 import { useLogStore } from "@/stores/log-store";
@@ -72,6 +73,11 @@ export function ProjectOverview() {
             <p className="text-xs text-text-tertiary">No connections configured yet</p>
           )}
         </section>
+
+        <KnowledgeHealthPanel
+          projectId={activeProject.id}
+          connectionId={activeConnection?.id ?? null}
+        />
 
         <section className="rounded-lg border border-border-subtle bg-surface-1/50 p-4 space-y-3">
           <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">

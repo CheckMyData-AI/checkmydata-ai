@@ -307,6 +307,53 @@ export interface ProjectReadiness {
   is_stale: boolean;
 }
 
+// Knowledge Catalog (Phase 1): actionable freshness + artifact counts surfaced
+// by GET /projects/{id}/knowledge-health.
+export type KnowledgeActionKind =
+  | "reindex_db"
+  | "reindex_repo"
+  | "resync"
+  | "none";
+
+export interface KnowledgeRecommendedAction {
+  kind: KnowledgeActionKind;
+  label: string;
+  connection_id: string | null;
+}
+
+export interface KnowledgeFreshnessWarning {
+  category: "db_index" | "sync" | "git" | "code_graph";
+  severity: "info" | "warning" | "critical";
+  message: string;
+  recommended_action: KnowledgeRecommendedAction;
+}
+
+export interface KnowledgeFreshness {
+  overall_stale: boolean;
+  db_index_age_hours: number | null;
+  db_index_stale: boolean;
+  sync_status: string | null;
+  sync_stale: boolean;
+  git_behind_commits: number | null;
+  git_unindexed: boolean;
+  code_graph_symbol_count: number;
+  code_graph_stale: boolean;
+  warnings: KnowledgeFreshnessWarning[];
+}
+
+export interface KnowledgeHealth {
+  project_id: string;
+  connection_id: string | null;
+  freshness: KnowledgeFreshness;
+  artifact_counts: {
+    tables: number;
+    learnings: number;
+    insights: number;
+    rules: number;
+    lineage: number;
+  };
+}
+
 export interface LLMModel {
   id: string;
   name: string;

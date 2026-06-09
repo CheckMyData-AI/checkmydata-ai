@@ -324,6 +324,20 @@ class DbIndexPipeline:
             except Exception:
                 logger.debug("Incremental reuse-map build failed", exc_info=True)
                 reuse_analyses = {}
+
+            # Phase 5: proactive schema-drift alert. The persisted fingerprint
+            # still holds the *previous* schema at this point (it is rewritten
+            # at the end of the run), so compare now and emit an insight on
+            # drift. Best-effort — never blocks indexing.
+            try:
+                await self._maybe_alert_schema_change(
+                    wf_id=wf_id,
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    new_fp=new_fp,
+                )
+            except Exception:
+                logger.debug("Schema-change alert failed", exc_info=True)
             if reuse_analyses:
                 await self._tracker.emit(
                     wf_id,
@@ -883,6 +897,55 @@ class DbIndexPipeline:
                     numeric_format_notes=e.numeric_format_notes,
                 )
         return reuse
+
+    async def _maybe_alert_schema_change(
+        self,
+        *,
+        wf_id: str,
+        project_id: str,
+        connection_id: str,
+        new_fp: dict[str, str],
+    ) -> None:
+        """Emit a proactive ``schema_change`` insight when the schema drifted.
+
+        Reads the previously-persisted fingerprint (still current at this point
+        in the run) and diffs it against ``new_fp``. Gated by
+        ``schema_change_alerts_enabled``; a first-time index emits nothing.
+        """
+        from app.config import settings as _settings
+
+        if not _settings.schema_change_alerts_enabled:
+            return
+
+        async with async_session_factory() as session:
+            summary = await self._svc.get_summary(session, connection_id)
+            prev_raw = getattr(summary, "schema_fingerprint", None) if summary else None
+            if not prev_raw or prev_raw == "{}":
+                return
+            try:
+                prev_fp = json.loads(prev_raw)
+            except (json.JSONDecodeError, TypeError):
+                return
+            if not isinstance(prev_fp, dict) or not prev_fp:
+                return
+
+            from app.services.schema_change_detector import SchemaChangeDetector
+
+            diff = await SchemaChangeDetector().detect_and_alert(
+                session,
+                project_id=project_id,
+                connection_id=connection_id,
+                previous_fingerprint=prev_fp,
+                current_fingerprint=new_fp,
+            )
+            if diff.has_changes:
+                await session.commit()
+                await self._tracker.emit(
+                    wf_id,
+                    "introspect_schema",
+                    "started",
+                    f"Schema drift detected: {diff.summary()}",
+                )
 
     # ------------------------------------------------------------------
     # Schema retriever (M4)

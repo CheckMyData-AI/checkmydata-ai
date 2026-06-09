@@ -68,6 +68,7 @@ class ContextLoader:
             from app.config import settings as _settings
             from app.knowledge.bm25_index import BM25Index
             from app.knowledge.hybrid_retriever import HybridRetriever
+            from app.knowledge.reranker import build_reranker
 
             self._hybrid_retriever = HybridRetriever(
                 bm25=BM25Index(_settings.bm25_data_dir),
@@ -75,8 +76,61 @@ class ContextLoader:
                 rrf_k=_settings.hybrid_rrf_k,
                 min_score=_settings.hybrid_min_score,
                 chroma_max_distance=_settings.rag_relevance_threshold,
+                reranker=build_reranker(
+                    enabled=_settings.reranker_enabled,
+                    model_name=_settings.reranker_model,
+                ),
+                rerank_candidates=_settings.reranker_candidates,
             )
         return self._hybrid_retriever
+
+    async def build_context_pack(
+        self,
+        *,
+        project_id: str,
+        connection_id: str | None,
+        question: str,
+        has_connection: bool = True,
+        has_repo: bool = True,
+        estimated_queries: int = 1,
+        needs_multiple_data_sources: bool = False,
+    ):
+        """Phase 4: plan + assemble a single traceable ``ContextPack``.
+
+        Replaces the orchestrator's 6+ ad-hoc lazy loads with one call: the
+        :class:`~app.agents.context_planner.ContextPlanner` decides which
+        categories to fetch (query-aware), then the
+        :class:`~app.services.knowledge_catalog_service.KnowledgeCatalogService`
+        assembles only those, trust-enriched. Returns ``None`` on failure so the
+        caller can fall back to the legacy lazy path (vision invariant #5).
+        """
+        try:
+            from app.agents.context_planner import ContextPlanner
+            from app.config import settings as _settings
+            from app.models.base import async_session_factory
+            from app.services.knowledge_catalog_service import KnowledgeCatalogService
+
+            planner = ContextPlanner(mode=_settings.context_planner_mode)
+            plan = await planner.plan(
+                question,
+                estimated_queries=estimated_queries,
+                needs_multiple_data_sources=needs_multiple_data_sources,
+                has_connection=has_connection,
+                has_repo=has_repo,
+                budget_tokens=_settings.context_planner_budget_tokens,
+            )
+            catalog = KnowledgeCatalogService(vector_store=self._vector_store)
+            async with async_session_factory() as session:
+                return await catalog.get_context_pack(
+                    session,
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    question=question,
+                    plan=plan,
+                )
+        except Exception:
+            logger.warning("build_context_pack failed — falling back to lazy loads", exc_info=True)
+            return None
 
     async def has_mcp_sources(self, project_id: str, wf_id: str = "") -> bool:
         """Check if the project has any MCP-type connections (cached for 60s)."""

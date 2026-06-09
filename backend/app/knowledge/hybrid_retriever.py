@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.knowledge.bm25_index import BM25Index
+from app.knowledge.reranker import Reranker
 from app.knowledge.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,8 @@ class HybridRetriever:
         min_score: float = 0.0,
         retriever_timeout_sec: float = _DEFAULT_RETRIEVER_TIMEOUT_SEC,
         chroma_max_distance: float | None = None,
+        reranker: Reranker | None = None,
+        rerank_candidates: int = 30,
     ) -> None:
         self._bm25 = bm25
         self._vector = vector_store
@@ -87,6 +90,10 @@ class HybridRetriever:
         # ride into the fused result on rank alone (parity with the legacy
         # Chroma-only path's rag_relevance_threshold filter).
         self._chroma_max_distance = chroma_max_distance
+        # Phase 3: optional second-stage cross-encoder reranker. When None,
+        # fusion order is returned as-is (zero added latency).
+        self._reranker = reranker
+        self._rerank_candidates = max(1, rerank_candidates)
 
     async def query(
         self,
@@ -115,8 +122,16 @@ class HybridRetriever:
         )
 
         fused = self._fuse(bm25_results, chroma_results)
-        # Apply min_score and trim to k.
+        # Apply min_score (trim to k happens after optional reranking).
         fused = [r for r in fused if r.rrf_score >= self._min_score]
+
+        # Phase 3: second-stage cross-encoder rerank. Rescore the top
+        # ``rerank_candidates`` fused hits jointly against the query, then
+        # return the best k. Without a reranker this is a plain ``fused[:k]``.
+        if self._reranker is not None and len(fused) > 1:
+            candidates = fused[: self._rerank_candidates]
+            reranked = await self._reranker.rerank(query_text, candidates, top_k=k)
+            return list(reranked)[:k]
         return fused[:k]
 
     # ------------------------------------------------------------------

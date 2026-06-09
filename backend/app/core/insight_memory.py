@@ -35,6 +35,10 @@ VALID_INSIGHT_TYPES = frozenset(
         # (e.g. "function X caches IP lookups in Redis"). Project-scoped and
         # auto-surfaced into the orchestrator prompt by load_relevant_insights.
         "code_finding",
+        # Phase 5: proactive schema-drift alerts emitted by SchemaChangeDetector
+        # when introspection finds added/removed/changed tables vs the last
+        # indexed fingerprint.
+        "schema_change",
     }
 )
 
