@@ -95,22 +95,22 @@ def create_mcp_server() -> FastMCP:
         return await _with_principal(lambda p: tools.execute_raw_query(p, connection_id, query))
 
     # ------------------------------------------------------------------
-    # Resources
+    # Resources — same auth + tenancy gate as tools (F-SEC-1)
     # ------------------------------------------------------------------
 
     @mcp.resource("project://{project_id}/schema")
     async def project_schema(project_id: str) -> str:
         """Aggregated database schema for all connections in a project."""
-        return await res.get_project_schema(project_id)
+        return await _with_principal(lambda p: res.get_project_schema(p, project_id))
 
     @mcp.resource("project://{project_id}/rules")
     async def project_rules(project_id: str) -> str:
         """Custom rules defined for a project."""
-        return await res.get_project_rules(project_id)
+        return await _with_principal(lambda p: res.get_project_rules(p, project_id))
 
     @mcp.resource("project://{project_id}/knowledge")
     async def project_knowledge(project_id: str) -> str:
         """Knowledge base summary for a project."""
-        return await res.get_project_knowledge(project_id)
+        return await _with_principal(lambda p: res.get_project_knowledge(p, project_id))
 
     return mcp

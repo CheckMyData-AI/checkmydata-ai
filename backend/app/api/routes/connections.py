@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
@@ -259,6 +260,14 @@ class ConnectionCreate(BaseModel):
                     raise ValueError("mcp_env keys max 255 chars, values max 4096 chars")
         return v
 
+    @field_validator("ssh_pre_commands")
+    @classmethod
+    def validate_ssh_pre_commands(cls, v: list[str] | None) -> list[str] | None:
+        # F-SEC-5: restrict pre-commands to the env-setup allowlist.
+        if v is not None:
+            validate_pre_commands(v)
+        return v
+
     @field_validator("name", "connection_string", mode="before")
     @classmethod
     def strip_strings(cls, v: str | None) -> str | None:
@@ -296,12 +305,20 @@ class ConnectionUpdate(BaseModel):
     is_read_only: bool | None = None
     ssh_exec_mode: bool | None = None
     ssh_command_template: str | None = Field(None, max_length=2000)
-    ssh_pre_commands: list[str] | None = None
+    ssh_pre_commands: list[str] | None = Field(None, max_length=20)
     mcp_server_command: str | None = Field(None, max_length=500)
     mcp_server_args: list[str] | None = None
     mcp_server_url: str | None = Field(None, max_length=2000)
     mcp_transport_type: str | None = Field(None, max_length=50)
     mcp_env: dict[str, str] | None = None
+
+    @field_validator("ssh_pre_commands")
+    @classmethod
+    def validate_ssh_pre_commands(cls, v: list[str] | None) -> list[str] | None:
+        # F-SEC-5: restrict pre-commands to the env-setup allowlist.
+        if v is not None:
+            validate_pre_commands(v)
+        return v
 
 
 class ConnectionResponse(BaseModel):
@@ -339,6 +356,13 @@ async def create_connection(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
+    # T-BILL-2: plan-based paywall on connection count (402 + upgrade payload).
+    from app.services.entitlement_service import EntitlementService, QuotaExceededError
+
+    try:
+        await EntitlementService().enforce_connection_quota(db, user["user_id"])
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=402, detail=exc.as_payload()) from exc
     conn = await _svc.create(db, **body.model_dump())
     logger.info(
         "Connection created: name=%s type=%s project=%s",

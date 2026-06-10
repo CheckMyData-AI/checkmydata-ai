@@ -98,13 +98,13 @@ class TestEstimateRotationImminent:
     """Verify the CostEstimateResponse includes rotation_imminent."""
 
     def test_rotation_imminent_field_exists(self):
-        from app.api.routes.chat import CostEstimateResponse
+        from app.api.routes.chat_utility import CostEstimateResponse
 
         resp = CostEstimateResponse()
         assert resp.rotation_imminent is False
 
     def test_rotation_imminent_when_high_utilization(self):
-        from app.api.routes.chat import CostEstimateResponse
+        from app.api.routes.chat_utility import CostEstimateResponse
 
         resp = CostEstimateResponse(context_utilization_pct=92.0, rotation_imminent=True)
         assert resp.rotation_imminent is True

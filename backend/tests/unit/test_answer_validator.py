@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -77,10 +77,23 @@ class TestAnswerValidator:
         assert verdict.is_partial is True
 
     @pytest.mark.asyncio
-    async def test_llm_failure_defaults_to_pass(self):
+    async def test_llm_failure_fails_closed_by_default(self):
+        """R5-6: an unverifiable answer must not be asserted as verified."""
         llm = MagicMock()
         llm.complete = AsyncMock(side_effect=LLMError("boom"))
         validator = AnswerValidator(llm)
-        verdict = await validator.validate(question="q", answer="some answer")
+        with patch("app.config.settings.answer_validator_fail_closed", True):
+            verdict = await validator.validate(question="q", answer="some answer")
+        assert verdict.addresses_question is False
+        assert verdict.is_partial is True
+        assert verdict.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_fails_open_when_configured(self):
+        llm = MagicMock()
+        llm.complete = AsyncMock(side_effect=LLMError("boom"))
+        validator = AnswerValidator(llm)
+        with patch("app.config.settings.answer_validator_fail_closed", False):
+            verdict = await validator.validate(question="q", answer="some answer")
         assert verdict.addresses_question is True
         assert verdict.confidence == 0.0

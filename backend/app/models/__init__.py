@@ -4,6 +4,7 @@ from app.models.agent_learning import AgentLearning  # noqa: F401
 from app.models.backup_record import BackupRecord  # noqa: F401
 from app.models.batch_query import BatchQuery  # noqa: F401
 from app.models.benchmark import DataBenchmark  # noqa: F401
+from app.models.billing import Plan, StripeEvent, Subscription  # noqa: F401
 from app.models.chat_session import ChatMessage, ChatSession  # noqa: F401
 from app.models.code_db_sync import CodeDbSync  # noqa: F401
 from app.models.code_graph import CodeCluster, CodeGraphEdge, CodeGraphSymbol  # noqa: F401

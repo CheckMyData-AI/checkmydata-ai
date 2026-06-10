@@ -37,6 +37,8 @@ dependencies = [
     "geoip2fast>=1.0.0",
     "resend>=2.0.0",
     "tiktoken>=0.7.0",
+    "stripe>=11.0.0",
+    "sentry-sdk[fastapi]>=2.0.0",
     # Tree-sitter pinned to 0.23.x; tree-sitter-language-pack 0.7.x bundles
     # grammars compatible with that ABI. Newer versions of language-pack
     # (1.x) ship their own incompatible bindings that break Parser.parse().

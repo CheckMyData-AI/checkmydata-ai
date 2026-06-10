@@ -29,6 +29,7 @@ from app.connectors.exec_templates import (
     format_template,
 )
 from app.connectors.ssh_known_hosts import connect_with_policy
+from app.connectors.ssh_pre_commands import validate_pre_commands
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,15 @@ class SSHExecConnector(BaseConnector):
         return template
 
     def _prepend_pre_commands(self, cmd: str) -> str:
-        """Prepend ssh_pre_commands (e.g. PATH exports) to any command string."""
+        """Prepend ssh_pre_commands (e.g. PATH exports) to any command string.
+
+        F-SEC-5: pre-commands are validated against the allowlist before
+        being joined into the shell line — defense in depth in case a
+        non-conforming value reached the stored config.
+        """
         pre = self._config.ssh_pre_commands if self._config else None
         if pre:
+            validate_pre_commands(pre)
             return " && ".join(pre) + " && " + cmd
         return cmd
 

@@ -73,6 +73,7 @@ Two typefaces loaded via `next/font/google` with `display: "swap"`:
 |--------|-------------|----------------|------|
 | **DM Sans** | `--font-sans` | `font-sans` | All UI text: headings, body, labels, buttons |
 | **JetBrains Mono** | `--font-mono` | `font-mono` | Code blocks, SQL, data tables, monospaced values |
+| **Space Grotesk** | `--font-display` | `font-display` | Marketing headlines only (landing + subpages). Never in product UI. |
 
 #### Type Scale
 
@@ -409,9 +410,13 @@ All custom animations live in `globals.css`. Standard timing: `ease-out`.
 | Onboarding back | 0.2s | `onboarding-slide-left` | `.animate-onboarding-back` | Wizard step backward |
 | Standard spin | built-in | `animate-spin` | Tailwind built-in | Spinner |
 | Checkpoint reveal | 0.24s | `checkpoint-reveal` | `.checkpoint-reveal` | Checkpoint card entrance |
-| Pipeline stage enter | 0.2s | (transition) | `.pipeline-stage-enter.is-visible` | Staggered stage rows |
 | Progress fill | 0.3s | (transition) | `.pipeline-progress-fill` | Pipeline progress bar (scaleX) |
 | Press feedback | 0.14s | (transition) | `.ui-pressable:active` | Button scale(0.97) |
+| Stage glow | 2.4s infinite | `stage-glow` | `.stage-active-glow` | Active pipeline stage breathing highlight |
+| Stage shake | 0.34s | `stage-shake` | `.stage-failed-shake` | Failed pipeline stage error emphasis |
+| Data row cascade | 0.26s | `data-row-enter` | `.data-row-enter` | Result table rows fading in with per-row `animation-delay` (capped at 16 rows) |
+
+> Pipeline stage *entrances* are now driven by Framer Motion springs in `StageRow.tsx` (the old `.pipeline-stage-enter` CSS class was removed).
 
 **Custom easing tokens** (defined in `@theme` and `:root` in `globals.css`):
 
@@ -426,6 +431,20 @@ Utility classes: `.ease-out-quart`, `.ease-in-out-strong`, `.ease-drawer` set `t
 - Looping indicators: 1.5s+ `ease-in-out infinite`.
 - Never add new `@keyframes` without documenting them here.
 - `transition-colors` on all interactive elements for hover/focus state changes. Use `transition-all duration-150` for buttons with multiple changing properties.
+
+#### Motion libraries & shared tokens
+
+Three motion layers coexist; pick the right one:
+
+| Layer | Where | Library | Entry points |
+|-------|-------|---------|--------------|
+| Scroll storytelling | Marketing pages only | GSAP 3 + ScrollTrigger + Lenis | `lib/motion/gsap.ts`, `components/marketing/SmoothScroll.tsx`, `DataStory.tsx`, `WordLight.tsx`, `CountUp.tsx` |
+| State choreography | `/app` product UI | Framer Motion (`motion/react`) | `StageRow.tsx`, `ChatPanel.tsx`, `FaqAccordion.tsx` |
+| Micro-motion | Everywhere | Pure CSS keyframes/transitions | `globals.css` (table above) |
+
+Shared numeric tokens live in `frontend/src/lib/motion/tokens.ts` — `DUR`, `EASE` (cubic-bezier), `GSAP_EASE`, `SPRING` (Framer Motion presets: `chip`, `message`, `panel`), `STAGGER`. Always import from there instead of inventing new durations/eases inline.
+
+Preference hooks live in `frontend/src/lib/motion/useMotionPreferences.ts` — `useReducedMotion`, `useCoarsePointer`, `useCinematicCapable` (desktop + fine pointer + motion OK). The `/app` page wraps everything in `<MotionConfig reducedMotion="user">`, so Framer Motion animations auto-respect the OS setting. Lenis smooth scrolling (`SmoothScroll`) disables itself on reduced-motion and coarse pointers.
 
 #### Cinematic landing system (`cmd-*`)
 
@@ -443,9 +462,12 @@ A separate, opt-in 2.5D motion layer used **only** on the marketing landing (`(m
 | `.cmd-ring` | `cmd-ring` | Expanding core rings. `--cmd-ring-dur` / `--cmd-ring-delay` |
 | `.cmd-bar` | `cmd-bar-grow` | Growing answer-chart bars. `--cmd-bar-delay` |
 | `.cmd-orbit` | `cmd-orbit` | Slow dashed orbit rotation. `--cmd-orbit-dur` |
-| `.cmd-shimmer-text` | `cmd-shimmer` | Gradient word-lighting sweep on accent headings |
 | `.cmd-scan` | `cmd-scan` | Vertical scan sweep over the showcase frame |
 | `.cmd-parallax` / `.cmd-stage` | (JS / perspective) | Parallax transform target / perspective container |
+| `.cmd-story` / `.cmd-story-fallback` | (media query) | Pinned hero scrollytelling vs static fallback. The pinned story renders only at `min-width: 1024px` + `prefers-reduced-motion: no-preference` + `pointer: fine` |
+| `.cmd-caret` | `cmd-caret-blink` | Blinking terminal caret in the hero story |
+
+> `.cmd-shimmer-text` (gradient text sweep) was removed — accent headings use plain `text-accent` + `font-display`. Scroll-driven word lighting is done by the `WordLight` component (GSAP opacity scrub) instead.
 
 **Cinematic rules:**
 - This layer is for the landing only — do not use `cmd-*` classes in app UI.
@@ -496,13 +518,18 @@ Global rule in `globals.css`:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }
 ```
 
-All animations and transitions are neutralized. No additional opt-out logic needed in components.
+All CSS animations, transitions, and stagger delays are neutralized. JS-driven motion opts out separately:
+- Framer Motion: `<MotionConfig reducedMotion="user">` at the `/app` root.
+- GSAP/Lenis (marketing): components check `useReducedMotion` / `matchMedia` before animating; `DataStory` swaps to a static fallback via the `.cmd-story` media query.
+- Chart.js: `ChartRenderer` sets `animation: false` when reduced motion is detected.
 
 ### 4.4 ARIA Patterns
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { MotionConfig } from "motion/react";
 import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -364,16 +365,20 @@ function AppPageContent() {
 
 export default function Home() {
   return (
-    <AuthGate>
-      <Suspense
-        fallback={
-          <div className="min-h-screen bg-surface-0 flex items-center justify-center">
-            <p className="text-sm text-text-muted animate-pulse">Loading...</p>
-          </div>
-        }
-      >
-        <AppPageContent />
-      </Suspense>
-    </AuthGate>
+    // reducedMotion="user" makes every Framer Motion animation in the app
+    // respect the OS prefers-reduced-motion setting automatically.
+    <MotionConfig reducedMotion="user">
+      <AuthGate>
+        <Suspense
+          fallback={
+            <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+              <p className="text-sm text-text-muted animate-pulse">Loading...</p>
+            </div>
+          }
+        >
+          <AppPageContent />
+        </Suspense>
+      </AuthGate>
+    </MotionConfig>
   );
 }

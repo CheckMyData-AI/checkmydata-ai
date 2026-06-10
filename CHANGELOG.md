@@ -8,6 +8,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Consolidated technical audit remediation (June 2026).** Full P0–P2 pass over
+  API, agent/orchestrator, MCP, connectors/SSH, and billing:
+  - *MCP resources auth (P0):* `project://{id}/schema|rules|knowledge` resources
+    now resolve a principal and enforce project membership via
+    `_require_project_access` — same fail-closed ownership model as MCP tools.
+  - *SSH hardening (P0):* default host-key policy is now `tofu` (unknown policy
+    values fail closed to `strict`); SSH pre-commands are validated against a
+    strict allowlist (`app/connectors/ssh_pre_commands.py`) with metacharacter
+    rejection, count/length limits, and validation at both the API layer and
+    `ssh_exec`.
+  - *Billing end-to-end (P0):* new `plans`/`subscriptions`/`stripe_events`
+    tables (+ seeded Free/Pro/Team plans), Stripe Checkout/Customer Portal/
+    webhook routes under `/api/billing/*`, `EntitlementService` (plan-derived
+    token limits, connection/project quotas with HTTP 402), `BillingService`
+    with idempotent webhook event handling, `/pricing` marketing page,
+    `PricingTable` + `BillingPanel` UI, and 402-aware frontend API client.
+    Token budget gate (`check_budget`) is now wired into all chat entry points
+    (HTTP/SSE/WS) with plan-based limits.
+  - *Redis-backed limits (P1):* central `app/core/redis_client.py`; slowapi
+    rate limiting, `AgentLimiter` (Lua-scripted concurrency slots), and
+    `WsTicketStore` (SET EX / GETDEL) all use Redis when configured, with
+    in-memory fallbacks for dev.
+  - *Sentry (P1):* backend `sentry-sdk[fastapi]` and frontend `@sentry/nextjs`
+    initialization with shared PII/secret scrubbing (`app/core/sentry.py`,
+    `frontend/src/lib/sentry-scrub.ts`) covering Bearer tokens, API keys,
+    cookies, DSNs, and emails.
+  - *ClickHouse streaming + health loop (P1):* `ClickHouseConnector` now streams
+    row blocks and stops at the row cap instead of materializing full results;
+    the background health loop iterates all registered connector pools via the
+    new `app/core/connector_pools.py` registry.
+  - *Orchestrator tails (P1):* stuck pipelines emit a `stage_failed` tracker
+    event; `WorkflowTracker.end` reports the true terminal status;
+    `AnswerValidator` fails closed on LLM errors (configurable via
+    `answer_validator_fail_closed`).
+
+### Changed
+
+- **Frontend auth is cookie-only:** removed the legacy `localStorage`
+  `auth_token` fallback from `_client.ts` / `sse.ts`; all requests rely on
+  httpOnly session cookies + CSRF.
+- **Next.js security headers:** `next.config.ts` now emits CSP, HSTS,
+  `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, and
+  `Permissions-Policy` for the Next shell.
+- **Feature flags default-on:** `orchestrator_auto_investigate_enabled`,
+  `hybrid_retrieval_enabled`, and `schema_retrieval_enabled` now default to
+  `True`; `code_graph_enabled` and `lineage_enabled` remain opt-in.
+- **`chat.py` decomposed** (2 855 → ~1 700 lines): session CRUD moved to
+  `chat_sessions.py`, feedback/learning-credit endpoints to `chat_feedback.py`,
+  and estimate/search/suggestions/explain-sql/summarize to `chat_utility.py`.
+  Route URLs are unchanged.
+
+### Removed
+
+- Deprecated legacy modules `app/core/orchestrator.py` and
+  `app/core/tool_executor.py` (superseded by `app/agents/*`).
+
 - **Knowledge Architecture roadmap — Phase 0 & Phase 1.** Foundation work toward
   a unified Knowledge Fabric (see `docs/KNOWLEDGE_CATALOG.md`).
   - *Phase 0 (Stabilize & Unify):* the plan-summary routing label now mirrors the

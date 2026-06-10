@@ -19,7 +19,11 @@ from app.api.routes import (
     auth,
     backup,
     batch,
+    billing,
     chat,
+    chat_feedback,
+    chat_sessions,
+    chat_utility,
     connection_learnings,
     connections,
     dashboards,
@@ -63,6 +67,11 @@ configure_logging(
 
 logger = logging.getLogger(__name__)
 
+# Error tracking (T-OBS-1) — no-op unless SENTRY_DSN is configured.
+from app.core.sentry import init_sentry  # noqa: E402
+
+init_sentry()
+
 
 _backup_task: asyncio.Task[None] | None = None
 _scheduler_task: asyncio.Task[None] | None = None
@@ -94,12 +103,15 @@ async def lifespan(app: FastAPI):
     await _periodic_insight_maintenance()
     await _cleanup_pipeline_runs()
 
+    from app.core import redis_client
     from app.core.cache import shared_cache
     from app.core.task_queue import init_task_queue
 
     redis_url = settings.redis_url or None
     await init_task_queue(redis_url)
     await shared_cache.connect(redis_url)
+    # Shared client for AgentLimiter / WsTicketStore (T-SCALE-1 / T-SEC-7).
+    await redis_client.connect(redis_url)
 
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
@@ -142,11 +154,13 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
+    from app.core import redis_client as _rc
     from app.core.cache import shared_cache as _sc
     from app.core.task_queue import close_task_queue
 
     await close_task_queue()
     await _sc.close()
+    await _rc.close()
 
     from app.api.routes.connections import cancel_background_tasks as cancel_conn_tasks
     from app.api.routes.repos import cancel_background_tasks as cancel_repo_tasks
@@ -343,6 +357,9 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(chat_sessions.router, prefix="/api/chat", tags=["chat"])
+app.include_router(chat_feedback.router, prefix="/api/chat", tags=["chat"])
+app.include_router(chat_utility.router, prefix="/api/chat", tags=["chat"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(health_monitor.router, prefix="/api/connections", tags=["health-monitor"])
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
@@ -368,6 +385,7 @@ app.include_router(
     tags=["data-investigations"],
 )
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+app.include_router(billing.router, prefix="/api", tags=["billing"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
 app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
@@ -928,17 +946,21 @@ async def trigger_initial_backup() -> None:
 
 
 async def _health_check_loop() -> None:
-    """Periodically check health of recently-used database connections."""
+    """Periodically check health of recently-used database connections.
+
+    Probes every pool registered in :mod:`app.core.connector_pools` (the
+    SQL agent registers its pool at construction; any future pool owner
+    just calls ``register_pool``). Covers all db types uniformly —
+    PG / MySQL / Mongo / ClickHouse / MCP — via ``test_connection()``.
+    """
+    from app.core.connector_pools import all_connectors
     from app.core.health_monitor import health_monitor
     from app.core.workflow_tracker import tracker
 
     await asyncio.sleep(30)
     while True:
         try:
-            agent = getattr(chat, "_agent", None)
-            orch = getattr(agent, "_orchestrator", None) if agent else None
-            sql = getattr(orch, "_sql", None) if orch else None
-            connectors = getattr(sql, "_connectors", {}) if sql else {}
+            connectors = all_connectors()
 
             if connectors:
                 wf_id = await tracker.begin("health_check")

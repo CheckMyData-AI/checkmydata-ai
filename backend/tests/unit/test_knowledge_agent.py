@@ -257,7 +257,11 @@ class TestKnowledgeAgent:
         mock_llm,
         mock_vector_store,
         context,
+        monkeypatch,
     ):
+        # The "No sufficiently relevant" wording is specific to the dense-only
+        # path; force it since hybrid retrieval is now on by default.
+        monkeypatch.setattr("app.agents.knowledge_agent.settings.hybrid_retrieval_enabled", False)
         mock_vector_store.query = MagicMock(
             return_value=[
                 {

@@ -1,4 +1,4 @@
-import { API_BASE, getAuthHeaders, getCsrfHeaders, handleSessionExpired, request } from "./_client";
+import { API_BASE, getCsrfHeaders, handleSessionExpired, request } from "./_client";
 import type {
   AppNotification,
   BatchQueryDTO,
@@ -193,7 +193,6 @@ export const viz = {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...getAuthHeaders(),
         ...getCsrfHeaders("POST"),
       },
       body: JSON.stringify({ columns, rows, format }),
@@ -294,7 +293,6 @@ export const batch = {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...getAuthHeaders(),
         ...getCsrfHeaders("POST"),
       },
     });

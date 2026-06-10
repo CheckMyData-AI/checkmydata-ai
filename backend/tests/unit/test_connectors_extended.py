@@ -675,13 +675,21 @@ class TestClickHouseConnector:
         result = await connector.execute_query("SELECT 1")
         assert result.error == "Not connected"
 
-    async def test_execute_query_returns_rows(self, connector):
-        mock_result = MagicMock()
-        mock_result.column_names = ["id", "name"]
-        mock_result.result_rows = [(1, "alice"), (2, "bob")]
+    @staticmethod
+    def _stream(blocks, columns):
+        """Mimic clickhouse-connect's row-block stream context manager."""
+        stream = MagicMock()
+        stream.source.column_names = columns
+        stream.__enter__ = MagicMock(return_value=stream)
+        stream.__exit__ = MagicMock(return_value=False)
+        stream.__iter__ = MagicMock(side_effect=lambda: iter(blocks))
+        return stream
 
+    async def test_execute_query_returns_rows(self, connector):
         mock_client = MagicMock()
-        mock_client.query.return_value = mock_result
+        mock_client.query_row_block_stream.return_value = self._stream(
+            [[(1, "alice"), (2, "bob")]], ["id", "name"]
+        )
         connector._client = mock_client
 
         result = await connector.execute_query("SELECT * FROM users")
@@ -690,12 +698,8 @@ class TestClickHouseConnector:
         assert result.row_count == 2
 
     async def test_execute_query_empty(self, connector):
-        mock_result = MagicMock()
-        mock_result.column_names = []
-        mock_result.result_rows = []
-
         mock_client = MagicMock()
-        mock_client.query.return_value = mock_result
+        mock_client.query_row_block_stream.return_value = self._stream([], [])
         connector._client = mock_client
 
         result = await connector.execute_query("SELECT * FROM empty")
@@ -703,19 +707,15 @@ class TestClickHouseConnector:
 
     async def test_execute_query_exception(self, connector):
         mock_client = MagicMock()
-        mock_client.query.side_effect = Exception("network error")
+        mock_client.query_row_block_stream.side_effect = Exception("network error")
         connector._client = mock_client
 
         result = await connector.execute_query("BAD")
         assert "network error" in result.error
 
     async def test_execute_query_with_params(self, connector):
-        mock_result = MagicMock()
-        mock_result.column_names = ["cnt"]
-        mock_result.result_rows = [(5,)]
-
         mock_client = MagicMock()
-        mock_client.query.return_value = mock_result
+        mock_client.query_row_block_stream.return_value = self._stream([[(5,)]], ["cnt"])
         connector._client = mock_client
 
         result = await connector.execute_query(
@@ -723,7 +723,7 @@ class TestClickHouseConnector:
             params={"val": 10},
         )
         assert result.row_count == 1
-        mock_client.query.assert_called_once_with(
+        mock_client.query_row_block_stream.assert_called_once_with(
             "SELECT count() FROM t WHERE x = {val:Int32}",
             parameters={"val": 10},
         )

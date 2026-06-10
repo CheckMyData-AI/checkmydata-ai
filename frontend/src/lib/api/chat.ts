@@ -1,4 +1,4 @@
-import { API_BASE, getAuthHeaders, getCsrfHeaders, handleSessionExpired, request } from "./_client";
+import { API_BASE, getCsrfHeaders, handleSessionExpired, request } from "./_client";
 import type {
   ChatMessageDTO,
   ChatResponse,
@@ -137,7 +137,6 @@ export const chat = {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...getAuthHeaders(),
         ...getCsrfHeaders("POST"),
       },
       body: JSON.stringify(data),

@@ -20,13 +20,16 @@ export function ConnectionsPanel() {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-xl mx-auto p-6 space-y-4">
-        <div>
+        <div className="animate-slide-in-left" style={{ animationFillMode: "both" }}>
           <h2 className="text-sm font-semibold text-text-primary">Connections</h2>
           <p className="text-xs text-text-tertiary mt-0.5">
             Database connections for {activeProject.name}
           </p>
         </div>
-        <section className="rounded-lg border border-border-subtle bg-surface-1/50 p-3">
+        <section
+          className="animate-slide-in-left rounded-lg border border-border-subtle bg-surface-1/50 p-3"
+          style={{ animationDelay: "60ms", animationFillMode: "both" }}
+        >
           <div className="flex items-center gap-2 mb-2 px-1">
             <Icon name="database" size={14} className="text-text-tertiary" />
             <span className="text-xs text-text-secondary">

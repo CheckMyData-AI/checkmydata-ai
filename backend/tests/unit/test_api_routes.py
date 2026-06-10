@@ -499,8 +499,8 @@ class TestStartupStaleReset:
 class TestChatSessionRoutes:
     def test_list_sessions(self, client):
         with (
-            patch("app.api.routes.chat._chat_svc") as mock_svc,
-            patch("app.api.routes.chat._membership_svc") as mock_msvc,
+            patch("app.api.routes.chat_sessions._chat_svc") as mock_svc,
+            patch("app.api.routes.chat_sessions._membership_svc") as mock_msvc,
         ):
             mock_msvc.require_role = AsyncMock(return_value="viewer")
             mock_svc.list_sessions = AsyncMock(return_value=[])
@@ -510,7 +510,7 @@ class TestChatSessionRoutes:
 
     def test_delete_session_not_found(self, client):
         with (
-            patch("app.api.routes.chat._chat_svc") as mock_svc,
+            patch("app.api.routes.chat_sessions._chat_svc") as mock_svc,
         ):
             mock_svc.get_session = AsyncMock(return_value=None)
             mock_svc.delete_session = AsyncMock(return_value=False)

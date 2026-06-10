@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -27,9 +28,10 @@ const LAST_UPDATED = "March 19, 2026";
 export default function TermsPage() {
   return (
     <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24 space-y-10">
+      <CinematicEngine />
       {/* Page title */}
-      <header className="space-y-3 pb-8 border-b border-border-subtle">
-        <h1 className="text-2xl font-bold tracking-tight">
+      <header className="cmd-reveal space-y-3 pb-8 border-b border-border-subtle">
+        <h1 className="font-display text-2xl font-bold tracking-tight">
           Terms of Service
         </h1>
         <p className="text-sm text-text-tertiary">
@@ -454,7 +456,7 @@ function Section({
       id={id}
       className="space-y-4 scroll-mt-8 [&_p]:text-sm [&_p]:text-text-secondary [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-2 [&_ul]:text-sm [&_ul]:text-text-secondary [&_li]:leading-relaxed"
     >
-      <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+      <h2 className="font-display text-lg font-semibold text-text-primary">{title}</h2>
       {children}
     </section>
   );

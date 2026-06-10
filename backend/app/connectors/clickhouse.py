@@ -79,23 +79,42 @@ class ClickHouseConnector(BaseConnector):
         if not self._client:
             return QueryResult(error="Not connected")
 
+        client = self._client
         start = time.monotonic()
+
+        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
+
+        def _run_streaming() -> tuple[list[str], list[list[Any]], bool]:
+            """Stream row blocks and stop at the cap (R2-1 class fix).
+
+            The legacy path (``client.query``) materialised the *entire*
+            result set in memory before the row cap was applied — the same
+            OOM bug PG/MySQL had. ``query_row_block_stream`` pulls blocks
+            incrementally; exiting the ``with`` early closes the HTTP
+            response so the server stops sending.
+            """
+            with client.query_row_block_stream(query, parameters=params) as stream:
+                columns = list(stream.source.column_names or [])
+                rows: list[list[Any]] = []
+                truncated = False
+                for block in stream:
+                    for row in block:
+                        if len(rows) >= MAX_RESULT_ROWS:
+                            truncated = True
+                            break
+                        rows.append(list(row))
+                    if truncated:
+                        break
+                return columns, rows, truncated
+
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(self._client.query, query, parameters=params),
+            columns, rows, truncated = await asyncio.wait_for(
+                asyncio.to_thread(_run_streaming),
                 timeout=self._QUERY_TIMEOUT_S,
             )
             elapsed = (time.monotonic() - start) * 1000
 
-            columns = list(result.column_names) if result.column_names else []
-            all_rows = [list(row) for row in result.result_rows] if result.result_rows else []
-            from app.connectors.base import MAX_RESULT_ROWS
-
-            truncated = len(all_rows) > MAX_RESULT_ROWS
-            rows = all_rows[:MAX_RESULT_ROWS] if truncated else all_rows
             # Byte-level backstop alongside the row cap (wide rows / BLOBs).
-            from app.connectors.base import cap_rows_by_bytes
-
             rows, byte_truncated = cap_rows_by_bytes(rows)
             truncated = truncated or byte_truncated
             return QueryResult(

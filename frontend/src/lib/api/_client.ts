@@ -1,5 +1,4 @@
 import { toast } from "@/stores/toast-store";
-import { useAuthStore } from "@/stores/auth-store";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -9,19 +8,13 @@ let sessionExpiredHandled = false;
 export function handleSessionExpired(): void {
   if (sessionExpiredHandled || typeof window === "undefined") return;
   sessionExpiredHandled = true;
-  useAuthStore.getState().logout();
+  // Lazy import: auth-store imports the api barrel, so a static import here
+  // would create a module cycle that breaks Next.js prerendering.
+  void import("@/stores/auth-store").then(({ useAuthStore }) => {
+    useAuthStore.getState().logout();
+  });
   toast("Session expired, please log in again", "error");
   window.location.href = "/login";
-}
-
-export function getAuthHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const token = localStorage.getItem("auth_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch {
-    return {};
-  }
 }
 
 const CSRF_COOKIE = "cmd_csrf";
@@ -91,7 +84,8 @@ export async function request<T>(
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...getAuthHeaders(),
+          // Auth rides exclusively on the httpOnly session cookie (T-SEC-3);
+          // the legacy localStorage bearer fallback has been removed.
           ...getCsrfHeaders(restOptions.method),
           ...(optHeaders instanceof Headers
             ? Object.fromEntries(optHeaders.entries())
@@ -129,6 +123,15 @@ export async function request<T>(
       }
       if (res.status === 429) {
         throw new Error("Too many requests. Please wait a moment and try again.");
+      }
+      if (res.status === 402) {
+        // Plan paywall (T-BILL-2): backend returns a structured payload.
+        const body = await res.json().catch(() => ({}));
+        const detail = body.detail ?? {};
+        throw new Error(
+          (typeof detail === "object" && detail.message) ||
+            "Plan limit reached. Upgrade at /pricing to continue.",
+        );
       }
       const body = await res.json().catch(() => ({}));
       const detail = Array.isArray(body.detail)

@@ -100,7 +100,9 @@ async def test_tofu_falls_back_when_path_unwritable():
 
 
 @pytest.mark.asyncio
-async def test_unknown_policy_defaults_to_disabled():
+async def test_unknown_policy_fails_closed_to_strict(tmp_path):
+    """F-SEC-4: an unrecognised policy must never disable verification."""
+    path = str(tmp_path / "known_hosts")
     captured: dict = {}
 
     async def fake_connect(**kw):
@@ -109,11 +111,22 @@ async def test_unknown_policy_defaults_to_disabled():
 
     with (
         patch.object(ssh_known_hosts.settings, "ssh_host_key_policy", "bogus"),
+        patch.object(ssh_known_hosts.settings, "ssh_known_hosts_path", path),
         patch.object(ssh_known_hosts.asyncssh, "connect", side_effect=fake_connect),
     ):
         await ssh_known_hosts.connect_with_policy(_kwargs())
 
-    assert captured["known_hosts"] is None
+    assert captured["known_hosts"] == path
+
+
+@pytest.mark.asyncio
+async def test_default_policy_is_tofu():
+    """F-SEC-4: the shipped default must verify host keys (tofu), not disable."""
+    from app.config import Settings
+
+    assert Settings.model_fields["ssh_host_key_policy"].default == "tofu"
+    with patch.object(ssh_known_hosts.settings, "ssh_host_key_policy", ""):
+        assert ssh_known_hosts._policy() == "tofu"
 
 
 @pytest.mark.asyncio

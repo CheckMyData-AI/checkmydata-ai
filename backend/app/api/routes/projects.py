@@ -116,6 +116,14 @@ async def create_project(
             detail="You are not eligible to create projects. Please request access.",
         )
 
+    # T-BILL-2: plan-based paywall on project count (402 + upgrade payload).
+    from app.services.entitlement_service import EntitlementService, QuotaExceededError
+
+    try:
+        await EntitlementService().enforce_project_quota(db, user["user_id"])
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=402, detail=exc.as_payload()) from exc
+
     data = body.model_dump()
     data["owner_id"] = user["user_id"]
 

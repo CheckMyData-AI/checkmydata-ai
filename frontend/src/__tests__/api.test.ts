@@ -192,12 +192,15 @@ describe("api.batch", () => {
 });
 
 describe("api auth headers", () => {
-  it("sends Authorization header when token is stored", async () => {
+  it("never sends a bearer header even when a legacy token is stored", async () => {
+    // Legacy localStorage fallback removed: auth rides on the httpOnly
+    // session cookie only.
     localStorage.setItem("auth_token", "test-jwt");
     mockOk([]);
     await api.projects.list();
     const [, opts] = fetchMock.mock.calls[0];
-    expect(opts.headers.Authorization).toBe("Bearer test-jwt");
+    expect(opts.headers.Authorization).toBeUndefined();
+    expect(opts.credentials).toBe("include");
   });
 
   it("omits Authorization header when no token", async () => {

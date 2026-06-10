@@ -1754,7 +1754,19 @@ class OrchestratorAgent(BaseAgent):
                 replan_history=replan_history,
             )
 
-        await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
+        # R5-6: report the real terminal status. Previously this always said
+        # ``completed`` even when the executor came back ``stage_failed``
+        # (after exhausting replans), so SSE consumers showed a green check
+        # on a failed pipeline.
+        if exec_result.status == "stage_failed":
+            failed_id = exec_result.failed_stage.stage_id if exec_result.failed_stage else "?"
+            await self._tracker.end(
+                wf_id, "orchestrator", "failed", f"complex_pipeline stage={failed_id}"
+            )
+        elif exec_result.status == "checkpoint":
+            await self._tracker.end(wf_id, "orchestrator", "checkpoint", "complex_pipeline")
+        else:
+            await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
         try:
             from app.core.metrics import RequestMetrics, get_metrics_collector
 

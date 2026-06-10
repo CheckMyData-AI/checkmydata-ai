@@ -82,7 +82,11 @@ export function DataTable({ data }: DataTableProps) {
                 </td>
               </tr>
             ) : rows.map((row, i) => (
-              <tr key={`${i}-${columns.length > 0 ? String(row[columns[0]] ?? "") : i}`} className="border-b border-border-subtle/50 hover:bg-surface-2/30">
+              <tr
+                key={`${i}-${columns.length > 0 ? String(row[columns[0]] ?? "") : i}`}
+                className="data-row-enter border-b border-border-subtle/50 hover:bg-surface-2/30"
+                style={{ animationDelay: `${Math.min(i, 16) * 28}ms` }}
+              >
                 {columns.map((col) => (
                   <td key={col} className="px-4 py-2 text-text-primary whitespace-nowrap">
                     {row[col] == null ? (

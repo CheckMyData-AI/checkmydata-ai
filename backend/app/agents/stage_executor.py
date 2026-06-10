@@ -156,6 +156,17 @@ class StageExecutor:
                 # orchestrator can replan around the unsatisfiable stage instead
                 # of silently presenting partial data as authoritative.
                 if remaining:
+                    # Tell SSE consumers the pipeline is stuck (previously the
+                    # status flipped to stage_failed with no tracker event, so
+                    # the UI kept showing the last stage as in-progress).
+                    await self._tracker.emit(
+                        wf_id,
+                        "stage_failed",
+                        "failed",
+                        f"Pipeline stuck: {len(remaining)} stage(s) have unmet dependencies",
+                        stage_id=remaining[0].stage_id,
+                        remaining_stage_ids=[s.stage_id for s in remaining],
+                    )
                     return _StageExecutorResult(
                         status="stage_failed",
                         stage_ctx=stage_ctx,

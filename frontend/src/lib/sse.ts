@@ -15,15 +15,6 @@ export interface WorkflowEvent {
 
 export type WorkflowEventHandler = (event: WorkflowEvent) => void;
 
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem("auth_token");
-  } catch {
-    return null;
-  }
-}
-
 function parseSSEChunk(buffer: string, onEvent: WorkflowEventHandler): string {
   const parts = buffer.split("\n\n");
   const remaining = parts.pop() || "";
@@ -56,13 +47,11 @@ function createSSEStream(
   onEnd?: () => void,
 ): () => void {
   const ctrl = new AbortController();
-  const token = getToken();
 
   fetch(url, {
-    // Browser auth rides on the httpOnly session cookie (T-SEC-3); the bearer
-    // header is only set when an API client persisted a token.
+    // Auth rides exclusively on the httpOnly session cookie (T-SEC-3);
+    // the legacy localStorage bearer fallback has been removed.
     credentials: "include",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     signal: ctrl.signal,
   })
     .then(async (res) => {

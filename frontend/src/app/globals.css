@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 html, body {
-  overflow-x: hidden;
+  /* `clip` (not `hidden`): hidden turns body into a scroll container,
+     which silently breaks position:sticky (pinned hero story). */
+  overflow-x: clip;
   background-color: #09090b;
 }
 
@@ -19,14 +21,17 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }
 
 @theme {
   --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono), ui-monospace, monospace;
+  --font-display: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 
   --color-surface-0: #09090b;
   --color-surface-1: #18181b;
@@ -92,6 +97,41 @@ select:focus-visible {
 .pipeline-stage-enter.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Active pipeline stage — soft breathing glow */
+@keyframes stage-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent) 8%, transparent);
+  }
+}
+.stage-active-glow {
+  animation: stage-glow 2.4s ease-in-out infinite;
+}
+
+/* Failed pipeline stage — one decisive shake on entry */
+@keyframes stage-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+.stage-failed-shake {
+  animation: stage-shake 340ms var(--ease-out-quart) 1;
+}
+
+/* Result table rows cascade in (delay capped in markup; reduced-motion
+   neutralized by the global rule) */
+@keyframes data-row-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.data-row-enter {
+  animation: data-row-enter 260ms var(--ease-out-quart) both;
 }
 
 .pipeline-progress-fill {
@@ -352,32 +392,38 @@ select:focus-visible {
   animation: cmd-orbit var(--cmd-orbit-dur, 48s) linear infinite;
 }
 
-/* Headline shimmer sweep (word-lighting accent) */
-@keyframes cmd-shimmer {
-  to { background-position: 200% center; }
-}
-.cmd-shimmer-text {
-  background: linear-gradient(
-    100deg,
-    var(--color-accent) 0%,
-    var(--color-accent-hover) 38%,
-    var(--color-text-primary) 50%,
-    var(--color-accent-hover) 62%,
-    var(--color-accent) 100%
-  );
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-          background-clip: text;
-  -webkit-text-fill-color: transparent;
-          color: transparent;
-  animation: cmd-shimmer 7s linear infinite;
-}
-
 /* Parallax targets — transform driven by the cinematic engine */
 .cmd-parallax { will-change: transform; }
 
 /* Perspective stage for the showcase rise */
 .cmd-stage { perspective: 1400px; }
+
+/* ── Pinned data-story scrollytelling ─────────────────────────
+   The pinned scene only exists on large, fine-pointer,
+   motion-allowed viewports; everyone else gets the static
+   fallback. Gated in CSS so SSR output is correct with no
+   hydration flash. */
+.cmd-story { display: none; }
+.cmd-story-fallback { display: block; }
+
+@media (min-width: 1024px) and (prefers-reduced-motion: no-preference) and (pointer: fine) {
+  .cmd-story { display: block; }
+  .cmd-story-fallback { display: none; }
+}
+
+/* Blinking terminal caret for typed-question beats */
+@keyframes cmd-caret-blink {
+  0%, 45% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.cmd-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--color-accent);
+  animation: cmd-caret-blink 1.1s steps(1) infinite;
+}
 
 .chat-markdown {
   overflow-wrap: anywhere;

@@ -1,3 +1,4 @@
+import type React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CinematicEngine } from "@/components/marketing/CinematicEngine";
@@ -95,7 +96,7 @@ export default function SupportPage() {
         }}
       />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
-        <h1 className="cmd-reveal text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+        <h1 className="cmd-reveal font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           Support
         </h1>
         <p className="cmd-reveal text-lg text-text-secondary leading-relaxed">
@@ -105,11 +106,11 @@ export default function SupportPage() {
 
       {/* Contact channels */}
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Get in Touch
         </h2>
         <div className="grid sm:grid-cols-2 gap-4">
-          <div className="bg-surface-1 border border-border-subtle rounded-xl p-5 space-y-2">
+          <div className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-5 space-y-2">
             <h3 className="text-sm font-semibold text-text-primary">
               Email Support
             </h3>
@@ -127,7 +128,8 @@ export default function SupportPage() {
             href="https://github.com/CheckMyData-AI/checkmydata-ai/issues"
             target="_blank"
             rel="noopener noreferrer"
-            className="bg-surface-1 border border-border-subtle rounded-xl p-5 space-y-2 hover:border-accent/30 transition-colors block"
+            className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-5 space-y-2 hover:border-accent/30 transition-colors block"
+            style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
           >
             <h3 className="text-sm font-semibold text-text-primary">
               GitHub Issues
@@ -144,7 +146,7 @@ export default function SupportPage() {
 
       {/* Documentation links */}
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Documentation
         </h2>
         <div className="grid sm:grid-cols-2 gap-4">
@@ -169,13 +171,14 @@ export default function SupportPage() {
               desc: "Common questions and troubleshooting tips.",
               href: "https://github.com/CheckMyData-AI/checkmydata-ai/blob/main/FAQ.md",
             },
-          ].map((doc) => (
+          ].map((doc, i) => (
             <a
               key={doc.title}
               href={doc.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
+              className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
+              style={{ ["--cmd-i"]: i } as React.CSSProperties}
             >
               <h3 className="text-sm font-semibold text-text-primary mb-1">
                 {doc.title}
@@ -188,10 +191,10 @@ export default function SupportPage() {
 
       {/* FAQ */}
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Frequently Asked Questions
         </h2>
-        <div className="space-y-4">
+        <div className="cmd-reveal space-y-4">
           {FAQS.map((faq) => (
             <details
               key={faq.q}

@@ -398,26 +398,60 @@ class TestMCPResources:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("app.mcp_server.resources._rule_svc") as mock_svc:
+            with (
+                patch("app.mcp_server.resources._rule_svc") as mock_svc,
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 mock_svc.list_all = AsyncMock(return_value=[mock_rule])
                 from app.mcp_server.resources import get_project_rules
 
-                result = await get_project_rules("p1")
+                result = await get_project_rules(_PRINCIPAL, "p1")
 
         data = json.loads(result)
         assert len(data["rules"]) == 1
         assert data["rules"][0]["name"] == "Revenue rule"
 
     @pytest.mark.asyncio
+    async def test_get_project_rules_cross_tenant_denied(self):
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.resources._rule_svc") as mock_svc,
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                mock_svc.list_all = AsyncMock(return_value=[MagicMock()])
+                from app.mcp_server.resources import get_project_rules
+
+                result = await get_project_rules(_PRINCIPAL, "someone-elses-project")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
+        mock_svc.list_all.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_project_knowledge_empty(self):
         mock_collection = MagicMock()
         mock_collection.count.return_value = 0
 
-        with patch("app.knowledge.vector_store.VectorStore") as mock_vs:
-            mock_vs.return_value.get_or_create_collection.return_value = mock_collection
-            from app.mcp_server.resources import get_project_knowledge
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_project_knowledge("p1")
+            with (
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+                patch("app.knowledge.vector_store.VectorStore") as mock_vs,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
+                mock_vs.return_value.get_or_create_collection.return_value = mock_collection
+                from app.mcp_server.resources import get_project_knowledge
+
+                result = await get_project_knowledge(_PRINCIPAL, "p1")
 
         data = json.loads(result)
         assert data["status"] == "empty"
@@ -428,15 +462,40 @@ class TestMCPResources:
         mock_collection = MagicMock()
         mock_collection.count.return_value = 150
 
-        with patch("app.knowledge.vector_store.VectorStore") as mock_vs:
-            mock_vs.return_value.get_or_create_collection.return_value = mock_collection
-            from app.mcp_server.resources import get_project_knowledge
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_project_knowledge("p1")
+            with (
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+                patch("app.knowledge.vector_store.VectorStore") as mock_vs,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
+                mock_vs.return_value.get_or_create_collection.return_value = mock_collection
+                from app.mcp_server.resources import get_project_knowledge
+
+                result = await get_project_knowledge(_PRINCIPAL, "p1")
 
         data = json.loads(result)
         assert data["status"] == "indexed"
         assert data["document_count"] == 150
+
+    @pytest.mark.asyncio
+    async def test_get_project_knowledge_cross_tenant_denied(self):
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("app.mcp_server.resources._membership_svc") as mock_msvc:
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                from app.mcp_server.resources import get_project_knowledge
+
+                result = await get_project_knowledge(_PRINCIPAL, "someone-elses-project")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
 
     @pytest.mark.asyncio
     async def test_get_project_schema(self):
@@ -458,16 +517,57 @@ class TestMCPResources:
             with (
                 patch("app.mcp_server.resources._connection_svc") as mock_conn_svc,
                 patch("app.mcp_server.resources._db_index_svc") as mock_idx_svc,
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
             ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
                 mock_conn_svc.list_by_project = AsyncMock(return_value=[mock_conn])
                 mock_idx_svc.get_index = AsyncMock(return_value=[entry])
                 from app.mcp_server.resources import get_project_schema
 
-                result = await get_project_schema("p1")
+                result = await get_project_schema(_PRINCIPAL, "p1")
 
         data = json.loads(result)
         assert len(data["tables"]) == 1
         assert data["tables"][0]["table_name"] == "orders"
+
+    @pytest.mark.asyncio
+    async def test_get_project_schema_cross_tenant_denied(self):
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.resources._connection_svc") as mock_conn_svc,
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=False)
+                mock_conn_svc.list_by_project = AsyncMock(return_value=[MagicMock()])
+                from app.mcp_server.resources import get_project_schema
+
+                result = await get_project_schema(_PRINCIPAL, "someone-elses-project")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
+        mock_conn_svc.list_by_project.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resources_anonymous_principal_denied(self):
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("app.mcp_server.resources._membership_svc") as mock_msvc:
+                mock_msvc.can_access = AsyncMock(return_value=True)
+                from app.mcp_server.resources import get_project_rules
+
+                result = await get_project_rules({"user_id": ""}, "p1")
+
+        data = json.loads(result)
+        assert "Access denied" in data["error"]
+        # An empty principal must be denied before any membership lookup.
+        mock_msvc.can_access.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

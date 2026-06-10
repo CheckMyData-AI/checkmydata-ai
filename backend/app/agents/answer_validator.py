@@ -66,7 +66,12 @@ class AnswerValidator:
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> AnswerValidationResult:
-        """Return a structured verdict; failures default to ``True`` (do no harm)."""
+        """Return a structured verdict.
+
+        LLM failures fail *closed* by default (see
+        ``settings.answer_validator_fail_closed``); parse noise on a
+        successful LLM reply stays lenient.
+        """
         if not answer or not answer.strip():
             return AnswerValidationResult(
                 addresses_question=False,
@@ -97,11 +102,24 @@ class AnswerValidator:
                 model=model,
             )
         except LLMError:
-            logger.debug("AnswerValidator LLM call failed; defaulting to OK", exc_info=True)
+            # R5-6: fail closed by default — an answer we could not verify is
+            # reported as "does not address the question" so the caller frames
+            # it as a continuable partial result instead of a verified final
+            # answer. ``answer_validator_fail_closed=False`` restores the old
+            # lenient behaviour.
+            from app.config import settings
+
+            fail_closed = settings.answer_validator_fail_closed
+            logger.debug(
+                "AnswerValidator LLM call failed; failing %s",
+                "closed" if fail_closed else "open",
+                exc_info=True,
+            )
             return AnswerValidationResult(
-                addresses_question=True,
+                addresses_question=not fail_closed,
                 confidence=0.0,
                 reason="validator unavailable",
+                is_partial=fail_closed,
             )
 
         text = (response.content or "").strip()

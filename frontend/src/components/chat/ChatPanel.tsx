@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { useAppStore } from "@/stores/app-store";
+import { SPRING, DUR } from "@/lib/motion/tokens";
 import { api, type ChatResponse, type StreamError, type QuerySuggestion, type CostEstimate } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { toast } from "@/stores/toast-store";
@@ -806,8 +808,19 @@ export function ChatPanel() {
       )}
       <div className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4 chat-scroll" aria-live="polite" aria-relevant="additions" aria-atomic="false">
         {messages.length === 0 ? (
-          <div className="text-center text-text-tertiary text-sm mt-20">
-            <p className="text-lg font-medium mb-2">
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DUR.slow, ease: [0.23, 1, 0.32, 1] }}
+            className="text-center text-text-tertiary text-sm mt-20"
+          >
+            <span
+              className="mx-auto mb-5 flex w-12 h-12 items-center justify-center rounded-2xl border border-border-subtle bg-surface-1"
+              aria-hidden="true"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-accent animate-pulse-dot" />
+            </span>
+            <p className="text-lg font-medium mb-2 text-text-primary">
               {activeConnection ? "Ready to query" : "Knowledge Base Mode"}
             </p>
             {activeConnection ? (
@@ -820,8 +833,9 @@ export function ChatPanel() {
               <p>Ask questions about your project documentation</p>
             )}
             <p className="mt-1">Ask a question about your data…</p>
-          </div>
+          </motion.div>
         ) : null}
+        <AnimatePresence initial={false}>
         {messages.map((msg, idx) => {
           const canRetry =
             msg.responseType === "error" &&
@@ -832,22 +846,34 @@ export function ChatPanel() {
             ? [...messages].reverse().find((m) => m.role === "user")
             : undefined;
           return (
-            <ChatMessage
+            <motion.div
               key={msg.id}
-              message={msg}
-              metadataJson={msg.metadataJson}
-              onRetry={prevUserMsg ? () => handleSend(prevUserMsg.content) : undefined}
-              onSendMessage={handleSend}
-              onContinueAnalysis={
-                msg.responseType === "step_limit_reached" ? handleContinueAnalysis : undefined
-              }
-              sessionId={activeSession?.id ?? undefined}
-            />
+              initial={{ opacity: 0, y: 14, scale: 0.99 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={SPRING.message}
+            >
+              <ChatMessage
+                message={msg}
+                metadataJson={msg.metadataJson}
+                onRetry={prevUserMsg ? () => handleSend(prevUserMsg.content) : undefined}
+                onSendMessage={handleSend}
+                onContinueAnalysis={
+                  msg.responseType === "step_limit_reached" ? handleContinueAnalysis : undefined
+                }
+                sessionId={activeSession?.id ?? undefined}
+              />
+            </motion.div>
           );
         })}
+        </AnimatePresence>
         {/* Pipeline stage progress (visible even after thinking finishes for checkpoints) */}
         {pipelineStages.length > 0 && (
-          <div className="bg-surface-2/80 rounded-xl px-4 py-3 overflow-hidden">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={SPRING.panel}
+            className="bg-surface-2/80 rounded-xl px-4 py-3 overflow-hidden"
+          >
             <StageProgress
               stages={pipelineStages}
               pipelineRunId={pipelineRunId}
@@ -867,10 +893,15 @@ export function ChatPanel() {
                   : undefined
               }
             />
-          </div>
+          </motion.div>
         )}
         {isThinking && (
-          <div className="flex gap-3">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={SPRING.panel}
+            className="flex gap-3"
+          >
             {streamingText ? (
               <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
                 <div className="chat-markdown overflow-hidden">
@@ -906,10 +937,15 @@ export function ChatPanel() {
                 </button>
               </div>
             )}
-          </div>
+          </motion.div>
         )}
         {isBackgroundProcessing && (
-          <div className="flex gap-3">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={SPRING.panel}
+            className="flex gap-3"
+          >
             <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden">
               <div className="flex items-center gap-2">
                 <div className="flex gap-1">
@@ -925,7 +961,7 @@ export function ChatPanel() {
                 The response is being generated. It will appear here automatically.
               </p>
             </div>
-          </div>
+          </motion.div>
         )}
         <div ref={messagesEndRef} />
       </div>

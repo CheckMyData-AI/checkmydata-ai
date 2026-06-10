@@ -1,9 +1,11 @@
 "use client";
 
+import { motion, useReducedMotion } from "motion/react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/Badge";
 import { Icon } from "@/components/ui/Icon";
 import type { PipelineStage } from "@/components/chat/pipeline-types";
+import { SPRING } from "@/lib/motion/tokens";
 import { cn } from "@/lib/utils";
 
 export interface StageRowProps {
@@ -41,15 +43,21 @@ export function StageRow({
 }: StageRowProps) {
   const compact = !expanded && !isCurrent;
   const muted = stage.status === "pending" || stage.status === "skipped";
+  const reduced = useReducedMotion();
 
   return (
-    <div
+    <motion.div
+      layout="position"
+      initial={reduced ? false : { opacity: 0, y: 10, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={reduced ? { duration: 0 } : SPRING.chip}
       className={cn(
-        "pipeline-stage-enter is-visible flex gap-2 rounded-lg border px-3 py-2 text-sm",
+        "flex gap-2 rounded-lg border px-3 py-2 text-sm",
         STATUS_BG[stage.status] ?? "bg-surface-2",
+        isCurrent && stage.status === "running" && "stage-active-glow",
+        stage.status === "failed" && "stage-failed-shake",
         className,
       )}
-      style={{ transitionDelay: `${Math.min(index, 8) * 40}ms` }}
     >
       <div className="flex flex-col items-center pt-0.5 shrink-0">
         <StatusBadge status={stage.status} size="sm" />
@@ -116,6 +124,6 @@ export function StageRow({
           </div>
         ) : null}
       </div>
-    </div>
+    </motion.div>
   );
 }

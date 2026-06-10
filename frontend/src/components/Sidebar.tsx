@@ -26,6 +26,7 @@ import { useLogStore } from "@/stores/log-store";
 import { toast } from "@/stores/toast-store";
 import { AccountMenu } from "./auth/AccountMenu";
 import { UsageStatsPanel } from "./usage/UsageStatsPanel";
+import { BillingPanel } from "./billing/BillingPanel";
 import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
 import { ScheduleManager } from "./schedules/ScheduleManager";
 import { DashboardList } from "./dashboards/DashboardList";
@@ -551,6 +552,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                     onToggle={operationsGroup.toggle}
                   >
                     <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
+                      <BillingPanel />
                       <UsageStatsPanel />
                     </SidebarSection>
 
@@ -842,6 +844,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   onToggle={usageCollapse.toggle}
                   collapsed={collapsed}
                 >
+                  <BillingPanel />
                   <UsageStatsPanel />
                 </SidebarSection>
 

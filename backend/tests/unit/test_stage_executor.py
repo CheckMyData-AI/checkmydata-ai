@@ -171,6 +171,26 @@ class TestExecute:
         assert result.failed_stage is not None
         assert result.failed_stage.stage_id == "s1"
 
+    @pytest.mark.asyncio
+    async def test_stuck_dependency_emits_stage_failed_event(self, executor, context, mock_tracker):
+        """R5-6: the stuck pipeline must also tell SSE consumers via a
+        ``stage_failed`` tracker event, not just the return status."""
+        stuck = PlanStage(
+            stage_id="s1",
+            description="depends on a stage that does not exist",
+            tool="query_database",
+            depends_on=["does-not-exist"],
+        )
+        await executor.execute(_make_plan(stuck), context)
+
+        failed_emits = [c for c in mock_tracker.emit.await_args_list if c.args[1] == "stage_failed"]
+        assert len(failed_emits) == 1
+        call = failed_emits[0]
+        assert call.args[0] == "wf-test"
+        assert call.args[2] == "failed"
+        assert call.kwargs["stage_id"] == "s1"
+        assert call.kwargs["remaining_stage_ids"] == ["s1"]
+
     def test_missing_operation_defaults_to_passthrough(self):
         """R5-8: a process_data stage without an explicit operation must default
         to ``passthrough`` (forward rows unchanged) rather than guessing

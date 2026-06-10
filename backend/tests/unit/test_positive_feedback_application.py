@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.routes.chat import apply_exposed_learnings_on_positive_feedback
+from app.api.routes.chat_feedback import apply_exposed_learnings_on_positive_feedback
 from app.models.agent_learning import AgentLearning
 from app.models.base import Base
 

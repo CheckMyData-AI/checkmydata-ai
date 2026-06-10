@@ -1,3 +1,4 @@
+import type React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CinematicEngine } from "@/components/marketing/CinematicEngine";
@@ -60,7 +61,7 @@ export default function AboutPage() {
         }}
       />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
-        <h1 className="cmd-reveal text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+        <h1 className="cmd-reveal font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           About CheckMyData.ai
         </h1>
         <p className="cmd-reveal text-lg text-text-secondary leading-relaxed">
@@ -71,7 +72,7 @@ export default function AboutPage() {
       </header>
 
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">Our Mission</h2>
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">Our Mission</h2>
         <p className="text-sm text-text-secondary leading-relaxed">
           We believe the hard part of working with data isn&rsquo;t writing SQL —
           it&rsquo;s knowing the context to query it correctly. CheckMyData.ai
@@ -88,7 +89,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           How It Works
         </h2>
         <div className="space-y-4 text-sm text-text-secondary leading-relaxed">
@@ -114,14 +115,15 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Technology Stack
         </h2>
         <div className="grid gap-4">
-          {TECH_STACK.map((row) => (
+          {TECH_STACK.map((row, i) => (
             <div
               key={row.category}
-              className="bg-surface-1 border border-border-subtle rounded-xl p-4"
+              className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-4"
+              style={{ ["--cmd-i"]: i } as React.CSSProperties}
             >
               <h3 className="text-sm font-semibold text-text-primary mb-1">
                 {row.category}
@@ -133,7 +135,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-6">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Open Source
         </h2>
         <p className="text-sm text-text-secondary leading-relaxed">
@@ -141,7 +143,7 @@ export default function AboutPage() {
           is publicly available on GitHub. We welcome contributions,
           bug reports, and feature requests from the community.
         </p>
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="cmd-reveal cmd-reveal-scale flex flex-col sm:flex-row gap-4">
           <a
             href="https://github.com/CheckMyData-AI/checkmydata-ai"
             target="_blank"
@@ -160,7 +162,7 @@ export default function AboutPage() {
       </section>
 
       <section className="mt-12 space-y-4">
-        <h2 className="cmd-reveal text-xl font-semibold text-text-primary">Contact</h2>
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">Contact</h2>
         <p className="text-sm text-text-secondary leading-relaxed">
           Have questions or want to get in touch? Reach out at{" "}
           <a

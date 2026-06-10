@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.routes.chat import contradict_exposed_learnings_on_negative_feedback
+from app.api.routes.chat_feedback import contradict_exposed_learnings_on_negative_feedback
 from app.models.agent_learning import AgentLearning
 from app.models.base import Base
 

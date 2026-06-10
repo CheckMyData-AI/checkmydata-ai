@@ -29,14 +29,16 @@ function mockSSEResponse(chunks: string[]) {
 }
 
 describe("subscribeToWorkflow", () => {
-  it("sends Authorization header when token exists", async () => {
+  it("relies on session cookie, never a bearer header", async () => {
+    // Legacy localStorage fallback removed (P2 cleanup).
     localStorage.setItem("auth_token", "my-jwt");
     mockSSEResponse([]);
     subscribeToWorkflow("wf-1", vi.fn());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toContain("/workflows/events?workflow_id=wf-1");
-    expect(opts.headers.Authorization).toBe("Bearer my-jwt");
+    expect(opts.headers?.Authorization).toBeUndefined();
+    expect(opts.credentials).toBe("include");
   });
 
   it("omits Authorization when no token", async () => {
@@ -44,7 +46,7 @@ describe("subscribeToWorkflow", () => {
     subscribeToWorkflow("wf-2", vi.fn());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, opts] = fetchMock.mock.calls[0];
-    expect(opts.headers.Authorization).toBeUndefined();
+    expect(opts.headers?.Authorization).toBeUndefined();
   });
 
   it("parses SSE events and calls onEvent", async () => {
@@ -84,13 +86,14 @@ describe("subscribeToAllEvents", () => {
     expect(url).not.toContain("workflow_id");
   });
 
-  it("sends auth header", async () => {
+  it("uses cookie auth instead of bearer header", async () => {
     localStorage.setItem("auth_token", "tok-123");
     mockSSEResponse([]);
     subscribeToAllEvents(vi.fn());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, opts] = fetchMock.mock.calls[0];
-    expect(opts.headers.Authorization).toBe("Bearer tok-123");
+    expect(opts.headers?.Authorization).toBeUndefined();
+    expect(opts.credentials).toBe("include");
   });
 
   it("calls onError on non-ok response", async () => {

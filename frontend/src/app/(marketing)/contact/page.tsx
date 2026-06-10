@@ -1,5 +1,7 @@
+import type React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 
 export const metadata: Metadata = {
   title: "Contact",
@@ -38,6 +40,7 @@ const CHANNELS = [
 export default function ContactPage() {
   return (
     <article className="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <CinematicEngine />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -62,22 +65,23 @@ export default function ContactPage() {
         }}
       />
       <header className="space-y-4 pb-10 border-b border-border-subtle">
-        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+        <h1 className="cmd-reveal font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
           Contact Us
         </h1>
-        <p className="text-lg text-text-secondary leading-relaxed">
+        <p className="cmd-reveal text-lg text-text-secondary leading-relaxed" style={{ ["--cmd-i"]: 1 } as React.CSSProperties}>
           We would love to hear from you. Choose the channel that best fits
           your needs.
         </p>
       </header>
 
       <div className="mt-12 grid gap-6">
-        {CHANNELS.map((ch) => (
+        {CHANNELS.map((ch, i) => (
           <div
             key={ch.email}
-            className="bg-surface-1 border border-border-subtle rounded-xl p-6 space-y-3"
+            className="cmd-reveal cmd-reveal-scale bg-surface-1 border border-border-subtle rounded-xl p-6 space-y-3"
+            style={{ ["--cmd-i"]: i } as React.CSSProperties}
           >
-            <h2 className="text-lg font-semibold text-text-primary">
+            <h2 className="font-display text-lg font-semibold text-text-primary">
               {ch.title}
             </h2>
             <p className="text-sm text-text-secondary leading-relaxed">
@@ -108,7 +112,7 @@ export default function ContactPage() {
       </div>
 
       <section className="mt-12 space-y-6">
-        <h2 className="text-xl font-semibold text-text-primary">
+        <h2 className="cmd-reveal font-display text-xl font-semibold text-text-primary">
           Community &amp; Open Source
         </h2>
         <p className="text-sm text-text-secondary leading-relaxed">
@@ -120,7 +124,7 @@ export default function ContactPage() {
             href="https://github.com/CheckMyData-AI/checkmydata-ai/issues"
             target="_blank"
             rel="noopener noreferrer"
-            className="bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
+            className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
           >
             <h3 className="text-sm font-semibold text-text-primary mb-1">
               Bug Reports &amp; Features
@@ -133,7 +137,8 @@ export default function ContactPage() {
             href="https://github.com/CheckMyData-AI/checkmydata-ai/discussions"
             target="_blank"
             rel="noopener noreferrer"
-            className="bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
+            className="cmd-reveal bg-surface-1 border border-border-subtle rounded-xl p-5 hover:border-accent/30 transition-colors block"
+            style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
           >
             <h3 className="text-sm font-semibold text-text-primary mb-1">
               Discussions &amp; Q&amp;A

@@ -178,9 +178,11 @@ class Settings(BaseSettings):
     # an unexplained empty set), the response is flagged ``suspicious_result``.
     # With this enabled, the chat layer kicks off a background investigation on
     # that flagged result automatically instead of waiting for a manual user
-    # thumbs-down. Default off: auto-investigations cost LLM calls, so it is
-    # opt-in per deployment.
-    orchestrator_auto_investigate_enabled: bool = False
+    # thumbs-down. Default ON (F-ARCH-6 decision, 2026-06): the LLM cost is
+    # now bounded by per-user token budgets (entitlements / USER_*_TOKEN_LIMIT)
+    # and the AgentLimiter, and the quality win on suspicious results outweighs
+    # the marginal spend. Set False to make investigations manual-only.
+    orchestrator_auto_investigate_enabled: bool = True
 
     # Batch query execution (T19). ``batch_max_concurrency`` caps the
     # number of concurrent queries inside one batch; ``batch_result_row_cap``
@@ -357,6 +359,14 @@ class Settings(BaseSettings):
     cross_connection_learnings_enabled: bool = False
 
     # ----- Code intelligence pipeline (M1–M6) ---------------------------------
+    # F-ARCH-6 rollout decision (2026-06):
+    #   * Read-path retrieval flags (hybrid_retrieval, schema_retrieval) are ON
+    #     by default — they are fail-safe (dense-only / safety-net fallbacks)
+    #     and need no extra dependencies.
+    #   * Index-path flags (code_graph, lineage, clustering) stay OFF by
+    #     default — they add significant CPU cost to repo indexing and lineage
+    #     depends on the graph; enable per-deployment once indexing cost is
+    #     validated on production-sized repos.
     # Master flag: enables tree-sitter AST parsing + code knowledge graph.
     # When False, the legacy regex-based entity_extractor path runs.
     code_graph_enabled: bool = False
@@ -371,8 +381,10 @@ class Settings(BaseSettings):
     # Minimum confidence for keeping a CALLS edge in the graph.
     code_graph_call_confidence_threshold: float = 0.3
 
-    # M3: hybrid retrieval (BM25 + Chroma fused via RRF).
-    hybrid_retrieval_enabled: bool = False
+    # M3: hybrid retrieval (BM25 + Chroma fused via RRF). Default ON: falls
+    # back to dense-only when a project has no BM25 snapshot yet, so it is
+    # safe across projects indexed before the feature existed.
+    hybrid_retrieval_enabled: bool = True
     bm25_data_dir: str = "./data/bm25"
     hybrid_rrf_k: int = 60
     hybrid_min_score: float = 0.01
@@ -386,10 +398,13 @@ class Settings(BaseSettings):
     reranker_candidates: int = 30
 
     # M4: question-aware schema retrieval (BM25 + embeddings over DbIndex).
-    schema_retrieval_enabled: bool = False
+    # Default ON: retrieved tables are unioned with the legacy relevance-score
+    # safety net and any retriever failure degrades to the old behaviour.
+    schema_retrieval_enabled: bool = True
     sql_agent_max_context_tables: int = 15
 
     # M5: graph-driven code→DB lineage (replaces regex `used_in_files`).
+    # OFF by default — requires code_graph_enabled (see F-ARCH-6 note above).
     lineage_enabled: bool = False
     lineage_max_depth: int = 5
 
@@ -462,6 +477,16 @@ class Settings(BaseSettings):
     # Redis (enables shared cache + ARQ task queue; empty = in-process fallback)
     redis_url: str = ""
 
+    # ------------------------------------------------------------------
+    # Sentry error tracking (T-OBS-1). Off unless ``SENTRY_DSN`` is set.
+    # PII is scrubbed before send (no request bodies/headers/cookies, no
+    # default PII); only user *id* is attached for correlation.
+    # ------------------------------------------------------------------
+    sentry_dsn: str = ""
+    sentry_environment: str = ""  # defaults to ``environment`` when empty
+    sentry_traces_sample_rate: float = 0.0  # performance tracing off by default
+    sentry_profiles_sample_rate: float = 0.0
+
     # MCP server (T-SEC-1). Off by default: the network-exposed MCP surface
     # must not run until a credential is configured. ``mcp_api_key_user_id``
     # binds the server's API key to a real platform user so MCP tool calls are
@@ -498,21 +523,50 @@ class Settings(BaseSettings):
     # heuristic. Off by default to keep the gate cheap & predictable.
     data_gate_llm_semantics: bool = False
 
+    # F-FIN-1: per-user LLM token budgets enforced at the chat entry points
+    # (/ask, /ask/stream, WS). 0 = unlimited. Use the
+    # ``USER_DAILY_TOKEN_LIMIT`` / ``USER_MONTHLY_TOKEN_LIMIT`` env vars to
+    # cap runaway LLM spend per user until plan-based entitlements land.
+    user_daily_token_limit: int = 0
+    user_monthly_token_limit: int = 0
+
+    # ------------------------------------------------------------------
+    # Billing / Stripe (T-BILL-1..9). Disabled by default: with
+    # ``billing_enabled=False`` all billing routes 404 and entitlements
+    # fall back to the global token limits above.
+    # ------------------------------------------------------------------
+    billing_enabled: bool = False
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_publishable_key: str = ""
+    # Map of plan slug -> Stripe price id; set via env, e.g.
+    # STRIPE_PRICE_PRO=price_xxx, STRIPE_PRICE_TEAM=price_yyy
+    stripe_price_pro: str = ""
+    stripe_price_team: str = ""
+    # Where Stripe redirects after Checkout / Portal (frontend URLs).
+    billing_success_path: str = "/dashboard?billing=success"
+    billing_cancel_path: str = "/pricing?billing=canceled"
+
     # External service settings
     model_cache_ttl_seconds: int = 3600
     health_degraded_latency_ms: int = 3000
     ssh_connect_timeout: int = 30
     ssh_command_timeout: int = 60
 
-    # R1-2: SSH host-key verification policy.
-    #   "disabled" — known_hosts=None (no verification; legacy default, MITM-exposed)
+    # R1-2 / F-SEC-4: SSH host-key verification policy.
     #   "tofu"      — trust-on-first-use: pin the host key on first connect into
     #                 ``ssh_known_hosts_path`` and verify against it thereafter
+    #                 (secure default; a *changed* key is rejected)
     #   "strict"    — verify against ``ssh_known_hosts_path`` only; reject unknown hosts
-    # Use the ``SSH_HOST_KEY_POLICY`` env var to opt into verification.
-    ssh_host_key_policy: str = "disabled"
+    #   "disabled"  — known_hosts=None (no verification; MITM-exposed; explicit,
+    #                 logged, non-production-only override)
+    # Use the ``SSH_HOST_KEY_POLICY`` env var to override.
+    ssh_host_key_policy: str = "tofu"
     # Where TOFU/strict host keys are stored (writable path).
     ssh_known_hosts_path: str = "/tmp/checkmydata_known_hosts"
+    # F-SEC-5: restrict ssh_pre_commands to a safe allowlist (export/source/cd)
+    # and reject shell metacharacters. Disable only as an emergency escape hatch.
+    ssh_pre_command_allowlist_enabled: bool = True
 
     # Admin emails — users with these emails get access to admin-only endpoints
     # (manual backup trigger, cluster-wide metrics, etc.). Use the

@@ -1,6 +1,6 @@
 """Unit tests for _compute_sql_complexity in the chat routes."""
 
-from app.api.routes.chat import _compute_sql_complexity
+from app.api.routes.chat_utility import _compute_sql_complexity
 
 
 class TestComputeSqlComplexity:

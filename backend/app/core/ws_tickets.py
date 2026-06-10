@@ -15,16 +15,24 @@ hands that ticket to the WS handshake via the ``Sec-WebSocket-Protocol`` header
 * single-use (consumed atomically on redemption), and
 * short-lived (default 30s TTL).
 
-The store is in-memory and therefore single-process. That is acceptable for this
-sprint; a Redis-backed store lands with ``T-SCALE-1`` when the app scales out.
+When the shared Redis client is connected (T-SCALE-1) tickets live in Redis
+(``SET EX`` + atomic ``GETDEL`` redemption) so the WS handshake can land on a
+different dyno than the one that minted the ticket. Without Redis the original
+in-memory, single-process store applies.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
+
+from app.core.redis_client import get_redis
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 30
 # Carried in Sec-WebSocket-Protocol so the server can pick the ticket out of any
@@ -40,8 +48,12 @@ class _Ticket:
     expires_at: float
 
 
+def _rkey(ticket: str) -> str:
+    return f"cmd:wsticket:{ticket}"
+
+
 class WsTicketStore:
-    """Async-safe, in-memory, single-use ticket store with TTL."""
+    """Async-safe, single-use ticket store with TTL (Redis-backed when available)."""
 
     def __init__(self, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> None:
         self._ttl = ttl_seconds
@@ -63,6 +75,29 @@ class WsTicketStore:
         """Mint a ticket bound to (user, project, connection). Returns (ticket, ttl)."""
         ttl = ttl_seconds if ttl_seconds is not None else self._ttl
         ticket = secrets.token_urlsafe(32)
+
+        redis = get_redis()
+        if redis is not None:
+            try:
+                await redis.set(
+                    _rkey(ticket),
+                    json.dumps(
+                        {
+                            "user_id": user_id,
+                            "project_id": project_id,
+                            "connection_id": connection_id,
+                        }
+                    ),
+                    ex=max(1, int(ttl)),
+                    nx=True,
+                )
+                return ticket, ttl
+            except Exception:
+                logger.warning(
+                    "WsTicketStore: Redis issue failed, falling back to memory",
+                    exc_info=True,
+                )
+
         now = time.monotonic()
         async with self._lock:
             self._prune(now)
@@ -83,6 +118,31 @@ class WsTicketStore:
         """
         if not ticket:
             return None
+
+        redis = get_redis()
+        if redis is not None:
+            try:
+                # GETDEL is atomic: one redemption ever sees the value.
+                raw = await redis.getdel(_rkey(ticket))
+                if raw is not None:
+                    try:
+                        entry = json.loads(raw)
+                    except (TypeError, ValueError):
+                        return None
+                    if (
+                        entry.get("project_id") != project_id
+                        or entry.get("connection_id") != connection_id
+                    ):
+                        return None
+                    return entry.get("user_id")
+                # Not in Redis — fall through to the in-memory store, which may
+                # hold tickets issued before Redis connected.
+            except Exception:
+                logger.warning(
+                    "WsTicketStore: Redis redeem failed, falling back to memory",
+                    exc_info=True,
+                )
+
         now = time.monotonic()
         async with self._lock:
             self._prune(now)

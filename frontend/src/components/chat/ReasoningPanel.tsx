@@ -39,7 +39,15 @@ function getIconName(step: string): "activity" | "database" | "book-open" | "bar
   return "circle";
 }
 
-function StepRow({ step, isLast }: { step: ReasoningStep; isLast: boolean }) {
+function StepRow({
+  step,
+  isLast,
+  index = 0,
+}: {
+  step: ReasoningStep;
+  isLast: boolean;
+  index?: number;
+}) {
   const icon = getIconName(step.step);
   const label = step.detail || step.step.replace(/:/g, " ").trim() || "Step";
   const isCompleted = step.status === "completed";
@@ -47,7 +55,10 @@ function StepRow({ step, isLast }: { step: ReasoningStep; isLast: boolean }) {
   const isStarted = step.status === "started";
 
   return (
-    <div className="flex items-start gap-2 relative">
+    <div
+      className="animate-slide-in-left flex items-start gap-2 relative"
+      style={{ animationDelay: `${Math.min(index, 12) * 35}ms`, animationFillMode: "both" }}
+    >
       <div className="flex flex-col items-center shrink-0">
         <div
           className={`rounded-full p-1 ${
@@ -195,6 +206,7 @@ function ReasoningPanelBody({ onClose }: { onClose: () => void }) {
                 <StepRow
                   key={`${step.step}-${idx}`}
                   step={step}
+                  index={idx}
                   isLast={idx === significantSteps.length - 1}
                 />
               ))}

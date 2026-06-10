@@ -8,12 +8,12 @@ export {
   handleSessionExpired,
   API_BASE,
   request,
-  getAuthHeaders,
   getCsrfToken,
   getCsrfHeaders,
 } from "./_client";
 
 import { auth } from "./auth";
+import { billing } from "./billing";
 import { projects } from "./projects";
 import { connections } from "./connections";
 import { chat } from "./chat";
@@ -48,6 +48,7 @@ import {
 export {
   auth,
   batch,
+  billing,
   chat,
   connections,
   dashboards,
@@ -77,6 +78,7 @@ export {
 
 export const api = {
   auth,
+  billing,
   projects,
   connections,
   chat,

@@ -5,6 +5,10 @@ import { LogoMark } from "@/components/ui/Logo";
 import { AuthRedirect } from "@/components/auth/AuthRedirect";
 import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 import { SchemaGraph } from "@/components/marketing/SchemaGraph";
+import { DataStory } from "@/components/marketing/DataStory";
+import { WordLight } from "@/components/marketing/WordLight";
+import { CountUp } from "@/components/marketing/CountUp";
+import { FaqAccordion } from "@/components/marketing/FaqAccordion";
 
 export const metadata: Metadata = {
   title: "CheckMyData.ai — AI Analyst for Your Database",
@@ -386,7 +390,7 @@ export default async function LandingPage() {
             </p>
 
             <h1
-              className="cmd-reveal text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.1] text-balance"
+              className="cmd-reveal font-display text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-text-primary leading-[1.08] text-balance"
               style={{ ["--cmd-i"]: 2 } as React.CSSProperties}
             >
               Correct answers from
@@ -447,26 +451,35 @@ export default async function LandingPage() {
             </p>
           </div>
 
-          {/* Showcase — the intelligence core rises into view on scroll */}
-          <div
-            className="cmd-reveal cmd-reveal-rise mt-16 sm:mt-20 max-w-4xl mx-auto"
-            style={{ ["--cmd-i"]: 7 } as React.CSSProperties}
-          >
-            <div className="cmd-float relative overflow-hidden rounded-2xl border border-border-subtle bg-surface-1/40 backdrop-blur-sm p-4 sm:p-8">
-              {/* scan sweep */}
-              <div
-                aria-hidden="true"
-                className="cmd-scan pointer-events-none absolute inset-x-0 top-0 h-24"
-                style={{
-                  background:
-                    "linear-gradient(to bottom, var(--color-accent), transparent)",
-                  opacity: 0.06,
-                }}
-              />
-              <SchemaGraph />
-            </div>
-          </div>
         </div>
+      </section>
+
+      {/* ── DATA STORY — pinned scrollytelling on desktop, static core elsewhere ── */}
+      <section className="relative pb-16 sm:pb-20" aria-label="How CheckMyData answers a question">
+        <DataStory
+          fallback={
+            <div className="max-w-4xl mx-auto px-6">
+              <div
+                className="cmd-reveal cmd-reveal-rise"
+                style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
+              >
+                <div className="cmd-float relative overflow-hidden rounded-2xl border border-border-subtle bg-surface-1/40 backdrop-blur-sm p-4 sm:p-8">
+                  {/* scan sweep */}
+                  <div
+                    aria-hidden="true"
+                    className="cmd-scan pointer-events-none absolute inset-x-0 top-0 h-24"
+                    style={{
+                      background:
+                        "linear-gradient(to bottom, var(--color-accent), transparent)",
+                      opacity: 0.06,
+                    }}
+                  />
+                  <SchemaGraph />
+                </div>
+              </div>
+            </div>
+          }
+        />
       </section>
 
       {/* ── TRUST SIGNALS BAR ── */}
@@ -482,7 +495,7 @@ export default async function LandingPage() {
               <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" className="text-warning" aria-hidden="true">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
-              <span className="font-semibold tabular-nums">{stars.toLocaleString("en-US")}</span>
+              <CountUp value={stars} className="font-semibold tabular-nums" />
               <span className="text-text-tertiary">stars on GitHub</span>
             </a>
           )}
@@ -513,18 +526,16 @@ export default async function LandingPage() {
         <div className="max-w-6xl mx-auto px-6">
           <div className="cmd-reveal text-center mb-4">
             <p className="text-sm font-medium text-accent mb-3">The context engine</p>
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+            <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
               Why the answers are{" "}
-              <span className="cmd-shimmer-text">actually correct</span>
+              <span className="text-accent">actually correct</span>
             </h2>
           </div>
-          <p
-            className="cmd-reveal text-center text-text-secondary max-w-2xl mx-auto mb-16 leading-relaxed text-pretty"
-            style={{ ["--cmd-i"]: 1 } as React.CSSProperties}
-          >
-            Data is abundant. The context needed to query it correctly is scarce.
-            CheckMyData assembles that context before it writes a single line of SQL.
-          </p>
+          <WordLight
+            as="p"
+            text="Data is abundant. The context needed to query it correctly is scarce. CheckMyData assembles that context before it writes a single line of SQL."
+            className="cmd-reveal text-center text-lg text-text-primary max-w-2xl mx-auto mb-16 leading-relaxed text-pretty block"
+          />
 
           <div className="grid lg:grid-cols-2 gap-10 lg:gap-12 items-center">
             <ul className="space-y-4">
@@ -664,10 +675,10 @@ export default async function LandingPage() {
       <section className="py-20 sm:py-28" id="features">
         <div className="max-w-6xl mx-auto px-6">
           <div className="cmd-reveal text-center mb-6">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+            <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
               Everything you need to actually
               <br className="hidden sm:block" />{" "}
-              <span className="cmd-shimmer-text">understand your data</span>
+              <span className="text-accent">understand your data</span>
             </h2>
           </div>
           <p
@@ -730,7 +741,7 @@ export default async function LandingPage() {
         <div className="max-w-6xl mx-auto px-6">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className="cmd-reveal cmd-reveal-left">
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
+              <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
                 What can you do with it?
               </h2>
               <p className="text-text-secondary leading-relaxed mb-8 text-pretty">
@@ -773,22 +784,34 @@ export default async function LandingPage() {
                 <span className="ml-2">checkmydata</span>
               </div>
               <div className="space-y-3 text-text-secondary">
-                <p>
+                <p
+                  className="cmd-reveal"
+                  style={{ ["--cmd-i"]: 2 } as React.CSSProperties}
+                >
                   <span className="text-text-muted">you:</span>{" "}
                   <span className="text-text-primary">Why did revenue drop last week?</span>
                 </p>
-                <p>
+                <p
+                  className="cmd-reveal"
+                  style={{ ["--cmd-i"]: 4 } as React.CSSProperties}
+                >
                   <span className="text-text-muted">ai:</span>{" "}
                   <span className="text-accent">Analyzing orders table...</span>
                 </p>
-                <p className="text-text-tertiary text-xs pl-4 border-l border-border-subtle">
+                <p
+                  className="cmd-reveal text-text-tertiary text-xs pl-4 border-l border-border-subtle"
+                  style={{ ["--cmd-i"]: 6 } as React.CSSProperties}
+                >
                   SELECT date, SUM(amount) FROM orders
                   <br />
                   WHERE date &gt;= &apos;2026-03-17&apos;
                   <br />
                   GROUP BY date ORDER BY date
                 </p>
-                <p>
+                <p
+                  className="cmd-reveal"
+                  style={{ ["--cmd-i"]: 8 } as React.CSSProperties}
+                >
                   <span className="text-text-muted">ai:</span>{" "}
                   Revenue dropped 23% on March 20.
                   <br />
@@ -796,7 +819,10 @@ export default async function LandingPage() {
                     Root cause: payment gateway timeout affected 142 orders.
                   </span>
                 </p>
-                <p className="text-success text-xs">
+                <p
+                  className="cmd-reveal text-success text-xs"
+                  style={{ ["--cmd-i"]: 10 } as React.CSSProperties}
+                >
                   + Chart generated &middot; Exportable
                 </p>
               </div>
@@ -809,9 +835,9 @@ export default async function LandingPage() {
       <section className="py-20 sm:py-28 border-t border-border-subtle" id="how-it-works">
         <div className="max-w-6xl mx-auto px-6">
           <div className="cmd-reveal text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+            <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
               From zero to insight in{" "}
-              <span className="cmd-shimmer-text">30 seconds</span>
+              <span className="text-accent">30 seconds</span>
             </h2>
           </div>
 
@@ -874,7 +900,7 @@ export default async function LandingPage() {
             </div>
             <div className="relative">
               <LogoMark size={48} className="mx-auto mb-6" />
-              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-text-primary">
+              <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-text-primary">
                 Built in public, fully transparent
               </h2>
               <p className="mt-4 text-lg text-text-secondary max-w-lg mx-auto leading-relaxed text-pretty">
@@ -910,40 +936,11 @@ export default async function LandingPage() {
       <section className="py-20 sm:py-28 border-t border-border-subtle" id="faq">
         <div className="max-w-3xl mx-auto px-6">
           <div className="cmd-reveal text-center mb-12">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
-              Questions, <span className="cmd-shimmer-text">answered</span>
+            <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary">
+              Questions, <span className="text-accent">answered</span>
             </h2>
           </div>
-          <div className="space-y-4">
-            {LANDING_FAQS.map((faq, i) => (
-              <details
-                key={faq.q}
-                style={{ ["--cmd-i"]: i % 3 } as React.CSSProperties}
-                className="cmd-reveal group bg-surface-1 border border-border-subtle rounded-xl"
-              >
-                <summary className="cursor-pointer p-5 text-sm font-semibold text-text-primary list-none flex items-center justify-between gap-4">
-                  {faq.q}
-                  <svg
-                    width={16}
-                    height={16}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="text-text-muted shrink-0 transition-transform group-open:rotate-180"
-                    aria-hidden="true"
-                  >
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </summary>
-                <div className="px-5 pb-5 text-sm text-text-secondary leading-relaxed">
-                  {faq.a}
-                </div>
-              </details>
-            ))}
-          </div>
+          <FaqAccordion items={LANDING_FAQS} />
           <p className="cmd-reveal mt-8 text-center text-sm text-text-tertiary">
             More questions? Visit{" "}
             <Link
@@ -969,8 +966,8 @@ export default async function LandingPage() {
       {/* ── FINAL CTA ── */}
       <section className="py-20 sm:py-28 border-t border-border-subtle">
         <div className="cmd-reveal max-w-6xl mx-auto px-6 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
-            Start exploring <span className="cmd-shimmer-text">your data</span> today
+          <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
+            Start exploring <span className="text-accent">your data</span> today
           </h2>
           <p className="text-text-secondary max-w-md mx-auto mb-10">
             No credit card. Deploy in minutes.

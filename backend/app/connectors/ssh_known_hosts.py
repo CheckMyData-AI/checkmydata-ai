@@ -8,8 +8,8 @@ test) behave consistently.
 
 Policies (``settings.ssh_host_key_policy``):
 
-* ``"disabled"`` — no verification (``known_hosts=None``). Legacy default,
-  kept so existing deployments are not broken by an upgrade.
+* ``"disabled"`` — no verification (``known_hosts=None``). Explicit, logged,
+  non-production-only override (F-SEC-4).
 * ``"strict"`` — verify against ``settings.ssh_known_hosts_path``; unknown or
   changed host keys are rejected. The file must be pre-populated.
 * ``"tofu"`` — trust-on-first-use. The first connection to an unseen host
@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 def _policy() -> str:
-    return (settings.ssh_host_key_policy or "disabled").strip().lower()
+    # F-SEC-4: fail towards verification — an unset/blank policy means "tofu".
+    return (settings.ssh_host_key_policy or "tofu").strip().lower()
 
 
 def _ensure_known_hosts_file(path: str) -> bool:
@@ -103,6 +104,13 @@ async def connect_with_policy(
         return await coro
 
     if policy == "disabled":
+        # F-SEC-4: this is an explicit, logged, non-production-only override.
+        logger.warning(
+            "SSH host-key verification is DISABLED (ssh_host_key_policy=disabled) "
+            "for connection to %s — vulnerable to man-in-the-middle. "
+            "Set SSH_HOST_KEY_POLICY=tofu or strict in production.",
+            host,
+        )
         connect_kwargs["known_hosts"] = None
         return await _connect(connect_kwargs)
 
@@ -134,9 +142,11 @@ async def connect_with_policy(
         _pin_host_key(conn, path, host)
         return conn
 
+    # F-SEC-4: fail closed — an unrecognised policy must never silently
+    # disable verification.
     logger.warning(
-        "Unknown ssh_host_key_policy %r; treating as 'disabled' (no verification)",
+        "Unknown ssh_host_key_policy %r; treating as 'strict' (fail closed)",
         policy,
     )
-    connect_kwargs["known_hosts"] = None
+    connect_kwargs["known_hosts"] = path
     return await _connect(connect_kwargs)

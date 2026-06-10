@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
 import { MobileMenu } from "@/components/ui/MobileMenu";
+import { SmoothScroll } from "@/components/marketing/SmoothScroll";
 
 const NAV_LINKS = [
   { href: "/about", label: "About" },
+  { href: "/pricing", label: "Pricing" },
   { href: "/support", label: "Support" },
   {
     href: "https://github.com/CheckMyData-AI/checkmydata-ai",
@@ -14,6 +16,7 @@ const NAV_LINKS = [
 
 const FOOTER_PRODUCT = [
   { href: "/about", label: "About" },
+  { href: "/pricing", label: "Pricing" },
   { href: "/contact", label: "Contact" },
   { href: "/support", label: "Support" },
 ] as const;
@@ -52,6 +55,7 @@ export default function MarketingLayout({
       <noscript>
         <style>{`.cmd-reveal{opacity:1!important;transform:none!important}`}</style>
       </noscript>
+      <SmoothScroll />
 
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-border-subtle/60 bg-surface-0/80 backdrop-blur-lg">

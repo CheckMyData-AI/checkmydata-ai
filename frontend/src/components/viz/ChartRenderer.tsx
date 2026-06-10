@@ -139,9 +139,26 @@ export function ChartRenderer({ config }: ChartRendererProps) {
   );
   const data = { ...chartData, labels: truncatedLabels, datasets: coloredDatasets };
 
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   const options: Record<string, unknown> = {
     responsive: true,
     maintainAspectRatio: false,
+    // Cinematic draw-on: bars/arcs grow with a light per-datum stagger.
+    // Disabled entirely under prefers-reduced-motion.
+    animation: reducedMotion
+      ? false
+      : {
+          duration: 800,
+          easing: "easeOutQuart",
+          delay: (ctx: { type?: string; mode?: string; dataIndex?: number }) =>
+            ctx.type === "data" && ctx.mode === "default"
+              ? Math.min(ctx.dataIndex ?? 0, 20) * 35
+              : 0,
+        },
     plugins: {
       legend: {
         display: !isSingleSeries || chartType === "pie",

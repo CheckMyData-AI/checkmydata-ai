@@ -106,6 +106,11 @@ class SQLAgent(BaseAgent):
 
         self._connectors: dict[str, BaseConnector] = {}
         self._connector_lock = asyncio.Lock()
+        # Expose the pool to the periodic health-check loop (covers every
+        # db type pooled here: PG / MySQL / Mongo / ClickHouse / MCP).
+        from app.core.connector_pools import register_pool
+
+        register_pool("sql_agent", self)
         self._schema_cache: TTLCache[str, SchemaInfo] = TTLCache(
             ttl=settings.schema_cache_ttl_seconds,
             max_size=128,
