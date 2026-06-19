@@ -12,6 +12,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.config import settings
+from app.core.redis_tls import redis_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,17 @@ def _storage_uri() -> str:
     return "memory://"
 
 
+def _storage_options() -> dict[str, str]:
+    """TLS kwargs for Heroku ``rediss://`` (self-signed chain)."""
+    if not settings.redis_url:
+        return {}
+    opts = redis_connect_kwargs(settings.redis_url)
+    return {k: str(v) for k, v in opts.items()}
+
+
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["60/minute"],
     storage_uri=_storage_uri(),
+    storage_options=_storage_options(),
 )

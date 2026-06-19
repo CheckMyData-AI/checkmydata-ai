@@ -2,7 +2,7 @@
 
 from slowapi.util import get_remote_address
 
-from app.core.rate_limit import limiter
+from app.core.rate_limit import _storage_options, limiter
 
 
 def test_limiter_instance_exists() -> None:
@@ -21,3 +21,19 @@ def test_default_limit_is_60_per_minute() -> None:
 
 def test_key_func_is_get_remote_address() -> None:
     assert limiter._key_func is get_remote_address
+
+
+def test_storage_options_rediss_disables_cert_verify(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.core.rate_limit.settings.redis_url",
+        "rediss://:pass@host.example:24510/0",
+    )
+    assert _storage_options() == {"ssl_cert_reqs": "none"}
+
+
+def test_storage_options_plain_redis_empty(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.core.rate_limit.settings.redis_url",
+        "redis://localhost:6379/0",
+    )
+    assert _storage_options() == {}

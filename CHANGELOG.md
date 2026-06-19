@@ -159,6 +159,12 @@ self-learning/memory system.
 
 ### Fixed
 
+- **Usage Summary "Failed to fetch" on Heroku.** slowapi rate limiting uses Redis
+  when `REDIS_URL` is set; Heroku `rediss://` requires `ssl_cert_reqs="none"`
+  (same as ARQ/worker). Without it, every rate-limited route (including
+  `GET /api/usage/stats`) crashed with SSL verify errors → HTTP 500. Fixed by
+  passing `redis_connect_kwargs()` into slowapi `storage_options`.
+
 - **Google sign-in missing on production login page.** Frontend CSP added in
   `next.config.ts` (security headers rollout) blocked Google Identity Services
   (`accounts.google.com` / `apis.google.com` script, connect, and iframe). The
