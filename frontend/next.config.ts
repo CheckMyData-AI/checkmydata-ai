@@ -16,13 +16,16 @@ const wsOrigin = apiOrigin.replace(/^http/, "ws");
 // CSP for the Next shell. Next.js injects inline bootstrap scripts, so
 // 'unsafe-inline' is required for script-src without a nonce pipeline;
 // 'unsafe-eval' is only needed for dev (react-refresh).
+// Google Identity Services (Sign in with Google) needs accounts.google.com in
+// script-src/connect-src/frame-src — mirror backend SECURITY_CSP allowlist.
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isProd ? "" : " 'unsafe-eval'"}`,
+  `script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com${isProd ? "" : " 'unsafe-eval'"}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://*.googleusercontent.com",
   "font-src 'self' data:",
-  `connect-src 'self' ${apiOrigin} ${wsOrigin} https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io`,
+  `connect-src 'self' ${apiOrigin} ${wsOrigin} https://accounts.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io`,
+  "frame-src https://accounts.google.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

@@ -159,6 +159,14 @@ self-learning/memory system.
 
 ### Fixed
 
+- **Google sign-in missing on production login page.** Frontend CSP added in
+  `next.config.ts` (security headers rollout) blocked Google Identity Services
+  (`accounts.google.com` / `apis.google.com` script, connect, and iframe). The
+  client ID was baked into the bundle but GIS never loaded, so the login form
+  showed email/password only. CSP now mirrors the backend Google OAuth
+  allowlist (`script-src`, `connect-src`, `frame-src`, `img-src` for profile
+  avatars).
+
 - **Multi-stage chat crash: `WorkflowTracker.emit() got multiple values for
   argument 'status'`.** Every orchestrated request that produced a multi-stage
   execution plan failed with `An unexpected error occurred`. `StageExecutor.
