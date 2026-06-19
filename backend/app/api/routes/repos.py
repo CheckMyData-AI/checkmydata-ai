@@ -283,7 +283,12 @@ async def _spawn_repo_index(
     }
 
 
-async def run_repo_index_task(project_id: str, force_full: bool = False) -> None:
+async def run_repo_index_task(
+    project_id: str,
+    force_full: bool = False,
+    *,
+    chain_sync: bool = True,
+) -> None:
     """Queue/worker entrypoint for a repo index run (no HTTP context).
 
     Mirrors the in-process background path but loads its own project + workflow.
@@ -304,7 +309,7 @@ async def run_repo_index_task(project_id: str, force_full: bool = False) -> None
 
     lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
     body = IndexRequest(force_full=force_full)
-    await _run_index_background(project_id, project, body, wf_id, lock)
+    await _run_index_background(project_id, project, body, wf_id, lock, chain_sync=chain_sync)
 
 
 def _verify_webhook_signature(secret: str, raw_body: bytes, headers) -> bool:
@@ -485,6 +490,8 @@ async def _run_index_background(
     body: IndexRequest,
     wf_id: str,
     lock: asyncio.Lock,
+    *,
+    chain_sync: bool = True,
 ) -> None:
     """Run the indexing pipeline as a background task with its own DB session."""
     async with lock:
@@ -520,7 +527,8 @@ async def _run_index_background(
                         live_table_names=live_table_names,
                     )
                     await _regenerate_overview(project_id)
-                    await _maybe_autostart_sync_chain(project_id)
+                    if chain_sync:
+                        await _maybe_autostart_sync_chain(project_id)
                 except Exception as exc:
                     logger.exception("Indexing pipeline failed for project %s", project_id)
                     try:

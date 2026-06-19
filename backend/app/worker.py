@@ -174,6 +174,15 @@ async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: st
     await svc.execute_batch(batch_id, connection_id, user_id=user_id)
 
 
+async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> None:  # noqa: ARG001
+    """Daily orchestrator: repo index → DB index → code↔DB sync for one project."""
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+
+    svc = DailyKnowledgeSyncService()
+    result = await svc.run_for_project(project_id)
+    await svc.persist_run(result)
+
+
 # ---------------------------------------------------------------------------
 # Startup / shutdown hooks
 # ---------------------------------------------------------------------------
@@ -222,6 +231,7 @@ class WorkerSettings:  # pragma: no cover
         run_code_db_sync,
         run_repo_index,
         run_batch,
+        run_daily_project_knowledge_sync,
     ]
     on_startup = startup
     on_shutdown = shutdown

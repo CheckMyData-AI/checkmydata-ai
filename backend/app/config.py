@@ -281,6 +281,14 @@ class Settings(BaseSettings):
     # maintenance loop. ``0`` disables.
     freshness_reconciler_enabled: bool = False
 
+    # DailyKnowledgeSync: forced nightly repo index → DB index → code↔DB sync for
+    # every eligible project. Runs at ``daily_knowledge_sync_hour`` in
+    # ``daily_knowledge_sync_timezone`` (default Europe/Berlin = 00:00 CET/CEST).
+    daily_knowledge_sync_enabled: bool = False
+    daily_knowledge_sync_hour: int = 0
+    daily_knowledge_sync_timezone: str = "Europe/Berlin"
+    daily_knowledge_sync_job_timeout_seconds: int = 7200
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2

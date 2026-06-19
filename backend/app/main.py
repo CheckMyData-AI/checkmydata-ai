@@ -78,11 +78,13 @@ _scheduler_task: asyncio.Task[None] | None = None
 _health_check_task: asyncio.Task[None] | None = None
 _maintenance_task: asyncio.Task[None] | None = None
 _git_poll_task: asyncio.Task[None] | None = None
+_daily_knowledge_sync_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backup_task, _scheduler_task, _health_check_task, _maintenance_task, _git_poll_task  # noqa: PLW0603
+    global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
+    global _git_poll_task, _daily_knowledge_sync_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -121,6 +123,7 @@ async def lifespan(app: FastAPI):
     _health_check_task = asyncio.create_task(_health_check_loop())
     _maintenance_task = asyncio.create_task(_maintenance_loop())
     _git_poll_task = asyncio.create_task(_git_poll_loop())
+    _daily_knowledge_sync_task = asyncio.create_task(_daily_knowledge_sync_cron_loop())
 
     from app.core.workflow_tracker import tracker as _wf_tracker
     from app.services.trace_persistence_service import TracePersistenceService
@@ -146,6 +149,7 @@ async def lifespan(app: FastAPI):
         _health_check_task,
         _maintenance_task,
         _git_poll_task,
+        _daily_knowledge_sync_task,
     ):
         if task and not task.done():
             task.cancel()
@@ -665,6 +669,88 @@ async def _git_poll_loop() -> None:
             break
         except Exception:
             logger.exception("Git poll loop iteration failed; will retry next cycle")
+
+
+async def _dispatch_daily_knowledge_sync_wave() -> None:
+    """Enqueue one daily knowledge sync job per eligible project."""
+    from zoneinfo import ZoneInfo
+
+    from app.core import task_queue
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+
+    svc = DailyKnowledgeSyncService()
+    dispatched = 0
+    skipped = 0
+
+    try:
+        async with async_session_factory() as session:
+            all_projects = await svc._project_svc.list_all(session)
+            eligible = await svc.list_eligible_projects(session)
+
+        skipped = len(all_projects) - len(eligible)
+
+        tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
+        run_date = datetime.now(tz).strftime("%Y-%m-%d")
+
+        for project in eligible:
+            task_id = f"daily_sync:{project.id}:{run_date}"
+            pid = project.id
+
+            async def _run_in_process(*, project_id: str = pid) -> None:
+                result = await svc.run_for_project(project_id)
+                await svc.persist_run(result)
+
+            await task_queue.enqueue(
+                "run_daily_project_knowledge_sync",
+                coro_factory=_run_in_process,
+                task_id=task_id,
+                _job_timeout=settings.daily_knowledge_sync_job_timeout_seconds,
+                project_id=project.id,
+            )
+            dispatched += 1
+
+        logger.info(
+            "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d",
+            dispatched,
+            skipped,
+        )
+    except Exception:
+        logger.exception("Cron: daily knowledge sync wave dispatch failed")
+
+
+async def _daily_knowledge_sync_cron_loop() -> None:
+    """Run daily knowledge sync at the configured hour in Europe/Berlin (default 00:00 CET/CEST)."""
+    if not settings.daily_knowledge_sync_enabled:
+        return
+
+    from zoneinfo import ZoneInfo
+
+    from app.services.daily_knowledge_sync_service import compute_next_scheduled_run
+
+    while True:
+        try:
+            tz_name = settings.daily_knowledge_sync_timezone
+            tz = ZoneInfo(tz_name)
+            next_run = compute_next_scheduled_run(
+                datetime.now(tz),
+                hour=settings.daily_knowledge_sync_hour,
+                timezone_name=tz_name,
+            )
+            wait_seconds = (next_run - datetime.now(tz)).total_seconds()
+            logger.info(
+                "Cron: next daily knowledge sync in %.0f seconds (at %s)",
+                wait_seconds,
+                next_run.isoformat(),
+            )
+            await asyncio.sleep(wait_seconds)
+            await _dispatch_daily_knowledge_sync_wave()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception(
+                "Cron: daily knowledge sync loop iteration failed; will retry next cycle"
+            )
+            await asyncio.sleep(60)
 
 
 async def _cleanup_pipeline_runs() -> None:

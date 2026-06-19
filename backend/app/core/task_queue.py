@@ -67,6 +67,7 @@ async def enqueue(
     *,
     task_id: str | None = None,
     _queue_name: str | None = None,
+    _job_timeout: int | None = None,
     **kwargs: Any,
 ) -> str | None:
     """Enqueue a background task.
@@ -89,11 +90,16 @@ async def enqueue(
     """
     if _arq_pool is not None:
         try:
+            arq_kwargs: dict[str, Any] = {
+                "_job_id": task_id,
+                "_queue_name": _queue_name or "arq:queue",
+            }
+            if _job_timeout is not None:
+                arq_kwargs["_job_timeout"] = _job_timeout
             job = await _arq_pool.enqueue_job(
                 task_name,
                 **kwargs,
-                _job_id=task_id,
-                _queue_name=_queue_name or "arq:queue",
+                **arq_kwargs,
             )
             jid = getattr(job, "job_id", None)
             logger.info("Task enqueued via ARQ: %s (job=%s)", task_name, jid)

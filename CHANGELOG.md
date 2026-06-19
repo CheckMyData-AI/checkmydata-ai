@@ -8,7 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Consolidated technical audit remediation (June 2026).** Full P0–P2 pass over
+- **Daily knowledge sync cron.** Opt-in nightly job (`DAILY_KNOWLEDGE_SYNC_ENABLED`)
+  at 00:00 Europe/Berlin runs incremental repo index → DB index → code↔DB sync
+  for every eligible project (repo + active connections). Results are persisted
+  in `knowledge_sync_runs` and logged with the `Cron: daily knowledge sync`
+  prefix for monitoring.
+
   API, agent/orchestrator, MCP, connectors/SSH, and billing:
   - *MCP resources auth (P0):* `project://{id}/schema|rules|knowledge` resources
     now resolve a principal and enforce project membership via
