@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
@@ -79,7 +80,7 @@ def _pick_total_column(columns: list[str], rows: list[list[Any]]) -> str | None:
 
 
 def collect_sql_totals_snapshots(
-    all_sql_results: list[SQLAgentResult | None],
+    all_sql_results: Sequence[SQLAgentResult | None],
 ) -> list[SqlTotalsSnapshot]:
     snapshots: list[SqlTotalsSnapshot] = []
     for idx, sr in enumerate(all_sql_results, start=1):
@@ -111,7 +112,7 @@ def collect_sql_totals_snapshots(
     return snapshots
 
 
-def sql_results_reconcile(all_sql_results: list[SQLAgentResult | None]) -> bool:
+def sql_results_reconcile(all_sql_results: Sequence[SQLAgentResult | None]) -> bool:
     """Return True when at least two SQL results share the same grand total.
 
     Mixed workflows (e.g. gross revenue + refund totals in one turn) may produce
@@ -127,7 +128,7 @@ def sql_results_reconcile(all_sql_results: list[SQLAgentResult | None]) -> bool:
     return any(n >= 2 for n in counts.values())
 
 
-def build_reconciliation_note(all_sql_results: list[SQLAgentResult | None]) -> str | None:
+def build_reconciliation_note(all_sql_results: Sequence[SQLAgentResult | None]) -> str | None:
     """Prompt note when aggregate and detail queries produce the same total."""
     snapshots = collect_sql_totals_snapshots(all_sql_results)
     if len(snapshots) < 2:
