@@ -1556,22 +1556,22 @@ class SQLAgent(BaseAgent):
             sync_svc = CodeDbSyncService()
             async with async_session_factory() as session:
                 entries = await sync_svc.get_sync(session, cfg.connection_id)
-            for e in entries:
-                raw = getattr(e, "required_filters_json", "{}") or "{}"
+            for sync_entry in entries:
+                raw = getattr(sync_entry, "required_filters_json", "{}") or "{}"
                 try:
                     parsed = json_mod.loads(raw)
                 except (json_mod.JSONDecodeError, TypeError):
                     parsed = {}
                 if parsed and isinstance(parsed, dict):
-                    sync_filters[e.table_name] = parsed
+                    sync_filters[sync_entry.table_name] = parsed
 
             index_hints: dict[str, str] = {}
             idx_svc = DbIndexService()
             async with async_session_factory() as session:
                 index_entries = await idx_svc.get_index(session, cfg.connection_id)
-            for e in index_entries:
-                if e.query_hints:
-                    index_hints[e.table_name] = e.query_hints
+            for index_entry in index_entries:
+                if index_entry.query_hints:
+                    index_hints[index_entry.table_name] = index_entry.query_hints
 
             return merge_required_filters(sync_filters, index_hints)
         except Exception:
