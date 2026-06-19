@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Heroku worker + Redis TLS.** Production Docker image installs the `[redis]`
+  extra (ARQ task queue). `heroku.yml` and CI deploy release both `web` and
+  `worker` dynos. Heroku `rediss://` URLs use `ssl_cert_reqs=none` via
+  `app/core/redis_tls.py` (redis-py 5.x compatibility).
+
 - **Daily knowledge sync cron.** Opt-in nightly job (`DAILY_KNOWLEDGE_SYNC_ENABLED`)
   at 00:00 Europe/Berlin runs incremental repo index → DB index → code↔DB sync
   for every eligible project (repo + active connections). Results are persisted

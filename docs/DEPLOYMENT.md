@@ -9,7 +9,7 @@
 ## Platforms / targets
 | Env | Platform | App / service | URL | Notes |
 |-----|----------|---------------|-----|-------|
-| production | Heroku (container registry) | `checkmydata-api` (backend) | https://api.checkmydata.ai | App name overridable via repo var `BACKEND_APP` |
+| production | Heroku (container registry) | `checkmydata-api` (backend) | https://api.checkmydata.ai | `web` + `worker` dynos; Redis addon for ARQ |
 | production | Heroku (container registry) | `checkmydata-web` (frontend) | https://checkmydata.ai | App name overridable via repo var `FRONTEND_APP` |
 
 DigitalOcean App Platform config (`.do/app.yaml`) exists but is not the active
@@ -53,7 +53,10 @@ No local `git push heroku` is needed; deploy is fully CI-driven.
 - GitHub vars (names only, with defaults in deploy.yml): `BACKEND_APP`,
   `FRONTEND_APP`, `BACKEND_API_URL`, `BACKEND_WS_URL`, `FRONTEND_URL`.
 - Heroku runtime config (names only): `DATABASE_URL`, `MASTER_ENCRYPTION_KEY`,
-  `JWT_SECRET`, `OPENAI_API_KEY`, `CORS_ORIGINS`, `AUTH_COOKIE_DOMAIN`, etc.
+  `JWT_SECRET`, `OPENAI_API_KEY`, `CORS_ORIGINS`, `AUTH_COOKIE_DOMAIN`,
+  `REDIS_URL`, feature flags (`CODE_GRAPH_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`,
+  etc.), billing (`BILLING_ENABLED`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TEAM`), etc.
 - `AUTH_COOKIE_DOMAIN` **must** be set to the shared parent domain
   (`.checkmydata.ai`) because the SPA (`checkmydata.ai`) and API
   (`api.checkmydata.ai`) live on different subdomains. With a host-only cookie
