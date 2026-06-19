@@ -28,8 +28,9 @@ async def init_task_queue(redis_url: str | None = None) -> None:
 
     try:
         arq_create_pool = importlib.import_module("arq.connections").create_pool
-        RedisSettings = importlib.import_module("arq.connections").RedisSettings  # noqa: N806
-        _arq_pool = await arq_create_pool(RedisSettings.from_dsn(redis_url))
+        from app.core.redis_tls import arq_redis_settings
+
+        _arq_pool = await arq_create_pool(arq_redis_settings(redis_url))
         logger.info("Task queue: ARQ connected to Redis")
     except Exception:
         logger.warning(

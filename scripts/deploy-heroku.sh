@@ -115,10 +115,22 @@ if [ "$DEPLOY_BACKEND" = true ]; then
     -t "registry.heroku.com/${BACKEND_APP}/web" \
     -f Dockerfile.backend .
 
-  echo "→ Pushing backend image …"
-  docker push "registry.heroku.com/${BACKEND_APP}/web"
+  echo "→ Tagging worker image …"
+  docker tag "registry.heroku.com/${BACKEND_APP}/web" "registry.heroku.com/${BACKEND_APP}/worker"
 
-  heroku_release "$BACKEND_APP"
+  echo "→ Pushing backend images …"
+  docker push "registry.heroku.com/${BACKEND_APP}/web"
+  docker push "registry.heroku.com/${BACKEND_APP}/worker"
+
+  IMAGE_ID="$(docker inspect --format='{{.Id}}' "registry.heroku.com/${BACKEND_APP}/web")"
+  echo "→ Releasing ${BACKEND_APP} web + worker (image ${IMAGE_ID:0:19})…"
+  curl -sf -X PATCH "https://api.heroku.com/apps/${BACKEND_APP}/formation" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+    -H "Authorization: Bearer ${HEROKU_API_KEY}" \
+    -d "{\"updates\":[{\"type\":\"web\",\"docker_image\":\"${IMAGE_ID}\"},{\"type\":\"worker\",\"docker_image\":\"${IMAGE_ID}\",\"command\":\"sh -c /opt/venv/bin/arq\\\\ app.worker.WorkerSettings\"}]}" \
+    | python3 -m json.tool 2>/dev/null || true
+  echo ""
 fi
 
 # ── Frontend ──────────────────────────────────────────────────────

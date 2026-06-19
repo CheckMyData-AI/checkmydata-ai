@@ -61,7 +61,7 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"}]}'
+            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"},{"type":"worker","docker_image":"'"$IMAGE_ID"'"}]}'
 
       - name: Release frontend
         run: |

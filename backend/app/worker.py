@@ -217,10 +217,10 @@ async def shutdown(ctx: dict) -> None:  # noqa: ARG001
 
 def _redis_settings():  # pragma: no cover
     """Build ARQ RedisSettings from REDIS_URL env var."""
-    from arq.connections import RedisSettings
+    from app.core.redis_tls import arq_redis_settings
 
     url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    return RedisSettings.from_dsn(url)
+    return arq_redis_settings(url)
 
 
 class WorkerSettings:  # pragma: no cover

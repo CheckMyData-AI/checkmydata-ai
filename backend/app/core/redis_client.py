@@ -25,7 +25,11 @@ async def connect(redis_url: str | None) -> None:
         return
     try:
         redis_mod = importlib.import_module("redis.asyncio")
-        client = redis_mod.from_url(redis_url, decode_responses=True)
+        from app.core.redis_tls import redis_connect_kwargs
+
+        client = redis_mod.from_url(
+            redis_url, decode_responses=True, **redis_connect_kwargs(redis_url)
+        )
         await client.ping()
         _client = client
         logger.info("redis_client: connected")

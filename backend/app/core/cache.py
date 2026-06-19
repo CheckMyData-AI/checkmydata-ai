@@ -31,7 +31,11 @@ class SharedCache:
             return
         try:
             redis_mod = importlib.import_module("redis.asyncio")
-            self._redis = redis_mod.from_url(redis_url, decode_responses=True)
+            from app.core.redis_tls import redis_connect_kwargs
+
+            self._redis = redis_mod.from_url(
+                redis_url, decode_responses=True, **redis_connect_kwargs(redis_url)
+            )
             await self._redis.ping()
             logger.info("SharedCache[%s]: connected to Redis", self._prefix)
         except Exception:
