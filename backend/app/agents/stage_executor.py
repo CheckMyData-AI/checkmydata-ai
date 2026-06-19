@@ -868,6 +868,8 @@ class StageExecutor:
             "You are a data analyst. Synthesise the stage results below into "
             "a clear, complete answer. Include a summary table if the user "
             "requested one. Provide analytical commentary where appropriate. "
+            "When stage SQL totals reconcile, do NOT claim an earlier query was "
+            "wrong or under-counted without a numeric mismatch. "
             "Reason internally in English, but write the final answer in the "
             "SAME language as the original question."
         )

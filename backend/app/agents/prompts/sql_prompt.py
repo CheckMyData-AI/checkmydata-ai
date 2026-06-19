@@ -98,7 +98,10 @@ def build_sql_system_prompt(
         "- Include LIMIT for potentially large result sets.\n"
         "- Focus on the current question — conversation history is reference only.\n"
         "- Record new data observations with `write_note` or `record_learning`.\n"
-        "- After getting results, sanity-check the data before returning it."
+        "- After getting results, sanity-check the data before returning it.\n"
+        "- For categorical breakdowns (product_type, status, etc.), prefer exact "
+        "values from `get_query_context` / distinct-value samples or `IN (...)` — "
+        "avoid ad-hoc `LIKE` patterns unless the user asked for pattern matching."
     )
 
     if has_db_index:

@@ -35,6 +35,11 @@ from app.agents.response_builder import (
     ResponseBuilder,
     SQLResultBlock,
 )
+from app.agents.sql_result_reconciliation import (
+    build_reconciliation_note,
+    scrub_false_sql_self_correction,
+    sql_results_reconcile,
+)
 from app.agents.router import RouteResult, route_request
 from app.agents.sql_agent import SQLAgent, SQLAgentResult
 from app.agents.stage_context import ExecutionPlan, StageContext
@@ -79,7 +84,7 @@ _LLM_CALL_BASE_BACKOFF = 3.0
 MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 
 
-PROMPT_VERSION = "v2.1"
+PROMPT_VERSION = "v2.2"
 
 _PREVIEW_MAX = 500
 
@@ -947,6 +952,8 @@ class OrchestratorAgent(BaseAgent):
                             f"({reason}, {budget_pct:.0%} used). You MUST compose "
                             "your complete final answer NOW using the data you have "
                             "gathered so far. Do NOT make any more tool calls. "
+                            "If multiple SQL queries sum to the same total, do NOT "
+                            "claim an earlier query was wrong or under-counted. "
                             "Write the answer in the SAME language as the user's "
                             "most recent message."
                         ),
@@ -1063,6 +1070,7 @@ class OrchestratorAgent(BaseAgent):
                     final_text = ResponseBuilder.build_partial_text(
                         last_sql_result, knowledge_sources
                     )
+                final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 await self._stream_tokens(wf_id, final_text)
                 break
 
@@ -1078,6 +1086,7 @@ class OrchestratorAgent(BaseAgent):
                 final_text = llm_resp.content or ResponseBuilder.build_timeout_text(
                     last_sql_result, knowledge_sources
                 )
+                final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 wall_clock_timeout_hit = True
                 await self._stream_tokens(wf_id, final_text)
                 break
@@ -1254,6 +1263,9 @@ class OrchestratorAgent(BaseAgent):
                                 "asking the agent to re-query.",
                                 tool=tc.name,
                             )
+                        recon_note = build_reconciliation_note(all_sql_results)
+                        if recon_note and recon_note not in result_text:
+                            result_text = f"{result_text}\n\n{recon_note}"
                 elif isinstance(sub_result, KnowledgeResult):
                     knowledge_sources.extend(sub_result.sources)
                 elif isinstance(sub_result, MCPSourceResult):
@@ -1318,6 +1330,7 @@ class OrchestratorAgent(BaseAgent):
                         final_text = ResponseBuilder.build_partial_text(
                             last_sql_result, knowledge_sources
                         )
+                    final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                     await self._stream_tokens(wf_id, final_text)
                 except LLMError:
                     logger.warning(
@@ -1328,9 +1341,11 @@ class OrchestratorAgent(BaseAgent):
                     final_text = ResponseBuilder.build_partial_text(
                         last_sql_result, knowledge_sources
                     )
+                    final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                     await self._stream_tokens(wf_id, final_text)
             else:
                 final_text = ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources)
+                final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 await self._stream_tokens(wf_id, final_text)
             step_limit_hit = True
 
@@ -1566,6 +1581,8 @@ class OrchestratorAgent(BaseAgent):
                 },
                 default=str,
             )
+
+        final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
 
         return AgentResponse(
             answer=final_text,
@@ -2392,6 +2409,16 @@ class OrchestratorAgent(BaseAgent):
     _dedup_tool_calls = staticmethod(ToolDispatcher.dedup_tool_calls)
     _build_process_data_params = staticmethod(ToolDispatcher.build_process_data_params)
     _format_sql_result_for_llm = staticmethod(ToolDispatcher.format_sql_result_for_llm)
+
+    @staticmethod
+    def _finalize_tool_loop_answer(
+        text: str,
+        all_sql_results: list[SQLAgentResult],
+    ) -> str:
+        return scrub_false_sql_self_correction(
+            text,
+            reconciled=sql_results_reconcile(all_sql_results),
+        )
 
     # Backward-compatible aliases — delegate to ResponseBuilder
     _build_partial_text = staticmethod(ResponseBuilder.build_partial_text)

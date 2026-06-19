@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents.sql_agent import SQLAgentResult
+from app.agents.sql_result_reconciliation import build_reconciliation_note
 
 if TYPE_CHECKING:
     from app.agents.orchestrator import AgentResponse
@@ -292,6 +293,10 @@ class ResponseBuilder:
             char_budget = max(1, budget_tokens * 4)
             collected = collected[:char_budget] + "\n... (truncated)"
 
+        recon_note = build_reconciliation_note(results_to_summarize)
+        if recon_note:
+            collected += f"\n\n{recon_note}"
+
         user_question = ""
         for m in reversed(loop_messages):
             if m.role == "user" and m.content:
@@ -306,6 +311,8 @@ class ResponseBuilder:
                 "Structure your answer with clear sections and key findings. "
                 "Do NOT mention step limits, partial results, or that "
                 "anything was cut short — present this as a complete answer. "
+                "If SQL RECONCILIATION shows matching totals across queries, "
+                "do NOT claim an earlier query was wrong or under-counted. "
                 "Write the answer in the SAME language as the original question "
                 "below (reason internally in English).\n\n"
                 + (f"Original question: {user_question}\n\n" if user_question else "")
