@@ -7,7 +7,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.connectors.base import SchemaInfo
-from app.core.query_validation import QueryAttempt, QueryError, QueryErrorType
+from app.core.query_validation import QueryAttempt, QueryError, QueryErrorType, ValidationResult
+from app.core.required_filter_guard import check_required_filters
 from app.core.retry_strategy import RetryStrategy
 from app.core.schema_hints import get_table_detail, list_all_tables_summary
 
@@ -30,6 +31,7 @@ class ContextEnricher:
         distinct_values: dict[str, dict[str, list[str]]] | None = None,
         learnings_context: str = "",
         sync_query_tips: str = "",
+        required_filters_by_table: dict[str, set[str]] | None = None,
     ):
         self._schema = schema
         self._vector_store = vector_store
@@ -39,7 +41,11 @@ class ContextEnricher:
         self._distinct_values = distinct_values or {}
         self._learnings_context = learnings_context
         self._sync_query_tips = sync_query_tips
+        self._required_filters_by_table = required_filters_by_table or {}
         self._retry_strategy = RetryStrategy()
+
+    def validate_required_filters(self, query: str, db_type: str) -> ValidationResult:
+        return check_required_filters(query, db_type, self._required_filters_by_table)
 
     async def build_repair_context(
         self,

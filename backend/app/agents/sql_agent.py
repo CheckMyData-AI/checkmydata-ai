@@ -464,6 +464,7 @@ class SQLAgent(BaseAgent):
         rules_ctx = await self._load_rules_for_repair(ctx.project_id)
         dv = await self._load_distinct_values(cfg)
         learn_ctx = await self._load_learnings_for_repair(cfg)
+        required_filters = await self._load_required_filters_by_table(cfg)
         enricher = ContextEnricher(
             schema,
             self._vector_store,
@@ -473,6 +474,7 @@ class SQLAgent(BaseAgent):
             distinct_values=dv,
             learnings_context=learn_ctx,
             sync_query_tips=sync_tips,
+            required_filters_by_table=required_filters,
         )
         repairer = QueryRepairer(self._llm)
         validation_loop = ValidationLoop(
@@ -1537,6 +1539,46 @@ class SQLAgent(BaseAgent):
         except Exception:
             logger.debug("_load_sync_filters_and_mappings failed", exc_info=True)
             return "", ""
+
+    async def _load_required_filters_by_table(
+        self, cfg: ConnectionConfig
+    ) -> dict[str, set[str]]:
+        """Merge code-DB sync required_filters with db_index query_hints per table."""
+        if not cfg.connection_id:
+            return {}
+        try:
+            import json as json_mod
+
+            from app.core.required_filter_guard import merge_required_filters
+            from app.models.base import async_session_factory
+            from app.services.code_db_sync_service import CodeDbSyncService
+            from app.services.db_index_service import DbIndexService
+
+            sync_filters: dict[str, dict[str, str]] = {}
+            sync_svc = CodeDbSyncService()
+            async with async_session_factory() as session:
+                entries = await sync_svc.get_sync(session, cfg.connection_id)
+            for e in entries:
+                raw = getattr(e, "required_filters_json", "{}") or "{}"
+                try:
+                    parsed = json_mod.loads(raw)
+                except (json_mod.JSONDecodeError, TypeError):
+                    parsed = {}
+                if parsed and isinstance(parsed, dict):
+                    sync_filters[e.table_name] = parsed
+
+            index_hints: dict[str, str] = {}
+            idx_svc = DbIndexService()
+            async with async_session_factory() as session:
+                index_entries = await idx_svc.get_index(session, cfg.connection_id)
+            for e in index_entries:
+                if e.query_hints:
+                    index_hints[e.table_name] = e.query_hints
+
+            return merge_required_filters(sync_filters, index_hints)
+        except Exception:
+            logger.debug("_load_required_filters_by_table failed", exc_info=True)
+            return {}
 
     async def _resolve_connection_id(self, project_id: str, cfg: ConnectionConfig) -> str | None:
         from app.models.base import async_session_factory

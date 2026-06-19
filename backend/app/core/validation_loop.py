@@ -127,6 +127,49 @@ class ValidationLoop:
 
                 all_warnings.extend(pre_result.warnings)
 
+            # --- Required business filters (code-DB sync / schema index) ---
+            async with self._tracker.step(
+                workflow_id,
+                "required_filter_check",
+                f"Required filter check (attempt {attempt_num}/{self._config.max_retries})",
+                span_type="validation",
+            ):
+                filter_result = self._enricher.validate_required_filters(
+                    current_query, schema.db_type
+                )
+
+            if not filter_result.is_valid and filter_result.error:
+                attempt.error = filter_result.error
+                attempt.elapsed_ms = (time.monotonic() - t0) * 1000
+                attempts.append(attempt)
+
+                repair = await self._try_repair(
+                    filter_result.error,
+                    question,
+                    current_query,
+                    attempts,
+                    project_id,
+                    workflow_id,
+                    schema,
+                    connection_config,
+                    attempt_num,
+                    chat_history=chat_history,
+                    preferred_provider=preferred_provider,
+                    model=model,
+                )
+                if repair is None:
+                    return self._fail(
+                        current_query,
+                        current_explanation,
+                        attempts,
+                        filter_result.error,
+                        all_warnings,
+                    )
+                current_query, current_explanation = repair
+                continue
+
+            all_warnings.extend(filter_result.warnings)
+
             # --- Safety check ---
             async with self._tracker.step(
                 workflow_id, "safety_check", "Validating query safety", span_type="validation"
