@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, type Connection, type Project } from "@/lib/api";
+import { MAX_POLL_MS, POLL_INTERVAL_MS } from "@/lib/polling";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
@@ -191,7 +192,21 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     setIndexStatus("indexing");
     try {
       await api.connections.indexDb(createdConnection.id);
-      setIndexStatus("done");
+      const start = Date.now();
+      while (Date.now() - start < MAX_POLL_MS) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        const status = await api.connections.indexDbStatus(createdConnection.id);
+        if (!status.is_indexing) {
+          if (status.indexing_status === "failed") {
+            setIndexStatus("error");
+          } else {
+            setIndexStatus("done");
+          }
+          return;
+        }
+      }
+      setIndexStatus("error");
+      toast("Database indexing timed out", "error");
     } catch {
       setIndexStatus("error");
     }

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Knowledge pipeline visibility.** New `GET /api/projects/{id}/pipeline-status`
+  aggregates repo index, DB index, and code-DB sync state for all project
+  members. ARQ worker workflow events are bridged to API SSE via Redis pub/sub
+  (`cmd:workflow_events`). Frontend polls pipeline status and seeds
+  `ActiveTasksWidget`, Sidebar, ConnectionSelector, and Knowledge Health panel.
+
 - **Heroku worker + Redis TLS.** Production Docker image installs the `[redis]`
   extra (ARQ task queue). `heroku.yml` and CI deploy release both `web` and
   `worker` dynos. Heroku `rediss://` URLs use `ssl_cert_reqs=none` via

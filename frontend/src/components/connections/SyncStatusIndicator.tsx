@@ -20,11 +20,21 @@ function timeAgo(iso: string): string {
 const REFRESH_PIPELINES = new Set(["code_db_sync", "db_index"]);
 
 export function SyncStatusIndicator() {
+  const activeProject = useAppStore((s) => s.activeProject);
   const activeConnection = useAppStore((s) => s.activeConnection);
+  const pipelineStatus = useAppStore((s) =>
+    activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
+  );
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const tasks = useTaskStore((s) => s.tasks);
   const prevFinishedRef = useRef<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const connPipeline = pipelineStatus?.connections.find(
+    (c) => c.connection_id === activeConnection?.id,
+  );
+  const pipelineSyncRunning = connPipeline?.code_db_sync.is_syncing ?? false;
+  const pipelineSyncStatus = connPipeline?.code_db_sync.sync_status;
 
   useEffect(() => {
     if (!activeConnection) {
@@ -46,7 +56,13 @@ export function SyncStatusIndicator() {
       pollRef.current = null;
     }
 
-    if (!activeConnection || syncStatus?.sync_status !== "running") return;
+    const shouldPoll =
+      activeConnection &&
+      (syncStatus?.sync_status === "running" ||
+        syncStatus?.is_syncing ||
+        pipelineSyncRunning);
+
+    if (!shouldPoll) return;
 
     const connId = activeConnection.id;
     let cancelled = false;
@@ -66,7 +82,7 @@ export function SyncStatusIndicator() {
         pollRef.current = null;
       }
     };
-  }, [activeConnection, syncStatus?.sync_status]);
+  }, [activeConnection, syncStatus?.sync_status, syncStatus?.is_syncing, pipelineSyncRunning]);
 
   const prevRunningRef = useRef<Set<string>>(new Set());
 
@@ -100,27 +116,36 @@ export function SyncStatusIndicator() {
     }
   }, [tasks, activeConnection]);
 
-  if (!activeConnection || !syncStatus) return null;
+  if (!activeConnection) return null;
 
-  const { is_synced, sync_status, synced_tables, total_tables, synced_at } = syncStatus;
+  const effectiveSyncStatus =
+    syncStatus?.sync_status ?? pipelineSyncStatus ?? "idle";
+  const isSyncing =
+    syncStatus?.is_syncing ||
+    syncStatus?.sync_status === "running" ||
+    pipelineSyncRunning;
+  const isSynced = syncStatus?.is_synced ?? false;
+  const syncedTables = syncStatus?.synced_tables ?? connPipeline?.code_db_sync.synced_tables;
+  const totalTables = syncStatus?.total_tables ?? connPipeline?.code_db_sync.total_tables;
+  const syncedAt = syncStatus?.synced_at ?? connPipeline?.code_db_sync.synced_at ?? undefined;
 
-  if (!is_synced && sync_status !== "stale" && sync_status !== "running") return null;
-
-  const dotColor = sync_status === "running"
+  const dotColor = isSyncing
     ? "bg-warning animate-pulse-dot"
-    : sync_status === "stale"
+    : effectiveSyncStatus === "stale"
       ? "bg-warning"
-      : is_synced
+      : isSynced
         ? "bg-success"
         : "bg-surface-3";
 
-  const label = sync_status === "running"
+  const label = isSyncing
     ? "Syncing..."
-    : sync_status === "stale"
+    : effectiveSyncStatus === "stale"
       ? "Sync stale"
-      : `${synced_tables ?? 0}/${total_tables ?? 0} tables matched`;
+      : isSynced
+        ? `${syncedTables ?? 0}/${totalTables ?? 0} tables matched`
+        : "Not synced yet";
 
-  const ageStr = synced_at ? timeAgo(synced_at) : null;
+  const ageStr = syncedAt ? timeAgo(syncedAt) : null;
 
   return (
     <div className="mt-1 px-2 flex items-center gap-1.5 text-[10px] text-text-muted">

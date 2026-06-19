@@ -93,6 +93,12 @@ class WorkflowTracker:
         self._workflow_owners: dict[str, dict[str, str]] = {}
         self._persistence_hooks: list[Any] = []
         self._ended_workflows: set[str] = set()
+        self._cross_process_publish = False
+        self._external_rebroadcast = False
+
+    def enable_cross_process_publish(self) -> None:
+        """Worker process: publish events to Redis for API SSE subscribers."""
+        self._cross_process_publish = True
 
     def add_persistence_hook(self, callback: Any) -> None:
         """Register an async callback invoked on every broadcast (fire-and-forget)."""
@@ -343,7 +349,36 @@ class WorkflowTracker:
         async with self._lock:
             self._subscribers = [s for s in self._subscribers if s.queue is not queue]
 
+    async def broadcast_external(self, event: WorkflowEvent) -> None:
+        """Deliver an event received from another process (Redis) to local SSE only."""
+        self._external_rebroadcast = True
+        try:
+            if event.step == "pipeline_start" and event.pipeline in BACKGROUND_PIPELINES:
+                self._active_workflows[event.workflow_id] = {
+                    "workflow_id": event.workflow_id,
+                    "pipeline": event.pipeline,
+                    "started_at": event.timestamp,
+                    "extra": event.extra or {},
+                }
+                uid = str((event.extra or {}).get("user_id") or "")
+                pid = str((event.extra or {}).get("project_id") or "")
+                if uid or pid:
+                    self._workflow_owners[event.workflow_id] = {"user_id": uid, "project_id": pid}
+            elif event.step == "pipeline_end":
+                self._active_workflows.pop(event.workflow_id, None)
+                self._ended_workflows.add(event.workflow_id)
+            await self._deliver_local(event)
+        finally:
+            self._external_rebroadcast = False
+
     async def _broadcast(self, event: WorkflowEvent) -> None:
+        await self._deliver_local(event)
+        if self._cross_process_publish and not self._external_rebroadcast:
+            from app.core.workflow_events import publish_workflow_event
+
+            await publish_workflow_event(event)
+
+    async def _deliver_local(self, event: WorkflowEvent) -> None:
         short = event.detail[:30] + "…" if len(event.detail) > 30 else event.detail
         logger.info(
             "workflow[%s] %s: %s (%s)%s",

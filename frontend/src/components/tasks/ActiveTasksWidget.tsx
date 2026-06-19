@@ -142,10 +142,15 @@ function TaskItem({ task }: { task: ActiveTask }) {
 
 export function ActiveTasksWidget() {
   const tasks = useTaskStore((s) => s.tasks);
+  const activeProject = useAppStore((s) => s.activeProject);
   const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const taskList = Object.values(tasks);
+  const taskList = Object.values(tasks).filter((t) => {
+    if (!activeProject) return true;
+    const pid = t.extra.project_id;
+    return !pid || pid === activeProject.id;
+  });
   const runningCount = taskList.filter((t) => t.status === "running").length;
   const failedCount = taskList.filter((t) => t.status === "failed").length;
   const hasAny = taskList.length > 0;

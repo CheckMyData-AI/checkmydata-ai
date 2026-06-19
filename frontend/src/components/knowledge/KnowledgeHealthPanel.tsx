@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type KnowledgeHealth, type KnowledgeActionKind } from "@/lib/api";
+import { POLL_INTERVAL_MS } from "@/lib/polling";
+import { useAppStore } from "@/stores/app-store";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/stores/toast-store";
@@ -55,6 +57,17 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
     setLoading(true);
     fetchHealth();
   }, [fetchHealth]);
+
+  const pipelineStatus = useAppStore((s) => s.pipelineStatusByProject[projectId]);
+  const anyPipelineRunning = pipelineStatus?.any_running ?? false;
+
+  useEffect(() => {
+    if (!anyPipelineRunning) return;
+    const id = setInterval(() => {
+      void fetchHealth();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [anyPipelineRunning, fetchHealth]);
 
   const runAction = async (
     kind: KnowledgeActionKind,
@@ -117,6 +130,12 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
         </div>
       ) : !health ? null : (
         <div className="space-y-3">
+          {anyPipelineRunning && (
+            <div className="flex items-center gap-2 text-xs text-warning rounded-md border border-border-default bg-warning-muted px-2.5 py-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse-dot shrink-0" />
+              <span>Knowledge pipeline running (index or sync in progress)…</span>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             {COUNT_META.map(({ key, label, icon }) => (
               <div

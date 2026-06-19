@@ -216,6 +216,11 @@ async def _spawn_repo_index(
         if existing_task and not existing_task.done():
             return None
 
+        if task_queue.is_arq_active():
+            existing_running_cp = await _checkpoint_svc.get_active(db, project_id)
+            if existing_running_cp and existing_running_cp.status == "running":
+                return None
+
         if debounce:
             now = time.monotonic()
             last = _last_index_trigger_at.get(project_id)
@@ -233,6 +238,8 @@ async def _spawn_repo_index(
         resumed = False
         if existing_cp and not force_full:
             if existing_cp.status == "running":
+                if task_queue.is_arq_active():
+                    return None
                 existing_cp.status = "interrupted"
                 await db.commit()
             resumed = True
@@ -465,6 +472,10 @@ async def _maybe_autostart_sync_chain(project_id: str) -> None:
     case). All failures are swallowed so the chain never fails the index.
     """
     if not settings.auto_sync_after_index:
+        logger.info(
+            "auto_sync skipped reason=flag_off project=%s",
+            project_id[:8],
+        )
         return
     try:
         from app.api.routes.connections import maybe_autostart_sync
@@ -576,6 +587,11 @@ async def repo_status(
 
     checkpoint = await _checkpoint_svc.get_active(db, project_id)
 
+    in_memory_running = bool(
+        _indexing_tasks.get(project_id) and not _indexing_tasks[project_id].done()
+    )
+    checkpoint_running = checkpoint is not None and checkpoint.status == "running"
+
     return {
         "project_id": project_id,
         "repo_url": project.repo_url,
@@ -586,11 +602,10 @@ async def repo_status(
         "branch": record.branch if record else project.repo_branch,
         "indexed_files_count": indexed_files_count,
         "total_documents": len(docs),
-        "is_indexing": bool(
-            _indexing_tasks.get(project_id) and not _indexing_tasks[project_id].done()
-        ),
+        "is_indexing": in_memory_running or checkpoint_running,
         "has_checkpoint": checkpoint is not None,
         "checkpoint_status": checkpoint.status if checkpoint else None,
+        "workflow_id": checkpoint.workflow_id if checkpoint else None,
     }
 
 

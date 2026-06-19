@@ -47,6 +47,7 @@ const LogsScreen = dynamic(
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import { useKnowledgePipelineStatus } from "@/hooks/useKnowledgePipelineStatus";
 import { useRestoreState } from "@/hooks/useRestoreState";
 import { useRefreshOnFocus } from "@/hooks/useRefreshOnFocus";
 import { useMobileLayout } from "@/hooks/useMobileLayout";
@@ -80,6 +81,7 @@ function AppPageContent() {
   });
 
   useGlobalEvents(!!user);
+  useKnowledgePipelineStatus(activeProject?.id);
   useRestoreState(!!user);
   useRefreshOnFocus(!!user);
 

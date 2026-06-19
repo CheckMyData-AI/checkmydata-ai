@@ -1,5 +1,5 @@
 import { request } from "./_client";
-import type { KnowledgeHealth, Project, ProjectReadiness } from "./types";
+import type { KnowledgeHealth, PipelineStatusResponse, Project, ProjectReadiness } from "./types";
 
 export const projects = {
   list: () => request<Project[]>("/projects"),
@@ -17,6 +17,8 @@ export const projects = {
         connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""
       }`,
     ),
+  pipelineStatus: (id: string) =>
+    request<PipelineStatusResponse>(`/projects/${id}/pipeline-status`),
   requestAccess: (data: { email: string; description: string; message: string }) =>
     request<{ ok: boolean }>("/projects/access-requests", {
       method: "POST",

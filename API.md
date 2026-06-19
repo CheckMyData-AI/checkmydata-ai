@@ -33,6 +33,8 @@ Authorization: Bearer <jwt-token>
 | PATCH | `/api/projects/{id}` | Update project |
 | DELETE | `/api/projects/{id}` | Delete project |
 | GET | `/api/projects/{id}/readiness` | Check project setup readiness |
+| GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
+| GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
 
 ## Connections
 

@@ -62,6 +62,9 @@ interface SidebarProps {
 export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarProps) {
   const { isOwner, canEdit } = usePermission();
   const activeProject = useAppStore((s) => s.activeProject);
+  const pipelineStatus = useAppStore((s) =>
+    activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
+  );
   const sshKeys = useAppStore((s) => s.sshKeys);
   const setSshKeys = useAppStore((s) => s.setSshKeys);
   const projects = useAppStore((s) => s.projects);
@@ -262,6 +265,14 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         .join("")
     : "";
 
+  const repoIsIndexing =
+    pipelineStatus?.repo.is_indexing ?? repoStatus?.is_indexing ?? indexing;
+  const remoteWorkflowId =
+    pipelineStatus?.repo.is_indexing && pipelineStatus.repo.workflow_id
+      ? pipelineStatus.repo.workflow_id
+      : null;
+  const effectiveWorkflowId = indexWorkflowId ?? remoteWorkflowId;
+
   const repoSection = activeProject?.repo_url ? (
     <div className="space-y-2 px-1">
       {repoStatus && (
@@ -300,7 +311,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               Not yet indexed
             </p>
           )}
-          {repoStatus.is_indexing && (
+          {repoIsIndexing && (
             <p className="text-warning text-[11px] flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse-dot" />
               Indexing in progress...
@@ -352,9 +363,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         </p>
       )}
 
-      {indexWorkflowId && (
+      {effectiveWorkflowId && (
         <WorkflowProgress
-          workflowId={indexWorkflowId}
+          workflowId={effectiveWorkflowId}
           compact
           onComplete={handleIndexComplete}
         />

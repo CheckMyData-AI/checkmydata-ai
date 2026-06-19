@@ -115,6 +115,10 @@ async def lifespan(app: FastAPI):
     # Shared client for AgentLimiter / WsTicketStore (T-SCALE-1 / T-SEC-7).
     await redis_client.connect(redis_url)
 
+    from app.core.workflow_events import start_workflow_event_subscriber
+
+    await start_workflow_event_subscriber()
+
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
         await _maybe_initial_backup()
@@ -161,6 +165,9 @@ async def lifespan(app: FastAPI):
     from app.core import redis_client as _rc
     from app.core.cache import shared_cache as _sc
     from app.core.task_queue import close_task_queue
+    from app.core.workflow_events import stop_workflow_event_subscriber
+
+    await stop_workflow_event_subscriber()
 
     await close_task_queue()
     await _sc.close()

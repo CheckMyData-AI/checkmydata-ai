@@ -35,6 +35,9 @@ interface ConnectionSelectorProps {
 
 export function ConnectionSelector({ createRequested, onCreateHandled }: ConnectionSelectorProps) {
   const activeProject = useAppStore((s) => s.activeProject);
+  const pipelineStatus = useAppStore((s) =>
+    activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
+  );
   const connections = useAppStore((s) => s.connections);
   const activeConnection = useAppStore((s) => s.activeConnection);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
@@ -272,6 +275,18 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     });
     return () => { cancelled = true; };
   }, [connections, startIndexPoll, startSyncPoll]);
+
+  useEffect(() => {
+    if (!pipelineStatus) return;
+    for (const conn of pipelineStatus.connections) {
+      if (conn.db_index.is_indexing && !indexPollRef.current.has(conn.connection_id)) {
+        startIndexPoll(conn.connection_id);
+      }
+      if (conn.code_db_sync.is_syncing && !syncPollRef.current.has(conn.connection_id)) {
+        startSyncPoll(conn.connection_id);
+      }
+    }
+  }, [pipelineStatus, startIndexPoll, startSyncPoll]);
 
   useEffect(() => {
     if (createRequested) {

@@ -109,8 +109,18 @@ async def _dispatch_code_db_sync(
             connection_id=connection_id,
             project_id=project_id,
         )
+        logger.info(
+            "code_db_sync dispatched mode=arq connection=%s project=%s",
+            connection_id[:8],
+            project_id[:8],
+        )
         return
 
+    logger.info(
+        "code_db_sync dispatched mode=inprocess connection=%s project=%s",
+        connection_id[:8],
+        project_id[:8],
+    )
     task = asyncio.create_task(_run_sync_background(connection_id, project_id))
     task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
     _sync_tasks[connection_id] = task
@@ -984,7 +994,7 @@ async def sync_status(
     in_memory_running = existing is not None and not existing.done()
     db_running = status.get("sync_status") == "running"
 
-    if db_running and not in_memory_running:
+    if db_running and not in_memory_running and not task_queue.is_arq_active():
         logger.warning(
             "Stale sync_status='running' with no in-memory task: "
             "connection=%s — resetting to 'failed'",

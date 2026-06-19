@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatSession, Connection, Project, SshKey } from "@/lib/api";
+import type { ChatSession, Connection, PipelineStatusResponse, Project, SshKey } from "@/lib/api";
 
 type ChatMode = "full" | "knowledge_only";
 
@@ -96,6 +96,7 @@ interface AppState {
   focusSidebarSection: string | null;
   triggerProjectEdit: boolean;
   readinessCache: Record<string, ReadinessCacheEntry>;
+  pipelineStatusByProject: Record<string, PipelineStatusResponse>;
   sessionTokens: number;
   sessionCost: number;
   logsOpen: boolean;
@@ -128,6 +129,7 @@ interface AppState {
   setTriggerProjectEdit: (v: boolean) => void;
   setReadinessCache: (projectId: string, entry: ReadinessCacheEntry) => void;
   clearReadinessCache: (projectId: string) => void;
+  setPipelineStatus: (projectId: string, status: PipelineStatusResponse | null) => void;
   addSessionUsage: (tokens: number, cost: number) => void;
   resetSessionUsage: () => void;
   setLogsOpen: (open: boolean) => void;
@@ -153,6 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   focusSidebarSection: null,
   triggerProjectEdit: false,
   readinessCache: {},
+  pipelineStatusByProject: {},
   sessionTokens: 0,
   sessionCost: 0,
   logsOpen: false,
@@ -273,6 +276,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const { [projectId]: _, ...rest } = state.readinessCache;
       return { readinessCache: rest };
+    }),
+  setPipelineStatus: (projectId, status) =>
+    set((state) => {
+      if (status === null) {
+        const { [projectId]: _, ...rest } = state.pipelineStatusByProject;
+        return { pipelineStatusByProject: rest };
+      }
+      return {
+        pipelineStatusByProject: {
+          ...state.pipelineStatusByProject,
+          [projectId]: status,
+        },
+      };
     }),
   addSessionUsage: (tokens, cost) =>
     set((state) => ({

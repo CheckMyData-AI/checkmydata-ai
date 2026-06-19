@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type ProjectReadiness } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
 import { useAppStore } from "@/stores/app-store";
+import { useTaskStore } from "@/stores/task-store";
 import { toast } from "@/stores/toast-store";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 
@@ -102,18 +103,26 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         return;
       }
       try {
-        const r = await api.projects.readiness(projectId);
+        const [r, pipeline] = await Promise.all([
+          api.projects.readiness(projectId),
+          api.projects.pipelineStatus(projectId).catch(() => null),
+        ]);
         if (!mountedRef.current) return;
         setReadiness(r);
         useAppStore.getState().setReadinessCache(projectId, {
           ready: r.ready,
           checkedAt: Date.now(),
         });
+        if (pipeline) {
+          useAppStore.getState().setPipelineStatus(projectId, pipeline);
+          useTaskStore.getState().seedFromPipelineStatus(pipeline);
+        }
         const stepDone =
           (stepKey === "index_repo" && r.repo_indexed) ||
           (stepKey === "index_db" && r.db_indexed) ||
           (stepKey === "sync" && r.code_db_synced);
-        if (stepDone) {
+        const pipelineIdle = pipeline ? !pipeline.any_running : false;
+        if (stepDone && pipelineIdle) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           setActionInProgress(null);

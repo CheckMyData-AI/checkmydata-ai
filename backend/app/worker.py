@@ -140,8 +140,25 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
                 result.get("error", "unknown"),
             )
         else:
-            logger.info("run_code_db_sync completed: connection=%s", connection_id[:8])
+            tables = result.get("total_tables") if isinstance(result, dict) else None
+            matched = result.get("synced_tables") if isinstance(result, dict) else None
+            logger.info(
+                "run_code_db_sync completed: connection=%s tables=%s matched=%s",
+                connection_id[:8],
+                tables,
+                matched,
+            )
             final_status = "completed"
+            try:
+                from app.api.routes.connections import _regenerate_overview
+
+                await _regenerate_overview(project_id, connection_id)
+            except Exception:
+                logger.debug(
+                    "run_code_db_sync post-sync overview failed for %s",
+                    connection_id[:8],
+                    exc_info=True,
+                )
     except Exception:
         logger.exception("run_code_db_sync failed for %s", connection_id[:8])
     finally:
@@ -190,7 +207,9 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
 
 async def startup(ctx: dict) -> None:  # noqa: ARG001
     """Called once when the worker starts."""
+    from app.core import redis_client
     from app.core.logging_config import configure_logging
+    from app.core.workflow_tracker import tracker
     from app.models.base import init_db, run_migrations
 
     configure_logging(
@@ -199,13 +218,18 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     )
     run_migrations()
     await init_db()
+    redis_url = os.getenv("REDIS_URL")
+    await redis_client.connect(redis_url)
+    tracker.enable_cross_process_publish()
     logger.info("ARQ worker started")
 
 
 async def shutdown(ctx: dict) -> None:  # noqa: ARG001
     """Called once when the worker stops."""
+    from app.core import redis_client
     from app.models.base import engine
 
+    await redis_client.close()
     await engine.dispose()
     logger.info("ARQ worker stopped")
 

@@ -307,6 +307,101 @@ class TestSyncStatusStaleReset:
             data = resp.json()
             assert data["is_syncing"] is True
 
+    def test_arq_sync_running_not_reset_to_failed(self, client):
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+            patch("app.api.routes.connections._sync_svc") as mock_sync_svc,
+            patch("app.api.routes.connections._sync_tasks", {}),
+            patch("app.api.routes.connections.task_queue") as mock_tq,
+        ):
+            mock_tq.is_arq_active.return_value = True
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_sync_svc.get_status = AsyncMock(
+                return_value={
+                    "is_synced": False,
+                    "sync_status": "running",
+                    "total_tables": 10,
+                    "synced_tables": 0,
+                }
+            )
+            mock_sync_svc.set_sync_status = AsyncMock()
+
+            resp = client.get("/api/connections/conn-1/sync/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_syncing"] is True
+            assert data["sync_status"] == "running"
+            mock_sync_svc.set_sync_status.assert_not_called()
+
+
+class TestPipelineStatusEndpoint:
+    def test_pipeline_status_returns_any_running(self, client):
+        mock_project = MagicMock()
+        mock_project.id = "proj-1"
+
+        with (
+            patch("app.api.routes.projects._membership_svc") as mock_msvc,
+            patch("app.api.routes.projects._svc") as mock_psvc,
+            patch("app.services.pipeline_status_service.PipelineStatusService") as mock_svc_cls,
+        ):
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_psvc.get = AsyncMock(return_value=mock_project)
+            mock_svc = mock_svc_cls.return_value
+            mock_svc.get_status = AsyncMock(
+                return_value={
+                    "project_id": "proj-1",
+                    "any_running": True,
+                    "repo": {"is_indexing": True, "checkpoint_status": "running"},
+                    "connections": [],
+                }
+            )
+
+            resp = client.get("/api/projects/proj-1/pipeline-status")
+
+            assert resp.status_code == 200
+            assert resp.json()["any_running"] is True
+
+
+class TestRepoStatusCheckpoint:
+    """Repo status reflects persisted checkpoint when ARQ has no in-memory task."""
+
+    def test_checkpoint_running_sets_is_indexing(self, client):
+        mock_project = MagicMock()
+        mock_project.repo_url = "https://github.com/org/repo"
+        mock_project.repo_branch = "main"
+
+        mock_checkpoint = MagicMock()
+        mock_checkpoint.status = "running"
+        mock_checkpoint.workflow_id = "wf-checkpoint-1"
+
+        with (
+            patch("app.api.routes.repos._membership_svc") as mock_msvc,
+            patch("app.api.routes.repos._project_svc") as mock_psvc,
+            patch("app.api.routes.repos._git_tracker") as mock_git,
+            patch("app.api.routes.repos._doc_store") as mock_docs,
+            patch("app.api.routes.repos._checkpoint_svc") as mock_cp_svc,
+            patch("app.api.routes.repos._indexing_tasks", {}),
+        ):
+            mock_msvc.require_role = AsyncMock(return_value="viewer")
+            mock_psvc.get = AsyncMock(return_value=mock_project)
+            mock_git.get_last_indexed_record = AsyncMock(return_value=None)
+            mock_docs.get_docs_for_project = AsyncMock(return_value=[])
+            mock_cp_svc.get_active = AsyncMock(return_value=mock_checkpoint)
+
+            resp = client.get("/api/repos/proj-1/status")
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_indexing"] is True
+            assert data["checkpoint_status"] == "running"
+            assert data["workflow_id"] == "wf-checkpoint-1"
+
 
 class TestDbIndexBackgroundPipelineFailure:
     """Tests that pipeline.run() returning failure sets correct final status."""

@@ -176,6 +176,9 @@ export interface RepoStatus {
   indexed_files_count: number;
   total_documents: number;
   is_indexing: boolean;
+  has_checkpoint?: boolean;
+  checkpoint_status?: string | null;
+  workflow_id?: string | null;
 }
 
 export interface UpdateCheck {
@@ -352,6 +355,39 @@ export interface KnowledgeHealth {
     rules: number;
     lineage: number;
   };
+}
+
+export interface RepoPipelineStatus {
+  is_indexing: boolean;
+  checkpoint_status: string | null;
+  workflow_id: string | null;
+  last_indexed_at: string | null;
+  last_indexed_commit: string | null;
+}
+
+export interface ConnectionPipelineStatus {
+  connection_id: string;
+  connection_name: string;
+  db_index: {
+    is_indexing: boolean;
+    indexing_status: string;
+    indexed_at: string | null;
+    table_count: number;
+  };
+  code_db_sync: {
+    is_syncing: boolean;
+    sync_status: string;
+    synced_at: string | null;
+    total_tables: number;
+    synced_tables: number;
+  };
+}
+
+export interface PipelineStatusResponse {
+  project_id: string;
+  repo: RepoPipelineStatus;
+  connections: ConnectionPipelineStatus[];
+  any_running: boolean;
 }
 
 export interface LLMModel {

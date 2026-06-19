@@ -448,3 +448,42 @@ async def project_knowledge_health(
         connection_id=resolved_conn_id,
         repo_clone_dir=repo_clone_dir,
     )
+
+
+@router.get("/{project_id}/pipeline-status")
+async def project_pipeline_status(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Unified repo index / DB index / code-DB sync status for all project members."""
+    from app.api.routes import connections as conn_routes
+    from app.api.routes import repos as repo_routes
+    from app.services.pipeline_status_service import PipelineStatusService
+
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    project = await _svc.get(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo_task = repo_routes._indexing_tasks.get(project_id)
+    in_memory_repo = repo_task is not None and not repo_task.done()
+
+    in_memory_db: dict[str, bool] = {}
+    for cid, task in conn_routes._db_index_tasks.items():
+        if not task.done():
+            in_memory_db[cid] = True
+
+    in_memory_sync: dict[str, bool] = {}
+    for cid, task in conn_routes._sync_tasks.items():
+        if not task.done():
+            in_memory_sync[cid] = True
+
+    svc = PipelineStatusService()
+    return await svc.get_status(
+        db,
+        project_id,
+        in_memory_repo_indexing=in_memory_repo,
+        in_memory_db_index=in_memory_db,
+        in_memory_sync=in_memory_sync,
+    )
