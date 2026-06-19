@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -65,20 +65,14 @@ def _pick_total_column(columns: list[str], rows: list[list[Any]]) -> str | None:
 
     numeric_cols: list[str] = []
     for idx, col in enumerate(columns):
-        values = [
-            _parse_number(row[idx] if idx < len(row) else None) for row in rows
-        ]
+        values = [_parse_number(row[idx] if idx < len(row) else None) for row in rows]
         if values and all(v is not None for v in values):
             numeric_cols.append(col)
 
     if len(numeric_cols) == 1:
         return numeric_cols[0]
 
-    hinted = [
-        col
-        for col in numeric_cols
-        if any(h in col.lower() for h in _NUMERIC_HINTS)
-    ]
+    hinted = [col for col in numeric_cols if any(h in col.lower() for h in _NUMERIC_HINTS)]
     if len(hinted) == 1:
         return hinted[0]
     return None
