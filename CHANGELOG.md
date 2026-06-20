@@ -8,6 +8,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **MCP observability + drop-in agent skill.** Every MCP auth attempt, tool
+  start/ok/crash, and key-CRUD event now emits a structured log line
+  (`MCP auth: …`, `MCP tool <name> starting (user=…)`, `MCP key issued`,
+  etc.) — see `docs/MCP_SERVER.md#logging--debugging` for the grep cheatsheet.
+  Plaintext tokens are redacted to their 12-char display prefix in every
+  log; tests pin that the secret cannot leak. New documentation:
+  `docs/MCP_SERVER.md` (full integration guide), `API.md` (token CRUD
+  endpoints + rate limits), `backend/.env.example` (per-user vs operator
+  modes), `CLAUDE.md` (architecture note). Portable agent skill at
+  `.claude/skills/checkmydata-mcp/` with `SKILL.md`,
+  `references/client-configs.md` (Claude Desktop, Cursor, OpenAI Agents
+  SDK), `references/tools.md` (tool schema reference), and
+  `references/troubleshooting.md` (common error → root-cause table) — any
+  MCP-aware agent can ingest this folder and learn the full integration
+  flow.
+
+- **Per-user MCP API tokens.** Each user can mint their own `cmd_mcp_…`
+  tokens (`POST /api/auth/mcp-tokens`) and point Claude Desktop / Cursor /
+  any MCP client at them via `CHECKMYDATA_API_KEY`. The MCP `authenticate()`
+  flow now resolves a per-user token to the issuing user, so tool calls and
+  resources are scoped to that user's project membership — no shared
+  service-account binding required. Storage: new `mcp_api_keys` table
+  (sha256 hash + display prefix, optional expiry, revocation, last-used
+  touch). Routes (JWT/session-authenticated): list/create/revoke; plaintext
+  is returned exactly once at creation. Legacy server-level
+  `CHECKMYDATA_API_KEY` + `MCP_API_KEY_USER_ID` operator binding remains
+  for single-tenant self-hosted setups. Frontend: `McpTokenManager` in the
+  Settings panel with create/list/revoke + one-time plaintext reveal and a
+  Claude Desktop config snippet. New backend tests cover issuance,
+  hashed-lookup, revocation, expiry, the per-user auth path, and the route
+  contract (no plaintext leak on list).
+
+- **MCP server best-practices alignment.** All MCP tools now use the
+  `checkmydata_*` service prefix to avoid collisions with other MCP servers a
+  client may load in parallel. Every tool carries explicit `ToolAnnotations`
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so
+  clients can render appropriate confirmation prompts. List tools
+  (`list_projects`, `list_connections`, `get_schema`) gained pagination
+  (`offset`/`limit` with `has_more`/`next_offset`) and a `response_format`
+  switch between `"json"` (default) and `"markdown"`. New `checkmydata_ping`
+  tool returns the resolved principal for client smoke-testing. The package
+  now re-exports `create_mcp_server`. Tool/resource descriptions, titles, and
+  MIME types are filled in for richer client UI. Tests cover annotations,
+  pagination, markdown output, and the package export. Server name updated
+  from `CheckMyData.ai` to `checkmydata-mcp` per the MCP naming convention.
+
 - **Knowledge pipeline visibility.** New `GET /api/projects/{id}/pipeline-status`
   aggregates repo index, DB index, and code-DB sync state for all project
   members. ARQ worker workflow events are bridged to API SSE via Redis pub/sub

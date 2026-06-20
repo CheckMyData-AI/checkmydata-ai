@@ -18,6 +18,7 @@ from app.models.indexing_checkpoint import IndexingCheckpoint  # noqa: F401
 from app.models.insight_record import InsightRecord, TrustScore  # noqa: F401
 from app.models.knowledge_doc import KnowledgeDoc  # noqa: F401
 from app.models.knowledge_sync_run import KnowledgeSyncRun  # noqa: F401
+from app.models.mcp_api_key import McpApiKey  # noqa: F401
 from app.models.metric_definition import MetricDefinition, MetricRelationship  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.pipeline_run import PipelineRun  # noqa: F401

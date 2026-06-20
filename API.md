@@ -20,8 +20,13 @@ Authorization: Bearer <jwt-token>
 | GET | `/api/auth/me` | Get current user profile |
 | POST | `/api/auth/complete-onboarding` | Mark onboarding complete |
 | DELETE | `/api/auth/account` | Delete account and all data |
+| POST | `/api/auth/mcp-tokens` | Issue a per-user MCP API token (plaintext shown once) |
+| GET | `/api/auth/mcp-tokens` | List the caller's MCP tokens (hash + prefix only) |
+| DELETE | `/api/auth/mcp-tokens/{token_id}` | Revoke an MCP token (404 if missing/not owned) |
 
-**Rate limits**: Register: 5/min, Login: 10/min, Google: 10/min
+**Rate limits**: Register: 5/min, Login: 10/min, Google: 10/min, MCP token create: 10/min, revoke: 30/min
+
+See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guide.
 
 ## Projects
 

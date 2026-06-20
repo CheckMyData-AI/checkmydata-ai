@@ -2,6 +2,14 @@
 
 Each function here is registered as an MCP tool and bridges the external
 MCP protocol into the existing agent infrastructure.
+
+Response contract
+-----------------
+All tools return a JSON-encoded string. Errors are JSON objects with an
+``error`` field; this is by design so a tool failure surfaces inside the
+tool result rather than as a protocol error. List tools support
+pagination (``offset`` / ``limit``) and a ``response_format`` switch
+between ``"json"`` (default) and ``"markdown"`` for human-readable output.
 """
 
 from __future__ import annotations
@@ -27,6 +35,11 @@ _project_svc = ProjectService()
 _connection_svc = ConnectionService()
 _db_index_svc = DbIndexService()
 _membership_svc = MembershipService()
+
+
+# Pagination defaults align with MCP best-practices (20–50 items typical).
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 200
 
 
 def _principal_user_id(principal: dict) -> str:
@@ -74,6 +87,27 @@ def _make_orchestrator() -> OrchestratorAgent:
     return OrchestratorAgent(llm_router=LLMRouter())
 
 
+def _clamp_pagination(offset: int | None, limit: int | None) -> tuple[int, int]:
+    off = max(int(offset or 0), 0)
+    lim = int(limit or DEFAULT_PAGE_LIMIT)
+    lim = max(1, min(lim, MAX_PAGE_LIMIT))
+    return off, lim
+
+
+def _paginate(items: list, offset: int, limit: int) -> dict[str, Any]:
+    total = len(items)
+    page = items[offset : offset + limit]
+    next_offset = offset + limit if offset + limit < total else None
+    return {
+        "total": total,
+        "count": len(page),
+        "offset": offset,
+        "items": page,
+        "has_more": next_offset is not None,
+        "next_offset": next_offset,
+    }
+
+
 def _format_query_result(qr: QueryResult) -> dict[str, Any]:
     return {
         "columns": qr.columns,
@@ -105,6 +139,92 @@ def _agent_response_to_dict(resp: AgentResponse) -> dict[str, Any]:
     if resp.error:
         result["error"] = resp.error
     return result
+
+
+# ---------------------------------------------------------------------------
+# Markdown renderers
+# ---------------------------------------------------------------------------
+
+
+def _md_projects(payload: dict[str, Any]) -> str:
+    items = payload.get("items", [])
+    if not items:
+        return "_No accessible projects._"
+    lines = [f"### Projects ({payload['count']}/{payload['total']})", ""]
+    for p in items:
+        desc = (p.get("description") or "").strip()
+        lines.append(f"- **{p['name']}** (`{p['id']}`)" + (f" — {desc}" if desc else ""))
+    if payload.get("has_more"):
+        lines.append(f"\n_more available — next_offset={payload['next_offset']}_")
+    return "\n".join(lines)
+
+
+def _md_connections(payload: dict[str, Any]) -> str:
+    items = payload.get("items", [])
+    if not items:
+        return "_No connections configured for this project._"
+    lines = [f"### Connections ({payload['count']}/{payload['total']})", ""]
+    for c in items:
+        active = "active" if c.get("is_active") else "inactive"
+        lines.append(
+            f"- **{c['name']}** (`{c['id']}`) — {c['db_type']} / {c['source_type']} — {active}"
+        )
+    if payload.get("has_more"):
+        lines.append(f"\n_more available — next_offset={payload['next_offset']}_")
+    return "\n".join(lines)
+
+
+def _md_schema(payload: dict[str, Any]) -> str:
+    tables = payload.get("items", [])
+    if not tables:
+        return "_No tables indexed for this connection._"
+    lines = [f"### Schema ({payload['count']}/{payload['total']} tables)", ""]
+    for t in tables:
+        head = f"#### `{t.get('schema', 'public')}.{t['name']}`"
+        if t.get("row_count") is not None:
+            head += f"  ·  rows ≈ {t['row_count']}"
+        lines.append(head)
+        desc = (t.get("description") or "").strip()
+        if desc:
+            lines.append(f"> {desc}")
+        cols = t.get("columns") or {}
+        if isinstance(cols, dict) and cols:
+            for col_name, col_info in cols.items():
+                if isinstance(col_info, dict):
+                    typ = col_info.get("type", "")
+                    note = col_info.get("note") or col_info.get("description") or ""
+                    suffix = f" — {note}" if note else ""
+                    lines.append(f"  - `{col_name}` {typ}".rstrip() + suffix)
+                else:
+                    lines.append(f"  - `{col_name}` — {col_info}")
+        lines.append("")
+    if payload.get("has_more"):
+        lines.append(f"_more available — next_offset={payload['next_offset']}_")
+    return "\n".join(lines).rstrip()
+
+
+def _emit(payload: dict[str, Any], response_format: str, md_render) -> str:
+    """Return either JSON or Markdown for a payload."""
+    if (response_format or "json").lower() == "markdown":
+        return md_render(payload)
+    return json.dumps(payload, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+async def ping(principal: dict) -> str:
+    """Minimal health-check tool. Returns the resolved principal so clients
+    can verify the server, auth, and user binding all work end-to-end."""
+    return json.dumps(
+        {
+            "ok": True,
+            "principal": {"user_id": _principal_user_id(principal)},
+            "version": 1,
+        }
+    )
 
 
 async def query_database(
@@ -233,25 +353,41 @@ async def search_codebase(principal: dict, project_id: str, question: str) -> st
     return json.dumps(_agent_response_to_dict(resp), default=str)
 
 
-async def list_projects(principal: dict) -> str:
-    """List only the projects the authenticated principal can access."""
+async def list_projects(
+    principal: dict,
+    offset: int = 0,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    response_format: str = "json",
+) -> str:
+    """List only the projects the authenticated principal can access (paginated)."""
     user_id = _principal_user_id(principal)
     if not user_id:
-        return json.dumps({"projects": []})
+        empty = _paginate([], 0, DEFAULT_PAGE_LIMIT)
+        # Preserve historical contract for unauthenticated callers.
+        empty["projects"] = empty["items"]
+        return _emit(empty, response_format, _md_projects)
     async with async_session_factory() as session:
         projects = await _membership_svc.list_accessible(session, user_id)
-    return json.dumps(
-        {
-            "projects": [
-                {"id": p.id, "name": p.name, "description": getattr(p, "description", "")}
-                for p in projects
-            ],
-        }
-    )
+
+    rows = [
+        {"id": p.id, "name": p.name, "description": getattr(p, "description", "") or ""}
+        for p in projects
+    ]
+    off, lim = _clamp_pagination(offset, limit)
+    payload = _paginate(rows, off, lim)
+    # Back-compat field for older clients.
+    payload["projects"] = payload["items"]
+    return _emit(payload, response_format, _md_projects)
 
 
-async def list_connections(principal: dict, project_id: str) -> str:
-    """List connections for a project the principal can access."""
+async def list_connections(
+    principal: dict,
+    project_id: str,
+    offset: int = 0,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    response_format: str = "json",
+) -> str:
+    """List connections for a project the principal can access (paginated)."""
     user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
         try:
@@ -259,24 +395,35 @@ async def list_connections(principal: dict, project_id: str) -> str:
         except _AccessDeniedError as exc:
             return json.dumps({"error": str(exc)})
         connections = await _connection_svc.list_by_project(session, project_id)
-    return json.dumps(
+
+    rows = [
         {
-            "connections": [
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "db_type": c.db_type,
-                    "source_type": c.source_type,
-                    "is_active": c.is_active,
-                }
-                for c in connections
-            ],
+            "id": c.id,
+            "name": c.name,
+            "db_type": c.db_type,
+            "source_type": c.source_type,
+            "is_active": c.is_active,
         }
-    )
+        for c in connections
+    ]
+    off, lim = _clamp_pagination(offset, limit)
+    payload = _paginate(rows, off, lim)
+    payload["connections"] = payload["items"]
+    return _emit(payload, response_format, _md_connections)
 
 
-async def get_schema(principal: dict, connection_id: str) -> str:
-    """Get the indexed database schema for a connection the principal can access."""
+async def get_schema(
+    principal: dict,
+    connection_id: str,
+    offset: int = 0,
+    limit: int = 50,
+    response_format: str = "json",
+) -> str:
+    """Get the indexed database schema for a connection the principal can access.
+
+    Returns a paginated list of tables with columns, row counts, and any
+    business descriptions captured during indexing.
+    """
     user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
         try:
@@ -290,13 +437,13 @@ async def get_schema(principal: dict, connection_id: str) -> str:
 
     tables = []
     for entry in entries:
-        columns = {}
+        columns: Any = {}
         columns_raw = entry.column_notes_json or "{}"
         if columns_raw != "{}":
             try:
                 columns = json.loads(columns_raw)
             except (json.JSONDecodeError, TypeError):
-                pass
+                columns = {}
 
         tables.append(
             {
@@ -308,7 +455,10 @@ async def get_schema(principal: dict, connection_id: str) -> str:
             }
         )
 
-    return json.dumps({"tables": tables}, default=str)
+    off, lim = _clamp_pagination(offset, limit)
+    payload = _paginate(tables, off, lim)
+    payload["tables"] = payload["items"]
+    return _emit(payload, response_format, _md_schema)
 
 
 async def execute_raw_query(principal: dict, connection_id: str, query: str) -> str:

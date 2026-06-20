@@ -589,9 +589,158 @@ class TestMCPServerCreation:
 
         server = create_mcp_server()
         tool_names = list(server._tool_manager._tools.keys())
-        assert "query_database" in tool_names
-        assert "search_codebase" in tool_names
-        assert "list_projects" in tool_names
-        assert "list_connections" in tool_names
-        assert "get_schema" in tool_names
-        assert "execute_raw_query" in tool_names
+        # All public tools must be exposed under the `checkmydata_*` prefix
+        # so they cannot collide with another MCP server loaded in parallel.
+        for expected in (
+            "checkmydata_ping",
+            "checkmydata_query_database",
+            "checkmydata_search_codebase",
+            "checkmydata_list_projects",
+            "checkmydata_list_connections",
+            "checkmydata_get_schema",
+            "checkmydata_execute_raw_query",
+        ):
+            assert expected in tool_names, f"tool {expected!r} not registered"
+
+    def test_all_tools_carry_annotations(self):
+        from app.mcp_server.server import create_mcp_server
+
+        server = create_mcp_server()
+        for name, tool in server._tool_manager._tools.items():
+            ann = getattr(tool, "annotations", None)
+            assert ann is not None, f"{name} is missing ToolAnnotations"
+            # Every public tool is read-only — the server never mutates user
+            # data; raw SQL is constrained to read-only connections.
+            assert ann.readOnlyHint is True, f"{name} should be readOnlyHint=True"
+            assert ann.destructiveHint is False, f"{name} should be destructiveHint=False"
+
+    def test_package_exports_factory(self):
+        # Convenience import — the package re-exports the factory so callers
+        # don't have to dive into the submodule.
+        from app.mcp_server import create_mcp_server as exported
+        from app.mcp_server.server import create_mcp_server
+
+        assert exported is create_mcp_server
+
+
+# ---------------------------------------------------------------------------
+# Pagination, response format, and ping
+# ---------------------------------------------------------------------------
+
+
+class TestMCPPagination:
+    @pytest.mark.asyncio
+    async def test_list_projects_paginates(self):
+        # 25 projects exceeds the default page size (20) — paging must report
+        # has_more=True and a next_offset so the caller can fetch page 2.
+        mocks = []
+        for i in range(25):
+            m = MagicMock()
+            m.id = f"p{i}"
+            m.name = f"Project {i}"
+            m.description = ""
+            mocks.append(m)
+
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("app.mcp_server.tools._membership_svc") as mock_msvc:
+                mock_msvc.list_accessible = AsyncMock(return_value=mocks)
+                from app.mcp_server.tools import list_projects
+
+                page1 = await list_projects(_PRINCIPAL, offset=0, limit=20)
+                page2 = await list_projects(_PRINCIPAL, offset=20, limit=20)
+
+        data1 = json.loads(page1)
+        data2 = json.loads(page2)
+        assert data1["count"] == 20
+        assert data1["total"] == 25
+        assert data1["has_more"] is True
+        assert data1["next_offset"] == 20
+        assert data2["count"] == 5
+        assert data2["has_more"] is False
+        assert data2["next_offset"] is None
+        # Back-compat alias must keep working.
+        assert data1["projects"] == data1["items"]
+
+    @pytest.mark.asyncio
+    async def test_list_projects_markdown(self):
+        m = MagicMock()
+        m.id = "p1"
+        m.name = "Test Project"
+        m.description = "demo"
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("app.mcp_server.tools._membership_svc") as mock_msvc:
+                mock_msvc.list_accessible = AsyncMock(return_value=[m])
+                from app.mcp_server.tools import list_projects
+
+                result = await list_projects(_PRINCIPAL, response_format="markdown")
+
+        # Markdown rendering — must be a string but NOT valid JSON.
+        assert "Test Project" in result
+        assert "`p1`" in result
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_list_connections_paginates(self):
+        mocks = []
+        for i in range(5):
+            c = MagicMock()
+            c.id = f"c{i}"
+            c.name = f"Conn {i}"
+            c.db_type = "postgres"
+            c.source_type = "database"
+            c.is_active = True
+            mocks.append(c)
+
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with (
+                patch("app.mcp_server.tools._connection_svc") as mock_svc,
+                patch("app.mcp_server.tools._membership_svc") as mock_msvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
+                mock_svc.list_by_project = AsyncMock(return_value=mocks)
+                from app.mcp_server.tools import list_connections
+
+                result = await list_connections(_PRINCIPAL, "p1", offset=2, limit=2)
+
+        data = json.loads(result)
+        assert data["count"] == 2
+        assert data["total"] == 5
+        assert data["offset"] == 2
+        assert data["has_more"] is True
+        assert data["next_offset"] == 4
+        # Back-compat alias.
+        assert data["connections"] == data["items"]
+
+    @pytest.mark.asyncio
+    async def test_list_clamps_limit(self):
+        # Excessive limits get clamped to MAX_PAGE_LIMIT instead of allowing
+        # an unbounded response that would blow up the client's context.
+        from app.mcp_server.tools import MAX_PAGE_LIMIT, _clamp_pagination
+
+        off, lim = _clamp_pagination(-1, 10_000)
+        assert off == 0
+        assert lim == MAX_PAGE_LIMIT
+
+
+class TestMCPPing:
+    @pytest.mark.asyncio
+    async def test_ping_returns_principal(self):
+        from app.mcp_server.tools import ping
+
+        result = await ping(_PRINCIPAL)
+        data = json.loads(result)
+        assert data["ok"] is True
+        assert data["principal"]["user_id"] == "owner-1"
