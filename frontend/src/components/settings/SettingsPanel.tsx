@@ -8,6 +8,7 @@ import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { InviteManager } from "@/components/projects/InviteManager";
+import { McpTokenManager } from "@/components/mcp/McpTokenManager";
 import { usePermission } from "@/hooks/usePermission";
 import type { AppPanel } from "@/hooks/useAppPanel";
 
@@ -175,6 +176,8 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
             )}
           </section>
         )}
+
+        <McpTokenManager />
 
         <div className="flex items-center gap-3 text-xs text-text-muted px-1">
           <Link href="/terms" className="hover:text-text-secondary transition-colors">

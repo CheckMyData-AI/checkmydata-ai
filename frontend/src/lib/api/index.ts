@@ -12,7 +12,7 @@ export {
   getCsrfHeaders,
 } from "./_client";
 
-import { auth } from "./auth";
+import { auth, mcpTokens } from "./auth";
 import { billing } from "./billing";
 import { projects } from "./projects";
 import { connections } from "./connections";
@@ -49,6 +49,7 @@ export {
   auth,
   batch,
   billing,
+  mcpTokens,
   chat,
   connections,
   dashboards,
@@ -79,6 +80,7 @@ export {
 export const api = {
   auth,
   billing,
+  mcpTokens,
   projects,
   connections,
   chat,
