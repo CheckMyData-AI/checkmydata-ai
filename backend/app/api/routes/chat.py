@@ -1491,13 +1491,32 @@ async def chat_websocket(
                 await agent_limiter.release(user_id)
                 continue
 
-            async with async_session_factory() as db:
-                ws_user_msg = await _chat_svc.add_message(db, session_id, "user", message)
-                ws_user_message_id = ws_user_msg.id
-                history = await _chat_svc.get_history_as_messages(db, session_id)
+            try:
+                async with async_session_factory() as db:
+                    ws_user_msg = await _chat_svc.add_message(db, session_id, "user", message)
+                    ws_user_message_id = ws_user_msg.id
+                    history = await _chat_svc.get_history_as_messages(db, session_id)
 
-            queue = await tracker.subscribe()
-            relay_task = asyncio.create_task(_relay_events(queue))
+                queue = await tracker.subscribe()
+                relay_task = asyncio.create_task(_relay_events(queue))
+            except Exception:
+                # Setup failed AFTER acquiring the limiter + per-session lock but
+                # before the main try/finally below — release them here so the
+                # session is not wedged "busy" (lock leak, ~1h TTL) and the
+                # concurrency token is returned. Keep the socket open.
+                logger.warning("WS message setup failed", exc_info=True)
+                await agent_limiter.release(user_id)
+                try:
+                    await ws_lock_cm.__aexit__(None, None, None)
+                except Exception:
+                    logger.debug("WS session lock release failed", exc_info=True)
+                try:
+                    await websocket.send_json(
+                        {"type": "error", "message": "Failed to start processing this message."}
+                    )
+                except Exception:
+                    logger.debug("WS: failed to send setup error", exc_info=True)
+                continue
 
             try:
                 _proj_agent_prov = ws_project.agent_llm_provider if ws_project else None
