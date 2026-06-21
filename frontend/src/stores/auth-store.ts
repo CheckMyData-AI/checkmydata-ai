@@ -157,7 +157,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
     useNotesStore.getState().clear();
     useLogStore.getState().clear();
-    useBackgroundTasks.setState({ tasks: {} });
+    useBackgroundTasks.setState({ tasks: {}, pinnedRunningIds: new Set() });
 
     set({ user: null, token: null });
   },
