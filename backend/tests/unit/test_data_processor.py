@@ -98,6 +98,23 @@ class TestDataProcessorIPToCountry:
         assert result.query_result.execution_time_ms == 42.0
         assert result.query_result.truncated is True
 
+    def test_idempotent_when_already_enriched(self):
+        """Re-running enrichment on an already-enriched column must not append
+        duplicate columns (e.g. a replan re-applies the same processing step)."""
+        geoip = _mock_geoip()
+        proc = DataProcessor(geoip=geoip)
+
+        qr = QueryResult(
+            columns=["user_ip", "user_ip_country_code", "user_ip_country_name"],
+            rows=[["1.2.3.4", "US", "United States"]],
+            row_count=1,
+        )
+        result = proc.process(qr, "ip_to_country", {"column": "user_ip"})
+        cols = result.query_result.columns
+        assert cols.count("user_ip_country_code") == 1
+        assert cols.count("user_ip_country_name") == 1
+        assert cols == ["user_ip", "user_ip_country_code", "user_ip_country_name"]
+
     def test_dedup_lookups_for_repeated_ips(self):
         """T18: duplicated IPs trigger a single GeoIP lookup per unique value."""
         geoip = _mock_geoip()
@@ -228,6 +245,20 @@ class TestDataProcessorPhoneToCountry:
         qr = QueryResult(columns=["phone"], rows=[[""]], row_count=1)
         result = proc.process(qr, "phone_to_country", {"column": "phone"})
         assert result.query_result.rows[0][-2] == ""
+
+    def test_idempotent_when_already_enriched(self):
+        """Re-running phone enrichment must not append duplicate columns."""
+        proc = DataProcessor(geoip=_mock_geoip())
+        qr = QueryResult(
+            columns=["phone", "phone_country_code", "phone_country_name"],
+            rows=[["+12125551234", "US", "United States"]],
+            row_count=1,
+        )
+        result = proc.process(qr, "phone_to_country", {"column": "phone"})
+        cols = result.query_result.columns
+        assert cols.count("phone_country_code") == 1
+        assert cols.count("phone_country_name") == 1
+        assert cols == ["phone", "phone_country_code", "phone_country_name"]
 
     def test_missing_column_raises(self):
         proc = DataProcessor(geoip=_mock_geoip())
