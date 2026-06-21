@@ -1263,6 +1263,55 @@ class TestOrchestratorIntentRouting:
         )
 
     @pytest.mark.asyncio
+    async def test_budget_marker_does_not_accumulate(self, orch, mock_llm, base_context):
+        """I4/B3: the per-iteration [Budget: marker is replaced, not stacked.
+
+        Otherwise the native Anthropic path (which folds all system messages
+        together) accumulates a pile of stale budget lines.
+        """
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+        from app.llm.base import LLMResponse, ToolCall
+
+        def _tc(i):
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id=f"t{i}", name="search_codebase", arguments={"question": f"q{i}"})
+                ],
+            )
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[_tc(0), _tc(1), _tc(2), LLMResponse(content="Done.")]
+        )
+        orch._dispatcher.dispatch = AsyncMock(return_value=("ok result", None))
+
+        tools = get_orchestrator_tools(has_knowledge_base=True)
+        await orch._run_tool_loop(
+            base_context,
+            "wf-1",
+            has_connection=False,
+            db_type=None,
+            has_kb=True,
+            has_mcp=False,
+            has_repo=False,
+            table_map="",
+            project_overview=None,
+            recent_learnings=None,
+            custom_rules="",
+            tools=tools,
+            staleness_warning=None,
+            route_result=None,
+        )
+
+        final_msgs = mock_llm.complete.call_args_list[-1].kwargs["messages"]
+        budget_count = sum(
+            1
+            for m in final_msgs
+            if m.role == "system" and (m.content or "").startswith("[Budget:")
+        )
+        assert budget_count <= 1, f"expected <=1 budget marker, got {budget_count}"
+
+    @pytest.mark.asyncio
     async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
         """If router fails, the orchestrator should fall back to unified agent."""
         mock_llm.complete = AsyncMock(

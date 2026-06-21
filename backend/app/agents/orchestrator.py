@@ -987,6 +987,16 @@ class OrchestratorAgent(BaseAgent):
                     f"time {int(elapsed_wall)}s/{int(wall_clock_limit)}s, "
                     f"queries: {query_db_count}]"
                 )
+                # I4/B3: replace the previous budget marker instead of appending
+                # one per iteration. The native Anthropic adapter folds all
+                # system messages together, so without this stale budget lines
+                # pile up. Search by prefix — indices are unstable because
+                # ``trim_loop_messages`` mutates the list.
+                messages = [
+                    m
+                    for m in messages
+                    if not (m.role == "system" and (m.content or "").startswith("[Budget:"))
+                ]
                 messages.append(Message(role="system", content=budget_status))
 
             pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
