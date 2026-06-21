@@ -143,6 +143,44 @@ class TestAskEndpointAgent:
         fake_cm.__aexit__.assert_awaited()
 
     @pytest.mark.asyncio
+    @patch("app.api.routes.chat.maybe_auto_investigate")
+    @patch("app.api.routes.chat._agent")
+    async def test_ask_releases_session_lock_when_postagent_step_fails(
+        self, mock_agent, mock_investigate, auth_client, project_id
+    ):
+        """A failure in post-agent processing (after the agent already ran) must
+        also release the lock — the single try/finally covers the whole body,
+        closing the gap the interim fix left open."""
+        import contextlib
+        from unittest.mock import MagicMock
+
+        from app.api.routes import chat as chat_mod
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(
+                answer="ok",
+                response_type="text",
+                workflow_id="wf-x",
+                token_usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            )
+        )
+        mock_investigate.side_effect = RuntimeError("investigate boom")
+
+        fake_cm = MagicMock()
+        fake_cm.__aenter__ = AsyncMock(return_value=None)
+        fake_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(chat_mod, "session_processing_lock", return_value=fake_cm):
+            with contextlib.suppress(BaseException):
+                await auth_client.post(
+                    "/api/chat/ask",
+                    json={"project_id": project_id, "message": "hi"},
+                )
+
+        fake_cm.__aexit__.assert_awaited()
+
+    @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
     async def test_ask_sql_result_response(
         self, mock_agent, auth_client, project_id, connection_id

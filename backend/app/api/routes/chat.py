@@ -253,265 +253,261 @@ async def ask(
     try:
         user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
         history = await _chat_svc.get_history_as_messages(db, session_id)
-    except Exception:
-        # Release the per-session lock acquired above if the initial message
-        # persistence fails, so a transient DB error doesn't wedge the session
-        # "busy" for the lock TTL window (matches the WS-path fix). The broader
-        # post-agent gap is tracked separately for a full async-with refactor.
+        logger.info(
+            "Chat request: project=%s session=%s conn=%s",
+            body.project_id[:8],
+            session_id[:8],
+            (body.connection_id or "none")[:8],
+        )
+
+        project = await _project_svc.get(db, body.project_id)
+        agent_provider = body.preferred_provider or (
+            project.agent_llm_provider if project else None
+        )
+        agent_model = body.model or (project.agent_llm_model if project else None)
+        sql_provider = (project.sql_llm_provider if project else None) or agent_provider
+        sql_model = (project.sql_llm_model if project else None) or agent_model
+        max_steps = body.max_steps or (
+            getattr(project, "max_orchestrator_steps", None) if project else None
+        )
+
+        extra: dict = {"session_id": session_id}
+        if body.pipeline_action:
+            extra["pipeline_action"] = body.pipeline_action
+        if body.pipeline_run_id:
+            extra["pipeline_run_id"] = body.pipeline_run_id
+        if body.modification:
+            extra["modification"] = body.modification
+        if body.continuation_context:
+            extra["continuation_context"] = body.continuation_context
+
+        try:
+            result = await _agent.run(
+                question=body.message,
+                project_id=body.project_id,
+                connection_config=config,
+                chat_history=history[:-1],
+                preferred_provider=agent_provider,
+                model=agent_model,
+                sql_provider=sql_provider,
+                sql_model=sql_model,
+                project_name=project.name if project else None,
+                user_id=user["user_id"],
+                extra=extra,
+                max_steps=max_steps,
+            )
+        except Exception as agent_exc:
+            logger.exception("Agent run raised an exception")
+            _exc_msg = str(agent_exc)[:500]
+            try:
+                trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                if trace_svc is not None:
+                    await trace_svc.finalize_trace(
+                        f"unknown-{session_id}",
+                        project_id=body.project_id,
+                        user_id=user["user_id"],
+                        session_id=session_id,
+                        message_id=user_msg.id,
+                        question=body.message,
+                        response_type="error",
+                        status="failed",
+                        error_message=_exc_msg,
+                    )
+            except Exception:
+                logger.warning("Failed to finalize trace after agent crash", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing your request.",
+            ) from agent_exc
+
+        viz_data = None
+        if result.results and not result.error:
+            viz_data = render(
+                result=result.results,
+                viz_type=result.viz_type,
+                config=result.viz_config,
+                summary=result.answer,
+            )
+
+        raw_result = _build_raw_result(result.results)
+
+        rag_source_dicts = [
+            {
+                "source_path": s.source_path,
+                "distance": s.distance,
+                "doc_type": s.doc_type,
+            }
+            for s in result.knowledge_sources
+        ]
+
+        tool_calls_str = (
+            json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
+        )
+
+        ask_usage = result.token_usage or {}
+        ask_cost = _estimate_cost(
+            result.llm_model,
+            ask_usage.get("prompt_tokens", 0),
+            ask_usage.get("completion_tokens", 0),
+        )
+        enriched_token_usage = (
+            {
+                **(result.token_usage or {}),
+                "provider": result.llm_provider or "unknown",
+                "model": result.llm_model or "unknown",
+                "estimated_cost_usd": ask_cost,
+                "prompt_version": result.prompt_version,
+            }
+            if result.token_usage
+            else None
+        )
+
+        http_sql_results_payload = _build_sql_results_payload(result.sql_results, result.answer)
+
+        assistant_msg = await _chat_svc.add_message(
+            db,
+            session_id,
+            "assistant",
+            result.answer,
+            metadata={
+                "query": result.query,
+                "query_explanation": result.query_explanation,
+                "question": body.message,
+                "viz_type": result.viz_type,
+                "visualization": viz_data,
+                "raw_result": raw_result,
+                "error": result.error,
+                "workflow_id": result.workflow_id,
+                "row_count": (result.results.row_count if result.results else None),
+                "execution_time_ms": (result.results.execution_time_ms if result.results else None),
+                "rag_sources": rag_source_dicts,
+                "token_usage": enriched_token_usage,
+                "response_type": result.response_type,
+                "staleness_warning": result.staleness_warning,
+                "insights": result.insights or [],
+                "suggested_followups": result.suggested_followups or [],
+                "clarification_data": result.clarification_data,
+                "sql_results": http_sql_results_payload,
+                "continuation_context": result.continuation_context,
+                "exposed_learning_ids": result.exposed_learning_ids,
+            },
+            tool_calls_json=tool_calls_str,
+        )
+
+        # R4-2: credit exposed learnings now that the result validated successfully.
+        await credit_validated_learnings(result, body.connection_id, message_id=assistant_msg.id)
+
+        # R5-7: auto-route a suspicious result to the investigation agent.
+        await maybe_auto_investigate(
+            result,
+            project_id=body.project_id,
+            connection_id=body.connection_id,
+            session_id=session_id,
+            message_id=assistant_msg.id,
+        )
+
+        if rag_source_dicts:
+            try:
+                await _rag_feedback_svc.record(
+                    session=db,
+                    project_id=body.project_id,
+                    rag_sources=rag_source_dicts,
+                    query_succeeded=not result.error,
+                    question_snippet=body.message[:200],
+                )
+            except Exception:
+                logger.warning("Failed to record RAG feedback", exc_info=True)
+
+        usage = result.token_usage or {}
+        logger.info(
+            "Chat response: type=%s tokens=%d error=%s",
+            result.response_type,
+            usage.get("total_tokens", 0)
+            or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
+            bool(result.error),
+        )
+
+        try:
+            await _usage_svc.record_usage(
+                db,
+                user_id=user["user_id"],
+                project_id=body.project_id,
+                session_id=session_id,
+                message_id=assistant_msg.id,
+                provider=result.llm_provider or "unknown",
+                model=result.llm_model or "unknown",
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                estimated_cost_usd=_estimate_cost(
+                    result.llm_model,
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
+                ),
+            )
+        except Exception:
+            logger.warning("Failed to record token usage", exc_info=True)
+
+        if result.workflow_id:
+            try:
+                trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                if trace_svc is not None:
+                    await trace_svc.finalize_trace(
+                        result.workflow_id,
+                        project_id=body.project_id,
+                        user_id=user["user_id"],
+                        session_id=session_id,
+                        message_id=user_msg.id,
+                        assistant_message_id=assistant_msg.id,
+                        question=body.message,
+                        response_type=result.response_type or "text",
+                        status="failed" if result.error else "completed",
+                        error_message=result.error,
+                        total_duration_ms=(
+                            result.results.execution_time_ms if result.results else None
+                        ),
+                        total_tokens=usage.get("total_tokens", 0)
+                        or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
+                        estimated_cost_usd=_estimate_cost(
+                            result.llm_model,
+                            usage.get("prompt_tokens", 0),
+                            usage.get("completion_tokens", 0),
+                        ),
+                        llm_provider=result.llm_provider or "unknown",
+                        llm_model=result.llm_model or "unknown",
+                        steps_used=result.steps_used,
+                        steps_total=result.steps_total,
+                        tool_call_log=result.tool_call_log,
+                    )
+            except Exception:
+                logger.warning("Failed to finalize request trace", exc_info=True)
+
+        response = ChatResponse(
+            session_id=session_id,
+            answer=result.answer,
+            query=result.query or None,
+            query_explanation=result.query_explanation or None,
+            visualization=viz_data,
+            raw_result=raw_result,
+            error=result.error,
+            workflow_id=result.workflow_id,
+            staleness_warning=result.staleness_warning,
+            response_type=result.response_type,
+            assistant_message_id=assistant_msg.id,
+            user_message_id=user_msg.id,
+            rules_changed=_has_rules_changed(result.tool_call_log),
+            steps_used=result.steps_used,
+            steps_total=result.steps_total,
+            continuation_context=result.continuation_context,
+            clarification_data=result.clarification_data,
+            sql_results=http_sql_results_payload,
+        )
+        return response
+    finally:
         try:
             await _session_lock_cm.__aexit__(None, None, None)
         except Exception:
             logger.debug("Session lock release failed", exc_info=True)
-        raise
-
-    logger.info(
-        "Chat request: project=%s session=%s conn=%s",
-        body.project_id[:8],
-        session_id[:8],
-        (body.connection_id or "none")[:8],
-    )
-
-    project = await _project_svc.get(db, body.project_id)
-    agent_provider = body.preferred_provider or (project.agent_llm_provider if project else None)
-    agent_model = body.model or (project.agent_llm_model if project else None)
-    sql_provider = (project.sql_llm_provider if project else None) or agent_provider
-    sql_model = (project.sql_llm_model if project else None) or agent_model
-    max_steps = body.max_steps or (
-        getattr(project, "max_orchestrator_steps", None) if project else None
-    )
-
-    extra: dict = {"session_id": session_id}
-    if body.pipeline_action:
-        extra["pipeline_action"] = body.pipeline_action
-    if body.pipeline_run_id:
-        extra["pipeline_run_id"] = body.pipeline_run_id
-    if body.modification:
-        extra["modification"] = body.modification
-    if body.continuation_context:
-        extra["continuation_context"] = body.continuation_context
-
-    try:
-        result = await _agent.run(
-            question=body.message,
-            project_id=body.project_id,
-            connection_config=config,
-            chat_history=history[:-1],
-            preferred_provider=agent_provider,
-            model=agent_model,
-            sql_provider=sql_provider,
-            sql_model=sql_model,
-            project_name=project.name if project else None,
-            user_id=user["user_id"],
-            extra=extra,
-            max_steps=max_steps,
-        )
-    except Exception as agent_exc:
-        logger.exception("Agent run raised an exception")
-        _exc_msg = str(agent_exc)[:500]
-        try:
-            trace_svc = getattr(request.app.state, "trace_persistence_service", None)
-            if trace_svc is not None:
-                await trace_svc.finalize_trace(
-                    f"unknown-{session_id}",
-                    project_id=body.project_id,
-                    user_id=user["user_id"],
-                    session_id=session_id,
-                    message_id=user_msg.id,
-                    question=body.message,
-                    response_type="error",
-                    status="failed",
-                    error_message=_exc_msg,
-                )
-        except Exception:
-            logger.warning("Failed to finalize trace after agent crash", exc_info=True)
-        try:
-            await _session_lock_cm.__aexit__(type(agent_exc), agent_exc, None)
-        except Exception:
-            logger.debug("Session lock release failed", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred while processing your request.",
-        ) from agent_exc
-
-    viz_data = None
-    if result.results and not result.error:
-        viz_data = render(
-            result=result.results,
-            viz_type=result.viz_type,
-            config=result.viz_config,
-            summary=result.answer,
-        )
-
-    raw_result = _build_raw_result(result.results)
-
-    rag_source_dicts = [
-        {
-            "source_path": s.source_path,
-            "distance": s.distance,
-            "doc_type": s.doc_type,
-        }
-        for s in result.knowledge_sources
-    ]
-
-    tool_calls_str = json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
-
-    ask_usage = result.token_usage or {}
-    ask_cost = _estimate_cost(
-        result.llm_model, ask_usage.get("prompt_tokens", 0), ask_usage.get("completion_tokens", 0)
-    )
-    enriched_token_usage = (
-        {
-            **(result.token_usage or {}),
-            "provider": result.llm_provider or "unknown",
-            "model": result.llm_model or "unknown",
-            "estimated_cost_usd": ask_cost,
-            "prompt_version": result.prompt_version,
-        }
-        if result.token_usage
-        else None
-    )
-
-    http_sql_results_payload = _build_sql_results_payload(result.sql_results, result.answer)
-
-    assistant_msg = await _chat_svc.add_message(
-        db,
-        session_id,
-        "assistant",
-        result.answer,
-        metadata={
-            "query": result.query,
-            "query_explanation": result.query_explanation,
-            "question": body.message,
-            "viz_type": result.viz_type,
-            "visualization": viz_data,
-            "raw_result": raw_result,
-            "error": result.error,
-            "workflow_id": result.workflow_id,
-            "row_count": (result.results.row_count if result.results else None),
-            "execution_time_ms": (result.results.execution_time_ms if result.results else None),
-            "rag_sources": rag_source_dicts,
-            "token_usage": enriched_token_usage,
-            "response_type": result.response_type,
-            "staleness_warning": result.staleness_warning,
-            "insights": result.insights or [],
-            "suggested_followups": result.suggested_followups or [],
-            "clarification_data": result.clarification_data,
-            "sql_results": http_sql_results_payload,
-            "continuation_context": result.continuation_context,
-            "exposed_learning_ids": result.exposed_learning_ids,
-        },
-        tool_calls_json=tool_calls_str,
-    )
-
-    # R4-2: credit exposed learnings now that the result validated successfully.
-    await credit_validated_learnings(result, body.connection_id, message_id=assistant_msg.id)
-
-    # R5-7: auto-route a suspicious result to the investigation agent.
-    await maybe_auto_investigate(
-        result,
-        project_id=body.project_id,
-        connection_id=body.connection_id,
-        session_id=session_id,
-        message_id=assistant_msg.id,
-    )
-
-    if rag_source_dicts:
-        try:
-            await _rag_feedback_svc.record(
-                session=db,
-                project_id=body.project_id,
-                rag_sources=rag_source_dicts,
-                query_succeeded=not result.error,
-                question_snippet=body.message[:200],
-            )
-        except Exception:
-            logger.warning("Failed to record RAG feedback", exc_info=True)
-
-    usage = result.token_usage or {}
-    logger.info(
-        "Chat response: type=%s tokens=%d error=%s",
-        result.response_type,
-        usage.get("total_tokens", 0)
-        or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
-        bool(result.error),
-    )
-
-    try:
-        await _usage_svc.record_usage(
-            db,
-            user_id=user["user_id"],
-            project_id=body.project_id,
-            session_id=session_id,
-            message_id=assistant_msg.id,
-            provider=result.llm_provider or "unknown",
-            model=result.llm_model or "unknown",
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
-            estimated_cost_usd=_estimate_cost(
-                result.llm_model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
-            ),
-        )
-    except Exception:
-        logger.warning("Failed to record token usage", exc_info=True)
-
-    if result.workflow_id:
-        try:
-            trace_svc = getattr(request.app.state, "trace_persistence_service", None)
-            if trace_svc is not None:
-                await trace_svc.finalize_trace(
-                    result.workflow_id,
-                    project_id=body.project_id,
-                    user_id=user["user_id"],
-                    session_id=session_id,
-                    message_id=user_msg.id,
-                    assistant_message_id=assistant_msg.id,
-                    question=body.message,
-                    response_type=result.response_type or "text",
-                    status="failed" if result.error else "completed",
-                    error_message=result.error,
-                    total_duration_ms=result.results.execution_time_ms if result.results else None,
-                    total_tokens=usage.get("total_tokens", 0)
-                    or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
-                    estimated_cost_usd=_estimate_cost(
-                        result.llm_model,
-                        usage.get("prompt_tokens", 0),
-                        usage.get("completion_tokens", 0),
-                    ),
-                    llm_provider=result.llm_provider or "unknown",
-                    llm_model=result.llm_model or "unknown",
-                    steps_used=result.steps_used,
-                    steps_total=result.steps_total,
-                    tool_call_log=result.tool_call_log,
-                )
-        except Exception:
-            logger.warning("Failed to finalize request trace", exc_info=True)
-
-    response = ChatResponse(
-        session_id=session_id,
-        answer=result.answer,
-        query=result.query or None,
-        query_explanation=result.query_explanation or None,
-        visualization=viz_data,
-        raw_result=raw_result,
-        error=result.error,
-        workflow_id=result.workflow_id,
-        staleness_warning=result.staleness_warning,
-        response_type=result.response_type,
-        assistant_message_id=assistant_msg.id,
-        user_message_id=user_msg.id,
-        rules_changed=_has_rules_changed(result.tool_call_log),
-        steps_used=result.steps_used,
-        steps_total=result.steps_total,
-        continuation_context=result.continuation_context,
-        clarification_data=result.clarification_data,
-        sql_results=http_sql_results_payload,
-    )
-    try:
-        await _session_lock_cm.__aexit__(None, None, None)
-    except Exception:
-        logger.debug("Session lock release failed", exc_info=True)
-    return response
 
 
 @router.post("/ask/stream")
@@ -567,9 +563,19 @@ async def ask_stream(
             "Please wait for it to complete.",
         ) from exc
 
-    user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
-    user_message_id = user_msg.id
-    history = await _chat_svc.get_history_as_messages(db, session_id)
+    try:
+        user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
+        user_message_id = user_msg.id
+        history = await _chat_svc.get_history_as_messages(db, session_id)
+    except Exception:
+        # Release the per-session lock acquired above if the initial message
+        # persistence fails before the streaming generator (whose finally owns
+        # the release) is created — otherwise the session is wedged "busy".
+        try:
+            await _stream_lock_cm.__aexit__(None, None, None)
+        except Exception:
+            logger.debug("Session lock release failed", exc_info=True)
+        raise
 
     logger.info(
         "Chat stream request: project=%s session=%s conn=%s",
