@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from app.core.datetime_utils import ensure_aware
 from app.models.insight_record import InsightRecord, TrustScore
 from app.services.text_similarity import semantic_similarity
 
@@ -374,7 +375,10 @@ class InsightMemoryService:
         for ins in active:
             if ins.id in matched_ids:
                 continue
-            if ins.detected_at and ins.detected_at >= staleness_cutoff:
+            # detected_at is a server-default DateTime(timezone=True); SQLite
+            # reads it back naive, so normalize before the staleness compare.
+            detected_at = ensure_aware(ins.detected_at)
+            if detected_at is not None and detected_at >= staleness_cutoff:
                 continue
             if ins.user_verdict == "confirmed":
                 continue

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
+from app.core.datetime_utils import ensure_aware
 from app.core.rate_limit import limiter
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
@@ -342,7 +343,7 @@ async def project_readiness(
             repo_indexed = record is not None
             if record and record.created_at:
                 last_indexed_at = record.created_at.isoformat()
-                age = datetime.now(UTC) - record.created_at.replace(tzinfo=UTC)
+                age = datetime.now(UTC) - ensure_aware(record.created_at)
                 repo_dir = repo_analyzer.get_repo_dir(project_id)
                 if repo_dir.exists() and record.commit_sha:
                     try:
