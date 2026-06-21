@@ -307,9 +307,9 @@
 | #  | Task | Status | Priority | Dependencies | Est. Complexity |
 |----|------|--------|----------|--------------|-----------------|
 | 8.1 | Flip `code_graph_enabled` default `False → True` after 2-week soak | `pending` | P0 | Soak v129+ on canary project | Low |
-| 8.2 | Flip `hybrid_retrieval_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.1 soak passes | Low |
-| 8.3 | Flip `schema_retrieval_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.2 soak passes | Low |
-| 8.4 | Flip `lineage_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.3 soak passes | Low |
+| 8.2 | Flip `hybrid_retrieval_enabled` default `False → True` after 2-week soak | `done` (default `True` as of 1.14.0, with dense-only fallback) | P0 | 8.1 soak passes | Low |
+| 8.3 | Flip `schema_retrieval_enabled` default `False → True` after 2-week soak | `done` (default `True` as of 1.14.0, unioned with legacy relevance net) | P0 | 8.2 soak passes | Low |
+| 8.4 | Flip `lineage_enabled` default `False → True` after 2-week soak | `pending` | P0 | `code_graph_enabled` (8.1) soak passes | Low |
 | 8.5 | Flip `clustering_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.4 soak passes | Low |
 | 8.6 | Cleanup PR: remove `if settings.<flag>:` gates per [docs/ROLLOUT_M1_M6.md §4.2](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | All five soaks passed | Medium |
 | 8.7 | Cleanup PR: remove prompt-builder kwargs (`hybrid_retrieval_enabled`, `lineage_enabled`, `schema_retrieval_enabled`, `has_code_clusters`) per [§4.3](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | 8.6 | Low |
@@ -320,7 +320,7 @@
 - `LLM.stream()` and other `@abstractmethod` ABCs in `backend/app/llm/base.py` — standard ABC pattern, not stubs.
 - Per-request override of every flag via `extra` (operator escape hatch for projects that need different behavior).
 
-**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md) (`_pending_` for all five flags as of 1.12.3).
+**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md). As of 1.14.0: `hybrid_retrieval_enabled` and `schema_retrieval_enabled` default `True`; `code_graph_enabled`, `lineage_enabled`, and `clustering_enabled` remain `pending` soak.
 
 ---
 
