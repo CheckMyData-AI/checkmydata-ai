@@ -7,6 +7,7 @@ import { useAppStore } from "@/stores/app-store";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/stores/toast-store";
+import { SyncHistoryPanel } from "@/components/knowledge/SyncHistoryPanel";
 
 interface KnowledgeHealthPanelProps {
   projectId: string;
@@ -102,6 +103,8 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
   };
 
   return (
+    <>
+    <SyncHistoryPanel projectId={projectId} />
     <section className="rounded-lg border border-border-subtle bg-surface-1/50 p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
@@ -189,5 +192,6 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
         </div>
       )}
     </section>
+    </>
   );
 }
