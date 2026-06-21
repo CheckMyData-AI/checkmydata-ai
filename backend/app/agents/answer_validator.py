@@ -20,7 +20,6 @@ import logging
 from dataclasses import dataclass
 
 from app.llm.base import Message
-from app.llm.errors import LLMError
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
@@ -101,12 +100,15 @@ class AnswerValidator:
                 preferred_provider=preferred_provider,
                 model=model,
             )
-        except LLMError:
-            # R5-6: fail closed by default — an answer we could not verify is
-            # reported as "does not address the question" so the caller frames
-            # it as a continuable partial result instead of a verified final
-            # answer. ``answer_validator_fail_closed=False`` restores the old
-            # lenient behaviour.
+        except Exception:
+            # R5-6: fail closed by default for ANY validator failure (not just
+            # LLMError — a timeout or unexpected error must not crash the
+            # response pipeline or slip an unverified answer through). An answer
+            # we could not verify is reported as "does not address the question"
+            # so the caller frames it as a continuable partial result instead of
+            # a verified final answer. ``answer_validator_fail_closed=False``
+            # restores the old lenient behaviour. (CancelledError, a
+            # BaseException, still propagates and is not swallowed here.)
             from app.config import settings
 
             fail_closed = settings.answer_validator_fail_closed
