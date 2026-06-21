@@ -41,6 +41,16 @@ class KnowledgeSyncRunResult:
     error_message: str | None = None
 
 
+def _daily_wf_status(status: str) -> str:
+    """Map a run status to its terminal workflow-tracker status.
+
+    Only a hard failure surfaces as ``failed``; success/partial/skipped all
+    represent a completed daily-sync workflow.
+    """
+    completed = (_STATUS_SUCCESS, _STATUS_PARTIAL, _STATUS_SKIPPED)
+    return "completed" if status in completed else "failed"
+
+
 def compute_next_scheduled_run(
     now: datetime,
     *,

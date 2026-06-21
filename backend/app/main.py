@@ -696,8 +696,8 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                     from app.core.workflow_tracker import tracker
                     from app.services.daily_knowledge_sync_service import (
                         KnowledgeSyncRunResult,
+                        _daily_wf_status,
                     )
-                    from app.worker import _daily_wf_status
 
                     wf_id = await tracker.begin(
                         "daily_sync",

@@ -198,6 +198,7 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
     from app.services.daily_knowledge_sync_service import (
         DailyKnowledgeSyncService,
         KnowledgeSyncRunResult,
+        _daily_wf_status,
     )
 
     svc = DailyKnowledgeSyncService()
@@ -217,10 +218,6 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
             )
             await tracker.end(wf_id, "daily_sync", "failed", "daily sync interrupted")
         await svc.persist_run(result)
-
-
-def _daily_wf_status(status: str) -> str:
-    return "completed" if status in ("success", "partial", "skipped") else "failed"
 
 
 # ---------------------------------------------------------------------------
