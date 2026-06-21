@@ -809,6 +809,48 @@ class TestSortByOrder:
 
         assert [r[0] for r in result.query_result.rows] == ["DE", "FR", "US"]
 
+    def test_default_sort_with_null_group_does_not_crash(self):
+        # Regression: the default (no sort_by) sort key sorted the raw group
+        # tuple, raising "'<' not supported between NoneType and str" whenever a
+        # group_by column contained NULL — ubiquitous in real data.
+        proc = DataProcessor(geoip=_mock_geoip())
+        qr = QueryResult(
+            columns=["region", "amount"],
+            rows=[["US", 10], [None, 5], ["US", 3], [None, 7]],
+            row_count=4,
+        )
+
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {"group_by": ["region"], "aggregations": {"amount": "sum"}},
+        )
+
+        by_region = {r[0]: r[1] for r in result.query_result.rows}
+        assert by_region["US"] == 13
+        assert by_region[None] == 12
+
+    def test_default_sort_multi_column_group_with_nulls(self):
+        proc = DataProcessor(geoip=_mock_geoip())
+        qr = QueryResult(
+            columns=["region", "tier", "amount"],
+            rows=[
+                [None, "gold", 1],
+                [None, "silver", 2],
+                ["US", "gold", 3],
+            ],
+            row_count=3,
+        )
+
+        result = proc.process(
+            qr,
+            "aggregate_data",
+            {"group_by": ["region", "tier"], "aggregations": {"amount": "sum"}},
+        )
+
+        # Three distinct (region, tier) groups, no TypeError on the NULL region.
+        assert result.query_result.row_count == 3
+
     def test_invalid_sort_by_raises(self):
         proc = DataProcessor(geoip=_mock_geoip())
         qr = QueryResult(columns=["country", "amount"], rows=[["US", 100]], row_count=1)

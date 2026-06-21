@@ -327,7 +327,10 @@ class DataProcessor:
                 reverse=reverse,
             )
         else:
-            result_rows.sort(key=lambda r: r[: len(group_by)])
+            # None-safe sort on the group key: NULL group values must not be
+            # compared against real values (raises TypeError), so sort NULLs
+            # last per column — mirrors the explicit sort_by branch above.
+            result_rows.sort(key=lambda r: tuple((v is None, v) for v in r[: len(group_by)]))
 
         agg_qr = QueryResult(
             columns=result_columns,
