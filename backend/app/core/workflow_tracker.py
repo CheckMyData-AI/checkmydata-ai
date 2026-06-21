@@ -47,7 +47,7 @@ class WorkflowEvent:
         return json.dumps(asdict(self), default=str)
 
 
-BACKGROUND_PIPELINES = frozenset({"index_repo", "db_index", "code_db_sync"})
+BACKGROUND_PIPELINES = frozenset({"index_repo", "db_index", "code_db_sync", "daily_sync"})
 
 ESSENTIAL_STEPS = frozenset(
     {
