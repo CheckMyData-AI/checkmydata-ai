@@ -47,6 +47,7 @@ async def test_touch_heartbeat_creates_db_index_summary_when_missing():
     added = session.add.call_args[0][0]
     assert isinstance(added, DbIndexSummary)
     assert added.heartbeat_at is not None
+    session.flush.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ async def test_touch_heartbeat_creates_sync_summary_when_missing():
     added = session.add.call_args[0][0]
     assert isinstance(added, CodeDbSyncSummary)
     assert added.heartbeat_at is not None
+    session.flush.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +89,13 @@ async def test_touch_heartbeat_creates_sync_summary_when_missing():
 
 
 async def test_touch_heartbeat_checkpoint_executes_update():
-    """touch_heartbeat on CheckpointService issues an UPDATE and flushes."""
+    """touch_heartbeat on CheckpointService issues an UPDATE targeting indexing_checkpoint.
+
+    Introspects the compiled SQL string and bound parameters so the assertion
+    proves UPDATE (not SELECT/DELETE), the correct table, the heartbeat_at column
+    being set to a non-None UTC datetime, and the WHERE clause filtering on the
+    given checkpoint_id.
+    """
     svc = CheckpointService()
     session = AsyncMock()
 
@@ -95,3 +103,25 @@ async def test_touch_heartbeat_checkpoint_executes_update():
 
     session.execute.assert_awaited_once()
     session.flush.assert_awaited_once()
+
+    # Pull the statement that was passed to session.execute(stmt)
+    stmt = session.execute.call_args[0][0]
+    compiled_str = str(stmt).lower()
+
+    # Must be an UPDATE on the right table
+    assert "update" in compiled_str, f"Expected UPDATE, got: {compiled_str}"
+    assert "indexing_checkpoint" in compiled_str, f"Table missing from: {compiled_str}"
+
+    # heartbeat_at column must appear in the SET clause
+    assert "heartbeat_at" in compiled_str, f"heartbeat_at missing from: {compiled_str}"
+
+    # The WHERE clause must bind the supplied checkpoint_id
+    params = stmt.compile().params
+    assert any(v == "cp-abc-123" for v in params.values()), (
+        f"checkpoint_id 'cp-abc-123' not found in bound params: {params}"
+    )
+
+    # heartbeat_at must be bound to a non-None datetime (not NULL)
+    assert any(k == "heartbeat_at" and v is not None for k, v in params.items()), (
+        f"heartbeat_at not set to a non-None value in params: {params}"
+    )
