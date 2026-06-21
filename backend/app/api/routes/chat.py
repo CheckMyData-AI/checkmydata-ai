@@ -62,6 +62,12 @@ _rag_feedback_svc = RAGFeedbackService()
 _usage_svc = UsageService()
 _membership_svc = MembershipService()
 
+# Strong references to fire-and-forget background finalizer tasks. asyncio keeps
+# only a weak reference to a bare create_task(), so without this the finalizer
+# that persists agent results after a client disconnect can be garbage-collected
+# mid-flight — losing the very results it was scheduled to save.
+_background_finalize_tasks: set[asyncio.Task] = set()
+
 
 async def _check_token_budget(db: AsyncSession, user_id: str) -> str | None:
     """F-FIN-1: enforce per-user token budgets before running the agent.
@@ -1251,7 +1257,7 @@ async def ask_stream(
             if not task.done():
                 # Client disconnected while agent is still running.
                 # Schedule a background finalizer to persist results instead of cancelling.
-                asyncio.create_task(
+                _bg_task = asyncio.create_task(
                     _background_finalize(
                         bg_task=task,
                         bg_session_id=session_id,
@@ -1261,6 +1267,8 @@ async def ask_stream(
                         bg_request_app=request.app,
                     )
                 )
+                _background_finalize_tasks.add(_bg_task)
+                _bg_task.add_done_callback(_background_finalize_tasks.discard)
             else:
                 # Task already done (normal flow or error already handled).
                 # Release the limiter only if background finalizer wasn't scheduled.
