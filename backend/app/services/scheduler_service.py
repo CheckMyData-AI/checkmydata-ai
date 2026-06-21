@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 
 from croniter import croniter
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scheduled_query import ScheduledQuery, ScheduleRun
@@ -121,6 +121,29 @@ class SchedulerService:
             )
         )
         return list(result.scalars().all())
+
+    async def claim_due(self, db: AsyncSession, schedule_id: str, cron_expression: str) -> bool:
+        """Atomically claim a due schedule for execution (multi-dyno safe).
+
+        Advances ``next_run_at`` to the next cron instant in a single
+        conditional UPDATE. Returns ``True`` if this caller won the claim, or
+        ``False`` if another dyno already advanced it (the row no longer matches
+        the due predicate). This prevents duplicate execution — and duplicate
+        alert notifications — when more than one web dyno runs the scheduler
+        loop concurrently.
+        """
+        now = datetime.now(UTC)
+        result = await db.execute(
+            update(ScheduledQuery)
+            .where(
+                ScheduledQuery.id == schedule_id,
+                ScheduledQuery.is_active == True,  # noqa: E712
+                ScheduledQuery.next_run_at <= now,
+            )
+            .values(next_run_at=self.compute_next_run(cron_expression, base=now))
+        )
+        await db.commit()
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
 
     async def record_run(
         self,

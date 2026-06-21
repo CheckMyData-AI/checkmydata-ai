@@ -649,9 +649,13 @@ async def _git_poll_loop() -> None:
     while True:
         try:
             await asyncio.sleep(interval_seconds)
-            count = await poll_and_index_changed_repos()
-            if count:
-                logger.info("Git poll: triggered %d repo re-index(es)", count)
+            # Multi-dyno single-flight: only one dyno polls per tick.
+            async with redis_lock("cron:git_poll", ttl_seconds=interval_seconds + 60) as acquired:
+                if not acquired:
+                    continue
+                count = await poll_and_index_changed_repos()
+                if count:
+                    logger.info("Git poll: triggered %d repo re-index(es)", count)
         except asyncio.CancelledError:
             break
         except Exception:
@@ -822,6 +826,11 @@ async def _scheduler_loop() -> None:
                     continue
                 logger.info("Scheduler: %d due schedule(s) to execute", len(due))
                 for schedule in due:
+                    # Multi-dyno single-flight: atomically claim the schedule
+                    # before executing so a concurrent dyno's loop cannot
+                    # double-run the same query and double-send its alerts.
+                    if not await svc.claim_due(session, schedule.id, schedule.cron_expression):
+                        continue
                     try:
                         conn_model = await conn_svc.get(session, schedule.connection_id)
                         if not conn_model:
@@ -988,17 +997,23 @@ async def _backup_cron_loop() -> None:
                 next_run.isoformat(),
             )
             await asyncio.sleep(wait_seconds)
-            manifest = await mgr.run_backup("scheduled")
-            async with async_session_factory() as session:
-                session.add(
-                    BackupRecord(
-                        reason="scheduled",
-                        status="success",
-                        size_bytes=manifest.get("total_size_bytes", 0),
-                        manifest_json=manifest,
+            # Multi-dyno single-flight: only one dyno runs the scheduled
+            # backup per window — otherwise every web dyno backs up the same
+            # data in parallel, multiplying I/O and storage churn.
+            async with redis_lock("cron:backup", ttl_seconds=3600) as acquired:
+                if not acquired:
+                    continue
+                manifest = await mgr.run_backup("scheduled")
+                async with async_session_factory() as session:
+                    session.add(
+                        BackupRecord(
+                            reason="scheduled",
+                            status="success",
+                            size_bytes=manifest.get("total_size_bytes", 0),
+                            manifest_json=manifest,
+                        )
                     )
-                )
-                await session.commit()
+                    await session.commit()
         except asyncio.CancelledError:
             break
         except Exception:
@@ -1021,12 +1036,19 @@ async def _maintenance_loop() -> None:
     happened after startup and stale knowledge accumulated indefinitely.
     """
     interval_seconds = max(1, settings.maintenance_interval_hours) * 3600
+
     while True:
         try:
             await asyncio.sleep(interval_seconds)
-            await _periodic_learning_decay()
-            await _periodic_insight_maintenance()
-            await _freshness_reconcile()
+            # Multi-dyno single-flight: confidence decay / insight TTL / freshness
+            # must run once per interval, not once per dyno — otherwise every
+            # extra dyno applies the decay again (double/triple confidence drop).
+            async with redis_lock("cron:maintenance", ttl_seconds=900) as acquired:
+                if not acquired:
+                    continue
+                await _periodic_learning_decay()
+                await _periodic_insight_maintenance()
+                await _freshness_reconcile()
         except asyncio.CancelledError:
             break
         except Exception:
