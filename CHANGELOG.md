@@ -71,6 +71,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in `knowledge_sync_runs` and logged with the `Cron: daily knowledge sync`
   prefix for monitoring.
 
+- **Sync-workflow reliability (heartbeat + reaper, durable audit, single-flight cron).**
+  A set of interlocking features that make background indexing and sync jobs
+  crash-proof and observable:
+
+  - *Heartbeat + StaleRunReaper crash recovery:* every DB-index, code↔DB sync,
+    and repo-index run now ticks a `heartbeat_at` timestamp on its status row
+    every `HEARTBEAT_INTERVAL_SECONDS` (default 30 s). `StaleRunReaper` runs
+    in both the web and worker processes every `REAPER_INTERVAL_SECONDS`
+    (default 60 s); any `running` row whose heartbeat is older than
+    `STALE_RUNNING_HEARTBEAT_TIMEOUT_SECONDS` (default 300 s) is reset to
+    `failed`, so a hard worker crash no longer leaves the UI spinning forever.
+    Controlled by `REAPER_ENABLED` (default `True`).
+
+  - *Durable daily-sync audit + history endpoint:* the daily knowledge sync now
+    records a `knowledge_sync_runs` row with full outcome (per-project status,
+    counts, errors) in a crash-safe way — the audit row is written even if the
+    job process dies mid-run. New `GET /api/projects/{id}/sync-history` returns
+    the last N runs with per-project breakdown (see `API.md`). Frontend: a
+    **Sync History** panel in Project Overview shows run timeline, duration, and
+    errors.
+
+  - *Single-flight cron via Redis advisory lock:* the daily_sync ARQ cron
+    acquires a Redis `SET NX EX` lock before scheduling work so only one
+    scheduler instance can trigger a given sync window, eliminating duplicate
+    runs on multi-dyno deployments.
+
+  - *Parent `daily_sync` workflow:* a durable ARQ parent task orchestrates each
+    project's sync steps (repo → DB → code↔DB) as child tasks, emitting
+    per-project progress SSE events and writing the audit row with final status.
+
+  - *Stale-marking gate:* DB-index and sync stale-marking is gated on real
+    status changes — a row already at `failed`/`idle` is not touched again,
+    preventing spurious `updated_at` bumps and false SSE events.
+
+  - *Unified background-tasks store:* replaced the frontend `task-store` with a
+    unified `useBackgroundTasks` Zustand store that reconciles ARQ/SSE events
+    and poller results using SSE-provenance precedence — a running SSE event
+    cannot be overwritten by a stale poll response.
+
   API, agent/orchestrator, MCP, connectors/SSH, and billing:
   - *MCP resources auth (P0):* `project://{id}/schema|rules|knowledge` resources
     now resolve a principal and enforce project membership via

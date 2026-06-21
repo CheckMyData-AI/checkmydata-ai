@@ -257,6 +257,17 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 
 `billing_enabled`, `mcp_enabled`, `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).
 
+**Crash recovery / heartbeat:**
+
+| Flag | Default | Notes |
+|---|---|---|
+| `reaper_enabled` | on | `StaleRunReaper` runs in web + worker; set off to disable |
+| `heartbeat_interval_seconds` | 30 | How often running jobs tick `heartbeat_at` |
+| `reaper_interval_seconds` | 60 | How often the reaper sweeps for stuck rows |
+| `stale_running_heartbeat_timeout_seconds` | 300 | Rows older than this are reset to `failed` |
+
+Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker stops touching `heartbeat_at`, and the reaper flips the row to `failed` on the next sweep so the UI surfaces the failure instead of spinning indefinitely. New endpoint `GET /api/projects/{id}/sync-history` (see `API.md`) returns the last N daily-sync audit rows with per-project outcome details.
+
 ## Conventions
 
 ### Backend (Python)
