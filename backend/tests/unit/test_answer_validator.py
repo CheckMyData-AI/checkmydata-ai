@@ -97,3 +97,17 @@ class TestAnswerValidator:
             verdict = await validator.validate(question="q", answer="some answer")
         assert verdict.addresses_question is True
         assert verdict.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_non_llm_error_also_fails_closed(self):
+        """A non-LLMError validator failure (timeout, unexpected) must also fail
+        closed — not propagate and crash the response pipeline, nor silently
+        present an unverified answer as verified."""
+        llm = MagicMock()
+        llm.complete = AsyncMock(side_effect=TimeoutError("validator timed out"))
+        validator = AnswerValidator(llm)
+        with patch("app.config.settings.answer_validator_fail_closed", True):
+            verdict = await validator.validate(question="q", answer="some answer")
+        assert verdict.addresses_question is False
+        assert verdict.is_partial is True
+        assert verdict.confidence == 0.0
