@@ -232,6 +232,7 @@ async def test_persist_run_called_even_when_run_for_project_raises(monkeypatch):
 
     # arq is not installed in the unit-test venv (known pre-existing gap); stub it
     # so that `import app.worker` doesn't fail at module evaluation.
+    # Use monkeypatch.setitem so pytest tears the stubs down after this test.
     if "arq" not in sys.modules:
 
         class _FakeRedisSettings:
@@ -242,8 +243,8 @@ async def test_persist_run_called_even_when_run_for_project_raises(monkeypatch):
         arq_stub = types.ModuleType("arq")
         conn_stub = types.ModuleType("arq.connections")
         conn_stub.RedisSettings = _FakeRedisSettings  # type: ignore[attr-defined]
-        sys.modules["arq"] = arq_stub
-        sys.modules["arq.connections"] = conn_stub
+        monkeypatch.setitem(sys.modules, "arq", arq_stub)
+        monkeypatch.setitem(sys.modules, "arq.connections", conn_stub)
 
     import app.worker as worker_mod
     from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
