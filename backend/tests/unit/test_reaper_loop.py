@@ -8,6 +8,7 @@ inserting real rows.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
@@ -85,3 +86,47 @@ async def test_run_reaper_sweep_swallows_exceptions(monkeypatch):
 
     # Must not raise
     await run_reaper_sweep()
+
+
+# ---------------------------------------------------------------------------
+# 4. reaper_loop returns immediately when disabled (never enters the loop)
+# ---------------------------------------------------------------------------
+
+
+async def test_reaper_loop_returns_immediately_when_disabled(monkeypatch):
+    """With reaper_enabled=False, reaper_loop must return before sweeping."""
+    monkeypatch.setattr("app.core.reaper_loop.settings.reaper_enabled", False)
+
+    sweep_spy = AsyncMock()
+    monkeypatch.setattr("app.core.reaper_loop.run_reaper_sweep", sweep_spy)
+
+    from app.core.reaper_loop import reaper_loop
+
+    # Completes without blocking on the periodic sleep.
+    await asyncio.wait_for(reaper_loop(), timeout=1)
+    sweep_spy.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# 5. reaper_loop exits cleanly on CancelledError (no exception propagates)
+# ---------------------------------------------------------------------------
+
+
+async def test_reaper_loop_exits_cleanly_on_cancel(monkeypatch):
+    """Cancelling the loop while it sleeps must end the task without raising."""
+    monkeypatch.setattr("app.core.reaper_loop.settings.reaper_enabled", True)
+    monkeypatch.setattr("app.core.reaper_loop.settings.reaper_interval_seconds", 5)
+
+    sweep_spy = AsyncMock()
+    monkeypatch.setattr("app.core.reaper_loop.run_reaper_sweep", sweep_spy)
+
+    from app.core.reaper_loop import reaper_loop
+
+    task = asyncio.create_task(reaper_loop())
+    await asyncio.sleep(0.01)  # let it reach the interval sleep
+    task.cancel()
+    await task  # CancelledError is caught inside the loop → no raise
+
+    assert task.done()
+    assert not task.cancelled()
+    assert task.exception() is None
