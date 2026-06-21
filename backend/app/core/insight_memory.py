@@ -374,7 +374,13 @@ class InsightMemoryService:
         for ins in active:
             if ins.id in matched_ids:
                 continue
-            if ins.detected_at and ins.detected_at >= staleness_cutoff:
+            detected_at = ins.detected_at
+            if detected_at is not None and detected_at.tzinfo is None:
+                # SQLite reads a DateTime(timezone=True) server-default column
+                # back as naive; treat stored timestamps as UTC so the staleness
+                # comparison never raises ``naive >= aware`` TypeError.
+                detected_at = detected_at.replace(tzinfo=UTC)
+            if detected_at is not None and detected_at >= staleness_cutoff:
                 continue
             if ins.user_verdict == "confirmed":
                 continue
