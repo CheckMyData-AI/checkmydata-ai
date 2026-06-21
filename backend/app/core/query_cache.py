@@ -19,6 +19,58 @@ from app.connectors.base import QueryResult
 logger = logging.getLogger(__name__)
 
 
+def _normalize_query(query: str) -> str:
+    """Normalize a SQL string for cache keying without corrupting literals.
+
+    Lowercases and collapses runs of whitespace **outside** string literals and
+    quoted identifiers, while preserving the exact bytes **inside** ``'...'``,
+    ``"..."`` and `` `...` ``. This keeps the cache dedup benefit for keyword
+    case and formatting differences, yet never folds two genuinely different
+    queries together — e.g. ``region = 'EU'`` and ``region = 'eu'`` on a
+    case-sensitive database must not share a cache entry and serve wrong data.
+
+    Doubled quotes inside a literal (the SQL escape, ``'it''s'``) are kept
+    inside the literal. Being conservative (preserving more verbatim) can only
+    reduce cache hits, never cause a wrong-data collision.
+    """
+    out: list[str] = []
+    quote: str | None = None
+    pending_space = False
+    i = 0
+    n = len(query)
+    while i < n:
+        ch = query[i]
+        if quote is not None:
+            out.append(ch)
+            if ch == quote:
+                if i + 1 < n and query[i + 1] == quote:
+                    # Escaped quote (doubled) — still inside the literal.
+                    out.append(query[i + 1])
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            if pending_space and out:
+                out.append(" ")
+            pending_space = False
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch.isspace():
+            pending_space = True
+            i += 1
+            continue
+        if pending_space and out:
+            out.append(" ")
+        pending_space = False
+        out.append(ch.lower())
+        i += 1
+    return "".join(out)
+
+
 @dataclass
 class CachedResult:
     result: QueryResult
@@ -54,7 +106,7 @@ class QueryCache:
         query: str,
         schema_version: str | None = None,
     ) -> str:
-        normalized = " ".join(query.strip().split()).lower()
+        normalized = _normalize_query(query)
         qhash = hashlib.sha256(normalized.encode()).hexdigest()[:16]
         sv = schema_version or "_"
         return f"{connection_key}:{sv}:{qhash}"

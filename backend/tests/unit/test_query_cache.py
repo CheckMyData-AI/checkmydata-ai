@@ -30,6 +30,41 @@ class TestMakeKey:
         k2 = QueryCache._make_key("c", "select 1")
         assert k1 == k2
 
+    def test_string_literal_case_is_not_folded(self):
+        # On a case-sensitive DB these are different queries with different
+        # results — they must NOT share a cache entry.
+        k1 = QueryCache._make_key("c", "SELECT * FROM t WHERE region = 'EU'")
+        k2 = QueryCache._make_key("c", "SELECT * FROM t WHERE region = 'eu'")
+        assert k1 != k2
+
+    def test_string_literal_whitespace_is_not_collapsed(self):
+        k1 = QueryCache._make_key("c", "SELECT * FROM t WHERE city = 'New  York'")
+        k2 = QueryCache._make_key("c", "SELECT * FROM t WHERE city = 'New York'")
+        assert k1 != k2
+
+    def test_quoted_identifier_case_is_not_folded(self):
+        # Postgres quoted identifiers are case-sensitive.
+        k1 = QueryCache._make_key("c", 'SELECT "Col" FROM t')
+        k2 = QueryCache._make_key("c", 'SELECT "col" FROM t')
+        assert k1 != k2
+
+    def test_keyword_case_still_dedups_around_literals(self):
+        # Outside-literal normalization still applies: keyword case and spacing
+        # collapse, while the literal stays byte-exact.
+        k1 = QueryCache._make_key("c", "SELECT  *  FROM t WHERE region = 'EU'")
+        k2 = QueryCache._make_key("c", "select * from t where region = 'EU'")
+        assert k1 == k2
+
+    def test_escaped_quote_inside_literal_is_handled(self):
+        # The doubled-quote escape keeps us inside the literal; keyword case
+        # outside the literal still folds.
+        k1 = QueryCache._make_key("c", "SELECT * FROM t WHERE name = 'O''Brien' LIMIT 1")
+        k2 = QueryCache._make_key("c", "select * from t where name = 'O''Brien' limit 1")
+        assert k1 == k2
+        # A different literal value (case) does not collide.
+        k3 = QueryCache._make_key("c", "SELECT * FROM t WHERE name = 'o''brien' LIMIT 1")
+        assert k1 != k3
+
     def test_includes_connection_key(self):
         k1 = QueryCache._make_key("conn_a", "SELECT 1")
         k2 = QueryCache._make_key("conn_b", "SELECT 1")
