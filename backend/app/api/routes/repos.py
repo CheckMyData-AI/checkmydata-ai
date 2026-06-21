@@ -528,15 +528,26 @@ async def _run_index_background(
                 live_table_names = await _fetch_live_table_names(db, project_id)
 
                 try:
-                    await _pipeline_runner.run(
-                        project_id,
-                        project,
-                        body.force_full,
-                        db,
-                        wf_id,
-                        checkpoint,
-                        live_table_names=live_table_names,
-                    )
+                    from app.config import settings as _settings
+                    from app.core.heartbeat import heartbeat
+
+                    async def _hb() -> None:
+                        async with async_session_factory() as hb_db:
+                            await _checkpoint_svc.touch_heartbeat(hb_db, checkpoint.id)
+                            await hb_db.commit()
+
+                    async with heartbeat(
+                        _hb, interval_seconds=_settings.heartbeat_interval_seconds
+                    ):
+                        await _pipeline_runner.run(
+                            project_id,
+                            project,
+                            body.force_full,
+                            db,
+                            wf_id,
+                            checkpoint,
+                            live_table_names=live_table_names,
+                        )
                     await _regenerate_overview(project_id)
                     if chain_sync:
                         await _maybe_autostart_sync_chain(project_id)
