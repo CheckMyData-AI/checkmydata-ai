@@ -26,6 +26,7 @@ class AgentSettingsView:
     max_investigation_iterations: int
     agent_emergency_synthesis_pct: float
     history_tail_messages: int
+    router_last_turn_char_limit: int
     history_db_load_limit: int
     synthesis_data_token_budget_pct: float
     min_synthesis_length: int
@@ -235,6 +236,11 @@ class Settings(BaseSettings):
 
     # History tail / load limits (centralized, used across orchestrator + sub-agents)
     history_tail_messages: int = 4
+    # Char limit applied to the *latest* user turn sent to the routing LLM. The
+    # older history tail stays clipped to ~200 chars; the latest message gets a
+    # wider window so long follow-ups ("same cohorts but for Q2 …") are not
+    # truncated before the router classifies them (I5).
+    router_last_turn_char_limit: int = 800
     history_db_load_limit: int = 20
 
     # Synthesis budget (fraction of context window used to pack data into final synthesis)
@@ -610,6 +616,7 @@ class Settings(BaseSettings):
             max_investigation_iterations=self.max_investigation_iterations,
             agent_emergency_synthesis_pct=self.agent_emergency_synthesis_pct,
             history_tail_messages=self.history_tail_messages,
+            router_last_turn_char_limit=self.router_last_turn_char_limit,
             history_db_load_limit=self.history_db_load_limit,
             synthesis_data_token_budget_pct=self.synthesis_data_token_budget_pct,
             min_synthesis_length=self.min_synthesis_length,

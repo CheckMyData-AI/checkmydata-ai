@@ -144,6 +144,21 @@ async def test_route_request_parses_llm_response():
     assert result.needs_multiple_data_sources is True
 
 
+async def test_route_request_passes_full_latest_turn():
+    # I5: the latest user turn is sent to the router with the wider
+    # router_last_turn_char_limit (800), not clipped to the old 500.
+    response = MagicMock()
+    response.content = '{"route": "query", "complexity": "simple"}'
+    llm = MagicMock()
+    llm.complete = AsyncMock(return_value=response)
+    long_q = "x" * 700
+    await route_request(long_q, llm, has_connection=True)
+    msgs = llm.complete.call_args.kwargs["messages"]
+    final_user = msgs[-1]
+    assert final_user.role == "user"
+    assert len(final_user.content) == 700
+
+
 def test_build_router_prompt_includes_git_when_has_repo():
     prompt = _build_router_prompt(
         has_connection=True,
