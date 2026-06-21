@@ -108,6 +108,42 @@ class TestAskEndpointAgent:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
+    async def test_ask_releases_session_lock_when_message_persist_fails(
+        self, mock_agent, auth_client, project_id
+    ):
+        """A DB failure persisting the user message must release the per-session
+        lock acquired just before it — otherwise the session is wedged 'busy'
+        for the lock TTL window."""
+        import contextlib
+        from unittest.mock import MagicMock
+
+        from app.api.routes import chat as chat_mod
+
+        fake_cm = MagicMock()
+        fake_cm.__aenter__ = AsyncMock(return_value=None)
+        fake_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch.object(chat_mod, "session_processing_lock", return_value=fake_cm),
+            patch.object(
+                chat_mod._chat_svc,
+                "add_message",
+                new=AsyncMock(side_effect=RuntimeError("db down")),
+            ),
+        ):
+            # The test client re-raises server exceptions; we only care that the
+            # lock was released on the way out.
+            with contextlib.suppress(BaseException):
+                await auth_client.post(
+                    "/api/chat/ask",
+                    json={"project_id": project_id, "message": "hi"},
+                )
+
+        # The lock must have been released despite the failure (no wedged session).
+        fake_cm.__aexit__.assert_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
     async def test_ask_sql_result_response(
         self, mock_agent, auth_client, project_id, connection_id
     ):

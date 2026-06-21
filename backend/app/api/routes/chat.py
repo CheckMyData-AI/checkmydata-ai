@@ -250,8 +250,19 @@ async def ask(
             "Please wait for it to complete.",
         ) from exc
 
-    user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
-    history = await _chat_svc.get_history_as_messages(db, session_id)
+    try:
+        user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
+        history = await _chat_svc.get_history_as_messages(db, session_id)
+    except Exception:
+        # Release the per-session lock acquired above if the initial message
+        # persistence fails, so a transient DB error doesn't wedge the session
+        # "busy" for the lock TTL window (matches the WS-path fix). The broader
+        # post-agent gap is tracked separately for a full async-with refactor.
+        try:
+            await _session_lock_cm.__aexit__(None, None, None)
+        except Exception:
+            logger.debug("Session lock release failed", exc_info=True)
+        raise
 
     logger.info(
         "Chat request: project=%s session=%s conn=%s",
