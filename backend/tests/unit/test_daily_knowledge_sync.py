@@ -223,3 +223,45 @@ async def test_partial_status_on_connection_failure():
     conn_steps = result.steps_json["connections"][0]
     assert conn_steps["db_index"]["status"] == "failed"
     assert conn_steps["code_db_sync"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_persist_run_called_even_when_run_for_project_raises(monkeypatch):
+    import sys
+    import types
+
+    # arq is not installed in the unit-test venv (known pre-existing gap); stub it
+    # so that `import app.worker` doesn't fail at module evaluation.
+    if "arq" not in sys.modules:
+
+        class _FakeRedisSettings:
+            @classmethod
+            def from_dsn(cls, url: str) -> _FakeRedisSettings:
+                return cls()
+
+        arq_stub = types.ModuleType("arq")
+        conn_stub = types.ModuleType("arq.connections")
+        conn_stub.RedisSettings = _FakeRedisSettings  # type: ignore[attr-defined]
+        sys.modules["arq"] = arq_stub
+        sys.modules["arq.connections"] = conn_stub
+
+    import app.worker as worker_mod
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+
+    persisted = {}
+
+    async def boom(self, project_id):
+        raise RuntimeError("crash mid-run")
+
+    async def capture(self, result):
+        persisted["status"] = result.status
+
+    monkeypatch.setattr(DailyKnowledgeSyncService, "run_for_project", boom)
+    monkeypatch.setattr(DailyKnowledgeSyncService, "persist_run", capture)
+
+    try:
+        await worker_mod.run_daily_project_knowledge_sync({}, project_id="p1")
+    except RuntimeError:
+        pass
+
+    assert persisted.get("status") == "failed"

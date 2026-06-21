@@ -693,8 +693,36 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                 pid = project.id
 
                 async def _run_in_process(*, project_id: str = pid) -> None:
-                    result = await svc.run_for_project(project_id)
-                    await svc.persist_run(result)
+                    from app.core.workflow_tracker import tracker
+                    from app.services.daily_knowledge_sync_service import (
+                        KnowledgeSyncRunResult,
+                    )
+                    from app.worker import _daily_wf_status
+
+                    wf_id = await tracker.begin(
+                        "daily_sync",
+                        {"project_id": project_id, "trigger": "scheduled"},
+                    )
+                    result = None
+                    try:
+                        result = await svc.run_for_project(project_id)
+                        await tracker.end(
+                            wf_id,
+                            "daily_sync",
+                            _daily_wf_status(result.status),
+                            f"daily sync {result.status}",
+                        )
+                    finally:
+                        if result is None:
+                            result = KnowledgeSyncRunResult(
+                                project_id=project_id,
+                                status="failed",
+                                error_message="interrupted before completion",
+                            )
+                            await tracker.end(
+                                wf_id, "daily_sync", "failed", "daily sync interrupted"
+                            )
+                        await svc.persist_run(result)
 
                 await task_queue.enqueue(
                     "run_daily_project_knowledge_sync",
