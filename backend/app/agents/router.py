@@ -236,9 +236,7 @@ async def route_request(
                 snippet = m.content[:200]
                 messages.append(Message(role=m.role, content=snippet))
 
-    messages.append(
-        Message(role="user", content=question[: settings.router_last_turn_char_limit])
-    )
+    messages.append(Message(role="user", content=question[: settings.router_last_turn_char_limit]))
 
     try:
         resp = await llm_router.complete(

@@ -1305,9 +1305,7 @@ class TestOrchestratorIntentRouting:
 
         final_msgs = mock_llm.complete.call_args_list[-1].kwargs["messages"]
         budget_count = sum(
-            1
-            for m in final_msgs
-            if m.role == "system" and (m.content or "").startswith("[Budget:")
+            1 for m in final_msgs if m.role == "system" and (m.content or "").startswith("[Budget:")
         )
         assert budget_count <= 1, f"expected <=1 budget marker, got {budget_count}"
 

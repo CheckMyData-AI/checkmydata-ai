@@ -1179,9 +1179,7 @@ class OrchestratorAgent(BaseAgent):
                         # targeted directive (retry transient / adjust fatal)
                         # instead of a bland "tool failed" the LLM treats as
                         # terminal. Shared with the single-call branch (B2).
-                        err_msg, directive = self._tool_exc_to_directive(
-                            res, active_calls[i].name
-                        )
+                        err_msg, directive = self._tool_exc_to_directive(res, active_calls[i].name)
                         logger.warning(
                             "Parallel tool call %s failed (%s): %s",
                             active_calls[i].name,
@@ -1408,9 +1406,7 @@ class OrchestratorAgent(BaseAgent):
             if response_type == "sql_result" and last_sql_result is not None:
                 vr_norm = self._validator.validate_sql_result(last_sql_result)
                 row_count = (
-                    last_sql_result.results.row_count
-                    if last_sql_result.results is not None
-                    else 0
+                    last_sql_result.results.row_count if last_sql_result.results is not None else 0
                 )
                 suspicious = (
                     bool(vr_norm.warnings) or row_count == 0 or wf_id in self._wf_suspicious
@@ -2479,8 +2475,7 @@ class OrchestratorAgent(BaseAgent):
         )
         if retryable:
             directive = (
-                f" This looks transient — retry the same '{tool_name}' call once "
-                "before giving up."
+                f" This looks transient — retry the same '{tool_name}' call once before giving up."
             )
         else:
             directive = (
