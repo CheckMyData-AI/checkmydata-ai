@@ -353,13 +353,17 @@ class GitInspector:
                     if isinstance(raw_message, bytes)
                     else raw_message
                 )
+                # ``.strip()`` can empty a whitespace-only message, and
+                # ``"".splitlines()`` is ``[]`` — guard the index so an empty or
+                # blank tag/commit message yields "" instead of IndexError.
+                subject_lines = (message or "").strip().splitlines()
                 releases.append(
                     {
                         "tag_name": tag.name,
                         "commit_sha": commit.hexsha,
                         "short_sha": commit.hexsha[:10],
                         "commit_date": self._ts_to_iso(commit.committed_date),
-                        "message": (message or "").strip().splitlines()[0] if message else "",
+                        "message": subject_lines[0] if subject_lines else "",
                     }
                 )
             releases.sort(key=lambda r: r["commit_date"], reverse=True)

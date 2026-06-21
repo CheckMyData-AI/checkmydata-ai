@@ -134,6 +134,26 @@ class TestReleases:
         rels = await GitInspector(repo_dir).list_releases(tag_prefix="v2")
         assert rels == []
 
+    async def test_list_releases_blank_commit_message_does_not_crash(self, temp_repo):
+        # Regression: a lightweight tag on a commit whose message is only
+        # whitespace routes through commit.message; `.strip().splitlines()[0]`
+        # then raised IndexError, aborting the whole release listing.
+        # GitPython's index.commit stores the message verbatim (no git cleanup),
+        # so a whitespace-only commit message is reachable.
+        repo_dir, _ = temp_repo
+        from git import Repo
+
+        repo = Repo(str(repo_dir))
+        (repo_dir / "blank.py").write_text("x = 1\n")
+        repo.index.add(["blank.py"])
+        repo.index.commit("   \n  ")  # whitespace-only, stored verbatim
+        repo.create_tag("v9.9.9")  # lightweight tag → routes through commit.message
+
+        rels = await GitInspector(repo_dir).list_releases()
+        blank = next((r for r in rels if r["tag_name"] == "v9.9.9"), None)
+        assert blank is not None
+        assert blank["message"] == ""
+
 
 class TestStats:
     async def test_authors_stats(self, temp_repo):
