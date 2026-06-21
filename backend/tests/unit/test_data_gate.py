@@ -155,3 +155,23 @@ class TestStageRetryIntegration:
         b.fail("bad")
         a.merge(b)
         assert a.passed is False
+
+
+class TestEpochIntDates:
+    """I7: epoch timestamps arriving as int/float must be range-checked too."""
+
+    def test_nonsense_epoch_int_is_flagged(self):
+        # 10**20 is implausible as both epoch seconds and epoch ms.
+        qr = QueryResult(columns=["created_at"], rows=[[10**20]], row_count=1)
+        gate = DataGate()
+        outcome = DataGateOutcome()
+        gate._check_value_ranges(qr, outcome)
+        assert outcome.errors or outcome.warnings
+
+    def test_valid_epoch_seconds_not_flagged(self):
+        # 1700000000 -> 2023-11, a plausible epoch-seconds timestamp.
+        qr = QueryResult(columns=["created_at"], rows=[[1700000000]], row_count=1)
+        gate = DataGate()
+        outcome = DataGateOutcome()
+        gate._check_value_ranges(qr, outcome)
+        assert not outcome.errors and not outcome.warnings

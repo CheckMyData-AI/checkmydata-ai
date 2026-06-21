@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from app.agents.stage_context import PlanStage, StageContext, StageResult
@@ -307,6 +307,38 @@ class DataGate:
                             break
                     except (ValueError, TypeError):
                         pass
+                elif kind == "date" and isinstance(val, (int, float)) and not isinstance(val, bool):
+                    # I7: epoch timestamps arriving as numbers are the exact
+                    # unit error (seconds vs ms) the string branch above can't
+                    # see. Flag a number that is implausible as *both* epoch
+                    # seconds and epoch ms — i.e. not a real timestamp at all.
+                    plausible = False
+                    for divisor in (1, 1000):
+                        try:
+                            yr = datetime.fromtimestamp(val / divisor, tz=UTC).year
+                        except (ValueError, OverflowError, OSError):
+                            continue
+                        if year_min <= yr <= year_max:
+                            plausible = True
+                            break
+                    if not plausible:
+                        if settings.data_gate_hard_checks_enabled:
+                            outcome.fail(
+                                f"Column '{col_name}' has numeric value {val} "
+                                "that is not a plausible epoch timestamp "
+                                f"(seconds or ms) within [{year_min}, {year_max}].",
+                                suggestion=(
+                                    "Confirm the column is a real date; if it is "
+                                    "epoch seconds/ms, convert it (to_timestamp / "
+                                    "FROM_UNIXTIME) before returning."
+                                ),
+                            )
+                        else:
+                            outcome.warn(
+                                f"Column '{col_name}' has numeric value {val} "
+                                "that is not a plausible epoch timestamp.",
+                            )
+                        break
 
     @staticmethod
     def _check_truncation(
