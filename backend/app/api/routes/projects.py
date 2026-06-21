@@ -450,6 +450,38 @@ async def project_knowledge_health(
     )
 
 
+@router.get("/{project_id}/sync-history")
+async def project_sync_history(
+    project_id: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Recent scheduled daily-sync runs for a project (viewer access).
+
+    Returns up to *limit* (clamped 1–50) runs ordered newest-first.
+    Maps ``steps_json`` → ``steps`` so the frontend contract is stable.
+    """
+    from app.services.knowledge_sync_run_service import KnowledgeSyncRunService
+
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    runs = await KnowledgeSyncRunService().list_for_project(db, project_id, limit=limit)
+    return {
+        "runs": [
+            {
+                "id": r.id,
+                "trigger": r.trigger,
+                "status": r.status,
+                "duration_seconds": r.duration_seconds,
+                "error_message": r.error_message,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "steps": r.steps_json,
+            }
+            for r in runs
+        ]
+    }
+
+
 @router.get("/{project_id}/pipeline-status")
 async def project_pipeline_status(
     project_id: str,
