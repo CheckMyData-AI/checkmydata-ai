@@ -131,12 +131,16 @@ class MongoDBConnector(BaseConnector):
                 if "_id" in doc:
                     doc["_id"] = str(doc["_id"])
 
-            from app.connectors.base import MAX_RESULT_ROWS
+            from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
 
             truncated = len(docs) > MAX_RESULT_ROWS
             capped = docs[:MAX_RESULT_ROWS] if truncated else docs
             columns = list(capped[0].keys()) if capped else []
             rows = [list(d.get(c) for c in columns) for d in capped]
+            # Bound serialized size like the SQL connectors: a few very wide
+            # documents can blow past the byte budget even under the row cap.
+            rows, byte_truncated = cap_rows_by_bytes(rows)
+            truncated = truncated or byte_truncated
             return QueryResult(
                 columns=columns,
                 rows=rows,

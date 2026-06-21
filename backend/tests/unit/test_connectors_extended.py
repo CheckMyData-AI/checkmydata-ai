@@ -546,6 +546,32 @@ class TestMongoDBConnector:
         assert result.row_count == 2
         assert result.rows[0][0] == "abc"
 
+    async def test_execute_query_byte_guard_truncates(self, connector):
+        """A few very wide documents exceeding the byte cap are trimmed and flagged,
+        matching the SQL connectors (mongodb previously only capped row count)."""
+        from app.connectors.base import MAX_RESULT_BYTES
+
+        big = "x" * (MAX_RESULT_BYTES // 2 + 1)
+        mock_cursor = AsyncMock()
+        mock_cursor.to_list = AsyncMock(
+            return_value=[
+                {"_id": "a", "blob": big},
+                {"_id": "b", "blob": big},
+                {"_id": "c", "blob": big},
+            ]
+        )
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_coll = MagicMock()
+        mock_coll.find.return_value = mock_cursor
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+        connector._db = mock_db
+
+        query = json.dumps({"collection": "wide", "operation": "find", "filter": {}})
+        result = await connector.execute_query(query)
+        assert result.truncated is True
+        assert len(result.rows) < 3
+
     async def test_execute_query_count(self, connector):
         mock_coll = AsyncMock()
         mock_coll.count_documents = AsyncMock(return_value=42)
