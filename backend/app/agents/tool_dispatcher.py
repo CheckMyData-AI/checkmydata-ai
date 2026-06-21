@@ -409,22 +409,13 @@ class ToolDispatcher:
                 _accum_usage(total_usage, sql_result.token_usage)
 
                 vr = self._validator.validate_sql_result(sql_result)
-                # R5-4: a suspicious empty result is a likely-wrong-query
-                # signal, but only treat it as retryable when policy allows.
-                qr = getattr(sql_result, "results", None)
-                empty_suspicious = (
-                    settings.query_empty_result_retry
-                    and qr is not None
-                    and getattr(qr, "row_count", 0) == 0
-                    and not getattr(qr, "error", None)
-                )
-                needs_retry = not vr.passed or empty_suspicious
-                if needs_retry and attempt < MAX_SUB_AGENT_RETRIES:
-                    retry_errors = list(vr.errors) or (
-                        ["Query returned zero rows — verify table/column names and filters"]
-                        if empty_suspicious
-                        else []
-                    )
+                # I2/I3: the dispatcher retries only on a *validation failure*.
+                # A clean zero-row result is NOT re-queried here — the
+                # orchestrator result-gate (_result_gate_directive) is the single
+                # owner of the empty-result re-query decision (bounded per
+                # workflow), so genuinely-empty queries are not double-retried.
+                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
+                    retry_errors = list(vr.errors)
                     logger.info(
                         "SQL agent result needs retry (attempt %d): %s",
                         attempt + 1,
