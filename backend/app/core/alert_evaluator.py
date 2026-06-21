@@ -45,7 +45,18 @@ class AlertEvaluator:
                 continue
 
             idx = col_index[col_name]
-            threshold = float(threshold)
+            try:
+                threshold = float(threshold)
+            except (ValueError, TypeError):
+                # A user-supplied non-numeric threshold can't be evaluated;
+                # skip just this condition rather than aborting the whole
+                # alert pass (and failing the scheduled run).
+                logger.warning(
+                    "Skipping alert condition for column %s: non-numeric threshold %r",
+                    col_name,
+                    threshold,
+                )
+                continue
 
             if operator == "pct_change":
                 if len(result_rows) < 2:

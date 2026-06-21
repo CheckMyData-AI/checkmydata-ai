@@ -115,3 +115,29 @@ class TestEdgeCases:
         alerts = AlertEvaluator.evaluate(rows, cols, conds)
         assert len(alerts) == 1
         assert alerts[0]["condition"]["column"] == "orders"
+
+    def test_non_numeric_threshold_skips_condition(self):
+        # A user-supplied non-numeric threshold must not crash evaluation.
+        conds = json.dumps([{"column": "x", "operator": "gt", "threshold": "high"}])
+        assert AlertEvaluator.evaluate([[100]], ["x"], conds) == []
+
+    def test_non_numeric_threshold_does_not_abort_other_conditions(self):
+        # A bad threshold on one condition must not prevent a later valid
+        # condition from being evaluated (skip, don't abort the whole pass).
+        rows = [[200, 5]]
+        cols = ["orders", "errors"]
+        conds = json.dumps(
+            [
+                {"column": "orders", "operator": "gt", "threshold": "lots"},
+                {"column": "errors", "operator": "gt", "threshold": 1},
+            ]
+        )
+        alerts = AlertEvaluator.evaluate(rows, cols, conds)
+        assert len(alerts) == 1
+        assert alerts[0]["condition"]["column"] == "errors"
+
+    def test_pct_change_non_numeric_threshold_skips(self):
+        # The pct_change branch also reads ``threshold`` and must not crash.
+        rows = [[100], [200]]
+        conds = json.dumps([{"column": "rev", "operator": "pct_change", "threshold": "big"}])
+        assert AlertEvaluator.evaluate(rows, ["rev"], conds) == []
