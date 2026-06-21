@@ -408,6 +408,9 @@ class TestPipelineScopedContext:
             ),
         ):
             mock_planner = mock_planner_cls.return_value
+            # B1: the complex pipeline must use the public planner (plan()),
+            # which injects validation criteria, not the private _llm_plan().
+            mock_planner.plan = AsyncMock(return_value=plan)
             mock_planner._llm_plan = AsyncMock(return_value=plan)
 
             mock_executor = mock_executor_cls.return_value
@@ -416,6 +419,10 @@ class TestPipelineScopedContext:
             await agent._run_complex_pipeline(
                 ctx, wf_id="wf-1", table_map="", db_type="postgres", staleness_warning=None
             )
+
+        # B1: public planner used, private one not.
+        mock_planner.plan.assert_awaited()
+        mock_planner._llm_plan.assert_not_awaited()
 
         assert "ctx" in captured_ctx, "StageExecutor.execute was not called"
         scoped = captured_ctx["ctx"]

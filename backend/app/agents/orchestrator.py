@@ -1669,7 +1669,12 @@ class OrchestratorAgent(BaseAgent):
             step_data=_sd_plan,
             span_type="llm_call",
         ):
-            plan = await adaptive._llm_plan(
+            # B1: use the public planner so the initial plan gets
+            # ``_ensure_validation_criteria`` (auto-injected min_rows) and the
+            # quick-plan fallback — matching the replan path. The private
+            # ``_llm_plan`` skipped both, leaving the initial plan validated
+            # more loosely than its replans.
+            plan = await adaptive.plan(
                 context.user_question,
                 table_map=table_map,
                 db_type=db_type,
