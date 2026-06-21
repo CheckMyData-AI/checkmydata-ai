@@ -56,6 +56,7 @@ from app.api.routes import (
     workflows,
 )
 from app.config import settings
+from app.core.distributed_lock import redis_lock
 from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
 from app.models.base import async_session_factory, init_db, run_migrations
@@ -658,50 +659,59 @@ async def _git_poll_loop() -> None:
 
 
 async def _dispatch_daily_knowledge_sync_wave() -> None:
-    """Enqueue one daily knowledge sync job per eligible project."""
+    """Enqueue one daily knowledge sync job per eligible project.
+
+    A Redis advisory lock (keyed by ``run_date``) ensures exactly one web dyno
+    dispatches the wave per calendar day; other dynos skip silently.
+    """
     from zoneinfo import ZoneInfo
 
     from app.core import task_queue
     from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
 
-    svc = DailyKnowledgeSyncService()
-    dispatched = 0
-    skipped = 0
+    tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
+    run_date = datetime.now(tz).strftime("%Y-%m-%d")
 
-    try:
-        async with async_session_factory() as session:
-            all_projects = await svc._project_svc.list_all(session)
-            eligible = await svc.list_eligible_projects(session)
+    async with redis_lock(f"cron:daily_sync:{run_date}", ttl_seconds=3600) as acquired:
+        if not acquired:
+            logger.info("Cron: daily knowledge sync wave skipped (lock held by another dyno)")
+            return
 
-        skipped = len(all_projects) - len(eligible)
+        svc = DailyKnowledgeSyncService()
+        dispatched = 0
+        skipped = 0
 
-        tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-        run_date = datetime.now(tz).strftime("%Y-%m-%d")
+        try:
+            async with async_session_factory() as session:
+                all_projects = await svc._project_svc.list_all(session)
+                eligible = await svc.list_eligible_projects(session)
 
-        for project in eligible:
-            task_id = f"daily_sync:{project.id}:{run_date}"
-            pid = project.id
+            skipped = len(all_projects) - len(eligible)
 
-            async def _run_in_process(*, project_id: str = pid) -> None:
-                result = await svc.run_for_project(project_id)
-                await svc.persist_run(result)
+            for project in eligible:
+                task_id = f"daily_sync:{project.id}:{run_date}"
+                pid = project.id
 
-            await task_queue.enqueue(
-                "run_daily_project_knowledge_sync",
-                coro_factory=_run_in_process,
-                task_id=task_id,
-                _job_timeout=settings.daily_knowledge_sync_job_timeout_seconds,
-                project_id=project.id,
+                async def _run_in_process(*, project_id: str = pid) -> None:
+                    result = await svc.run_for_project(project_id)
+                    await svc.persist_run(result)
+
+                await task_queue.enqueue(
+                    "run_daily_project_knowledge_sync",
+                    coro_factory=_run_in_process,
+                    task_id=task_id,
+                    _job_timeout=settings.daily_knowledge_sync_job_timeout_seconds,
+                    project_id=project.id,
+                )
+                dispatched += 1
+
+            logger.info(
+                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d",
+                dispatched,
+                skipped,
             )
-            dispatched += 1
-
-        logger.info(
-            "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d",
-            dispatched,
-            skipped,
-        )
-    except Exception:
-        logger.exception("Cron: daily knowledge sync wave dispatch failed")
+        except Exception:
+            logger.exception("Cron: daily knowledge sync wave dispatch failed")
 
 
 async def _daily_knowledge_sync_cron_loop() -> None:
