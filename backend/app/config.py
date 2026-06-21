@@ -289,6 +289,14 @@ class Settings(BaseSettings):
     daily_knowledge_sync_timezone: str = "Europe/Berlin"
     daily_knowledge_sync_job_timeout_seconds: int = 7200
 
+    # Stale-run reaper (P0): heartbeat-based recovery of stuck 'running' statuses
+    # after a hard worker crash (OOM/SIGKILL/dyno cycle) where the job's finally
+    # block never ran. Reaper runs in both web and worker; idempotent.
+    reaper_enabled: bool = True
+    heartbeat_interval_seconds: int = 30
+    reaper_interval_seconds: int = 60
+    stale_running_heartbeat_timeout_seconds: int = 300
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
