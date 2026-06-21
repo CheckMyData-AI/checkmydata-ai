@@ -5,6 +5,8 @@ import time
 from typing import Any
 from urllib.parse import quote_plus
 
+from bson import ObjectId
+from bson.decimal128 import Decimal128
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.connectors.base import (
@@ -21,6 +23,29 @@ from app.connectors.ssh_tunnel import shared_tunnel_manager
 logger = logging.getLogger(__name__)
 # R1-4: all connectors share one process-wide tunnel manager.
 _tunnel_mgr = shared_tunnel_manager
+
+
+def _to_jsonable(value: Any) -> Any:
+    """Coerce Mongo-specific BSON types in a result cell to serializable forms.
+
+    Only Mongo-specific types are converted — ``datetime`` and ``bytes`` pass
+    through raw to match the SQL connectors, since the response encoder handles
+    those uniformly. ``ObjectId`` (which has no SQL analogue) becomes its hex
+    string, ``Decimal128`` becomes a ``decimal.Decimal`` (like asyncpg's numeric
+    results), and nested documents / arrays are walked so references buried in
+    subdocuments are coerced too. Without this, any non-``_id`` ObjectId — e.g.
+    a reference field, which is ubiquitous — would reach the response serializer
+    as a raw BSON object and break it.
+    """
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, Decimal128):
+        return value.to_decimal()
+    if isinstance(value, dict):
+        return {k: _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(v) for v in value]
+    return value
 
 
 class MongoDBConnector(BaseConnector):
@@ -127,16 +152,14 @@ class MongoDBConnector(BaseConnector):
             if not docs:
                 return QueryResult(row_count=0, execution_time_ms=elapsed)
 
-            for doc in docs:
-                if "_id" in doc:
-                    doc["_id"] = str(doc["_id"])
-
             from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
 
             truncated = len(docs) > MAX_RESULT_ROWS
             capped = docs[:MAX_RESULT_ROWS] if truncated else docs
             columns = list(capped[0].keys()) if capped else []
-            rows = [list(d.get(c) for c in columns) for d in capped]
+            # Coerce every cell — not just the top-level _id — so nested or
+            # reference ObjectIds / Decimal128 values are serializable.
+            rows = [[_to_jsonable(d.get(c)) for c in columns] for d in capped]
             # Bound serialized size like the SQL connectors: a few very wide
             # documents can blow past the byte budget even under the row cap.
             rows, byte_truncated = cap_rows_by_bytes(rows)
