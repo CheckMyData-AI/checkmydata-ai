@@ -574,6 +574,23 @@ class OrchestratorAgent(BaseAgent):
     # Execution paths
     # ------------------------------------------------------------------
 
+    async def _end_pipeline_workflow(self, wf_id: str, exec_result: Any, *, label: str) -> None:
+        """Emit the terminal ``pipeline_end`` event for a complex pipeline.
+
+        Maps the executor status to the workflow status so SSE consumers never
+        show a green check on a failed/incomplete run. Shared by the fresh
+        (``_run_complex_pipeline``) and resumed (``_resume_pipeline``) paths —
+        the resumed path previously returned without ending the workflow,
+        leaking it as a phantom "running" task.
+        """
+        if exec_result.status == "stage_failed":
+            failed_id = exec_result.failed_stage.stage_id if exec_result.failed_stage else "?"
+            await self._tracker.end(wf_id, "orchestrator", "failed", f"{label} stage={failed_id}")
+        elif exec_result.status == "checkpoint":
+            await self._tracker.end(wf_id, "orchestrator", "checkpoint", label)
+        else:
+            await self._tracker.end(wf_id, "orchestrator", "completed", label)
+
     async def _run_direct_response(
         self,
         context: AgentContext,
@@ -1775,15 +1792,7 @@ class OrchestratorAgent(BaseAgent):
         # ``completed`` even when the executor came back ``stage_failed``
         # (after exhausting replans), so SSE consumers showed a green check
         # on a failed pipeline.
-        if exec_result.status == "stage_failed":
-            failed_id = exec_result.failed_stage.stage_id if exec_result.failed_stage else "?"
-            await self._tracker.end(
-                wf_id, "orchestrator", "failed", f"complex_pipeline stage={failed_id}"
-            )
-        elif exec_result.status == "checkpoint":
-            await self._tracker.end(wf_id, "orchestrator", "checkpoint", "complex_pipeline")
-        else:
-            await self._tracker.end(wf_id, "orchestrator", "completed", "complex_pipeline")
+        await self._end_pipeline_workflow(wf_id, exec_result, label="complex_pipeline")
         try:
             from app.core.metrics import RequestMetrics, get_metrics_collector
 
@@ -2128,6 +2137,7 @@ class OrchestratorAgent(BaseAgent):
             logger.exception("Pipeline resume failed (run_id=%s)", run_id)
             raise
 
+        await self._end_pipeline_workflow(wf_id, exec_result, label="resumed_pipeline")
         return ResponseBuilder.build_pipeline_response(exec_result, wf_id, None, run_id)
 
     async def _create_pipeline_run(

@@ -2233,3 +2233,47 @@ class TestUnifiedResultGate:
         ok = SQLAgentResult(status="success", query="SELECT 1", results=qr)
         assert agent._result_gate_directive("wf-recover", ok) is None
         assert agent.pop_suspicious_reason("wf-recover") is None
+
+
+class TestEndPipelineWorkflow:
+    """_end_pipeline_workflow must emit pipeline_end mapping the executor status
+    so the resumed-pipeline path no longer leaks an unended workflow (phantom
+    'running' task) and SSE consumers never show a green check on a failure."""
+
+    def _agent(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.agents.orchestrator import OrchestratorAgent
+
+        tracker = MagicMock()
+        tracker.end = AsyncMock()
+        agent = OrchestratorAgent(llm_router=MagicMock(), workflow_tracker=tracker)
+        return agent, tracker
+
+    async def test_completed_status_ends_completed(self):
+        from types import SimpleNamespace
+
+        agent, tracker = self._agent()
+        res = SimpleNamespace(status="completed", failed_stage=None)
+        await agent._end_pipeline_workflow("wf1", res, label="resumed_pipeline")
+        tracker.end.assert_awaited_once_with("wf1", "orchestrator", "completed", "resumed_pipeline")
+
+    async def test_checkpoint_status_ends_checkpoint(self):
+        from types import SimpleNamespace
+
+        agent, tracker = self._agent()
+        res = SimpleNamespace(status="checkpoint", failed_stage=None)
+        await agent._end_pipeline_workflow("wf2", res, label="resumed_pipeline")
+        tracker.end.assert_awaited_once_with(
+            "wf2", "orchestrator", "checkpoint", "resumed_pipeline"
+        )
+
+    async def test_stage_failed_ends_failed_with_stage_id(self):
+        from types import SimpleNamespace
+
+        agent, tracker = self._agent()
+        res = SimpleNamespace(status="stage_failed", failed_stage=SimpleNamespace(stage_id="s3"))
+        await agent._end_pipeline_workflow("wf3", res, label="complex_pipeline")
+        tracker.end.assert_awaited_once_with(
+            "wf3", "orchestrator", "failed", "complex_pipeline stage=s3"
+        )
