@@ -147,13 +147,21 @@ class McpKeyService:
         if key.revoked_at is not None:
             logger.info("MCP key lookup: id=%s is revoked", key.id)
             return None
-        if key.expires_at is not None and key.expires_at <= datetime.now(UTC):
-            logger.info(
-                "MCP key lookup: id=%s expired at %s",
-                key.id,
-                key.expires_at.isoformat(),
-            )
-            return None
+        if key.expires_at is not None:
+            expires_at = key.expires_at
+            if expires_at.tzinfo is None:
+                # SQLite reads a DateTime(timezone=True) column back as naive;
+                # stored timestamps are UTC, so attach UTC before comparing —
+                # otherwise ``naive <= aware`` raises TypeError and breaks auth
+                # for every valid expiring token after a process restart.
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at <= datetime.now(UTC):
+                logger.info(
+                    "MCP key lookup: id=%s expired at %s",
+                    key.id,
+                    expires_at.isoformat(),
+                )
+                return None
         # Best-effort touch; failure here must not deny the call.
         try:
             key.last_used_at = datetime.now(UTC)

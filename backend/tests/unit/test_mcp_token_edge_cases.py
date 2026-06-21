@@ -97,6 +97,54 @@ class TestRealDbBehavior:
         assert found is None
 
     @pytest.mark.asyncio
+    async def test_lookup_valid_expiring_token_from_cold_session(self):
+        """Regression: on SQLite a ``DateTime(timezone=True)`` column reads
+        back *naive* in a fresh session (cold identity map). ``lookup_by_token``
+        compared it against an aware ``datetime.now(UTC)``, raising
+        ``TypeError`` and breaking auth for every valid *expiring* token after
+        a process restart. A valid future-dated token must resolve, not crash.
+        """
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        svc = McpKeyService()
+        try:
+            async with sm() as s1:
+                await _seed_user(s1)
+                issued = await svc.issue(s1, user_id="user-1", name="laptop", expires_in_days=30)
+                plaintext = issued.plaintext
+            # Fresh session ⇒ cold identity map ⇒ naive read-back from SQLite.
+            async with sm() as s2:
+                found = await svc.lookup_by_token(s2, plaintext)
+            assert found is not None
+            assert found.expires_at is not None
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_lookup_expired_token_from_cold_session_returns_none(self):
+        """The same naive read-back must still reject a genuinely expired token
+        (return ``None``) rather than raising."""
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        svc = McpKeyService()
+        try:
+            async with sm() as s1:
+                await _seed_user(s1)
+                issued = await svc.issue(s1, user_id="user-1", name="x")
+                issued.record.expires_at = datetime.now(UTC) - timedelta(days=1)
+                await s1.commit()
+                plaintext = issued.plaintext
+            async with sm() as s2:
+                found = await svc.lookup_by_token(s2, plaintext)
+            assert found is None
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
     async def test_revoked_token_is_rejected_even_if_not_expired(self, db_session):
         await _seed_user(db_session)
         svc = McpKeyService()
