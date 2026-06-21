@@ -7,7 +7,7 @@ async def test_heartbeat_writes_immediately_and_periodically():
     calls: list[float] = []
 
     async def writer():
-        calls.append(asyncio.get_event_loop().time())
+        calls.append(asyncio.get_running_loop().time())
 
     async with heartbeat(writer, interval_seconds=0.05):
         await asyncio.sleep(0.17)
@@ -24,7 +24,7 @@ async def test_heartbeat_swallows_writer_errors():
 
     async with heartbeat(bad_writer, interval_seconds=0.05):
         await asyncio.sleep(0.12)
-    assert count["n"] >= 1  # kept ticking despite errors
+    assert count["n"] >= 2  # kept ticking despite errors (immediate beat + ≥1 periodic)
 
 
 async def test_heartbeat_stops_after_exit():
