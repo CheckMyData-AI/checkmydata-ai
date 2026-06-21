@@ -1164,40 +1164,14 @@ class OrchestratorAgent(BaseAgent):
                     if isinstance(res, _ClarificationRequestError):
                         raise res
                     if isinstance(res, Exception):
-                        from app.agents.errors import (
-                            AgentError,
-                            AgentFatalError,
-                            AgentRetryableError,
-                        )
-
-                        if isinstance(res, LLMError):
-                            err_msg = res.user_message
-                        elif isinstance(res, (AgentRetryableError, AgentFatalError, AgentError)):
-                            err_msg = str(res) or type(res).__name__
-                        else:
-                            err_msg = f"{type(res).__name__}: {res}"
-
                         # R5-8: the dispatcher already exhausted its internal
-                        # retries before re-raising. Rather than folding a bland
-                        # "tool failed" into the transcript (which the LLM tends
-                        # to treat as terminal and synthesize around), give a
-                        # targeted directive: retry the *same* call once for
-                        # transient/retryable errors, or adjust inputs / proceed
-                        # without it for fatal ones.
-                        retryable = isinstance(res, AgentRetryableError) or (
-                            isinstance(res, LLMError) and getattr(res, "is_retryable", False)
+                        # retries before re-raising. Fold the failure into a
+                        # targeted directive (retry transient / adjust fatal)
+                        # instead of a bland "tool failed" the LLM treats as
+                        # terminal. Shared with the single-call branch (B2).
+                        err_msg, directive = self._tool_exc_to_directive(
+                            res, active_calls[i].name
                         )
-                        if retryable:
-                            directive = (
-                                f" This looks transient — retry the same "
-                                f"'{active_calls[i].name}' call once before giving up."
-                            )
-                        else:
-                            directive = (
-                                f" Do not retry '{active_calls[i].name}' unchanged; "
-                                "correct the inputs or continue with the data you have."
-                            )
-
                         logger.warning(
                             "Parallel tool call %s failed (%s): %s",
                             active_calls[i].name,
@@ -1221,15 +1195,46 @@ class OrchestratorAgent(BaseAgent):
                     else:
                         executed_pairs[tc_id] = res  # type: ignore[assignment]
             else:
+                # B2: the single-call branch is the most common path (the
+                # parallel branch only triggers for >1 non-process_data call).
+                # It previously had no safety net, so an unexpected exception in
+                # a handler (search_codebase / analyze_git / get_release_timeline
+                # / write_code_note) crashed the whole turn and discarded all
+                # gathered data. Mirror the parallel branch's graceful handling.
                 executed_pairs = {}
                 for single_tc in active_calls:
-                    executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
-                        single_tc,
-                        context,
-                        wf_id,
-                        total_usage,
-                        remaining_wall_seconds=_dispatch_wall,
-                    )
+                    try:
+                        executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
+                            single_tc,
+                            context,
+                            wf_id,
+                            total_usage,
+                            remaining_wall_seconds=_dispatch_wall,
+                        )
+                    except _ClarificationRequestError:
+                        raise
+                    except Exception as exc:
+                        err_msg, directive = self._tool_exc_to_directive(exc, single_tc.name)
+                        logger.warning(
+                            "Single tool call %s failed (%s): %s",
+                            single_tc.name,
+                            type(exc).__name__,
+                            exc,
+                            exc_info=exc,
+                        )
+                        await self._tracker.emit(
+                            wf_id,
+                            "tool_call:error",
+                            "error",
+                            f"{single_tc.name} failed: {err_msg}",
+                            tool=single_tc.name,
+                            error=err_msg,
+                            error_type=type(exc).__name__,
+                        )
+                        executed_pairs[single_tc.id] = (
+                            f"Tool '{single_tc.name}' failed: {err_msg}.{directive}",
+                            None,
+                        )
 
             tool_pairs: list[tuple[str, Any]] = []
             for tc in llm_resp.tool_calls:
@@ -2414,6 +2419,40 @@ class OrchestratorAgent(BaseAgent):
         if "permission" in msg or "access denied" in msg:
             return "Permission error. Please check your database credentials and permissions."
         return "An unexpected error occurred. Please try again shortly."
+
+    @staticmethod
+    def _tool_exc_to_directive(exc: BaseException, tool_name: str) -> tuple[str, str]:
+        """Map a tool-dispatch exception to ``(user_error_text, llm_directive)``.
+
+        Shared by the parallel and single-call branches of the tool loop (B2) so
+        a failed tool call is folded into a corrective directive rather than
+        crashing the turn. Transient/retryable errors prompt a single retry of
+        the same call; fatal ones tell the model to adjust inputs or proceed
+        without the tool.
+        """
+        from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
+
+        if isinstance(exc, LLMError):
+            err_msg = exc.user_message
+        elif isinstance(exc, (AgentRetryableError, AgentFatalError, AgentError)):
+            err_msg = str(exc) or type(exc).__name__
+        else:
+            err_msg = f"{type(exc).__name__}: {exc}"
+
+        retryable = isinstance(exc, AgentRetryableError) or (
+            isinstance(exc, LLMError) and getattr(exc, "is_retryable", False)
+        )
+        if retryable:
+            directive = (
+                f" This looks transient — retry the same '{tool_name}' call once "
+                "before giving up."
+            )
+        else:
+            directive = (
+                f" Do not retry '{tool_name}' unchanged; correct the inputs or "
+                "continue with the data you have."
+            )
+        return err_msg, directive
 
     # Backward-compatible aliases — delegate to ToolDispatcher
     _DEDUP_TOOL_NAMES = ToolDispatcher._DEDUP_TOOL_NAMES

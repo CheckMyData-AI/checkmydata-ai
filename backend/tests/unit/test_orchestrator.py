@@ -1217,6 +1217,52 @@ class TestOrchestratorIntentRouting:
         assert "wf-1" not in orch._wf_sql_results
 
     @pytest.mark.asyncio
+    async def test_single_call_dispatch_survives_exception(self, orch, mock_llm, base_context):
+        """B2: an unexpected exception in a single-tool-call turn must not crash
+        the turn — it is folded into a directive and the loop continues."""
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+        from app.llm.base import LLMResponse, ToolCall
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="t1", name="search_codebase", arguments={"question": "x"})
+                    ],
+                ),
+                LLMResponse(content="Final answer based on what I have."),
+            ]
+        )
+        orch._dispatcher.dispatch = AsyncMock(side_effect=RuntimeError("boom"))
+
+        tools = get_orchestrator_tools(has_knowledge_base=True)
+        resp = await orch._run_tool_loop(
+            base_context,
+            "wf-1",
+            has_connection=False,
+            db_type=None,
+            has_kb=True,
+            has_mcp=False,
+            has_repo=False,
+            table_map="",
+            project_overview=None,
+            recent_learnings=None,
+            custom_rules="",
+            tools=tools,
+            staleness_warning=None,
+            route_result=None,
+        )
+
+        # Turn survived (no raise) and produced the final answer.
+        assert resp.answer == "Final answer based on what I have."
+        # The failure was surfaced to the model as a tool message directive.
+        second_call_msgs = mock_llm.complete.call_args_list[1].kwargs["messages"]
+        assert any(
+            m.role == "tool" and "failed" in (m.content or "").lower() for m in second_call_msgs
+        )
+
+    @pytest.mark.asyncio
     async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
         """If router fails, the orchestrator should fall back to unified agent."""
         mock_llm.complete = AsyncMock(
