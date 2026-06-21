@@ -338,3 +338,55 @@ class TestGetRunHistory:
         schedule, *_ = await _make_schedule(db)
         history = await svc.get_run_history(db, schedule.id)
         assert history == []
+
+
+class TestClaimDue:
+    """Atomic single-flight claim used to keep multi-dyno scheduler loops from
+    double-executing the same due schedule (and double-sending its alerts)."""
+
+    @pytest.mark.asyncio
+    async def test_first_claim_succeeds_and_advances_next_run(self, db):
+        schedule, *_ = await _make_schedule(db, cron_expression="0 * * * *")
+        schedule.next_run_at = datetime.now(UTC) - timedelta(minutes=5)
+        await db.commit()
+
+        claimed = await svc.claim_due(db, schedule.id, schedule.cron_expression)
+        assert claimed is True
+
+        # The claim must have advanced next_run_at past now, so the row no
+        # longer matches the due predicate for any concurrent loop.
+        await db.refresh(schedule)
+        next_run = schedule.next_run_at
+        assert next_run is not None
+        next_run_aware = next_run if next_run.tzinfo else next_run.replace(tzinfo=UTC)
+        assert next_run_aware > datetime.now(UTC)
+
+    @pytest.mark.asyncio
+    async def test_second_claim_returns_false(self, db):
+        """Two web dynos racing on the same due schedule: the first claim wins,
+        the second must lose so the query runs exactly once."""
+        schedule, *_ = await _make_schedule(db, cron_expression="0 * * * *")
+        schedule.next_run_at = datetime.now(UTC) - timedelta(minutes=5)
+        await db.commit()
+
+        first = await svc.claim_due(db, schedule.id, schedule.cron_expression)
+        second = await svc.claim_due(db, schedule.id, schedule.cron_expression)
+        assert first is True
+        assert second is False
+
+    @pytest.mark.asyncio
+    async def test_claim_of_not_due_schedule_returns_false(self, db):
+        schedule, *_ = await _make_schedule(db)
+        schedule.next_run_at = datetime.now(UTC) + timedelta(hours=1)
+        await db.commit()
+
+        assert await svc.claim_due(db, schedule.id, schedule.cron_expression) is False
+
+    @pytest.mark.asyncio
+    async def test_claim_of_inactive_schedule_returns_false(self, db):
+        schedule, *_ = await _make_schedule(db)
+        schedule.is_active = False
+        schedule.next_run_at = datetime.now(UTC) - timedelta(minutes=5)
+        await db.commit()
+
+        assert await svc.claim_due(db, schedule.id, schedule.cron_expression) is False
