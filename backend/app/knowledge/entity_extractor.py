@@ -594,7 +594,12 @@ def _extract_columns(
                 line_start = content.rfind("\n", 0, m.start()) + 1
                 line = content[line_start : m.start()].strip()
                 parts = line.split(":")
-                col_name = parts[0].strip().split()[-1] if parts else ""
+                # The text before the match is whitespace-only when the call
+                # starts its own line (e.g. SQLAlchemy Core ``Table(...,
+                # Column(Integer, ...))``); ``"".split()`` is ``[]``, so guard
+                # the index instead of crashing the whole extraction.
+                name_tokens = parts[0].strip().split()
+                col_name = name_tokens[-1] if name_tokens else ""
                 _add(
                     col_name,
                     col_type,

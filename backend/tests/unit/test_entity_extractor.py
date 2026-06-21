@@ -26,6 +26,34 @@ class TestExtractColumns:
         assert "name" in names
         assert "email" in names
 
+    def test_core_style_column_at_line_start_does_not_crash(self):
+        # Regression: a SQLAlchemy Core / imperative table puts ``Column(<type>,
+        # ...)`` on its own indented line, so the text before the match is
+        # whitespace-only. ``"".split()[-1]`` raised IndexError and aborted the
+        # whole column extraction for the file.
+        content = (
+            "user_table = Table(\n"
+            '    "user",\n'
+            "    metadata,\n"
+            "    Column(Integer, primary_key=True),\n"
+            "    Column(String, nullable=False),\n"
+            ")\n"
+        )
+        cols = _extract_columns(content, "models.py")
+        # No crash; the unnamed positional Core columns are simply skipped.
+        assert isinstance(cols, list)
+
+    def test_core_and_declarative_columns_mixed(self):
+        # A declarative column with an annotation still yields its name even
+        # when a Core-style anonymous column appears in the same file.
+        content = (
+            "t = Table('t', metadata, Column(Integer))\n"
+            "class User(Base):\n"
+            "    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n"
+        )
+        names = {c.name for c in _extract_columns(content, "models.py")}
+        assert "id" in names
+
     def test_django_fields(self):
         content = (
             "class Product(models.Model):\n"
