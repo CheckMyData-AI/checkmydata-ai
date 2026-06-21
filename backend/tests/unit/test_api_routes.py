@@ -544,51 +544,46 @@ class TestSyncBackgroundPipelineFailure:
 
 
 class TestStartupStaleReset:
-    """Tests for _reset_stale_indexing_statuses startup hook."""
+    """Tests for the startup reaper sweep wired into main.py lifespan.
+
+    The blind _reset_stale_indexing_statuses was replaced by run_reaper_sweep
+    (heartbeat-aware).  These tests verify the delegation contract.
+    """
 
     @pytest.mark.asyncio
     async def test_resets_stale_running_statuses(self):
-        from app.main import _reset_stale_indexing_statuses
+        from app.core.reaper_loop import run_reaper_sweep
 
         mock_session = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        mock_tx = AsyncMock()
-        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
-        mock_tx.__aexit__ = AsyncMock(return_value=False)
-        mock_session.begin = MagicMock(return_value=mock_tx)
+        reap_spy = AsyncMock(return_value={"db_index": 2, "sync": 1, "repo": 0})
 
-        idx_result = MagicMock(rowcount=2)
-        sync_result = MagicMock(rowcount=1)
-        mock_session.execute = AsyncMock(side_effect=[idx_result, sync_result])
+        with (
+            patch("app.core.reaper_loop.settings.reaper_enabled", True),
+            patch("app.core.reaper_loop.async_session_factory", return_value=mock_ctx),
+            patch("app.core.reaper_loop._reaper.reap_once", reap_spy),
+        ):
+            await run_reaper_sweep()
 
-        with patch("app.main.async_session_factory", return_value=mock_session):
-            await _reset_stale_indexing_statuses()
-
-        assert mock_session.execute.call_count == 2
+        reap_spy.assert_awaited_once()
+        mock_session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_no_commit_when_no_stale(self):
-        from app.main import _reset_stale_indexing_statuses
+    async def test_no_op_when_reaper_disabled(self):
+        from app.core.reaper_loop import run_reaper_sweep
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        reap_spy = AsyncMock()
 
-        mock_tx = AsyncMock()
-        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
-        mock_tx.__aexit__ = AsyncMock(return_value=False)
-        mock_session.begin = MagicMock(return_value=mock_tx)
+        with (
+            patch("app.core.reaper_loop.settings.reaper_enabled", False),
+            patch("app.core.reaper_loop._reaper.reap_once", reap_spy),
+        ):
+            await run_reaper_sweep()
 
-        idx_result = MagicMock(rowcount=0)
-        sync_result = MagicMock(rowcount=0)
-        mock_session.execute = AsyncMock(side_effect=[idx_result, sync_result])
-
-        with patch("app.main.async_session_factory", return_value=mock_session):
-            await _reset_stale_indexing_statuses()
-
-        mock_session.commit.assert_not_called()
+        reap_spy.assert_not_awaited()
 
 
 class TestChatSessionRoutes:

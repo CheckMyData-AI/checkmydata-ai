@@ -80,12 +80,13 @@ _health_check_task: asyncio.Task[None] | None = None
 _maintenance_task: asyncio.Task[None] | None = None
 _git_poll_task: asyncio.Task[None] | None = None
 _daily_knowledge_sync_task: asyncio.Task[None] | None = None
+_reaper_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
-    global _git_poll_task, _daily_knowledge_sync_task  # noqa: PLW0603
+    global _git_poll_task, _daily_knowledge_sync_task, _reaper_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -100,7 +101,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _check_alembic_head()
     await _cleanup_stale_checkpoints()
-    await _reset_stale_indexing_statuses()
+    from app.core.reaper_loop import run_reaper_sweep
+
+    await run_reaper_sweep()
     await _backfill_default_rules()
     await _periodic_learning_decay()
     await _periodic_insight_maintenance()
@@ -130,6 +133,10 @@ async def lifespan(app: FastAPI):
     _git_poll_task = asyncio.create_task(_git_poll_loop())
     _daily_knowledge_sync_task = asyncio.create_task(_daily_knowledge_sync_cron_loop())
 
+    from app.core.reaper_loop import reaper_loop
+
+    _reaper_task = asyncio.create_task(reaper_loop())
+
     from app.core.workflow_tracker import tracker as _wf_tracker
     from app.services.trace_persistence_service import TracePersistenceService
 
@@ -155,6 +162,7 @@ async def lifespan(app: FastAPI):
         _maintenance_task,
         _git_poll_task,
         _daily_knowledge_sync_task,
+        _reaper_task,
     ):
         if task and not task.done():
             task.cancel()
@@ -461,37 +469,6 @@ async def _cleanup_stale_checkpoints() -> None:
                 logger.info("Startup: cleaned %d stale checkpoints", cleaned)
     except Exception:
         logger.warning("Failed to clean stale checkpoints at startup", exc_info=True)
-
-
-async def _reset_stale_indexing_statuses() -> None:
-    """Reset any 'running' indexing/sync statuses left over from a previous process."""
-    try:
-        from sqlalchemy import update
-
-        from app.models.code_db_sync import CodeDbSyncSummary
-        from app.models.db_index import DbIndexSummary
-
-        async with async_session_factory() as session:
-            async with session.begin():
-                idx_result = await session.execute(
-                    update(DbIndexSummary)
-                    .where(DbIndexSummary.indexing_status == "running")
-                    .values(indexing_status="failed")
-                )
-                sync_result = await session.execute(
-                    update(CodeDbSyncSummary)
-                    .where(CodeDbSyncSummary.sync_status == "running")
-                    .values(sync_status="failed")
-                )
-            total = (idx_result.rowcount or 0) + (sync_result.rowcount or 0)  # type: ignore[attr-defined]
-            if total:
-                logger.info(
-                    "Startup: reset stale 'running' statuses — %d indexing, %d sync",
-                    idx_result.rowcount or 0,  # type: ignore[attr-defined]
-                    sync_result.rowcount or 0,  # type: ignore[attr-defined]
-                )
-    except Exception:
-        logger.warning("Failed to reset stale indexing statuses at startup", exc_info=True)
 
 
 async def _backfill_default_rules() -> None:

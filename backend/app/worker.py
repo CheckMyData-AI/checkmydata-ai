@@ -13,6 +13,7 @@ in-process via the asyncio fallback in ``task_queue.py``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -221,11 +222,23 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     redis_url = os.getenv("REDIS_URL")
     await redis_client.connect(redis_url)
     tracker.enable_cross_process_publish()
+    from app.core.reaper_loop import reaper_loop, run_reaper_sweep
+
+    await run_reaper_sweep()
+    ctx["reaper_task"] = asyncio.create_task(reaper_loop())
     logger.info("ARQ worker started")
 
 
 async def shutdown(ctx: dict) -> None:  # noqa: ARG001
     """Called once when the worker stops."""
+    task = ctx.get("reaper_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     from app.core import redis_client
     from app.models.base import engine
 
