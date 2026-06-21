@@ -28,13 +28,19 @@ export function SyncStatusIndicator() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const tasks = useBackgroundTasks((s) => s.tasks);
   const prevFinishedRef = useRef<Set<string>>(new Set());
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const connPipeline = pipelineStatus?.connections.find(
     (c) => c.connection_id === activeConnection?.id,
   );
-  const pipelineSyncRunning = connPipeline?.code_db_sync.is_syncing ?? false;
   const pipelineSyncStatus = connPipeline?.code_db_sync.sync_status;
+
+  // Single source of truth for the "is syncing" running state: the unified
+  // background-tasks store's per-connection sync task (fed by SSE + the central
+  // pipeline-status poll in useKnowledgePipelineStatus). This component no
+  // longer runs its own /sync/status polling loop — it only fetches once to
+  // reconcile the synced_tables/total_tables/synced_at detail fields.
+  const syncTask = activeConnection ? tasks[`sync:${activeConnection.id}`] : undefined;
+  const storeSyncRunning = syncTask?.status === "running";
 
   useEffect(() => {
     if (!activeConnection) {
@@ -49,40 +55,6 @@ export function SyncStatusIndicator() {
       .catch(() => { if (!cancelled) toast("Could not load sync status", "error"); });
     return () => { cancelled = true; };
   }, [activeConnection]);
-
-  useEffect(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-
-    const shouldPoll =
-      activeConnection &&
-      (syncStatus?.sync_status === "running" ||
-        syncStatus?.is_syncing ||
-        pipelineSyncRunning);
-
-    if (!shouldPoll) return;
-
-    const connId = activeConnection.id;
-    let cancelled = false;
-    let pollFailures = 0;
-    pollRef.current = setInterval(() => {
-      if (cancelled) return;
-      api.connections
-        .syncStatus(connId)
-        .then((s) => { if (!cancelled) { setSyncStatus(s); pollFailures = 0; } })
-        .catch(() => { if (!cancelled && ++pollFailures >= 3) toast("Sync status polling failing", "error"); });
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [activeConnection, syncStatus?.sync_status, syncStatus?.is_syncing, pipelineSyncRunning]);
 
   const prevRunningRef = useRef<Set<string>>(new Set());
 
@@ -120,10 +92,7 @@ export function SyncStatusIndicator() {
 
   const effectiveSyncStatus =
     syncStatus?.sync_status ?? pipelineSyncStatus ?? "idle";
-  const isSyncing =
-    syncStatus?.is_syncing ||
-    syncStatus?.sync_status === "running" ||
-    pipelineSyncRunning;
+  const isSyncing = storeSyncRunning;
   const isSynced = syncStatus?.is_synced ?? false;
   const syncedTables = syncStatus?.synced_tables ?? connPipeline?.code_db_sync.synced_tables;
   const totalTables = syncStatus?.total_tables ?? connPipeline?.code_db_sync.total_tables;
