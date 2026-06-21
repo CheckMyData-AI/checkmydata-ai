@@ -118,6 +118,14 @@ class DataProcessor:
         cc_col = f"{column}_country_code"
         cn_col = f"{column}_country_name"
 
+        if cc_col in qr.columns or cn_col in qr.columns:
+            # Idempotent: re-appending would create duplicate column names that
+            # break name-based consumers (CSV export, dict conversion, synthesis).
+            return ProcessedData(
+                query_result=qr,
+                summary=f"Column '{column}' is already enriched with country data; skipped.",
+            )
+
         # T18: dedup lookups so an IP that appears 10,000 times is resolved
         # once. Huge win on large datasets where a handful of IPs dominate.
         unique_ips: set[str] = set()
@@ -180,6 +188,13 @@ class DataProcessor:
         col_idx = qr.columns.index(column)
         cc_col = f"{column}_country_code"
         cn_col = f"{column}_country_name"
+
+        if cc_col in qr.columns or cn_col in qr.columns:
+            # Idempotent: avoid duplicate enriched columns on re-run.
+            return ProcessedData(
+                query_result=qr,
+                summary=f"Column '{column}' is already enriched with country data; skipped.",
+            )
 
         # T18: dedup lookups — a customer list often has many duplicates.
         unique_phones: set[str] = set()
