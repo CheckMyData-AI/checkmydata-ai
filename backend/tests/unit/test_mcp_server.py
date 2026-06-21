@@ -787,3 +787,54 @@ class TestFormatQueryResult:
         out = _format_query_result(self._qr(10, truncated=True))
         assert len(out["rows"]) == 10
         assert out["truncated"] is True
+
+
+class TestGetProjectSchemaColumns:
+    """get_project_schema must return tables[].columns as a CONSISTENT list —
+    it previously emitted the raw column_notes dict for annotated tables and an
+    empty list otherwise, a union type that breaks a typed MCP client."""
+
+    @pytest.mark.asyncio
+    async def test_columns_are_a_consistent_list_of_name_note(self):
+        entry_with = MagicMock()
+        entry_with.table_name = "users"
+        entry_with.table_schema = "public"
+        entry_with.row_count = 10
+        entry_with.column_notes_json = json.dumps({"id": "pk", "email": "unique"})
+
+        entry_without = MagicMock()
+        entry_without.table_name = "logs"
+        entry_without.table_schema = "public"
+        entry_without.row_count = 0
+        entry_without.column_notes_json = "{}"
+
+        mock_conn = MagicMock()
+        mock_conn.id = "c1"
+        mock_conn.name = "DB"
+
+        with patch("app.mcp_server.resources.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+            with (
+                patch("app.mcp_server.resources._membership_svc") as mock_msvc,
+                patch("app.mcp_server.resources._connection_svc") as mock_csvc,
+                patch("app.mcp_server.resources._db_index_svc") as mock_isvc,
+            ):
+                mock_msvc.can_access = AsyncMock(return_value=True)
+                mock_csvc.list_by_project = AsyncMock(return_value=[mock_conn])
+                mock_isvc.get_index = AsyncMock(return_value=[entry_with, entry_without])
+
+                from app.mcp_server.resources import get_project_schema
+
+                result = await get_project_schema(_PRINCIPAL, "p1")
+
+        tables = json.loads(result)["tables"]
+        for t in tables:
+            assert isinstance(t["columns"], list)
+        by_name = {t["table_name"]: t for t in tables}
+        assert by_name["users"]["columns"] == [
+            {"name": "id", "note": "pk"},
+            {"name": "email", "note": "unique"},
+        ]
+        assert by_name["logs"]["columns"] == []

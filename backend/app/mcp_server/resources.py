@@ -56,11 +56,15 @@ async def get_project_schema(principal: dict, project_id: str) -> str:
         for conn in connections:
             entries = await _db_index_svc.get_index(session, conn.id)
             for entry in entries:
-                columns = []
+                columns: list[dict] = []
                 columns_raw = getattr(entry, "column_notes_json", None) or "{}"
                 if columns_raw and columns_raw != "{}":
                     try:
-                        columns = json.loads(columns_raw)
+                        notes = json.loads(columns_raw)
+                        if isinstance(notes, dict):
+                            # Always a list — a dict here would give the "columns"
+                            # key an inconsistent JSON type across tables.
+                            columns = [{"name": c, "note": n} for c, n in notes.items()]
                     except (json.JSONDecodeError, TypeError):
                         pass
                 all_tables.append(
