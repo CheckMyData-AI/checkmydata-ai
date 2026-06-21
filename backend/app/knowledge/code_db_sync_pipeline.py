@@ -13,6 +13,7 @@ import json
 import logging
 
 from app.config import settings
+from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.code_db_sync_analyzer import CodeDbSyncAnalyzer, TableSyncAnalysis
@@ -60,299 +61,314 @@ class CodeDbSyncPipeline:
             {"connection_id": connection_id, "project_id": project_id},
         )
 
-        try:
-            # Mark as running
-            async with async_session_factory() as session:
-                await self._sync_svc.set_sync_status(session, connection_id, "running")
-                await session.commit()
+        async def _hb() -> None:
+            async with async_session_factory() as s:
+                await self._sync_svc.touch_heartbeat(s, connection_id)
+                await s.commit()
 
-            # Step 1: Load code knowledge
-            knowledge: ProjectKnowledge | None = None
-            async with self._tracker.step(
-                wf_id,
-                "load_code_knowledge",
-                "Loading code knowledge",
-            ):
-                knowledge = await self._load_code_knowledge(project_id)
-
-            if not knowledge:
-                logger.warning(
-                    "CODE_DB_SYNC aborted: no code knowledge for project=%s",
-                    project_id[:8],
-                )
-                await self._tracker.end(
-                    wf_id, "code_db_sync", "failed", "No code knowledge available"
-                )
+        async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
+            try:
+                # Mark as running
                 async with async_session_factory() as session:
-                    await self._sync_svc.set_sync_status(session, connection_id, "failed")
+                    await self._sync_svc.set_sync_status(session, connection_id, "running")
                     await session.commit()
-                return {"status": "failed", "error": "No code knowledge — index repository first"}
-            await self._tracker.emit(
-                wf_id,
-                "load_code_knowledge",
-                "started",
-                f"Loaded {len(knowledge.entities)} entities, "
-                f"{len(knowledge.table_usage)} table usages, "
-                f"{len(knowledge.enums)} enums",
-            )
 
-            # Step 2: Load DB index
-            db_entries: list[DbIndex] = []
-            async with self._tracker.step(
-                wf_id,
-                "load_db_index",
-                "Loading database index",
-            ):
-                async with async_session_factory() as session:
-                    db_entries = await self._db_index_svc.get_index(session, connection_id)
+                # Step 1: Load code knowledge
+                knowledge: ProjectKnowledge | None = None
+                async with self._tracker.step(
+                    wf_id,
+                    "load_code_knowledge",
+                    "Loading code knowledge",
+                ):
+                    knowledge = await self._load_code_knowledge(project_id)
 
-            if not db_entries:
-                logger.warning(
-                    "CODE_DB_SYNC aborted: no DB index for connection=%s",
-                    connection_id[:8],
-                )
-                await self._tracker.end(wf_id, "code_db_sync", "failed", "No DB index available")
-                async with async_session_factory() as session:
-                    await self._sync_svc.set_sync_status(session, connection_id, "failed")
-                    await session.commit()
-                return {"status": "failed", "error": "No DB index — index database first"}
-            await self._tracker.emit(
-                wf_id,
-                "load_db_index",
-                "started",
-                f"Loaded {len(db_entries)} DB index entries",
-            )
-
-            # Load custom rules for enriched context
-            rules_context = await self._load_rules_context(project_id)
-
-            # Step 3: Match tables
-            matched_tables: list[_MatchedTable] = []
-            async with self._tracker.step(
-                wf_id,
-                "match_tables",
-                f"Matching {len(db_entries)} DB tables with code entities",
-            ):
-                matched_tables = self._match_tables(knowledge, db_entries, rules_context)
-
-            code_info_count = sum(1 for m in matched_tables if m.has_code_info)
-            db_only_match = len(matched_tables) - code_info_count
-            await self._tracker.emit(
-                wf_id,
-                "match_tables",
-                "started",
-                f"Matched {len(matched_tables)} tables "
-                f"({code_info_count} with code info, {db_only_match} DB-only)",
-            )
-
-            # Step 4: LLM analysis per table
-            analyses: list[TableSyncAnalysis] = []
-            async with self._tracker.step(
-                wf_id,
-                "analyze_sync",
-                f"Analyzing {len(matched_tables)} tables via LLM",
-            ):
-                large_tables = [m for m in matched_tables if m.has_code_info]
-                small_tables = [m for m in matched_tables if not m.has_code_info]
-
+                if not knowledge:
+                    logger.warning(
+                        "CODE_DB_SYNC aborted: no code knowledge for project=%s",
+                        project_id[:8],
+                    )
+                    await self._tracker.end(
+                        wf_id, "code_db_sync", "failed", "No code knowledge available"
+                    )
+                    async with async_session_factory() as session:
+                        await self._sync_svc.set_sync_status(session, connection_id, "failed")
+                        await session.commit()
+                    return {
+                        "status": "failed",
+                        "error": "No code knowledge — index repository first",
+                    }
                 await self._tracker.emit(
                     wf_id,
-                    "analyze_sync",
+                    "load_code_knowledge",
                     "started",
-                    f"Analyzing {len(large_tables)} tables individually, "
-                    f"{len(small_tables)} in batches of {BATCH_SIZE}",
+                    f"Loaded {len(knowledge.entities)} entities, "
+                    f"{len(knowledge.table_usage)} table usages, "
+                    f"{len(knowledge.enums)} enums",
                 )
 
-                # T16: analyse large tables and small-table batches
-                # concurrently. Each ``analyze_table`` / ``analyze_table_batch``
-                # call is independent (different tables, different LLM
-                # requests). Gathering turns an O(N) wait into a single
-                # batched wait bounded by the slowest call.
-                import asyncio as _asyncio
-
-                async def _one_large(mt):
-                    return await self._analyzer.analyze_table(
-                        table_name=mt.table_name,
-                        db_context=mt.db_context,
-                        code_context=mt.code_context,
-                        preferred_provider=preferred_provider,
-                        model=model,
-                    )
-
-                total_small_batches = (
-                    (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE if small_tables else 0
-                )
-
-                small_batch_specs: list[list] = []
-                for batch_start in range(0, len(small_tables), BATCH_SIZE):
-                    batch = small_tables[batch_start : batch_start + BATCH_SIZE]
-                    small_batch_specs.append(batch)
-
-                async def _one_small_batch(batch_list):
-                    batch_items = [(m.table_name, m.db_context, m.code_context) for m in batch_list]
-                    return await self._analyzer.analyze_table_batch(
-                        tables=batch_items,
-                        preferred_provider=preferred_provider,
-                        model=model,
-                    )
-
-                large_task = _asyncio.gather(*(_one_large(mt) for mt in large_tables))
-                small_task = _asyncio.gather(*(_one_small_batch(b) for b in small_batch_specs))
-                large_results, small_results = await _asyncio.gather(large_task, small_task)
-
-                large_pairs = zip(large_tables, large_results, strict=False)
-                for i, (mt, analysis) in enumerate(large_pairs, 1):
-                    analyses.append(analysis)
-                    await self._tracker.emit(
-                        wf_id,
-                        "analyze_sync",
-                        "started",
-                        f"[{i}/{len(large_tables)}] {mt.table_name} -> "
-                        f"{analysis.sync_status} (confidence={analysis.confidence_score})",
-                    )
-                for batch_idx, (batch, batch_results) in enumerate(
-                    zip(small_batch_specs, small_results, strict=False), 1
+                # Step 2: Load DB index
+                db_entries: list[DbIndex] = []
+                async with self._tracker.step(
+                    wf_id,
+                    "load_db_index",
+                    "Loading database index",
                 ):
-                    analyses.extend(batch_results)
-                    batch_names = ", ".join(m.table_name for m in batch)
+                    async with async_session_factory() as session:
+                        db_entries = await self._db_index_svc.get_index(session, connection_id)
+
+                if not db_entries:
+                    logger.warning(
+                        "CODE_DB_SYNC aborted: no DB index for connection=%s",
+                        connection_id[:8],
+                    )
+                    await self._tracker.end(
+                        wf_id, "code_db_sync", "failed", "No DB index available"
+                    )
+                    async with async_session_factory() as session:
+                        await self._sync_svc.set_sync_status(session, connection_id, "failed")
+                        await session.commit()
+                    return {"status": "failed", "error": "No DB index — index database first"}
+                await self._tracker.emit(
+                    wf_id,
+                    "load_db_index",
+                    "started",
+                    f"Loaded {len(db_entries)} DB index entries",
+                )
+
+                # Load custom rules for enriched context
+                rules_context = await self._load_rules_context(project_id)
+
+                # Step 3: Match tables
+                matched_tables: list[_MatchedTable] = []
+                async with self._tracker.step(
+                    wf_id,
+                    "match_tables",
+                    f"Matching {len(db_entries)} DB tables with code entities",
+                ):
+                    matched_tables = self._match_tables(knowledge, db_entries, rules_context)
+
+                code_info_count = sum(1 for m in matched_tables if m.has_code_info)
+                db_only_match = len(matched_tables) - code_info_count
+                await self._tracker.emit(
+                    wf_id,
+                    "match_tables",
+                    "started",
+                    f"Matched {len(matched_tables)} tables "
+                    f"({code_info_count} with code info, {db_only_match} DB-only)",
+                )
+
+                # Step 4: LLM analysis per table
+                analyses: list[TableSyncAnalysis] = []
+                async with self._tracker.step(
+                    wf_id,
+                    "analyze_sync",
+                    f"Analyzing {len(matched_tables)} tables via LLM",
+                ):
+                    large_tables = [m for m in matched_tables if m.has_code_info]
+                    small_tables = [m for m in matched_tables if not m.has_code_info]
+
                     await self._tracker.emit(
                         wf_id,
                         "analyze_sync",
                         "started",
-                        f"Batch {batch_idx}/{total_small_batches} done "
-                        f"({len(batch)} tables): {batch_names}",
+                        f"Analyzing {len(large_tables)} tables individually, "
+                        f"{len(small_tables)} in batches of {BATCH_SIZE}",
                     )
 
-            # Step 5: Store results
-            async with self._tracker.step(
-                wf_id,
-                "store_sync",
-                "Persisting sync results",
-            ):
-                async with async_session_factory() as session:
-                    all_table_names = {m.table_name for m in matched_tables}
-                    deleted = await self._sync_svc.delete_stale_tables(
-                        session, connection_id, all_table_names
+                    # T16: analyse large tables and small-table batches
+                    # concurrently. Each ``analyze_table`` / ``analyze_table_batch``
+                    # call is independent (different tables, different LLM
+                    # requests). Gathering turns an O(N) wait into a single
+                    # batched wait bounded by the slowest call.
+                    import asyncio as _asyncio
+
+                    async def _one_large(mt):
+                        return await self._analyzer.analyze_table(
+                            table_name=mt.table_name,
+                            db_context=mt.db_context,
+                            code_context=mt.code_context,
+                            preferred_provider=preferred_provider,
+                            model=model,
+                        )
+
+                    total_small_batches = (
+                        (len(small_tables) + BATCH_SIZE - 1) // BATCH_SIZE if small_tables else 0
                     )
-                    if deleted:
+
+                    small_batch_specs: list[list] = []
+                    for batch_start in range(0, len(small_tables), BATCH_SIZE):
+                        batch = small_tables[batch_start : batch_start + BATCH_SIZE]
+                        small_batch_specs.append(batch)
+
+                    async def _one_small_batch(batch_list):
+                        batch_items = [
+                            (m.table_name, m.db_context, m.code_context) for m in batch_list
+                        ]
+                        return await self._analyzer.analyze_table_batch(
+                            tables=batch_items,
+                            preferred_provider=preferred_provider,
+                            model=model,
+                        )
+
+                    large_task = _asyncio.gather(*(_one_large(mt) for mt in large_tables))
+                    small_task = _asyncio.gather(*(_one_small_batch(b) for b in small_batch_specs))
+                    large_results, small_results = await _asyncio.gather(large_task, small_task)
+
+                    large_pairs = zip(large_tables, large_results, strict=False)
+                    for i, (mt, analysis) in enumerate(large_pairs, 1):
+                        analyses.append(analysis)
+                        await self._tracker.emit(
+                            wf_id,
+                            "analyze_sync",
+                            "started",
+                            f"[{i}/{len(large_tables)}] {mt.table_name} -> "
+                            f"{analysis.sync_status} (confidence={analysis.confidence_score})",
+                        )
+                    for batch_idx, (batch, batch_results) in enumerate(
+                        zip(small_batch_specs, small_results, strict=False), 1
+                    ):
+                        analyses.extend(batch_results)
+                        batch_names = ", ".join(m.table_name for m in batch)
+                        await self._tracker.emit(
+                            wf_id,
+                            "analyze_sync",
+                            "started",
+                            f"Batch {batch_idx}/{total_small_batches} done "
+                            f"({len(batch)} tables): {batch_names}",
+                        )
+
+                # Step 5: Store results
+                async with self._tracker.step(
+                    wf_id,
+                    "store_sync",
+                    "Persisting sync results",
+                ):
+                    async with async_session_factory() as session:
+                        all_table_names = {m.table_name for m in matched_tables}
+                        deleted = await self._sync_svc.delete_stale_tables(
+                            session, connection_id, all_table_names
+                        )
+                        if deleted:
+                            await self._tracker.emit(
+                                wf_id,
+                                "store_sync",
+                                "started",
+                                f"Removed {deleted} stale sync entries",
+                            )
+
+                        mt_lookup = {m.table_name: m for m in matched_tables}
+                        for analysis in analyses:
+                            mt = mt_lookup.get(analysis.table_name)  # type: ignore[assignment]
+                            sync_data = {
+                                "table_name": analysis.table_name,
+                                "entity_name": mt.entity_name if mt else None,
+                                "entity_file_path": mt.entity_file_path if mt else None,
+                                "code_columns_json": mt.code_columns_json if mt else "[]",
+                                "used_in_files_json": mt.used_in_files_json if mt else "[]",
+                                "read_count": mt.read_count if mt else 0,
+                                "write_count": mt.write_count if mt else 0,
+                                "data_format_notes": analysis.data_format_notes,
+                                "column_sync_notes_json": analysis.column_sync_notes_json,
+                                "business_logic_notes": analysis.business_logic_notes,
+                                "conversion_warnings": analysis.conversion_warnings,
+                                "query_recommendations": analysis.query_recommendations,
+                                "required_filters_json": analysis.required_filters_json,
+                                "column_value_mappings_json": analysis.column_value_mappings_json,
+                                "sync_status": analysis.sync_status,
+                                "confidence_score": analysis.confidence_score,
+                            }
+                            await self._sync_svc.upsert_table_sync(
+                                session, connection_id, sync_data
+                            )
+
                         await self._tracker.emit(
                             wf_id,
                             "store_sync",
                             "started",
-                            f"Removed {deleted} stale sync entries",
+                            f"Stored {len(analyses)} sync entries",
                         )
+                        await session.commit()
 
-                    mt_lookup = {m.table_name: m for m in matched_tables}
-                    for analysis in analyses:
-                        mt = mt_lookup.get(analysis.table_name)  # type: ignore[assignment]
-                        sync_data = {
-                            "table_name": analysis.table_name,
-                            "entity_name": mt.entity_name if mt else None,
-                            "entity_file_path": mt.entity_file_path if mt else None,
-                            "code_columns_json": mt.code_columns_json if mt else "[]",
-                            "used_in_files_json": mt.used_in_files_json if mt else "[]",
-                            "read_count": mt.read_count if mt else 0,
-                            "write_count": mt.write_count if mt else 0,
-                            "data_format_notes": analysis.data_format_notes,
-                            "column_sync_notes_json": analysis.column_sync_notes_json,
-                            "business_logic_notes": analysis.business_logic_notes,
-                            "conversion_warnings": analysis.conversion_warnings,
-                            "query_recommendations": analysis.query_recommendations,
-                            "required_filters_json": analysis.required_filters_json,
-                            "column_value_mappings_json": analysis.column_value_mappings_json,
-                            "sync_status": analysis.sync_status,
-                            "confidence_score": analysis.confidence_score,
-                        }
-                        await self._sync_svc.upsert_table_sync(session, connection_id, sync_data)
+                # Step 6: Generate summary
+                synced_count = sum(1 for a in analyses if a.sync_status == "matched")
+                code_only_count = sum(1 for a in analyses if a.sync_status == "code_only")
+                db_only_count = sum(1 for a in analyses if a.sync_status == "db_only")
+                mismatch_count = sum(1 for a in analyses if a.sync_status == "mismatch")
 
+                async with self._tracker.step(
+                    wf_id,
+                    "generate_sync_summary",
+                    "Generating sync summary",
+                ):
                     await self._tracker.emit(
                         wf_id,
-                        "store_sync",
+                        "generate_sync_summary",
                         "started",
-                        f"Stored {len(analyses)} sync entries",
+                        f"Stats: {synced_count} matched, {code_only_count} code-only, "
+                        f"{db_only_count} DB-only, {mismatch_count} mismatch",
                     )
-                    await session.commit()
-
-            # Step 6: Generate summary
-            synced_count = sum(1 for a in analyses if a.sync_status == "matched")
-            code_only_count = sum(1 for a in analyses if a.sync_status == "code_only")
-            db_only_count = sum(1 for a in analyses if a.sync_status == "db_only")
-            mismatch_count = sum(1 for a in analyses if a.sync_status == "mismatch")
-
-            async with self._tracker.step(
-                wf_id,
-                "generate_sync_summary",
-                "Generating sync summary",
-            ):
-                await self._tracker.emit(
-                    wf_id,
-                    "generate_sync_summary",
-                    "started",
-                    f"Stats: {synced_count} matched, {code_only_count} code-only, "
-                    f"{db_only_count} DB-only, {mismatch_count} mismatch",
-                )
-                project_ctx = self._build_project_context(knowledge)
-                fk_ctx = self._build_fk_context(knowledge, db_entries)
-                await self._tracker.emit(
-                    wf_id,
-                    "generate_sync_summary",
-                    "started",
-                    "Generating LLM summary with FK relationships",
-                )
-                summary_result = await self._analyzer.generate_summary(
-                    analyses=analyses,
-                    project_context=project_ctx,
-                    fk_relationships=fk_ctx,
-                    preferred_provider=preferred_provider,
-                    model=model,
-                )
-
-                async with async_session_factory() as session:
-                    await self._sync_svc.upsert_summary(
-                        session,
-                        connection_id,
-                        {
-                            "total_tables": len(matched_tables),
-                            "synced_tables": synced_count,
-                            "code_only_tables": code_only_count,
-                            "db_only_tables": db_only_count,
-                            "mismatch_tables": mismatch_count,
-                            "global_notes": summary_result.global_notes,
-                            "data_conventions": summary_result.data_conventions,
-                            "query_guidelines": summary_result.query_guidelines,
-                            "join_recommendations": summary_result.join_recommendations,
-                            "sync_status": "completed",
-                        },
+                    project_ctx = self._build_project_context(knowledge)
+                    fk_ctx = self._build_fk_context(knowledge, db_entries)
+                    await self._tracker.emit(
+                        wf_id,
+                        "generate_sync_summary",
+                        "started",
+                        "Generating LLM summary with FK relationships",
                     )
-                    await session.commit()
+                    summary_result = await self._analyzer.generate_summary(
+                        analyses=analyses,
+                        project_context=project_ctx,
+                        fk_relationships=fk_ctx,
+                        preferred_provider=preferred_provider,
+                        model=model,
+                    )
 
-            await self._tracker.end(
-                wf_id,
-                "code_db_sync",
-                "completed",
-                f"{len(matched_tables)} tables synced ({synced_count} matched)",
-            )
+                    async with async_session_factory() as session:
+                        await self._sync_svc.upsert_summary(
+                            session,
+                            connection_id,
+                            {
+                                "total_tables": len(matched_tables),
+                                "synced_tables": synced_count,
+                                "code_only_tables": code_only_count,
+                                "db_only_tables": db_only_count,
+                                "mismatch_tables": mismatch_count,
+                                "global_notes": summary_result.global_notes,
+                                "data_conventions": summary_result.data_conventions,
+                                "query_guidelines": summary_result.query_guidelines,
+                                "join_recommendations": summary_result.join_recommendations,
+                                "sync_status": "completed",
+                            },
+                        )
+                        await session.commit()
 
-            return {
-                "status": "completed",
-                "total_tables": len(matched_tables),
-                "synced": synced_count,
-                "code_only": code_only_count,
-                "db_only": db_only_count,
-                "mismatch": mismatch_count,
-                "workflow_id": wf_id,
-            }
+                await self._tracker.end(
+                    wf_id,
+                    "code_db_sync",
+                    "completed",
+                    f"{len(matched_tables)} tables synced ({synced_count} matched)",
+                )
 
-        except Exception as exc:
-            logger.exception("Code-DB sync pipeline failed")
-            await self._tracker.end(wf_id, "code_db_sync", "failed", str(exc))
-            try:
-                async with async_session_factory() as session:
-                    await self._sync_svc.set_sync_status(session, connection_id, "failed")
-                    await session.commit()
-            except Exception:
-                logger.warning("Failed to set sync status to failed", exc_info=True)
-            return {"status": "failed", "error": str(exc), "workflow_id": wf_id}
+                return {
+                    "status": "completed",
+                    "total_tables": len(matched_tables),
+                    "synced": synced_count,
+                    "code_only": code_only_count,
+                    "db_only": db_only_count,
+                    "mismatch": mismatch_count,
+                    "workflow_id": wf_id,
+                }
+
+            except Exception as exc:
+                logger.exception("Code-DB sync pipeline failed")
+                await self._tracker.end(wf_id, "code_db_sync", "failed", str(exc))
+                try:
+                    async with async_session_factory() as session:
+                        await self._sync_svc.set_sync_status(session, connection_id, "failed")
+                        await session.commit()
+                except Exception:
+                    logger.warning("Failed to set sync status to failed", exc_info=True)
+                return {"status": "failed", "error": str(exc), "workflow_id": wf_id}
 
     # ------------------------------------------------------------------
     # Context helpers

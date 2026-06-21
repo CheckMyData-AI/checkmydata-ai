@@ -12,8 +12,10 @@ import logging
 from dataclasses import replace
 from datetime import datetime
 
+from app.config import settings
 from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, TableInfo
 from app.connectors.registry import get_connector
+from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
@@ -283,536 +285,551 @@ class DbIndexPipeline:
             },
         )
 
-        connector: BaseConnector | None = None
-        try:
-            # Step 1: Connect and introspect schema
-            async with self._tracker.step(
-                wf_id,
-                "introspect_schema",
-                f"Introspecting {connection_config.db_type} schema",
-            ):
-                connector = get_connector(
-                    connection_config.db_type,
-                    ssh_exec_mode=connection_config.ssh_exec_mode,
-                )
-                await connector.connect(connection_config)
-                await self._tracker.emit(
-                    wf_id,
-                    "introspect_schema",
-                    "started",
-                    f"Connected to {connection_config.db_type}",
-                )
-                schema = await connector.introspect_schema()
-                await self._tracker.emit(
-                    wf_id,
-                    "introspect_schema",
-                    "started",
-                    f"Found {len(schema.tables)} tables",
-                )
+        async def _hb() -> None:
+            async with async_session_factory() as s:
+                await self._svc.touch_heartbeat(s, connection_id)
+                await s.commit()
 
-            if not schema.tables:
-                await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
-                return {"status": "completed", "tables": 0}
-
-            # R2-3: incremental schema diff. Load the prior fingerprint +
-            # entries; any table whose column signature is unchanged can reuse
-            # its stored LLM analysis instead of paying for a fresh call.
-            new_fp = schema.fingerprint()
-            reuse_analyses: dict[str, TableAnalysis] = {}
+        async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
+            connector: BaseConnector | None = None
             try:
-                reuse_analyses = await self._build_reuse_map(connection_id, new_fp)
-            except Exception:
-                logger.debug("Incremental reuse-map build failed", exc_info=True)
-                reuse_analyses = {}
-
-            # Phase 5: proactive schema-drift alert. The persisted fingerprint
-            # still holds the *previous* schema at this point (it is rewritten
-            # at the end of the run), so compare now and emit an insight on
-            # drift. Best-effort — never blocks indexing.
-            try:
-                await self._maybe_alert_schema_change(
-                    wf_id=wf_id,
-                    project_id=project_id,
-                    connection_id=connection_id,
-                    new_fp=new_fp,
-                )
-            except Exception:
-                logger.debug("Schema-change alert failed", exc_info=True)
-            if reuse_analyses:
-                await self._tracker.emit(
+                # Step 1: Connect and introspect schema
+                async with self._tracker.step(
                     wf_id,
                     "introspect_schema",
-                    "started",
-                    f"Incremental: reusing analysis for {len(reuse_analyses)} unchanged table(s)",
-                )
-
-            # Step 2: Fetch sample data and distinct values per table (parallel)
-            samples: dict[str, tuple[QueryResult, str | None]] = {}
-            distinct_values: dict[str, dict[str, list[str]]] = {}
-            total_tables = len(schema.tables)
-            _sample_sem = asyncio.Semaphore(5)
-
-            _sampled_count = [0]
-
-            # R2-4: track evidence gaps so a run with failed sampling/distinct
-            # queries is not silently presented as authoritative. A swallowed
-            # sample error makes a table look empty (is_active=False), so we
-            # must record that the evidence is partial.
-            sample_failures: set[str] = set()
-            distinct_failures = 0
-
-            async def _fetch_table_samples(
-                table: TableInfo,
-            ) -> tuple[str, QueryResult, str | None, dict[str, list[str]], bool, int]:
-                async with _sample_sem:
-                    sample_failed = False
-                    tbl_distinct_failures = 0
-                    try:
-                        query, ordering_col = _sample_query(table, connection_config.db_type)
-                        result = await connector.execute_query(query)
-                        if result.error:
-                            sample_failed = True
-                            logger.debug(
-                                "Sample query returned error for %s: %s",
-                                table.name,
-                                result.error,
-                            )
-                    except Exception:
-                        logger.debug("Sample fetch failed for %s", table.name, exc_info=True)
-                        result = QueryResult(columns=[], rows=[], row_count=0)
-                        ordering_col = None
-                        sample_failed = True
-
-                    tbl_distinct: dict[str, list[str]] = {}
-                    heuristic_cols: set[str] = set()
-                    for col in table.columns:
-                        if _is_enum_candidate(col.name, col.data_type, table.row_count):
-                            heuristic_cols.add(col.name)
-
-                    sample_extra = _detect_low_cardinality_columns(
-                        result,
-                        table,
-                        heuristic_cols,
+                    f"Introspecting {connection_config.db_type} schema",
+                ):
+                    connector = get_connector(
+                        connection_config.db_type,
+                        ssh_exec_mode=connection_config.ssh_exec_mode,
                     )
-                    all_distinct_cols = heuristic_cols | set(sample_extra)
-
-                    for col_name in all_distinct_cols:
-                        try:
-                            dq = _build_distinct_query(table, col_name, connection_config.db_type)
-                            dr = await connector.execute_query(dq)
-                            if dr.error:
-                                tbl_distinct_failures += 1
-                                continue
-                            if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
-                                vals = [str(r[0]) for r in dr.rows if r[0] is not None]
-                                if vals:
-                                    tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
-                        except Exception:
-                            tbl_distinct_failures += 1
-                            logger.debug(
-                                "Distinct query failed for %s.%s",
-                                table.name,
-                                col_name,
-                                exc_info=True,
-                            )
-
-                    _sampled_count[0] += 1
-                    row_info = f"{result.row_count or len(result.rows)} rows"
-                    enum_info = f"{len(tbl_distinct)} enum cols" if tbl_distinct else ""
-                    detail_parts = [row_info] + ([enum_info] if enum_info else [])
+                    await connector.connect(connection_config)
                     await self._tracker.emit(
                         wf_id,
-                        "fetch_samples",
+                        "introspect_schema",
                         "started",
-                        f"Sampled {_sampled_count[0]}/{total_tables}: "
-                        f"{table.name} ({', '.join(detail_parts)})",
+                        f"Connected to {connection_config.db_type}",
+                    )
+                    schema = await connector.introspect_schema()
+                    await self._tracker.emit(
+                        wf_id,
+                        "introspect_schema",
+                        "started",
+                        f"Found {len(schema.tables)} tables",
                     )
 
-                    return (
-                        table.name,
+                if not schema.tables:
+                    await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
+                    return {"status": "completed", "tables": 0}
+
+                # R2-3: incremental schema diff. Load the prior fingerprint +
+                # entries; any table whose column signature is unchanged can reuse
+                # its stored LLM analysis instead of paying for a fresh call.
+                new_fp = schema.fingerprint()
+                reuse_analyses: dict[str, TableAnalysis] = {}
+                try:
+                    reuse_analyses = await self._build_reuse_map(connection_id, new_fp)
+                except Exception:
+                    logger.debug("Incremental reuse-map build failed", exc_info=True)
+                    reuse_analyses = {}
+
+                # Phase 5: proactive schema-drift alert. The persisted fingerprint
+                # still holds the *previous* schema at this point (it is rewritten
+                # at the end of the run), so compare now and emit an insight on
+                # drift. Best-effort — never blocks indexing.
+                try:
+                    await self._maybe_alert_schema_change(
+                        wf_id=wf_id,
+                        project_id=project_id,
+                        connection_id=connection_id,
+                        new_fp=new_fp,
+                    )
+                except Exception:
+                    logger.debug("Schema-change alert failed", exc_info=True)
+                if reuse_analyses:
+                    await self._tracker.emit(
+                        wf_id,
+                        "introspect_schema",
+                        "started",
+                        f"Incremental: reusing analysis for "
+                        f"{len(reuse_analyses)} unchanged table(s)",
+                    )
+
+                # Step 2: Fetch sample data and distinct values per table (parallel)
+                samples: dict[str, tuple[QueryResult, str | None]] = {}
+                distinct_values: dict[str, dict[str, list[str]]] = {}
+                total_tables = len(schema.tables)
+                _sample_sem = asyncio.Semaphore(5)
+
+                _sampled_count = [0]
+
+                # R2-4: track evidence gaps so a run with failed sampling/distinct
+                # queries is not silently presented as authoritative. A swallowed
+                # sample error makes a table look empty (is_active=False), so we
+                # must record that the evidence is partial.
+                sample_failures: set[str] = set()
+                distinct_failures = 0
+
+                async def _fetch_table_samples(
+                    table: TableInfo,
+                ) -> tuple[str, QueryResult, str | None, dict[str, list[str]], bool, int]:
+                    async with _sample_sem:
+                        sample_failed = False
+                        tbl_distinct_failures = 0
+                        try:
+                            query, ordering_col = _sample_query(table, connection_config.db_type)
+                            result = await connector.execute_query(query)
+                            if result.error:
+                                sample_failed = True
+                                logger.debug(
+                                    "Sample query returned error for %s: %s",
+                                    table.name,
+                                    result.error,
+                                )
+                        except Exception:
+                            logger.debug("Sample fetch failed for %s", table.name, exc_info=True)
+                            result = QueryResult(columns=[], rows=[], row_count=0)
+                            ordering_col = None
+                            sample_failed = True
+
+                        tbl_distinct: dict[str, list[str]] = {}
+                        heuristic_cols: set[str] = set()
+                        for col in table.columns:
+                            if _is_enum_candidate(col.name, col.data_type, table.row_count):
+                                heuristic_cols.add(col.name)
+
+                        sample_extra = _detect_low_cardinality_columns(
+                            result,
+                            table,
+                            heuristic_cols,
+                        )
+                        all_distinct_cols = heuristic_cols | set(sample_extra)
+
+                        for col_name in all_distinct_cols:
+                            try:
+                                dq = _build_distinct_query(
+                                    table, col_name, connection_config.db_type
+                                )
+                                dr = await connector.execute_query(dq)
+                                if dr.error:
+                                    tbl_distinct_failures += 1
+                                    continue
+                                if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
+                                    vals = [str(r[0]) for r in dr.rows if r[0] is not None]
+                                    if vals:
+                                        tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
+                            except Exception:
+                                tbl_distinct_failures += 1
+                                logger.debug(
+                                    "Distinct query failed for %s.%s",
+                                    table.name,
+                                    col_name,
+                                    exc_info=True,
+                                )
+
+                        _sampled_count[0] += 1
+                        row_info = f"{result.row_count or len(result.rows)} rows"
+                        enum_info = f"{len(tbl_distinct)} enum cols" if tbl_distinct else ""
+                        detail_parts = [row_info] + ([enum_info] if enum_info else [])
+                        await self._tracker.emit(
+                            wf_id,
+                            "fetch_samples",
+                            "started",
+                            f"Sampled {_sampled_count[0]}/{total_tables}: "
+                            f"{table.name} ({', '.join(detail_parts)})",
+                        )
+
+                        return (
+                            table.name,
+                            result,
+                            ordering_col,
+                            tbl_distinct,
+                            sample_failed,
+                            tbl_distinct_failures,
+                        )
+
+                async with self._tracker.step(
+                    wf_id,
+                    "fetch_samples",
+                    f"Fetching sample data from {total_tables} tables",
+                ):
+                    results = await asyncio.gather(
+                        *[_fetch_table_samples(t) for t in schema.tables]
+                    )
+                    for (
+                        tname,
                         result,
                         ordering_col,
                         tbl_distinct,
                         sample_failed,
                         tbl_distinct_failures,
-                    )
+                    ) in results:
+                        samples[tname] = (result, ordering_col)
+                        if tbl_distinct:
+                            distinct_values[tname] = tbl_distinct
+                        if sample_failed:
+                            sample_failures.add(tname)
+                        distinct_failures += tbl_distinct_failures
 
-            async with self._tracker.step(
-                wf_id,
-                "fetch_samples",
-                f"Fetching sample data from {total_tables} tables",
-            ):
-                results = await asyncio.gather(*[_fetch_table_samples(t) for t in schema.tables])
-                for (
-                    tname,
-                    result,
-                    ordering_col,
-                    tbl_distinct,
-                    sample_failed,
-                    tbl_distinct_failures,
-                ) in results:
-                    samples[tname] = (result, ordering_col)
-                    if tbl_distinct:
-                        distinct_values[tname] = tbl_distinct
-                    if sample_failed:
-                        sample_failures.add(tname)
-                    distinct_failures += tbl_distinct_failures
-
-                if sample_failures or distinct_failures:
-                    await self._tracker.emit(
-                        wf_id,
-                        "fetch_samples",
-                        "started",
-                        f"Partial evidence: {len(sample_failures)} table(s) failed sampling, "
-                        f"{distinct_failures} distinct-value query failure(s)",
-                    )
-
-            # Step 3: Load project knowledge and rules
-            code_context = ""
-            rules_context = ""
-            code_tables: set[str] = set()
-
-            async with self._tracker.step(
-                wf_id,
-                "load_context",
-                "Loading project knowledge and rules",
-            ):
-                code_context, code_tables = await self._load_code_context(project_id)
-                await self._tracker.emit(
-                    wf_id,
-                    "load_context",
-                    "started",
-                    f"Loaded {len(code_tables)} code entities",
-                )
-                rules_context = await self._load_rules_context(project_id)
-                await self._tracker.emit(
-                    wf_id,
-                    "load_context",
-                    "started",
-                    f"Loaded rules context ({len(rules_context)} chars)"
-                    if rules_context
-                    else "No custom rules found",
-                )
-
-            # Step 4: LLM validation per table
-            analyses: list[TableAnalysis] = []
-
-            async with self._tracker.step(
-                wf_id,
-                "validate_tables",
-                f"Analyzing {total_tables} tables via LLM",
-            ):
-                large_tables = []
-                small_tables = []
-
-                # R2-3: tables with an unchanged signature reuse their stored
-                # analysis and are excluded from LLM classification entirely.
-                for table in schema.tables:
-                    if table.name in reuse_analyses:
-                        # R2-3 follow-up: the column signature is unchanged so the
-                        # LLM analysis (description, relevance, hints) is stable,
-                        # but data presence is NOT — a table active last run may
-                        # now be empty (or vice versa). Recompute is_active from
-                        # the fresh sample using the same data-presence rule the
-                        # validator's fallback uses. Skip the override when
-                        # sampling failed for this table: a failed sample falsely
-                        # looks empty, so trust the prior value instead.
-                        reused = reuse_analyses[table.name]
-                        fresh_sample = samples.get(table.name, (QueryResult(), None))[0]
-                        reused = self._recompute_reused_is_active(
-                            reused,
-                            fresh_sample=fresh_sample,
-                            row_count=table.row_count or 0,
-                            sampling_failed=table.name in sample_failures,
-                        )
-                        analyses.append(reused)
-                        continue
-
-                    row_count = table.row_count or 0
-                    sample_result = samples.get(table.name, (QueryResult(), None))[0]
-                    has_data = bool(sample_result.rows)
-
-                    if row_count > 100 or has_data:
-                        large_tables.append(table)
-                    else:
-                        small_tables.append(table)
-
-                await self._tracker.emit(
-                    wf_id,
-                    "validate_tables",
-                    "started",
-                    f"Classified: {len(large_tables)} large tables (individual), "
-                    f"{len(small_tables)} small tables (batched), "
-                    f"{len(reuse_analyses)} reused (unchanged)",
-                )
-
-                _llm_sem = asyncio.Semaphore(3)
-                _large_done = [0]
-
-                async def _analyze_large_table(table: TableInfo) -> TableAnalysis:
-                    async with _llm_sem:
-                        sample_result, _ = samples.get(table.name, (QueryResult(), None))
-                        table_code_ctx = self._filter_code_context(code_context, table.name)
-                        result = await self._validator.analyze_table(
-                            table=table,
-                            sample_data=sample_result,
-                            code_context=table_code_ctx,
-                            rules_context=rules_context,
-                            preferred_provider=preferred_provider,
-                            model=model,
-                        )
-                        _large_done[0] += 1
+                    if sample_failures or distinct_failures:
                         await self._tracker.emit(
                             wf_id,
-                            "validate_tables",
+                            "fetch_samples",
                             "started",
-                            f"Analyzed [{_large_done[0]}/{len(large_tables)}]: "
-                            f"{table.name} (relevance={result.relevance_score})",
+                            f"Partial evidence: {len(sample_failures)} table(s) failed sampling, "
+                            f"{distinct_failures} distinct-value query failure(s)",
                         )
-                        return result
 
-                large_results = await asyncio.gather(
-                    *[_analyze_large_table(t) for t in large_tables]
-                )
-                analyses.extend(large_results)
+                # Step 3: Load project knowledge and rules
+                code_context = ""
+                rules_context = ""
+                code_tables: set[str] = set()
 
-                total_small_batches = (
-                    (len(small_tables) + self._batch_size - 1) // self._batch_size
-                    if small_tables
-                    else 0
-                )
-
-                # T16: small-table batches are independent LLM calls, so run
-                # them concurrently. Each batch produces a disjoint set of
-                # TableAnalysis records which we collect in original order.
-                batch_specs: list[tuple[list, list[tuple[TableInfo, QueryResult | None]], str]] = []
-                for batch_start in range(0, len(small_tables), self._batch_size):
-                    batch = small_tables[batch_start : batch_start + self._batch_size]
-                    batch_items: list[tuple[TableInfo, QueryResult | None]] = []
-                    for table in batch:
-                        sample_result, _ = samples.get(table.name, (QueryResult(), None))
-                        batch_items.append((table, sample_result))
-
-                    batch_code_ctx = ""
-                    for table in batch:
-                        ctx = self._filter_code_context(code_context, table.name)
-                        if ctx:
-                            batch_code_ctx += f"\n{ctx}"
-                    batch_specs.append((batch, batch_items, batch_code_ctx))
-
-                async def _run_batch(items, ctx_text):
-                    return await self._validator.analyze_table_batch(
-                        tables=items,
-                        code_context=ctx_text,
-                        rules_context=rules_context,
-                        preferred_provider=preferred_provider,
-                        model=model,
+                async with self._tracker.step(
+                    wf_id,
+                    "load_context",
+                    "Loading project knowledge and rules",
+                ):
+                    code_context, code_tables = await self._load_code_context(project_id)
+                    await self._tracker.emit(
+                        wf_id,
+                        "load_context",
+                        "started",
+                        f"Loaded {len(code_tables)} code entities",
+                    )
+                    rules_context = await self._load_rules_context(project_id)
+                    await self._tracker.emit(
+                        wf_id,
+                        "load_context",
+                        "started",
+                        f"Loaded rules context ({len(rules_context)} chars)"
+                        if rules_context
+                        else "No custom rules found",
                     )
 
-                small_batch_results = await asyncio.gather(
-                    *(_run_batch(items, ctx_text) for _, items, ctx_text in batch_specs)
-                )
-                for batch_idx, ((batch, _items, _ctx), batch_results) in enumerate(
-                    zip(batch_specs, small_batch_results, strict=False), 1
+                # Step 4: LLM validation per table
+                analyses: list[TableAnalysis] = []
+
+                async with self._tracker.step(
+                    wf_id,
+                    "validate_tables",
+                    f"Analyzing {total_tables} tables via LLM",
                 ):
-                    analyses.extend(batch_results)
-                    batch_num = batch_idx
-                    batch_names = ", ".join(t.name for t in batch)
+                    large_tables = []
+                    small_tables = []
+
+                    # R2-3: tables with an unchanged signature reuse their stored
+                    # analysis and are excluded from LLM classification entirely.
+                    for table in schema.tables:
+                        if table.name in reuse_analyses:
+                            # R2-3 follow-up: the column signature is unchanged so the
+                            # LLM analysis (description, relevance, hints) is stable,
+                            # but data presence is NOT — a table active last run may
+                            # now be empty (or vice versa). Recompute is_active from
+                            # the fresh sample using the same data-presence rule the
+                            # validator's fallback uses. Skip the override when
+                            # sampling failed for this table: a failed sample falsely
+                            # looks empty, so trust the prior value instead.
+                            reused = reuse_analyses[table.name]
+                            fresh_sample = samples.get(table.name, (QueryResult(), None))[0]
+                            reused = self._recompute_reused_is_active(
+                                reused,
+                                fresh_sample=fresh_sample,
+                                row_count=table.row_count or 0,
+                                sampling_failed=table.name in sample_failures,
+                            )
+                            analyses.append(reused)
+                            continue
+
+                        row_count = table.row_count or 0
+                        sample_result = samples.get(table.name, (QueryResult(), None))[0]
+                        has_data = bool(sample_result.rows)
+
+                        if row_count > 100 or has_data:
+                            large_tables.append(table)
+                        else:
+                            small_tables.append(table)
+
                     await self._tracker.emit(
                         wf_id,
                         "validate_tables",
                         "started",
-                        f"Batch {batch_num}/{total_small_batches} done "
-                        f"({len(batch)} small tables): {batch_names}",
+                        f"Classified: {len(large_tables)} large tables (individual), "
+                        f"{len(small_tables)} small tables (batched), "
+                        f"{len(reuse_analyses)} reused (unchanged)",
                     )
 
-            # Step 5: Store results
-            async with self._tracker.step(
-                wf_id,
-                "store_results",
-                "Persisting index to database",
-            ):
-                async with async_session_factory() as session:
-                    current_table_names = {t.name for t in schema.tables}
-                    deleted = await self._svc.delete_stale_tables(
-                        session, connection_id, current_table_names
+                    _llm_sem = asyncio.Semaphore(3)
+                    _large_done = [0]
+
+                    async def _analyze_large_table(table: TableInfo) -> TableAnalysis:
+                        async with _llm_sem:
+                            sample_result, _ = samples.get(table.name, (QueryResult(), None))
+                            table_code_ctx = self._filter_code_context(code_context, table.name)
+                            result = await self._validator.analyze_table(
+                                table=table,
+                                sample_data=sample_result,
+                                code_context=table_code_ctx,
+                                rules_context=rules_context,
+                                preferred_provider=preferred_provider,
+                                model=model,
+                            )
+                            _large_done[0] += 1
+                            await self._tracker.emit(
+                                wf_id,
+                                "validate_tables",
+                                "started",
+                                f"Analyzed [{_large_done[0]}/{len(large_tables)}]: "
+                                f"{table.name} (relevance={result.relevance_score})",
+                            )
+                            return result
+
+                    large_results = await asyncio.gather(
+                        *[_analyze_large_table(t) for t in large_tables]
                     )
-                    if deleted:
-                        logger.info("Removed %d stale table index entries", deleted)
+                    analyses.extend(large_results)
+
+                    total_small_batches = (
+                        (len(small_tables) + self._batch_size - 1) // self._batch_size
+                        if small_tables
+                        else 0
+                    )
+
+                    # T16: small-table batches are independent LLM calls, so run
+                    # them concurrently. Each batch produces a disjoint set of
+                    # TableAnalysis records which we collect in original order.
+                    batch_specs: list[
+                        tuple[list, list[tuple[TableInfo, QueryResult | None]], str]
+                    ] = []
+                    for batch_start in range(0, len(small_tables), self._batch_size):
+                        batch = small_tables[batch_start : batch_start + self._batch_size]
+                        batch_items: list[tuple[TableInfo, QueryResult | None]] = []
+                        for table in batch:
+                            sample_result, _ = samples.get(table.name, (QueryResult(), None))
+                            batch_items.append((table, sample_result))
+
+                        batch_code_ctx = ""
+                        for table in batch:
+                            ctx = self._filter_code_context(code_context, table.name)
+                            if ctx:
+                                batch_code_ctx += f"\n{ctx}"
+                        batch_specs.append((batch, batch_items, batch_code_ctx))
+
+                    async def _run_batch(items, ctx_text):
+                        return await self._validator.analyze_table_batch(
+                            tables=items,
+                            code_context=ctx_text,
+                            rules_context=rules_context,
+                            preferred_provider=preferred_provider,
+                            model=model,
+                        )
+
+                    small_batch_results = await asyncio.gather(
+                        *(_run_batch(items, ctx_text) for _, items, ctx_text in batch_specs)
+                    )
+                    for batch_idx, ((batch, _items, _ctx), batch_results) in enumerate(
+                        zip(batch_specs, small_batch_results, strict=False), 1
+                    ):
+                        analyses.extend(batch_results)
+                        batch_num = batch_idx
+                        batch_names = ", ".join(t.name for t in batch)
+                        await self._tracker.emit(
+                            wf_id,
+                            "validate_tables",
+                            "started",
+                            f"Batch {batch_num}/{total_small_batches} done "
+                            f"({len(batch)} small tables): {batch_names}",
+                        )
+
+                # Step 5: Store results
+                async with self._tracker.step(
+                    wf_id,
+                    "store_results",
+                    "Persisting index to database",
+                ):
+                    async with async_session_factory() as session:
+                        current_table_names = {t.name for t in schema.tables}
+                        deleted = await self._svc.delete_stale_tables(
+                            session, connection_id, current_table_names
+                        )
+                        if deleted:
+                            logger.info("Removed %d stale table index entries", deleted)
+                            await self._tracker.emit(
+                                wf_id,
+                                "store_results",
+                                "started",
+                                f"Removed {deleted} stale table index entries",
+                            )
+
+                        for analysis in analyses:
+                            sample_result, ordering_col = samples.get(
+                                analysis.table_name, (QueryResult(), None)
+                            )
+                            table_info = next(
+                                (t for t in schema.tables if t.name == analysis.table_name),
+                                None,
+                            )
+                            tbl_distinct = distinct_values.get(analysis.table_name, {})
+
+                            table_data = {
+                                "table_name": analysis.table_name,
+                                "table_schema": table_info.schema if table_info else "public",
+                                "column_count": len(table_info.columns) if table_info else 0,
+                                "row_count": table_info.row_count if table_info else None,
+                                "sample_data_json": _sample_to_json(sample_result),
+                                "column_distinct_values_json": json.dumps(
+                                    tbl_distinct, default=str
+                                ),
+                                "ordering_column": ordering_col,
+                                "latest_record_at": _detect_latest_record(
+                                    sample_result, ordering_col
+                                ),
+                                "is_active": analysis.is_active,
+                                "relevance_score": analysis.relevance_score,
+                                "business_description": analysis.business_description,
+                                "data_patterns": analysis.data_patterns,
+                                "column_notes_json": analysis.column_notes_json,
+                                "numeric_format_notes": analysis.numeric_format_notes,
+                                "query_hints": analysis.query_hints,
+                                "code_match_status": analysis.code_match_status,
+                                "code_match_details": analysis.code_match_details,
+                            }
+                            await self._svc.upsert_table(session, connection_id, table_data)
+
                         await self._tracker.emit(
                             wf_id,
                             "store_results",
                             "started",
-                            f"Removed {deleted} stale table index entries",
+                            f"Stored {len(analyses)} table entries",
                         )
+                        await session.commit()
 
-                    for analysis in analyses:
-                        sample_result, ordering_col = samples.get(
-                            analysis.table_name, (QueryResult(), None)
-                        )
-                        table_info = next(
-                            (t for t in schema.tables if t.name == analysis.table_name),
-                            None,
-                        )
-                        tbl_distinct = distinct_values.get(analysis.table_name, {})
+                # Step 6: Generate connection summary
+                async with self._tracker.step(
+                    wf_id,
+                    "generate_summary",
+                    "Generating database summary",
+                ):
+                    await self._tracker.emit(
+                        wf_id,
+                        "generate_summary",
+                        "started",
+                        f"Generating LLM summary for {len(analyses)} tables",
+                    )
+                    summary_result = await self._validator.generate_summary(
+                        analyses=analyses,
+                        schema=schema,
+                        code_tables=code_tables,
+                        preferred_provider=preferred_provider,
+                        model=model,
+                    )
 
-                        table_data = {
-                            "table_name": analysis.table_name,
-                            "table_schema": table_info.schema if table_info else "public",
-                            "column_count": len(table_info.columns) if table_info else 0,
-                            "row_count": table_info.row_count if table_info else None,
-                            "sample_data_json": _sample_to_json(sample_result),
-                            "column_distinct_values_json": json.dumps(tbl_distinct, default=str),
-                            "ordering_column": ordering_col,
-                            "latest_record_at": _detect_latest_record(sample_result, ordering_col),
-                            "is_active": analysis.is_active,
-                            "relevance_score": analysis.relevance_score,
-                            "business_description": analysis.business_description,
-                            "data_patterns": analysis.data_patterns,
-                            "column_notes_json": analysis.column_notes_json,
-                            "numeric_format_notes": analysis.numeric_format_notes,
-                            "query_hints": analysis.query_hints,
-                            "code_match_status": analysis.code_match_status,
-                            "code_match_details": analysis.code_match_details,
-                        }
-                        await self._svc.upsert_table(session, connection_id, table_data)
+                    live_tables = {t.name.lower() for t in schema.tables}
+                    code_lower = {t.lower() for t in code_tables}
+                    orphan_count = len(live_tables - code_lower)
+                    phantom_count = len(code_lower - live_tables)
+                    active_count = sum(1 for a in analyses if a.is_active)
+                    empty_count = sum(1 for a in analyses if not a.is_active)
 
                     await self._tracker.emit(
                         wf_id,
-                        "store_results",
+                        "generate_summary",
                         "started",
-                        f"Stored {len(analyses)} table entries",
+                        f"Summary: {active_count} active, {empty_count} empty, "
+                        f"{orphan_count} orphan, {phantom_count} phantom tables",
                     )
-                    await session.commit()
 
-            # Step 6: Generate connection summary
-            async with self._tracker.step(
-                wf_id,
-                "generate_summary",
-                "Generating database summary",
-            ):
-                await self._tracker.emit(
-                    wf_id,
-                    "generate_summary",
-                    "started",
-                    f"Generating LLM summary for {len(analyses)} tables",
-                )
-                summary_result = await self._validator.generate_summary(
-                    analyses=analyses,
-                    schema=schema,
-                    code_tables=code_tables,
-                    preferred_provider=preferred_provider,
-                    model=model,
-                )
-
-                live_tables = {t.name.lower() for t in schema.tables}
-                code_lower = {t.lower() for t in code_tables}
-                orphan_count = len(live_tables - code_lower)
-                phantom_count = len(code_lower - live_tables)
-                active_count = sum(1 for a in analyses if a.is_active)
-                empty_count = sum(1 for a in analyses if not a.is_active)
-
-                await self._tracker.emit(
-                    wf_id,
-                    "generate_summary",
-                    "started",
-                    f"Summary: {active_count} active, {empty_count} empty, "
-                    f"{orphan_count} orphan, {phantom_count} phantom tables",
-                )
-
-                async with async_session_factory() as session:
-                    await self._svc.upsert_summary(
-                        session,
-                        connection_id,
-                        {
-                            "total_tables": total_tables,
-                            "active_tables": active_count,
-                            "empty_tables": empty_count,
-                            "orphan_tables": orphan_count,
-                            "phantom_tables": phantom_count,
-                            "summary_text": summary_result.summary_text,
-                            "recommendations": summary_result.recommendations,
-                            # R2-3: persist for next run's incremental diff.
-                            "schema_fingerprint": json.dumps(new_fp, default=str),
-                        },
-                    )
-                    await session.commit()
-
-            # Step 7 (M4): build BM25 schema retriever for question-aware
-            # table resolution. Gated behind ``schema_retrieval_enabled`` so
-            # we can ship the index path without flipping the read path.
-            embed_failed = False
-            try:
-                from app.config import settings as _settings
-
-                if _settings.schema_retrieval_enabled:
-                    async with self._tracker.step(
-                        wf_id,
-                        "schema_embed",
-                        "Building schema retriever index",
-                    ):
-                        await self._build_schema_retriever(
-                            wf_id=wf_id,
-                            connection_id=connection_id,
-                            bm25_data_dir=_settings.bm25_data_dir,
+                    async with async_session_factory() as session:
+                        await self._svc.upsert_summary(
+                            session,
+                            connection_id,
+                            {
+                                "total_tables": total_tables,
+                                "active_tables": active_count,
+                                "empty_tables": empty_count,
+                                "orphan_tables": orphan_count,
+                                "phantom_tables": phantom_count,
+                                "summary_text": summary_result.summary_text,
+                                "recommendations": summary_result.recommendations,
+                                # R2-3: persist for next run's incremental diff.
+                                "schema_fingerprint": json.dumps(new_fp, default=str),
+                            },
                         )
-            except Exception:
-                # Never let retriever issues fail the indexing run, but record
-                # it as an evidence gap (R2-4) instead of swallowing silently.
-                embed_failed = True
-                logger.exception("schema_embed step failed; retriever may be stale")
+                        await session.commit()
 
-            try:
-                from app.services.code_db_sync_service import CodeDbSyncService
-
-                sync_svc = CodeDbSyncService()
-                async with async_session_factory() as session:
-                    await sync_svc.mark_stale(session, connection_id)
-                    await session.commit()
-            except Exception:
-                logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
-
-            # R2-4: a run with failed sampling/distinct/embed evidence is
-            # "completed_partial", not a clean "completed". Surface it so the
-            # caller can warn and avoid treating empty-looking tables as fact.
-            partial = bool(sample_failures or distinct_failures or embed_failed)
-            end_detail = f"{total_tables} tables indexed ({active_count} active)"
-            if partial:
-                end_detail += (
-                    f" — PARTIAL: {len(sample_failures)} sample failure(s), "
-                    f"{distinct_failures} distinct failure(s)"
-                    f"{', schema_embed failed' if embed_failed else ''}"
-                )
-            await self._tracker.end(
-                wf_id,
-                "db_index",
-                "completed",
-                end_detail,
-            )
-
-            return {
-                "status": "completed",
-                "tables": total_tables,
-                "active": active_count,
-                "empty": empty_count,
-                "workflow_id": wf_id,
-                "partial": partial,
-                "sample_failures": len(sample_failures),
-                "distinct_failures": distinct_failures,
-                "embed_failed": embed_failed,
-            }
-
-        except Exception as exc:
-            logger.exception("Database indexing pipeline failed")
-            await self._tracker.end(wf_id, "db_index", "failed", str(exc))
-            return {"status": "failed", "error": str(exc), "workflow_id": wf_id}
-
-        finally:
-            if connector:
+                # Step 7 (M4): build BM25 schema retriever for question-aware
+                # table resolution. Gated behind ``schema_retrieval_enabled`` so
+                # we can ship the index path without flipping the read path.
+                embed_failed = False
                 try:
-                    await connector.disconnect()
+                    if settings.schema_retrieval_enabled:
+                        async with self._tracker.step(
+                            wf_id,
+                            "schema_embed",
+                            "Building schema retriever index",
+                        ):
+                            await self._build_schema_retriever(
+                                wf_id=wf_id,
+                                connection_id=connection_id,
+                                bm25_data_dir=settings.bm25_data_dir,
+                            )
                 except Exception:
-                    logger.debug("Connector disconnect failed", exc_info=True)
+                    # Never let retriever issues fail the indexing run, but record
+                    # it as an evidence gap (R2-4) instead of swallowing silently.
+                    embed_failed = True
+                    logger.exception("schema_embed step failed; retriever may be stale")
+
+                try:
+                    from app.services.code_db_sync_service import CodeDbSyncService
+
+                    sync_svc = CodeDbSyncService()
+                    async with async_session_factory() as session:
+                        await sync_svc.mark_stale(session, connection_id)
+                        await session.commit()
+                except Exception:
+                    logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
+
+                # R2-4: a run with failed sampling/distinct/embed evidence is
+                # "completed_partial", not a clean "completed". Surface it so the
+                # caller can warn and avoid treating empty-looking tables as fact.
+                partial = bool(sample_failures or distinct_failures or embed_failed)
+                end_detail = f"{total_tables} tables indexed ({active_count} active)"
+                if partial:
+                    end_detail += (
+                        f" — PARTIAL: {len(sample_failures)} sample failure(s), "
+                        f"{distinct_failures} distinct failure(s)"
+                        f"{', schema_embed failed' if embed_failed else ''}"
+                    )
+                await self._tracker.end(
+                    wf_id,
+                    "db_index",
+                    "completed",
+                    end_detail,
+                )
+
+                return {
+                    "status": "completed",
+                    "tables": total_tables,
+                    "active": active_count,
+                    "empty": empty_count,
+                    "workflow_id": wf_id,
+                    "partial": partial,
+                    "sample_failures": len(sample_failures),
+                    "distinct_failures": distinct_failures,
+                    "embed_failed": embed_failed,
+                }
+
+            except Exception as exc:
+                logger.exception("Database indexing pipeline failed")
+                await self._tracker.end(wf_id, "db_index", "failed", str(exc))
+                return {"status": "failed", "error": str(exc), "workflow_id": wf_id}
+
+            finally:
+                if connector:
+                    try:
+                        await connector.disconnect()
+                    except Exception:
+                        logger.debug("Connector disconnect failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Incremental schema diff (R2-3)
