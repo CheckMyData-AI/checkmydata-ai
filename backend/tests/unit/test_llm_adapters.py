@@ -661,3 +661,59 @@ class TestToolSchema:
         out = adapter._tools_to_anthropic([_CREATE_PLAN_TOOL])
         assert out[0]["name"] == "create_execution_plan"
         assert out[0]["input_schema"]["type"] == "object"
+
+
+class TestOpenRouterCompleteResponse:
+    """complete() must not crash on a 200 response with no choices.
+
+    OpenRouter returns upstream provider failures as HTTP 200 with an
+    ``{"error": {...}}`` body and no ``choices`` — the parser must raise a
+    classified, retryable LLMError instead of an IndexError/KeyError.
+    """
+
+    def _adapter_returning(self, payload: dict):
+        from app.llm.openrouter_adapter import OpenRouterAdapter
+
+        adapter = OpenRouterAdapter()
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock(return_value=None)
+        resp.json = MagicMock(return_value=payload)
+        adapter._client.post = AsyncMock(return_value=resp)
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_error_body_raises_retryable_llm_server_error(self):
+        adapter = self._adapter_returning(
+            {"error": {"code": 500, "message": "upstream provider down"}}
+        )
+        try:
+            with pytest.raises(LLMServerError, match="upstream provider down") as ei:
+                await adapter.complete(messages=[_msg()])
+            assert ei.value.is_retryable is True
+        finally:
+            await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_choices_raises_llm_server_error(self):
+        adapter = self._adapter_returning({"choices": []})
+        try:
+            with pytest.raises(LLMServerError):
+                await adapter.complete(messages=[_msg()])
+        finally:
+            await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_valid_response_still_parses(self):
+        adapter = self._adapter_returning(
+            {
+                "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                "model": "openai/gpt-4o",
+            }
+        )
+        try:
+            result = await adapter.complete(messages=[_msg()])
+            assert result.content == "hi"
+            assert result.usage["completion_tokens"] == 2
+        finally:
+            await adapter.close()
