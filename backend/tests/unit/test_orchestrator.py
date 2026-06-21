@@ -1180,6 +1180,43 @@ class TestOrchestratorIntentRouting:
         assert mock_llm.complete.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_run_does_not_resurrect_enriched_cache(self, orch, mock_llm, base_context):
+        """B4: a fresh wf_id never reuses a prior _wf_enriched entry.
+
+        wf_id is minted per request, so the old cross-turn reuse block at the
+        top of run() always missed; pre-seeding it must not leak into the
+        current run's _wf_sql_results. The anti-leak cleanup still prunes.
+        """
+        import time as _t
+
+        from app.agents.sql_agent import SQLAgentResult
+
+        stale_marker = SQLAgentResult(query="SELECT 1")
+        orch._wf_enriched["wf-1"] = (stale_marker, _t.time())  # fresh, same wf id
+
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=(
+                        '{"route": "direct", "complexity": "simple", '
+                        '"approach": "Greeting", "estimated_queries": 0, '
+                        '"needs_multiple_data_sources": false}'
+                    )
+                ),
+                LLMResponse(content="Hi there."),
+            ]
+        )
+        with patch(
+            "app.agents.context_loader.ContextLoader.has_mcp_sources",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            await orch.run(base_context)
+
+        # Pre-fix the dead block seeded _wf_sql_results["wf-1"] from _wf_enriched.
+        assert "wf-1" not in orch._wf_sql_results
+
+    @pytest.mark.asyncio
     async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
         """If router fails, the orchestrator should fall back to unified agent."""
         mock_llm.complete = AsyncMock(

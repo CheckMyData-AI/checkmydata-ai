@@ -402,18 +402,14 @@ class OrchestratorAgent(BaseAgent):
         context: AgentContext,
         **_kwargs: Any,
     ) -> AgentResponse:
-        import time as _time
-
         wf_id = context.workflow_id
 
+        # B4: wf_id is minted fresh per request, so the old "reuse an enriched
+        # result from a previous turn under the same wf_id" block always missed
+        # and only ever leaked a stale entry into the current run. Removed. The
+        # per-workflow caches are still populated *within* a run (process_data
+        # enrichment); ``_cleanup_stale_results`` is the anti-leak sweep.
         stale_seconds = 300
-        enriched = self._wf_enriched.get(wf_id)
-        if enriched and (_time.time() - enriched[1]) < stale_seconds:
-            self._wf_sql_results[wf_id] = [enriched[0]]
-        else:
-            self._wf_sql_results.pop(wf_id, None)
-            self._wf_enriched.pop(wf_id, None)
-
         self._cleanup_stale_results(stale_seconds)
 
         try:
