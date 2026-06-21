@@ -1312,6 +1312,113 @@ class TestOrchestratorIntentRouting:
         assert budget_count <= 1, f"expected <=1 budget marker, got {budget_count}"
 
     @pytest.mark.asyncio
+    async def test_answer_gate_downgrades_suspicious_normal_completion(
+        self, orch, mock_llm, base_context
+    ):
+        """I6: a suspicious (zero-row) normal completion whose answer is judged
+        inadequate is downgraded to a continuable response_type."""
+        from app.agents.sql_agent import SQLAgentResult
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+        from app.connectors.base import QueryResult
+        from app.llm.base import LLMResponse, ToolCall
+
+        empty_sql = SQLAgentResult(
+            status="success",
+            query="SELECT count(*) FROM t",
+            results=QueryResult(columns=["c"], rows=[], row_count=0),
+        )
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="t1", name="query_database", arguments={"question": "how many"})
+                    ],
+                ),
+                LLMResponse(content="There are plenty of records."),
+            ]
+        )
+        orch._dispatcher.dispatch = AsyncMock(return_value=("0 rows", empty_sql))
+        orch._validate_partial_answer = AsyncMock(return_value=False)
+
+        tools = get_orchestrator_tools(has_connection=True)
+        resp = await orch._run_tool_loop(
+            base_context,
+            "wf-1",
+            has_connection=True,
+            db_type="postgres",
+            has_kb=False,
+            has_mcp=False,
+            has_repo=False,
+            table_map="",
+            project_overview=None,
+            recent_learnings=None,
+            custom_rules="",
+            tools=tools,
+            staleness_warning=None,
+            route_result=None,
+        )
+
+        orch._validate_partial_answer.assert_awaited()
+        assert resp.response_type == "step_limit_reached"
+
+    @pytest.mark.asyncio
+    async def test_answer_gate_skipped_on_clean_normal_completion(
+        self, orch, mock_llm, base_context
+    ):
+        """I6 cost guard: a clean, non-suspicious result makes NO answer-gate
+        call on the normal completion path."""
+        from app.agents.sql_agent import SQLAgentResult
+        from app.agents.tools.orchestrator_tools import get_orchestrator_tools
+        from app.connectors.base import QueryResult
+        from app.llm.base import LLMResponse, ToolCall
+
+        good_sql = SQLAgentResult(
+            status="success",
+            query="SELECT * FROM t",
+            results=QueryResult(columns=["c"], rows=[[1], [2]], row_count=2),
+        )
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="t1", name="query_database", arguments={"question": "list"})
+                    ],
+                ),
+                LLMResponse(content="Here are the two records."),
+            ]
+        )
+        orch._dispatcher.dispatch = AsyncMock(return_value=("2 rows", good_sql))
+        orch._validate_partial_answer = AsyncMock(return_value=True)
+        viz = MagicMock()
+        viz.viz_type = "table"
+        viz.viz_config = {}
+        viz.token_usage = {}
+        orch._viz.run = AsyncMock(return_value=viz)
+
+        tools = get_orchestrator_tools(has_connection=True)
+        resp = await orch._run_tool_loop(
+            base_context,
+            "wf-1",
+            has_connection=True,
+            db_type="postgres",
+            has_kb=False,
+            has_mcp=False,
+            has_repo=False,
+            table_map="",
+            project_overview=None,
+            recent_learnings=None,
+            custom_rules="",
+            tools=tools,
+            staleness_warning=None,
+            route_result=None,
+        )
+
+        orch._validate_partial_answer.assert_not_awaited()
+        assert resp.response_type == "sql_result"
+
+    @pytest.mark.asyncio
     async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
         """If router fails, the orchestrator should fall back to unified agent."""
         mock_llm.complete = AsyncMock(

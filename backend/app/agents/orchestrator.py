@@ -1401,6 +1401,31 @@ class OrchestratorAgent(BaseAgent):
             response_type = ResponseBuilder.determine_response_type(
                 last_sql_result, knowledge_sources, has_mcp_result
             )
+            # I6: on normal completion, run the answer-quality gate only when the
+            # result is *cheaply-detected suspicious* (validator warnings, zero
+            # rows, or the result-gate spent its correction budget this wf).
+            # Clean results take NO extra LLM call — the hot path is unchanged.
+            if response_type == "sql_result" and last_sql_result is not None:
+                vr_norm = self._validator.validate_sql_result(last_sql_result)
+                row_count = (
+                    last_sql_result.results.row_count
+                    if last_sql_result.results is not None
+                    else 0
+                )
+                suspicious = (
+                    bool(vr_norm.warnings) or row_count == 0 or wf_id in self._wf_suspicious
+                )
+                if suspicious:
+                    addresses = await self._validate_partial_answer(
+                        final_text,
+                        question=question,
+                        sql_results=all_sql_results,
+                        preferred_provider=context.preferred_provider,
+                        model=context.model,
+                        wf_id=wf_id,
+                    )
+                    if not addresses:
+                        response_type = "step_limit_reached"
 
         viz_type = "text"
         viz_config: dict = {}
