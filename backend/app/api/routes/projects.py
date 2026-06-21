@@ -474,7 +474,9 @@ async def project_sync_history(
                 "status": r.status,
                 "duration_seconds": r.duration_seconds,
                 "error_message": r.error_message,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                # created_at is a non-null column (server default), so it is
+                # always present — the frontend types it as a non-null string.
+                "created_at": r.created_at.isoformat(),
                 "steps": r.steps_json,
             }
             for r in runs

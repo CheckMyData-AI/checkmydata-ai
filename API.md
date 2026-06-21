@@ -40,7 +40,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}/readiness` | Check project setup readiness |
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
-| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, trigger, status, duration_seconds, error_message, created_at, steps}]}`. `limit` clamped to 1–50, default 20. |
+| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, trigger, status, duration_seconds, error_message, created_at, steps}]}`. `status` is one of `success` \| `partial` \| `failed` \| `skipped`; `created_at` is a non-null ISO-8601 string. `limit` clamped to 1–50, default 20. |
 
 ## Connections
 
