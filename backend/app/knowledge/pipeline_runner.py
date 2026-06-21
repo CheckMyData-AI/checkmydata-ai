@@ -1675,15 +1675,7 @@ class IndexingPipelineRunner:
                     exc_info=True,
                 )
 
-            if state.changed_files:
-                await tracker.emit(
-                    wf_id,
-                    "record_index",
-                    "started",
-                    "Marking DB index and sync as stale",
-                )
-                await self._mark_db_index_code_stale(db, project_id)
-                await self._mark_sync_stale(db, project_id)
+            await self._maybe_mark_stale(db=db, project_id=project_id, state=state, wf_id=wf_id)
 
         await self._cp_svc.delete(db, cp_id)
 
@@ -1699,6 +1691,25 @@ class IndexingPipelineRunner:
         result.files_indexed = len(state.changed_files)
         result.schemas_found = len(state.schemas)
         return result
+
+    async def _maybe_mark_stale(
+        self,
+        *,
+        db,
+        project_id: str,
+        state: _PipelineState,
+        wf_id: str = "",
+    ) -> None:
+        """Mark DB index and sync as stale only when real file changes occurred."""
+        if state.changed_files or state.deleted_files:
+            await tracker.emit(
+                wf_id,
+                "record_index",
+                "started",
+                "Marking DB index and sync as stale",
+            )
+            await self._mark_db_index_code_stale(db, project_id)
+            await self._mark_sync_stale(db, project_id)
 
     @staticmethod
     async def _mark_db_index_code_stale(
