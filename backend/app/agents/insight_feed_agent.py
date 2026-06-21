@@ -25,6 +25,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coerce_confidence(value: Any, default: float = 0.5) -> float:
+    """Best-effort float for an LLM-supplied confidence.
+
+    The model is asked for a 0–1 number but frequently returns junk
+    ("high", "90%", null). A single bad value must not blow up parsing and
+    discard every other insight in the batch — fall back to ``default``.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class FeedScanResult:
     """Result of an autonomous feed scan."""
@@ -252,7 +265,9 @@ class InsightFeedAgent:
                                         "title": f"[{table_name}] {item['title']}",
                                         "description": item.get("description", ""),
                                         "severity": item.get("severity", "info"),
-                                        "confidence": min(0.7, float(item.get("confidence", 0.5))),
+                                        "confidence": min(
+                                            0.7, _coerce_confidence(item.get("confidence", 0.5))
+                                        ),
                                         "action": item.get("action", ""),
                                         "impact": item.get("impact", ""),
                                         "sample_size": sample_rows,
