@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import type { WorkflowEvent } from "@/lib/sse";
+import type { PipelineStatusResponse } from "@/lib/api/types";
 
 function ev(p: Partial<WorkflowEvent>): WorkflowEvent {
   return {
@@ -40,5 +41,53 @@ describe("background-tasks-store", () => {
     ]);
     expect(useBackgroundTasks.getState().tasks["c"].status).toBe("running");
     expect(useBackgroundTasks.getState().tasks["c"].source).toBe("poll");
+  });
+
+  it("reconcileFromPipelineStatus does not overwrite an SSE-running task", () => {
+    const s = useBackgroundTasks.getState();
+    // Establish an SSE-sourced running task for the db_index workflow on connection "conn1".
+    const wfId = "db:conn1";
+    s.applySseEvent(
+      ev({ workflow_id: wfId, pipeline: "db_index", step: "pipeline_start" }),
+    );
+    expect(useBackgroundTasks.getState().tasks[wfId].source).toBe("sse");
+
+    // Now poll arrives saying the same connection is indexing.
+    const pipelineStatus: PipelineStatusResponse = {
+      project_id: "proj1",
+      repo: {
+        is_indexing: false,
+        checkpoint_status: null,
+        workflow_id: null,
+        last_indexed_at: null,
+        last_indexed_commit: null,
+      },
+      connections: [
+        {
+          connection_id: "conn1",
+          connection_name: "Test DB",
+          db_index: {
+            is_indexing: true,
+            indexing_status: "running",
+            indexed_at: null,
+            table_count: 0,
+          },
+          code_db_sync: {
+            is_syncing: false,
+            sync_status: "idle",
+            synced_at: null,
+            total_tables: 0,
+            synced_tables: 0,
+          },
+        },
+      ],
+      any_running: true,
+    };
+    s.reconcileFromPipelineStatus(pipelineStatus);
+
+    // SSE provenance must be preserved — poll must not overwrite it.
+    const task = useBackgroundTasks.getState().tasks[wfId];
+    expect(task.status).toBe("running");
+    expect(task.source).toBe("sse");
   });
 });

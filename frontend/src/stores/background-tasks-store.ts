@@ -63,6 +63,24 @@ function scheduleDismiss(workflowId: string, ms: number) {
 }
 
 /**
+ * Returns true when a poll-sourced upsert is allowed to create or refresh a task.
+ *
+ * A poll must NOT touch:
+ * - A terminal task (completed/failed) — never downgrade.
+ * - A running task whose source is "sse" — SSE provenance wins.
+ *
+ * It MAY touch:
+ * - Nothing (no existing task) — gap-fill is the whole point.
+ * - A poll-running task — refresh/merge is fine.
+ */
+function pollMayCreate(existing: BgTask | undefined): boolean {
+  if (!existing) return true;
+  if (existing.status === "completed" || existing.status === "failed") return false;
+  if (existing.status === "running" && existing.source === "sse") return false;
+  return true; // poll-running or other: allowed to refresh
+}
+
+/**
  * Upsert a task in the running state.
  *
  * Precedence rules:
@@ -210,15 +228,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
       for (const t of apiTasks) {
         const existing = updated[t.workflow_id];
         // Never overwrite a terminal task or an SSE-sourced running task.
-        if (existing) {
-          if (
-            existing.status === "completed" ||
-            existing.status === "failed" ||
-            (existing.status === "running" && existing.source === "sse")
-          ) {
-            continue;
-          }
-        }
+        if (!pollMayCreate(existing)) continue;
         updated = upsertRunningTask(
           updated,
           t.workflow_id,
@@ -245,10 +255,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
         cancelDismiss(wfId);
         const existing = updated[wfId];
         // Only gap-fill; do not overwrite terminal or SSE-running tasks.
-        if (
-          !existing ||
-          (existing.status === "running" && existing.source !== "sse")
-        ) {
+        if (pollMayCreate(existing)) {
           updated = upsertRunningTask(
             updated,
             wfId,
@@ -266,10 +273,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
           pinned.add(wfId);
           cancelDismiss(wfId);
           const existing = updated[wfId];
-          if (
-            !existing ||
-            (existing.status === "running" && existing.source !== "sse")
-          ) {
+          if (pollMayCreate(existing)) {
             updated = upsertRunningTask(
               updated,
               wfId,
@@ -285,10 +289,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
           pinned.add(wfId);
           cancelDismiss(wfId);
           const existing = updated[wfId];
-          if (
-            !existing ||
-            (existing.status === "running" && existing.source !== "sse")
-          ) {
+          if (pollMayCreate(existing)) {
             updated = upsertRunningTask(
               updated,
               wfId,
