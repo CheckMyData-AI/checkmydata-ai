@@ -220,6 +220,17 @@ class CheckpointService:
             await session.delete(cp)
             await session.commit()
 
+    async def touch_heartbeat(self, session: AsyncSession, checkpoint_id: str) -> None:
+        """Update heartbeat_at=now() for a running indexing checkpoint."""
+        from sqlalchemy import update
+
+        await session.execute(
+            update(IndexingCheckpoint)
+            .where(IndexingCheckpoint.id == checkpoint_id)
+            .values(heartbeat_at=datetime.now(UTC))
+        )
+        await session.flush()
+
     async def cleanup_stale(
         self,
         session: AsyncSession,

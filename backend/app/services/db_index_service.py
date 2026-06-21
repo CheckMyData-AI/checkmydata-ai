@@ -217,6 +217,15 @@ class DbIndexService:
             session.add(summary)
         await session.flush()
 
+    async def touch_heartbeat(self, session: AsyncSession, connection_id: str) -> None:
+        """Update heartbeat_at=now() for a running DB index (creates row if needed)."""
+        summary = await self.get_summary(session, connection_id)
+        if summary is None:
+            summary = DbIndexSummary(connection_id=connection_id)
+            session.add(summary)
+        summary.heartbeat_at = datetime.now(UTC)
+        await session.flush()
+
     async def get_indexing_status(
         self,
         session: AsyncSession,

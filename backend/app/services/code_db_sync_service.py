@@ -185,6 +185,15 @@ class CodeDbSyncService:
             connection_id[:8],
         )
 
+    async def touch_heartbeat(self, session: AsyncSession, connection_id: str) -> None:
+        """Update heartbeat_at=now() for a running code-DB sync (creates row if needed)."""
+        summary = await self.get_summary(session, connection_id)
+        if summary is None:
+            summary = CodeDbSyncSummary(connection_id=connection_id)
+            session.add(summary)
+        summary.heartbeat_at = datetime.now(UTC)
+        await session.flush()
+
     async def get_sync_status(
         self,
         session: AsyncSession,
