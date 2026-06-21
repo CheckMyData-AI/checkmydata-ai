@@ -744,3 +744,46 @@ class TestMCPPing:
         data = json.loads(result)
         assert data["ok"] is True
         assert data["principal"]["user_id"] == "owner-1"
+
+
+class TestFormatQueryResult:
+    """_format_query_result must never silently drop rows or the connector's
+    truncation signal — an MCP client agent has to know the result is partial."""
+
+    def _qr(self, n_rows: int, *, truncated: bool = False):
+        from app.connectors.base import QueryResult
+
+        return QueryResult(
+            columns=["id"],
+            rows=[[i] for i in range(n_rows)],
+            row_count=n_rows,
+            execution_time_ms=1.0,
+            truncated=truncated,
+        )
+
+    def test_small_result_not_truncated(self):
+        from app.mcp_server.tools import _format_query_result
+
+        out = _format_query_result(self._qr(5))
+        assert out["returned_rows"] == 5
+        assert out["row_count"] == 5
+        assert out["truncated"] is False
+        assert len(out["rows"]) == 5
+
+    def test_mcp_row_cap_signals_truncation(self):
+        from app.mcp_server.tools import MAX_RESULT_ROWS, _format_query_result
+
+        out = _format_query_result(self._qr(MAX_RESULT_ROWS + 50))
+        assert len(out["rows"]) == MAX_RESULT_ROWS
+        assert out["returned_rows"] == MAX_RESULT_ROWS
+        assert out["row_count"] == MAX_RESULT_ROWS + 50
+        assert out["truncated"] is True
+
+    def test_connector_truncation_flag_is_propagated(self):
+        from app.mcp_server.tools import _format_query_result
+
+        # Connector already truncated (e.g. byte cap) with few rows — the flag
+        # must survive even though the MCP 100-row cap was not hit.
+        out = _format_query_result(self._qr(10, truncated=True))
+        assert len(out["rows"]) == 10
+        assert out["truncated"] is True

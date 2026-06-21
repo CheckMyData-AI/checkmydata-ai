@@ -40,6 +40,9 @@ _membership_svc = MembershipService()
 # Pagination defaults align with MCP best-practices (20–50 items typical).
 DEFAULT_PAGE_LIMIT = 20
 MAX_PAGE_LIMIT = 200
+# Max query rows embedded in an MCP tool response. Larger results are capped
+# and flagged via ``truncated`` so the client agent knows the set is partial.
+MAX_RESULT_ROWS = 100
 
 
 def _principal_user_id(principal: dict) -> str:
@@ -109,10 +112,17 @@ def _paginate(items: list, offset: int, limit: int) -> dict[str, Any]:
 
 
 def _format_query_result(qr: QueryResult) -> dict[str, Any]:
+    rows = qr.rows[:MAX_RESULT_ROWS]
+    # Signal truncation explicitly: an MCP client agent must not mistake a
+    # partial result for the full set. Combine the connector's own truncation
+    # flag (e.g. byte/row caps) with the MCP-level row cap applied here.
+    truncated = bool(qr.truncated) or len(qr.rows) > MAX_RESULT_ROWS
     return {
         "columns": qr.columns,
-        "rows": qr.rows[:100],
+        "rows": rows,
+        "returned_rows": len(rows),
         "row_count": qr.row_count,
+        "truncated": truncated,
         "execution_time_ms": qr.execution_time_ms,
         "error": qr.error,
     }
