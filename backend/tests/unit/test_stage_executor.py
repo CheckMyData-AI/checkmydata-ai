@@ -152,6 +152,36 @@ class TestExecute:
         assert mock_sql_agent.run.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_parallel_stage_exception_handled_without_orphaning_sibling(
+        self, executor, context
+    ):
+        """One stage raising inside a parallel batch must be converted to a
+        graceful stage_failed (not propagate a raw exception) and the sibling
+        stage must still be awaited to completion (no orphaned background task)."""
+        import asyncio
+
+        # Two independent stages → same parallel batch.
+        plan = _make_plan(_sql_stage("s1"), _sql_stage("s2"))
+
+        sibling_completed = asyncio.Event()
+
+        async def fake_process(stage, stage_ctx, ctx):
+            if stage.stage_id == "s2":
+                raise RuntimeError("boom in parallel stage")
+            await asyncio.sleep(0.02)
+            sibling_completed.set()
+            return None
+
+        executor._process_one_stage = fake_process  # type: ignore[assignment]
+
+        result = await executor.execute(plan, context)
+
+        assert result.status == "stage_failed"
+        assert result.failed_stage is not None
+        assert result.failed_stage.stage_id == "s2"
+        assert sibling_completed.is_set(), "sibling stage was orphaned, not awaited"
+
+    @pytest.mark.asyncio
     async def test_stuck_dependency_returns_stage_failed(self, executor, context):
         """R5-6: a plan whose only stage depends on a missing stage can never
         become ready; the executor must surface ``stage_failed`` (replan-
