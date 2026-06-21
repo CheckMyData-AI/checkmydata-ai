@@ -132,6 +132,10 @@ class TracePersistenceService:
         self._buffers: dict[str, _WorkflowBuffer] = {}
         self._lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task[None] | None = None
+        # Strong references to in-flight persist tasks. asyncio only keeps a
+        # weak reference to a bare create_task(), so without this the trace
+        # write can be garbage-collected mid-flight and silently lost.
+        self._persist_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         self._tracker.add_persistence_hook(self._on_event)
@@ -145,6 +149,9 @@ class TracePersistenceService:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+        # Let any in-flight trace writes finish so they aren't dropped on shutdown.
+        if self._persist_tasks:
+            await asyncio.gather(*self._persist_tasks, return_exceptions=True)
         logger.info("TracePersistenceService stopped")
 
     async def _on_event(self, event: WorkflowEvent) -> None:
@@ -169,7 +176,9 @@ class TracePersistenceService:
                     self._buffers.pop(event.workflow_id, None)
 
             if event.step == "pipeline_end":
-                asyncio.create_task(self._persist_workflow(buf, event))
+                task = asyncio.create_task(self._persist_workflow(buf, event))
+                self._persist_tasks.add(task)
+                task.add_done_callback(self._persist_tasks.discard)
 
         except Exception:
             logger.warning(

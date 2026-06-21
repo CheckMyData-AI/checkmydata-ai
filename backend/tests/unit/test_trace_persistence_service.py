@@ -1,5 +1,6 @@
 """Unit tests for TracePersistenceService — span classification, filtering, and enrichment."""
 
+import asyncio
 import json
 
 import pytest
@@ -525,3 +526,59 @@ class TestStaleBufferPersistence:
         source = inspect.getsource(tps_mod.TracePersistenceService._cleanup_stale_buffers)
         assert "_persist_workflow" in source
         assert "Stale: pipeline_end never received" in source
+
+
+class TestPersistTaskReference:
+    """The fire-and-forget persist task must be strongly referenced so it can't
+    be garbage-collected mid-write (asyncio keeps only a weak ref to a bare
+    create_task)."""
+
+    @staticmethod
+    async def _drain(s: set, timeout: float = 1.0) -> None:
+        import time as _t
+
+        deadline = _t.monotonic() + timeout
+        while s and _t.monotonic() < deadline:
+            await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_persist_task_held_until_done_then_released(self):
+        svc = TracePersistenceService(WorkflowTracker())
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _fake_persist(buf, event):
+            started.set()
+            await release.wait()
+
+        svc._persist_workflow = _fake_persist  # type: ignore[assignment]
+
+        await svc._on_event(WorkflowEvent("wf-ref", "pipeline_start", "started"))
+        await svc._on_event(WorkflowEvent("wf-ref", "pipeline_end", "completed"))
+
+        await asyncio.wait_for(started.wait(), 1.0)
+        # In flight → the service holds a strong reference (GC-safe).
+        assert len(svc._persist_tasks) == 1
+
+        release.set()
+        await self._drain(svc._persist_tasks)
+        # Done → reference released via the done-callback (no leak).
+        assert len(svc._persist_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_drains_inflight_persist(self):
+        svc = TracePersistenceService(WorkflowTracker())
+        done = asyncio.Event()
+
+        async def _fake_persist(buf, event):
+            await asyncio.sleep(0)
+            done.set()
+
+        svc._persist_workflow = _fake_persist  # type: ignore[assignment]
+
+        await svc._on_event(WorkflowEvent("wf-stop", "pipeline_start", "started"))
+        await svc._on_event(WorkflowEvent("wf-stop", "pipeline_end", "completed"))
+
+        # stop() must let the in-flight write finish, not drop it.
+        await svc.stop()
+        assert done.is_set()
