@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code_db_sync import CodeDbSyncSummary
@@ -31,17 +32,17 @@ class StaleRunReaper:
                 model.heartbeat_at.is_(None) & (model.updated_at < cutoff)
             )
 
-        db_res = await session.execute(
+        db_res: CursorResult = await session.execute(  # type: ignore[assignment]
             update(DbIndexSummary)
             .where(DbIndexSummary.indexing_status == "running", _stale(DbIndexSummary))
             .values(indexing_status="failed")
         )
-        sync_res = await session.execute(
+        sync_res: CursorResult = await session.execute(  # type: ignore[assignment]
             update(CodeDbSyncSummary)
             .where(CodeDbSyncSummary.sync_status == "running", _stale(CodeDbSyncSummary))
             .values(sync_status="failed")
         )
-        repo_res = await session.execute(
+        repo_res: CursorResult = await session.execute(  # type: ignore[assignment]
             update(IndexingCheckpoint)
             .where(IndexingCheckpoint.status == "running", _stale(IndexingCheckpoint))
             .values(status="interrupted")

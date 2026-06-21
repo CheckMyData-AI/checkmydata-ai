@@ -123,7 +123,9 @@ async def test_dispatch_db_index_uses_enqueue_when_arq_active(monkeypatch):
     await conn_routes._dispatch_db_index("conn123", object(), "proj456")
 
     assert captured["task_name"] == "run_db_index"
-    assert captured["task_id"] == "db_index:conn123"
+    # Task IDs include a random suffix (e.g. "db_index:conn123:abc12345") so
+    # each retry gets a unique ARQ job id and is never silently de-duplicated.
+    assert captured["task_id"].startswith("db_index:conn123")
     assert captured["kwargs"] == {"connection_id": "conn123", "project_id": "proj456"}
     # No local handle in ARQ mode — persisted status is authoritative.
     assert "conn123" not in conn_routes._db_index_tasks

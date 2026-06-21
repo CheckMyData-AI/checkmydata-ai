@@ -428,6 +428,36 @@ def test_indexing_artifacts_cleanup_is_idempotent(tmp_path, monkeypatch):
     # No exception → contract held.
 
 
+@pytest.mark.asyncio
+async def test_reaper_recovers_stuck_running(db_session: AsyncSession):
+    """StaleRunReaper must flip a heartbeat-stale 'running' row to 'failed'.
+
+    This covers the crash-recovery path: if the worker dies while indexing,
+    the heartbeat stops updating. On the next reaper sweep, the row is found
+    stale (heartbeat older than timeout) and reset to 'failed' so the UI
+    surfaces the failure instead of spinning forever.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.db_index import DbIndexSummary
+    from app.services.stale_run_reaper import StaleRunReaper
+
+    old = datetime.now(UTC) - timedelta(seconds=600)
+    db_session.add(
+        DbIndexSummary(
+            connection_id="e2e-reaper",
+            indexing_status="running",
+            heartbeat_at=old,
+        )
+    )
+    await db_session.commit()
+
+    out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+    await db_session.commit()
+
+    assert out["db_index"] == 1, f"expected 1 reaped row, got {out}"
+
+
 def test_metrics_snapshot_counters_prefix_filter():
     """JSON ``/api/metrics`` filters via ``snapshot_counters(prefix=...)``."""
     from app.core.metrics import get_metrics_collector
