@@ -212,7 +212,17 @@ class OpenRouterAdapter(BaseLLMProvider):
 
         data = resp.json()
 
-        choice = data["choices"][0]
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not choices:
+            # OpenRouter can return HTTP 200 with an ``{"error": {...}}`` body
+            # and no ``choices`` when an upstream provider fails. Surface a
+            # classified, retryable LLMError so the router falls back instead of
+            # crashing on an IndexError/KeyError.
+            err = data.get("error") if isinstance(data, dict) else None
+            detail = err.get("message") if isinstance(err, dict) else None
+            raise LLMServerError(f"OpenRouter returned no choices: {detail or 'empty response'}")
+
+        choice = choices[0]
         msg = choice["message"]
 
         tool_calls: list[ToolCall] = []
