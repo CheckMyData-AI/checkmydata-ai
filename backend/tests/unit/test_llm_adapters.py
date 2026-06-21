@@ -414,6 +414,21 @@ class TestAnthropicAdapterComplete:
         assert len(formatted) == 1
         assert formatted[0]["role"] == "user"
 
+    async def test_format_messages_folds_midloop_system(self, adapter):
+        # B3: a non-leading system marker must NOT be hoisted into the system
+        # param; it is folded into a (trailing) user turn so it keeps recency.
+        msgs = [
+            _msg("system", "LEAD"),
+            _msg("user", "hi"),
+            _msg("assistant", "ok"),
+            _msg("system", "[Budget: step 2/10]"),
+        ]
+        system, formatted = adapter._format_messages(msgs)
+        assert system == "LEAD"
+        assert "[Budget: step 2/10]" not in system
+        assert formatted[-1]["role"] == "user"
+        assert "[Budget: step 2/10]" in formatted[-1]["content"]
+
     async def test_format_messages_tool(self, adapter):
         msgs = [
             Message(

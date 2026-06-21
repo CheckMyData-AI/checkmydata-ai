@@ -6,6 +6,7 @@ import anthropic
 from anthropic import AsyncAnthropic
 
 from app.config import settings
+from app.llm._system_messages import merge_nonleading_system
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from app.llm.errors import (
     LLMAuthError,
@@ -104,6 +105,11 @@ class AnthropicAdapter(BaseLLMProvider):
         return "anthropic"
 
     def _format_messages(self, messages: list[Message]) -> tuple[str, list[dict]]:
+        # B3: fold non-leading ``system`` markers (per-iteration budget notes,
+        # emergency-synthesis directives) into the adjacent user turn so they
+        # keep their recency instead of being concatenated into the top-level
+        # ``system`` param. Leading system messages still become ``system``.
+        messages = merge_nonleading_system(messages)
         system_prompt = ""
         formatted = []
         for m in messages:
