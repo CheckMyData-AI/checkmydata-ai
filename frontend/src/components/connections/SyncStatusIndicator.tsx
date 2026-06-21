@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type SyncStatus } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
-import { useTaskStore } from "@/stores/task-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { toast } from "@/stores/toast-store";
 
 function timeAgo(iso: string): string {
@@ -26,7 +26,7 @@ export function SyncStatusIndicator() {
     activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
   );
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const tasks = useTaskStore((s) => s.tasks);
+  const tasks = useBackgroundTasks((s) => s.tasks);
   const prevFinishedRef = useRef<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 

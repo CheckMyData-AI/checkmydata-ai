@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { broadcastEvent, subscribeToAllEvents, type WorkflowEvent } from "@/lib/sse";
 import { api } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
-import { useTaskStore } from "@/stores/task-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
@@ -40,7 +40,7 @@ export function useGlobalEvents(enabled: boolean) {
 
     function seedActiveTasks() {
       api.tasks.getActive().then(
-        (tasks) => { if (activeRef.current) useTaskStore.getState().seedFromApi(tasks); },
+        (tasks) => { if (activeRef.current) useBackgroundTasks.getState().reconcileFromActive(tasks); },
         () => {},
       );
     }
@@ -69,7 +69,7 @@ export function useGlobalEvents(enabled: boolean) {
           attemptRef.current = 0;
           useLogStore.getState().setConnected(true);
           useLogStore.getState().addEntry(toLogEntry(event));
-          useTaskStore.getState().processEvent(event);
+          useBackgroundTasks.getState().applySseEvent(event);
           broadcastEvent(event);
         },
         () => scheduleReconnect(),

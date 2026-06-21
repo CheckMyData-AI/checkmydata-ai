@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PipelineStatusResponse } from "@/lib/api";
 import { POLL_INTERVAL_MS } from "@/lib/polling";
 import { useAppStore } from "@/stores/app-store";
-import { useTaskStore } from "@/stores/task-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 
 const IDLE_POLL_MS = 30_000;
 
@@ -26,7 +26,7 @@ export function useKnowledgePipelineStatus(projectId: string | null | undefined)
       setError(false);
       setStatus(data);
       useAppStore.getState().setPipelineStatus(projectId, data);
-      useTaskStore.getState().seedFromPipelineStatus(data);
+      useBackgroundTasks.getState().reconcileFromPipelineStatus(data);
 
       const wasRunning = prevAnyRunningRef.current;
       if (wasRunning === true && !data.any_running) {

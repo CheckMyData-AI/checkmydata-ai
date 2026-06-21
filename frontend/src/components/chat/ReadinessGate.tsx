@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type ProjectReadiness } from "@/lib/api";
 import { useLogStore } from "@/stores/log-store";
 import { useAppStore } from "@/stores/app-store";
-import { useTaskStore } from "@/stores/task-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { toast } from "@/stores/toast-store";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 
@@ -115,7 +115,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         });
         if (pipeline) {
           useAppStore.getState().setPipelineStatus(projectId, pipeline);
-          useTaskStore.getState().seedFromPipelineStatus(pipeline);
+          useBackgroundTasks.getState().reconcileFromPipelineStatus(pipeline);
         }
         const stepDone =
           (stepKey === "index_repo" && r.repo_indexed) ||

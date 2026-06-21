@@ -5,7 +5,7 @@ import { toast } from "@/stores/toast-store";
 import { useAppStore } from "@/stores/app-store";
 import { useNotesStore } from "@/stores/notes-store";
 import { useLogStore } from "@/stores/log-store";
-import { useTaskStore } from "@/stores/task-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 
 const REFRESH_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -157,7 +157,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
     useNotesStore.getState().clear();
     useLogStore.getState().clear();
-    useTaskStore.setState({ tasks: {} });
+    useBackgroundTasks.setState({ tasks: {} });
 
     set({ user: null, token: null });
   },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useTaskStore, type ActiveTask } from "@/stores/task-store";
+import { useBackgroundTasks, type BgTask } from "@/stores/background-tasks-store";
 import { useAppStore } from "@/stores/app-store";
 import { Icon } from "@/components/ui/Icon";
 import type { IconName } from "@/components/ui/Icon";
@@ -53,10 +53,10 @@ function useElapsed(startedAt: number, completedAt: number | undefined, active: 
   return `${m}m ${s}s`;
 }
 
-function TaskItem({ task }: { task: ActiveTask }) {
+function TaskItem({ task }: { task: BgTask }) {
   const projects = useAppStore((s) => s.projects);
   const connections = useAppStore((s) => s.connections);
-  const dismissTask = useTaskStore((s) => s.dismissTask);
+  const dismissTask = useBackgroundTasks((s) => s.dismissTask);
   const elapsed = useElapsed(task.startedAt, task.completedAt, task.status === "running");
   const meta = PIPELINE_META[task.pipeline] || { label: task.pipeline, icon: "activity" as IconName };
 
@@ -141,7 +141,7 @@ function TaskItem({ task }: { task: ActiveTask }) {
 }
 
 export function ActiveTasksWidget() {
-  const tasks = useTaskStore((s) => s.tasks);
+  const tasks = useBackgroundTasks((s) => s.tasks);
   const activeProject = useAppStore((s) => s.activeProject);
   const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
