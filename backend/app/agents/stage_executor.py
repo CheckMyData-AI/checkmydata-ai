@@ -190,12 +190,37 @@ class StageExecutor:
                     await self._process_one_stage(batch[0], stage_ctx, context)
                 ]
             else:
-                outcomes = list(
-                    await _asyncio.gather(
-                        *(self._process_one_stage(s, stage_ctx, context) for s in batch),
-                        return_exceptions=False,
-                    )
+                # return_exceptions=True so one stage raising does NOT propagate
+                # immediately and orphan its siblings (which keep running with
+                # dangling sessions). Wait for all, then convert any raised
+                # exception into a graceful stage_failed outcome.
+                gathered = await _asyncio.gather(
+                    *(self._process_one_stage(s, stage_ctx, context) for s in batch),
+                    return_exceptions=True,
                 )
+                outcomes = []
+                for stage, res in zip(batch, gathered):
+                    if isinstance(res, BaseException):
+                        if isinstance(res, _asyncio.CancelledError):
+                            raise res
+                        logger.error(
+                            "Parallel stage %s raised; converting to stage_failed",
+                            stage.stage_id,
+                            exc_info=res,
+                        )
+                        outcomes.append(
+                            _StageExecutorResult(
+                                status="stage_failed",
+                                stage_ctx=stage_ctx,
+                                failed_stage=stage,
+                                failed_validation=StageValidationOutcome(
+                                    passed=False, errors=[str(res)]
+                                ),
+                                replan_eligible=stage.replan_on_failure,
+                            )
+                        )
+                    else:
+                        outcomes.append(res)
 
             for stage, outcome in zip(batch, outcomes):
                 if outcome is not None and outcome.status == "stage_failed":
