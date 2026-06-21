@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 import httpx
 
 from app.config import settings
+from app.llm._system_messages import merge_nonleading_system
 from app.llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from app.llm.errors import (
     LLMAuthError,
@@ -32,45 +33,9 @@ _OPENROUTER_TOKEN_LIMIT_MESSAGES: tuple[str, ...] = (
 )
 
 
-def _merge_nonleading_system(messages: list[Message]) -> list[Message]:
-    """Fold non-leading ``system`` messages into the adjacent user turn.
-
-    Anthropic (and Amazon Bedrock) routed through OpenRouter reject a ``system``
-    role that does not immediately follow a user message or a tool result:
-    ``role 'system' must follow a 'user' message``. Some callers historically
-    inserted mid-conversation ``system`` markers (e.g. an end-of-history
-    delimiter), which 400s every multi-turn chat. This normalizes the payload by
-    keeping only the leading run of ``system`` messages and merging any later
-    ``system`` content into the next user message (or a trailing user turn),
-    leaving OpenAI-style providers unaffected.
-    """
-    result: list[Message] = []
-    leading = True
-    pending: list[str] = []
-    for m in messages:
-        if m.role == "system":
-            if leading:
-                result.append(m)
-            elif m.content:
-                pending.append(m.content)
-            continue
-        leading = False
-        if pending and m.role == "user":
-            prefix = "\n\n".join(pending)
-            m = Message(
-                role="user",
-                content=f"{prefix}\n\n{m.content}" if m.content else prefix,
-                tool_call_id=m.tool_call_id,
-                name=m.name,
-                tool_calls=m.tool_calls,
-            )
-            pending = []
-        result.append(m)
-    if pending:
-        # No trailing user turn to attach to — emit one so the guidance survives
-        # without an invalid mid-conversation system role.
-        result.append(Message(role="user", content="\n\n".join(pending)))
-    return result
+# Backward-compatible alias — the implementation now lives in the shared
+# ``app.llm._system_messages`` module so the Anthropic adapter can reuse it.
+_merge_nonleading_system = merge_nonleading_system
 
 
 def _parse_openrouter_body(response: httpx.Response) -> dict | None:
