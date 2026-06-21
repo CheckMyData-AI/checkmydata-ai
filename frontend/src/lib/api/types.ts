@@ -867,3 +867,17 @@ export interface LossReportDTO {
   evidence: string[];
   severity: string;
 }
+
+export interface SyncHistoryRun {
+  id: string;
+  trigger: string;
+  status: "success" | "partial" | "failed" | "skipped";
+  duration_seconds: number | null;
+  error_message: string | null;
+  created_at: string;
+  steps: Record<string, unknown> | null;
+}
+
+export interface SyncHistoryResponse {
+  runs: SyncHistoryRun[];
+}
