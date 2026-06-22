@@ -257,26 +257,34 @@ async def _spawn_repo_index(
         )
         _last_index_trigger_at[project_id] = time.monotonic()
 
-        # ARQ mode: hand off to the worker. The persisted checkpoint is
-        # authoritative for status; no in-memory handle is kept.
+        # The run aggregate owns the workflow id; the pipeline reuses it.
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        try:
+            run = await RunCoordinator().start(
+                db,
+                kind="index_repo",
+                project_id=project_id,
+                connection_id=None,
+                trigger=trigger,
+                force_full=force_full,
+            )
+        except RunAlreadyActiveError:
+            return None
+        wf_id = run.workflow_id
+
+        # ARQ mode: hand off to the worker. The persisted run is authoritative
+        # for status; no in-memory handle is kept.
         if task_queue.is_arq_active():
             await task_queue.enqueue(
                 "run_repo_index",
                 task_id=f"repo_index:{project_id}:{uuid.uuid4().hex[:8]}",
                 project_id=project_id,
                 force_full=force_full,
+                wf_id=wf_id,
             )
-            return {"status": "queued", "workflow_id": None, "resumed": resumed}
+            return {"status": "queued", "run_id": run.id, "workflow_id": wf_id, "resumed": resumed}
 
-        wf_id = await tracker.begin(
-            "index_repo",
-            {
-                "project_id": project_id,
-                "repo_url": project.repo_url,
-                "resumed": resumed,
-                "trigger": trigger,
-            },
-        )
         body = IndexRequest(force_full=force_full)
         task = asyncio.create_task(
             _run_index_background(project_id, project, body, wf_id, lock),
@@ -286,6 +294,7 @@ async def _spawn_repo_index(
 
     return {
         "status": "resumed" if resumed else "started",
+        "run_id": run.id,
         "workflow_id": wf_id,
         "resumed": resumed,
     }
@@ -296,11 +305,14 @@ async def run_repo_index_task(
     force_full: bool = False,
     *,
     chain_sync: bool = True,
+    wf_id: str | None = None,
 ) -> None:
     """Queue/worker entrypoint for a repo index run (no HTTP context).
 
-    Mirrors the in-process background path but loads its own project + workflow.
-    Invoked by the ARQ worker's ``run_repo_index`` task.
+    Mirrors the in-process background path but loads its own project. When ``wf_id``
+    is provided (the manual route already minted the :class:`IndexingRun`) it is
+    reused; otherwise a workflow is begun here. Invoked by the ARQ worker's
+    ``run_repo_index`` task.
     """
     async with async_session_factory() as db:
         project = await _project_svc.get(db, project_id)
@@ -310,10 +322,11 @@ async def run_repo_index_task(
                 project_id[:8],
             )
             return
-        wf_id = await tracker.begin(
-            "index_repo",
-            {"project_id": project_id, "repo_url": project.repo_url, "trigger": "queue"},
-        )
+        if wf_id is None:
+            wf_id = await tracker.begin(
+                "index_repo",
+                {"project_id": project_id, "repo_url": project.repo_url, "trigger": "queue"},
+            )
 
     lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
     body = IndexRequest(force_full=force_full)

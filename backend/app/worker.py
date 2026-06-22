@@ -177,7 +177,9 @@ async def run_code_db_sync(  # noqa: ARG001
             logger.debug("Failed to update sync_status", exc_info=True)
 
 
-async def run_repo_index(ctx: dict, *, project_id: str, force_full: bool = False) -> None:  # noqa: ARG001
+async def run_repo_index(  # noqa: ARG001
+    ctx: dict, *, project_id: str, force_full: bool = False, wf_id: str | None = None
+) -> None:
     """Background repository index for a single project (Phase 2 trigger target).
 
     Enqueued by the git webhook / cron poll / manual route when ARQ is active.
@@ -187,7 +189,7 @@ async def run_repo_index(ctx: dict, *, project_id: str, force_full: bool = False
     """
     from app.api.routes.repos import run_repo_index_task
 
-    await run_repo_index_task(project_id, force_full=force_full)
+    await run_repo_index_task(project_id, force_full=force_full, wf_id=wf_id)
 
 
 async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: str) -> None:  # noqa: ARG001
