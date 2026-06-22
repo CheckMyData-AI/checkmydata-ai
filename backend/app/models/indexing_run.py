@@ -48,9 +48,7 @@ class IndexingRun(Base):
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    cancel_requested: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="0"
-    )
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

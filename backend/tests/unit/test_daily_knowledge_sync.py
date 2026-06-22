@@ -196,5 +196,3 @@ async def test_partial_status_on_connection_failure():
     conn_steps = result.steps_json["connections"][0]
     assert conn_steps["db_index"]["status"] == "failed"
     assert conn_steps["code_db_sync"]["status"] == "skipped"
-
-
