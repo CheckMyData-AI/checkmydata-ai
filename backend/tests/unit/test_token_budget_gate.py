@@ -11,15 +11,6 @@ from app.api.routes.chat import _check_token_budget
 
 class TestCheckTokenBudget:
     @pytest.mark.asyncio
-    async def test_no_limits_configured_skips_check(self):
-        with patch("app.api.routes.chat._usage_svc") as mock_svc:
-            mock_svc.check_token_budget = AsyncMock(return_value=None)
-            result = await _check_token_budget(AsyncMock(), "u1")
-
-        assert result is None
-        mock_svc.check_token_budget.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_within_budget_allows(self):
         with patch("app.api.routes.chat._usage_svc") as mock_svc:
             mock_svc.check_token_budget = AsyncMock(return_value=None)
@@ -41,6 +32,7 @@ class TestCheckTokenBudget:
 
         assert result is not None
         assert "Daily token budget exceeded" in result
+        assert "/pricing" in result
 
     @pytest.mark.asyncio
     async def test_infrastructure_error_fails_open(self):

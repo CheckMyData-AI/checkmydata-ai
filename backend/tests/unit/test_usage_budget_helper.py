@@ -46,3 +46,16 @@ async def test_unlimited_limits_short_circuit():
         new=AsyncMock(return_value=(0, 0)),
     ):
         assert await svc.check_token_budget(db, "u1") is None
+
+
+async def test_check_budget_infra_error_fails_open():
+    svc = UsageService()
+    db = AsyncMock()
+    with (
+        patch(
+            "app.services.entitlement_service.EntitlementService.effective_token_limits",
+            new=AsyncMock(return_value=(1000, 0)),
+        ),
+        patch.object(svc, "check_budget", new=AsyncMock(side_effect=RuntimeError("db down"))),
+    ):
+        assert await svc.check_token_budget(db, "u1") is None
