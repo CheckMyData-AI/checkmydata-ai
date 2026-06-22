@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useBackgroundTasks, type BgTask } from "@/stores/background-tasks-store";
 import { useAppStore } from "@/stores/app-store";
+import { api } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import type { IconName } from "@/components/ui/Icon";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 const PIPELINE_META: Record<string, { label: string; icon: IconName }> = {
   index_repo: { label: "Repository Indexing", icon: "folder-git" },
@@ -110,6 +112,11 @@ function TaskItem({ task }: { task: BgTask }) {
                 {stepLabel}
               </span>
             )}
+            {task.status === "running" && task.totalSteps > 0 && (
+              <span className="text-[10px] text-text-tertiary tabular-nums">
+                {task.stepIndex}/{task.totalSteps}
+              </span>
+            )}
             {task.status === "completed" && (
               <span className="text-[10px] text-success/70">Completed</span>
             )}
@@ -119,12 +126,43 @@ function TaskItem({ task }: { task: BgTask }) {
               </span>
             )}
           </div>
+
+          {task.status === "running" && (
+            <div className="mt-1.5 h-1 rounded-full bg-surface-2 overflow-hidden">
+              <div
+                className="h-full bg-accent transition-[width] duration-300"
+                style={{ width: `${Math.max(2, task.progressPct)}%` }}
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
           <span className="text-[10px] text-text-muted tabular-nums">
             {elapsed}
           </span>
+          {task.status === "running" && (
+            <Tooltip label="Cancel">
+              <button
+                onClick={() => void api.runs.cancel(task.runId).catch(() => {})}
+                className="text-text-muted hover:text-error p-0.5 rounded"
+                aria-label="Cancel run"
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </Tooltip>
+          )}
+          {task.status === "failed" && (
+            <Tooltip label="Retry">
+              <button
+                onClick={() => void api.runs.retry(task.runId).catch(() => {})}
+                className="text-text-muted hover:text-accent p-0.5 rounded"
+                aria-label="Retry run"
+              >
+                <Icon name="refresh-cw" size={11} />
+              </button>
+            </Tooltip>
+          )}
           {isFinished && (
             <button
               onClick={() => dismissTask(task.runId)}
