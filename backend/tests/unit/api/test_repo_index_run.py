@@ -25,7 +25,7 @@ def test_run_repo_index_worker_accepts_wf_id(monkeypatch: pytest.MonkeyPatch):
 
         class _RedisSettings:
             @classmethod
-            def from_dsn(cls, url: str) -> "_RedisSettings":
+            def from_dsn(cls, url: str) -> _RedisSettings:
                 return cls()
 
         conn_stub.RedisSettings = _RedisSettings  # type: ignore[attr-defined]
