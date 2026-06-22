@@ -1031,10 +1031,28 @@ async def _maintenance_loop() -> None:
                 await _periodic_learning_decay()
                 await _periodic_insight_maintenance()
                 await _freshness_reconcile()
+                await _sweep_telemetry_retention()
         except asyncio.CancelledError:
             break
         except Exception:
             logger.exception("Maintenance loop iteration failed; will retry next cycle")
+
+
+async def _sweep_telemetry_retention() -> None:
+    """Trim the run-event journal and expire old error-catalog rows."""
+    from app.services.telemetry_retention import TelemetryRetention
+
+    try:
+        async with async_session_factory() as session:
+            await TelemetryRetention().sweep(
+                session,
+                ttl_days=settings.indexing_run_events_ttl_days,
+                max_per_run=settings.indexing_run_events_max_per_run,
+                error_ttl_days=settings.error_log_ttl_days,
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("Telemetry retention sweep failed", exc_info=True)
 
 
 async def _maybe_initial_backup() -> None:
