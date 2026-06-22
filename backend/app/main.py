@@ -124,6 +124,11 @@ async def lifespan(app: FastAPI):
 
     await start_workflow_event_subscriber()
 
+    # Map pipeline-emitted workflow events onto the IndexingRun projection/journal.
+    from app.services.run_coordinator import RunCoordinator
+
+    RunCoordinator().attach()
+
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
         await _maybe_initial_backup()

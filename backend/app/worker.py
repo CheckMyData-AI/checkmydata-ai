@@ -241,6 +241,9 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     redis_url = os.getenv("REDIS_URL")
     await redis_client.connect(redis_url)
     tracker.enable_cross_process_publish()
+    from app.services.run_coordinator import RunCoordinator
+
+    RunCoordinator().attach()
     from app.core.reaper_loop import reaper_loop, run_reaper_sweep
 
     await run_reaper_sweep()

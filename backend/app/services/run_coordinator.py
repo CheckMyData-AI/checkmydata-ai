@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.workflow_tracker import tracker
+from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.knowledge.run_manifests import (
     Step,
     progress_for,
@@ -29,6 +29,7 @@ from app.knowledge.run_manifests import (
     step_position,
     total_steps,
 )
+from app.models.base import async_session_factory
 from app.models.indexing_run import IndexingRun, IndexingRunEvent
 from app.services.error_log_service import ErrorLogService
 
@@ -66,6 +67,8 @@ def _manifest_flags() -> dict[str, bool]:
 
 class RunCoordinator:
     _error_log = ErrorLogService()
+    _attached = False
+    _wf_to_run: dict[str, str] = {}
 
     def __init__(self) -> None:
         self._manifests: dict[str, list[Step]] = {}
@@ -128,6 +131,7 @@ class RunCoordinator:
         await db.commit()
         await db.refresh(run)
         self._manifests[run.id] = manifest
+        RunCoordinator._wf_to_run[run.workflow_id] = run.id
         await self._record(db, run, "pipeline_start", "started", f"Starting {kind}")
         return run
 
@@ -266,3 +270,123 @@ class RunCoordinator:
         new.meta_json = json.dumps({"force_full": force_full, "retried_from": old.id})
         await db.commit()
         return new
+
+    # -- persistence hook: map pipeline-emitted workflow events onto the run ----
+
+    def attach(self) -> None:
+        """Register the run-projection persistence hook (idempotent, process-wide)."""
+        if RunCoordinator._attached:
+            return
+        tracker.add_persistence_hook(self._on_event)
+        RunCoordinator._attached = True
+
+    async def _on_event(self, event: WorkflowEvent) -> None:
+        # Guard 1: coordinator-emitted events already carry run_id and were
+        # persisted in-process by _record/finish — never double-write them.
+        if event.run_id is not None:
+            return
+        # Guard 2: cross-process echo (Redis -> API). The process that actually
+        # executes the pipeline persists the event; the receiver only relays SSE.
+        if tracker._external_rebroadcast:
+            return
+        run_id = RunCoordinator._wf_to_run.get(event.workflow_id)
+        async with async_session_factory() as db:
+            run = None
+            if run_id is not None:
+                run = await db.get(IndexingRun, run_id)
+            if run is None:
+                stmt = select(IndexingRun).where(IndexingRun.workflow_id == event.workflow_id)
+                run = (await db.execute(stmt)).scalar_one_or_none()
+            if run is None or run.status in _TERMINAL_STATUSES:
+                return
+            RunCoordinator._wf_to_run[event.workflow_id] = run.id
+            await self._apply_event(db, run, event)
+
+    async def _apply_event(self, db: AsyncSession, run: IndexingRun, event: WorkflowEvent) -> None:
+        manifest = self._manifest_for(run)
+        if event.step == "pipeline_start":
+            return
+        if event.step == "pipeline_end":
+            terminal = (
+                "cancelled"
+                if run.cancel_requested
+                else ("failed" if event.status == "failed" else "completed")
+            )
+            run.status = terminal
+            run.finished_at = _now()
+            run.heartbeat_at = _now()
+            run.version += 1
+            if terminal == "completed":
+                run.progress_pct = 100
+            elif event.detail:
+                run.error = event.detail
+            if terminal == "failed":
+                run.failure_kind = run.failure_kind or "fatal"
+            await db.commit()
+            await self._journal(
+                db,
+                run,
+                event.step,
+                terminal,
+                event.detail or "",
+                level="error" if terminal == "failed" else "info",
+            )
+            if terminal == "failed":
+                await self._error_log.upsert_from_run(db, run)
+            RunCoordinator._wf_to_run.pop(run.workflow_id, None)
+            self._manifests.pop(run.id, None)
+            return
+        try:
+            position = step_position(manifest, event.step)
+        except KeyError:
+            # Free-form detail emit (not a manifest step): journal only.
+            await self._journal(db, run, event.step, event.status, event.detail or "")
+            return
+        if event.status == "started":
+            run.current_step = event.step
+            run.step_index = position
+            run.heartbeat_at = _now()
+            await db.commit()
+            await self._journal(db, run, event.step, "started", event.detail or "")
+        elif event.status in ("completed", "skipped"):
+            run.progress_pct = progress_for(manifest, position)
+            run.heartbeat_at = _now()
+            run.version += 1
+            await db.commit()
+            await self._journal(
+                db, run, event.step, event.status, event.detail or "", elapsed_ms=event.elapsed_ms
+            )
+        elif event.status == "failed":
+            await self._journal(
+                db,
+                run,
+                event.step,
+                "failed",
+                event.detail or "",
+                elapsed_ms=event.elapsed_ms,
+                level="error",
+            )
+
+    async def _journal(
+        self,
+        db: AsyncSession,
+        run: IndexingRun,
+        step: str,
+        status: str,
+        detail: str = "",
+        *,
+        elapsed_ms: float | None = None,
+        level: str = "info",
+    ) -> None:
+        db.add(
+            IndexingRunEvent(
+                run_id=run.id,
+                step=step,
+                status=status,
+                detail=detail,
+                elapsed_ms=elapsed_ms,
+                progress_pct=run.progress_pct,
+                level=level,
+            )
+        )
+        await db.commit()
