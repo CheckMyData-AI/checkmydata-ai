@@ -88,6 +88,28 @@ class ErrorLogService:
             meta={"connection_id": run.connection_id},
         )
 
+    async def upsert_validation_failure(
+        self,
+        db: AsyncSession,
+        *,
+        project_id: str | None,
+        kind: str,
+        message: str | None,
+        sample_ref: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> ErrorLog:
+        """Catalog a data/answer validation failure (``kind`` ∈ data_gate|answer)."""
+        return await self.upsert(
+            db,
+            project_id=project_id,
+            source="span",
+            kind=kind,
+            message=message,
+            failure_kind="data_missing",
+            sample_ref=sample_ref,
+            meta=meta,
+        )
+
     async def upsert_from_trace(self, db: AsyncSession, trace: RequestTrace) -> ErrorLog:
         return await self.upsert(
             db,
