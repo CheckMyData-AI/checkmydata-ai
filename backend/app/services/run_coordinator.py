@@ -65,6 +65,43 @@ def _manifest_flags() -> dict[str, bool]:
     }
 
 
+def _aware(dt: datetime) -> datetime:
+    """Normalise to UTC-aware (SQLite reads timestamps back naive)."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _emit_terminal_metrics(run: IndexingRun) -> None:
+    """SLI counters for a run reaching a terminal state (best-effort)."""
+    try:
+        from app.core.metrics import get_metrics_collector
+
+        mc = get_metrics_collector()
+        mc.inc("indexing_runs_total", kind=run.kind, status=run.status)
+        if run.started_at and run.finished_at:
+            mc.add(
+                "indexing_run_duration_seconds",
+                (_aware(run.finished_at) - _aware(run.started_at)).total_seconds(),
+                kind=run.kind,
+            )
+    except Exception:  # noqa: BLE001 — metrics must never break a run
+        logger.debug("run terminal metrics failed", exc_info=True)
+
+
+def _emit_ttfp_metric(run: IndexingRun) -> None:
+    """Time-to-first-progress SLI: first step start relative to run start."""
+    try:
+        from app.core.metrics import get_metrics_collector
+
+        if run.started_at is not None:
+            get_metrics_collector().add(
+                "indexing_run_time_to_first_progress_seconds",
+                (_now() - _aware(run.started_at)).total_seconds(),
+                kind=run.kind,
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("ttfp metric failed", exc_info=True)
+
+
 class RunCoordinator:
     _error_log = ErrorLogService()
     _attached = False
@@ -180,6 +217,8 @@ class RunCoordinator:
 
         manifest = self._manifest_for(run)
         position = step_position(manifest, step_key)
+        if run.step_index == 0:
+            _emit_ttfp_metric(run)
         run.current_step = step_key
         run.step_index = position
         run.heartbeat_at = _now()
@@ -238,6 +277,7 @@ class RunCoordinator:
         if status == "failed":
             await self._error_log.upsert_from_run(db, run)
         self._manifests.pop(run.id, None)
+        _emit_terminal_metrics(run)
 
     async def request_cancel(self, db: AsyncSession, run_id: str) -> bool:
         run = await db.get(IndexingRun, run_id)
@@ -335,6 +375,7 @@ class RunCoordinator:
                 await self._error_log.upsert_from_run(db, run)
             RunCoordinator._wf_to_run.pop(run.workflow_id, None)
             self._manifests.pop(run.id, None)
+            _emit_terminal_metrics(run)
             return
         try:
             position = step_position(manifest, event.step)
@@ -343,6 +384,8 @@ class RunCoordinator:
             await self._journal(db, run, event.step, event.status, event.detail or "")
             return
         if event.status == "started":
+            if run.step_index == 0:
+                _emit_ttfp_metric(run)
             run.current_step = event.step
             run.step_index = position
             run.heartbeat_at = _now()
