@@ -78,10 +78,16 @@ class DailyKnowledgeSyncService:
         self._checkpoint_svc = CheckpointService()
 
     async def list_eligible_projects(self, session: AsyncSession) -> list[Project]:
+        from app.services.sync_schedule_service import SyncScheduleService
+
+        sched = SyncScheduleService()
         projects = await self._project_svc.list_all(session)
         eligible: list[Project] = []
         for project in projects:
             if not project.repo_url:
+                continue
+            eff = await sched.effective(session, project.id)
+            if not eff["enabled"]:
                 continue
             connections = await self._active_connections(session, project.id)
             if connections:
