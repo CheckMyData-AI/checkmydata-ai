@@ -4,6 +4,7 @@ Drives McpAuthMiddleware with two different tokens and asserts each request
 sees its own principal — something the env-var-based auth tests cannot prove.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -57,4 +58,27 @@ async def test_invalid_token_is_401_and_leaves_no_principal():
             r = await client.post("/mcp", headers={"Authorization": "Bearer cmd_mcp_NOPE"})
     assert r.status_code == 401
     # ContextVar must be clean after the request (no leakage across requests).
+    assert runtime.current_principal.get() is None
+
+
+async def test_concurrent_requests_keep_isolated_principals():
+    """Prove that concurrent requests do not cross-contaminate principals.
+
+    Guards against a class of bug where the principal ContextVar is set on the
+    wrong asyncio Task — the exact failure mode pure-ASGI middleware was chosen
+    to avoid. This test runs two requests concurrently with different tokens
+    and asserts each sees its own principal without interference.
+    """
+    app = McpAuthMiddleware(_echo_principal_app)
+    transport = httpx.ASGITransport(app=app)
+    patch_target = "app.mcp_server.asgi.auth.authenticate"
+    with patch(patch_target, new=AsyncMock(side_effect=_fake_authenticate)):
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            ra, rb = await asyncio.gather(
+                client.post("/mcp", headers={"Authorization": "Bearer cmd_mcp_AAA"}),
+                client.post("/mcp", headers={"Authorization": "Bearer cmd_mcp_BBB"}),
+            )
+    assert ra.text == "user-a"
+    assert rb.text == "user-b"
+    # ContextVar must be clean after both requests complete.
     assert runtime.current_principal.get() is None
