@@ -100,3 +100,37 @@ async def test_step_emits_failed_event_then_reraises(session: AsyncSession):
     )
     statuses = [(e.step, e.status) for e in events]
     assert ("introspect_schema", "failed") in statuses
+
+
+# --- finish --------------------------------------------------------------
+
+
+async def test_finish_completed_sets_terminal_state(session: AsyncSession):
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="db_index", project_id="p5", connection_id="c1")
+    await coord.finish(session, run, "completed")
+    await session.refresh(run)
+    assert run.status == "completed"
+    assert run.progress_pct == 100
+    assert run.finished_at is not None
+
+
+async def test_finish_failed_upserts_error_log_and_dedups(session: AsyncSession):
+    from app.models.error_log import ErrorLog
+
+    coord = RunCoordinator()
+    r1 = await coord.start(session, kind="db_index", project_id="p6", connection_id="c1")
+    await coord.finish(
+        session, r1, "failed", error="connection refused on host 12", failure_kind="transient"
+    )
+    r2 = await coord.start(session, kind="db_index", project_id="p6", connection_id="c1")
+    await coord.finish(
+        session, r2, "failed", error="connection refused on host 99", failure_kind="transient"
+    )
+
+    rows = (
+        (await session.execute(select(ErrorLog).where(ErrorLog.project_id == "p6"))).scalars().all()
+    )
+    assert len(rows) == 1  # digit-skeleton dedup collapses host 12/99
+    assert rows[0].occurrences == 2
+    assert rows[0].source == "run"

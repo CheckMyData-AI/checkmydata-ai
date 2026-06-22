@@ -30,6 +30,7 @@ from app.knowledge.run_manifests import (
     total_steps,
 )
 from app.models.indexing_run import IndexingRun, IndexingRunEvent
+from app.services.error_log_service import ErrorLogService
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,8 @@ def _manifest_flags() -> dict[str, bool]:
 
 
 class RunCoordinator:
+    _error_log = ErrorLogService()
+
     def __init__(self) -> None:
         self._manifests: dict[str, list[Step]] = {}
 
@@ -195,3 +198,39 @@ class RunCoordinator:
             run.heartbeat_at = _now()
             await db.commit()
             await self._record(db, run, step_key, "completed", elapsed_ms=elapsed)
+
+    async def finish(
+        self,
+        db: AsyncSession,
+        run: IndexingRun,
+        status: str,
+        error: str | None = None,
+        failure_kind: str | None = None,
+    ) -> None:
+        run.status = status
+        run.finished_at = _now()
+        run.heartbeat_at = _now()
+        run.version += 1
+        if status == "completed":
+            run.progress_pct = 100
+        if error is not None:
+            run.error = error
+        if failure_kind is not None:
+            run.failure_kind = failure_kind
+        await db.commit()
+        # Journal the terminal event directly; tracker.end emits the canonical SSE.
+        db.add(
+            IndexingRunEvent(
+                run_id=run.id,
+                step="pipeline_end",
+                status=status,
+                detail=error or f"Pipeline {run.kind} {status}",
+                progress_pct=run.progress_pct,
+                level="error" if status == "failed" else "info",
+            )
+        )
+        await db.commit()
+        await tracker.end(run.workflow_id, run.kind, status, error or "")
+        if status == "failed":
+            await self._error_log.upsert_from_run(db, run)
+        self._manifests.pop(run.id, None)
