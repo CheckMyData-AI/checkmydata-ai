@@ -172,6 +172,9 @@ async def lifespan(app: FastAPI):
         yield
 
     await _trace_svc.stop()
+    from app.mcp_server import runtime as _mcp_runtime_shutdown
+
+    _mcp_runtime_shutdown.set_trace_service(None)
 
     for task in (
         _backup_task,

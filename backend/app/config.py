@@ -528,6 +528,12 @@ class Settings(BaseSettings):
     mcp_mount_enabled: bool = False
     mcp_mount_path: str = "/mcp"
 
+    # Host allow-list for the mounted MCP HTTP endpoint's DNS-rebinding
+    # protection (TransportSecuritySettings.allowed_hosts).  Empty list =
+    # protection disabled (permissive / backwards-compatible default).
+    # Example: ["api.checkmydata.ai", "localhost:8000"]
+    mcp_allowed_hosts: list[str] = []
+
     # GeoIP cache settings
     geoip_cache_enabled: bool = True
     geoip_cache_dir: str = "./data"

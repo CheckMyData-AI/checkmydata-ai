@@ -22,8 +22,10 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
+from app.config import settings
 from app.core.agent_limiter import agent_limiter
 from app.mcp_server import auth, runtime, tools
 from app.mcp_server import resources as res
@@ -105,6 +107,14 @@ _PING = ToolAnnotations(
 
 def create_mcp_server() -> FastMCP:
     """Build and return the configured MCP server instance."""
+    # DNS-rebinding protection: enabled only when mcp_allowed_hosts is non-empty
+    # so the default (empty list) is fully permissive and cannot lock out the
+    # endpoint on existing deployments.
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(settings.mcp_allowed_hosts),
+        allowed_hosts=settings.mcp_allowed_hosts,
+        allowed_origins=settings.cors_origins,
+    )
     mcp = FastMCP(
         "checkmydata-mcp",
         instructions=(
@@ -113,6 +123,9 @@ def create_mcp_server() -> FastMCP:
             "Every call is authorized against project membership; raw SQL is "
             "only accepted on connections explicitly marked read-only."
         ),
+        stateless_http=True,
+        json_response=True,
+        transport_security=transport_security,
     )
 
     # ------------------------------------------------------------------

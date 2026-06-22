@@ -575,6 +575,63 @@ class TestMCPResources:
 # ---------------------------------------------------------------------------
 
 
+class TestMCPTransportContract:
+    """Spec §3: stateless streamable-HTTP + DNS-rebinding guard defaults."""
+
+    def test_stateless_http_and_json_response_enabled(self):
+        """create_mcp_server() MUST produce a stateless, JSON-response server
+        so it is safe behind a load balancer (multi-dyno Heroku)."""
+        from app.mcp_server.server import create_mcp_server
+
+        server = create_mcp_server()
+        assert server.settings.stateless_http is True, (
+            "stateless_http must be True for horizontal scaling"
+        )
+        assert server.settings.json_response is True, (
+            "json_response must be True for stateless streamable-HTTP"
+        )
+
+    def test_empty_mcp_allowed_hosts_disables_dns_rebinding_protection(self):
+        """When MCP_ALLOWED_HOSTS is empty the endpoint must NOT lock itself
+        out via host validation — enable_dns_rebinding_protection must be
+        False (permissive default)."""
+        from unittest.mock import patch
+
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        from app.mcp_server.server import create_mcp_server
+
+        with patch("app.mcp_server.server.settings") as mock_settings:
+            mock_settings.mcp_allowed_hosts = []
+            mock_settings.cors_origins = []
+            server = create_mcp_server()
+
+        ts: TransportSecuritySettings = server.settings.transport_security
+        assert ts is not None, "transport_security must be set"
+        assert ts.enable_dns_rebinding_protection is False, (
+            "empty mcp_allowed_hosts must leave DNS-rebinding protection OFF "
+            "to avoid locking out the endpoint on default/legacy deployments"
+        )
+
+    def test_non_empty_mcp_allowed_hosts_enables_dns_rebinding_protection(self):
+        """When MCP_ALLOWED_HOSTS is non-empty, protection should be ON."""
+        from unittest.mock import patch
+
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        from app.mcp_server.server import create_mcp_server
+
+        with patch("app.mcp_server.server.settings") as mock_settings:
+            mock_settings.mcp_allowed_hosts = ["api.checkmydata.ai"]
+            mock_settings.cors_origins = ["https://app.checkmydata.ai"]
+            server = create_mcp_server()
+
+        ts: TransportSecuritySettings = server.settings.transport_security
+        assert ts.enable_dns_rebinding_protection is True
+        assert "api.checkmydata.ai" in ts.allowed_hosts
+        assert "https://app.checkmydata.ai" in ts.allowed_origins
+
+
 class TestMCPServerCreation:
     def test_create_mcp_server_returns_fastmcp_instance(self):
         from mcp.server.fastmcp import FastMCP
