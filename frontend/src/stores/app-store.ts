@@ -71,6 +71,26 @@ export function getPersistedId(key: string): string | null {
   }
 }
 
+const LAST_VIEW_KEY = "last_view_by_project";
+
+function readLastViews(): Record<string, string> {
+  try {
+    if (typeof window === "undefined") return {};
+    return JSON.parse(localStorage.getItem(LAST_VIEW_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function persistLastViews(map: Record<string, string>) {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(LAST_VIEW_KEY, JSON.stringify(map));
+  } catch {
+    /* QuotaExceededError — view memory persists only for this session */
+  }
+}
+
 interface ReadinessCacheEntry {
   ready: boolean;
   checkedAt: number;
@@ -133,6 +153,8 @@ interface AppState {
   addSessionUsage: (tokens: number, cost: number) => void;
   resetSessionUsage: () => void;
   setLogsOpen: (open: boolean) => void;
+  lastViewByProject: Record<string, string>;
+  setLastView: (projectId: string, view: string) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -159,6 +181,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionTokens: 0,
   sessionCost: 0,
   logsOpen: false,
+  lastViewByProject: readLastViews(),
+
+  setLastView: (projectId, view) =>
+    set((state) => {
+      const next = { ...state.lastViewByProject, [projectId]: view };
+      persistLastViews(next);
+      return { lastViewByProject: next };
+    }),
 
   setSshKeys: (keys) => set({ sshKeys: keys }),
   setProjects: (projects) => set({ projects }),
