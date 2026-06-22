@@ -1,8 +1,9 @@
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from starlette.applications import Starlette
 
-from app.mcp_server.asgi import McpAuthMiddleware, get_mcp_instance
+from app.mcp_server.asgi import McpAuthMiddleware, build_mounted_mcp_app, get_mcp_instance
 
 
 def test_get_mcp_instance_is_singleton():
@@ -45,3 +46,35 @@ async def test_valid_bearer_sets_principal():
             r = await client.post("/mcp", headers={"Authorization": "Bearer cmd_mcp_abc"})
     assert r.status_code == 200
     assert r.text == "tok-user"
+
+
+def test_build_mounted_mcp_app_has_auth_middleware():
+    app = build_mounted_mcp_app()
+    assert isinstance(app, Starlette)
+    assert any(m.cls is McpAuthMiddleware for m in app.user_middleware)
+
+
+async def test_unexpected_auth_error_is_fail_closed():
+    inner_called = []
+
+    async def _recording_inner(scope, receive, send):
+        inner_called.append(True)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = McpAuthMiddleware(_recording_inner)
+    transport = httpx.ASGITransport(app=app)
+    with patch(
+        "app.mcp_server.asgi._resolve_principal",
+        new=AsyncMock(side_effect=RuntimeError("unexpected db error")),
+    ):
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            r = await client.post("/mcp", headers={"Authorization": "Bearer some-token"})
+    assert r.status_code == 401
+    assert inner_called == [], "inner app must NOT be reached on unexpected auth error"

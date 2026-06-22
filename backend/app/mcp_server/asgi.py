@@ -65,6 +65,10 @@ class McpAuthMiddleware:
         except auth.MCPAuthError as exc:
             await self._unauthorized(send, str(exc))
             return
+        except Exception:
+            logger.exception("MCP auth: unexpected error resolving token")
+            await self._unauthorized(send, "Internal authentication error")
+            return
         token = runtime.current_principal.set(principal)
         try:
             await self.app(scope, receive, send)
