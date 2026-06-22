@@ -22,9 +22,12 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-from app.mcp_server import auth, tools
+from app.config import settings
+from app.core.agent_limiter import agent_limiter
+from app.mcp_server import auth, runtime, tools
 from app.mcp_server import resources as res
 
 logger = logging.getLogger(__name__)
@@ -34,28 +37,41 @@ async def _with_principal(
     run: Callable[[dict], Awaitable[str]],
     *,
     tool_name: str | None = None,
+    limited: bool = False,
 ) -> str:
     """Resolve the caller's identity, then run a tool bound to that principal.
 
-    Every tool goes through here so no tool can execute without an
-    authenticated, authorized principal. Auth failures are returned as a JSON
-    error rather than raised, matching the tools' error contract. Callers
-    pass ``tool_name`` so log lines carry the real tool identity instead of
-    ``<lambda>`` from the wrapping closure.
+    Identity comes from the request-scoped ContextVar set by the HTTP auth
+    middleware; absent that (stdio), we fall back to env-based ``authenticate``.
+    When ``limited`` is set the call is gated by the per-user agent limiter
+    (shared with chat) for concurrency + hourly caps.
     """
     name = tool_name or getattr(run, "__name__", "anonymous-tool")
-    try:
-        principal = await auth.authenticate()
-    except auth.MCPAuthError as exc:
-        logger.warning("MCP tool %s rejected: auth failed (%s)", name, exc)
-        return json.dumps({"error": str(exc)})
-    logger.info("MCP tool %s starting (user=%s)", name, principal.get("user_id"))
+    principal = runtime.current_principal.get()
+    if principal is None:
+        try:
+            principal = await auth.authenticate()
+        except auth.MCPAuthError as exc:
+            logger.warning("MCP tool %s rejected: auth failed (%s)", name, exc)
+            return json.dumps({"error": str(exc)})
+
+    user_id = principal.get("user_id") or ""
+    if limited:
+        rejection = await agent_limiter.acquire(user_id)
+        if rejection:
+            logger.info("MCP tool %s rate-limited (user=%s)", name, user_id)
+            return json.dumps({"error": rejection})
+
+    logger.info("MCP tool %s starting (user=%s)", name, user_id)
     try:
         result = await run(principal)
     except Exception:
         logger.exception("MCP tool %s crashed", name)
         return json.dumps({"error": "Internal tool error"})
-    logger.info("MCP tool %s ok (user=%s)", name, principal.get("user_id"))
+    finally:
+        if limited:
+            await agent_limiter.release(user_id)
+    logger.info("MCP tool %s ok (user=%s)", name, user_id)
     return result
 
 
@@ -91,6 +107,14 @@ _PING = ToolAnnotations(
 
 def create_mcp_server() -> FastMCP:
     """Build and return the configured MCP server instance."""
+    # DNS-rebinding protection: enabled only when mcp_allowed_hosts is non-empty
+    # so the default (empty list) is fully permissive and cannot lock out the
+    # endpoint on existing deployments.
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(settings.mcp_allowed_hosts),
+        allowed_hosts=settings.mcp_allowed_hosts,
+        allowed_origins=settings.cors_origins,
+    )
     mcp = FastMCP(
         "checkmydata-mcp",
         instructions=(
@@ -99,6 +123,9 @@ def create_mcp_server() -> FastMCP:
             "Every call is authorized against project membership; raw SQL is "
             "only accepted on connections explicitly marked read-only."
         ),
+        stateless_http=True,
+        json_response=True,
+        transport_security=transport_security,
     )
 
     # ------------------------------------------------------------------
@@ -145,6 +172,7 @@ def create_mcp_server() -> FastMCP:
         return await _with_principal(
             lambda p: tools.query_database(p, project_id, question, connection_id),
             tool_name="checkmydata_query_database",
+            limited=True,
         )
 
     @mcp.tool(
@@ -162,6 +190,7 @@ def create_mcp_server() -> FastMCP:
         return await _with_principal(
             lambda p: tools.search_codebase(p, project_id, question),
             tool_name="checkmydata_search_codebase",
+            limited=True,
         )
 
     @mcp.tool(
@@ -257,6 +286,7 @@ def create_mcp_server() -> FastMCP:
         return await _with_principal(
             lambda p: tools.execute_raw_query(p, connection_id, query),
             tool_name="checkmydata_execute_raw_query",
+            limited=True,
         )
 
     # ------------------------------------------------------------------

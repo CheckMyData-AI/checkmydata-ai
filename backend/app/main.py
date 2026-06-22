@@ -151,6 +151,10 @@ async def lifespan(app: FastAPI):
     await _trace_svc.start()
     app.state.trace_persistence_service = _trace_svc
 
+    from app.mcp_server import runtime as _mcp_runtime
+
+    _mcp_runtime.set_trace_service(_trace_svc)
+
     try:
         llm_router_startup = chat._agent._orchestrator._llm
         await llm_router_startup.start_health_checks()
@@ -158,9 +162,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.debug("Could not start LLM health checks", exc_info=True)
 
-    yield
+    from contextlib import AsyncExitStack
+
+    async with AsyncExitStack() as _mcp_stack:
+        if settings.mcp_enabled and settings.mcp_mount_enabled:
+            from app.mcp_server.asgi import get_mcp_instance
+
+            await _mcp_stack.enter_async_context(get_mcp_instance().session_manager.run())
+        yield
 
     await _trace_svc.stop()
+    from app.mcp_server import runtime as _mcp_runtime_shutdown
+
+    _mcp_runtime_shutdown.set_trace_service(None)
 
     for task in (
         _backup_task,
@@ -266,6 +280,12 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+if settings.mcp_enabled and settings.mcp_mount_enabled:
+    from app.mcp_server.asgi import build_mounted_mcp_app
+
+    app.mount(settings.mcp_mount_path, build_mounted_mcp_app())
+    logger.info("MCP server mounted at %s", settings.mcp_mount_path)
 
 
 @app.exception_handler(ValueError)

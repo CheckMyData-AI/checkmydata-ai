@@ -28,6 +28,7 @@ from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
+from app.services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ _project_svc = ProjectService()
 _connection_svc = ConnectionService()
 _db_index_svc = DbIndexService()
 _membership_svc = MembershipService()
+_usage_svc = UsageService()
 
 
 # Pagination defaults align with MCP best-practices (20–50 items typical).
@@ -74,16 +76,12 @@ async def _require_connection_access(session, connection_id: str, user_id: str):
 
 
 def _get_trace_svc():
-    """Best-effort retrieval of the global TracePersistenceService."""
-    try:
-        import app.main as _main_mod
+    """Trace persistence service, populated by the FastAPI lifespan when the
+    MCP app is mounted. Returns ``None`` in standalone/stdio mode (traces are
+    then skipped explicitly rather than via a fragile app.main reach-through)."""
+    from app.mcp_server import runtime
 
-        _app = getattr(_main_mod, "app", None)
-        if _app:
-            return getattr(_app.state, "trace_persistence_service", None)
-    except Exception:
-        pass
-    return None
+    return runtime.get_trace_service()
 
 
 def _make_orchestrator() -> OrchestratorAgent:
@@ -272,6 +270,10 @@ async def query_database(
         else:
             conn = connections[0]
 
+        budget_error = await _usage_svc.check_token_budget(session, user_id)
+        if budget_error:
+            return json.dumps({"error": budget_error})
+
         config = await _connection_svc.to_config(session, conn)
         config.connection_id = conn.id
 
@@ -324,6 +326,10 @@ async def search_codebase(principal: dict, project_id: str, question: str) -> st
             await _require_project_access(session, project_id, user_id)
         except _AccessDeniedError as exc:
             return json.dumps({"error": str(exc)})
+
+        budget_error = await _usage_svc.check_token_budget(session, user_id)
+        if budget_error:
+            return json.dumps({"error": budget_error})
 
     wf_id = await _singleton_tracker.begin(
         "mcp_search_codebase",

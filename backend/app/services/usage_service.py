@@ -115,6 +115,33 @@ class UsageService:
 
         return result
 
+    async def check_token_budget(self, db: AsyncSession, user_id: str) -> str | None:
+        """Return an error message when the user's token budget is exhausted,
+        else ``None``. Budget *checks* fail open (infra error must not take the
+        agent down); budget *breaches* always block. Limits come from plan
+        entitlements with a config fallback — the strictest non-zero wins.
+        """
+        try:
+            from app.services.entitlement_service import EntitlementService
+
+            daily, monthly = await EntitlementService().effective_token_limits(db, user_id)
+        except Exception:
+            logger.warning("Entitlement lookup failed; using config limits", exc_info=True)
+            from app.config import settings
+
+            daily = settings.user_daily_token_limit
+            monthly = settings.user_monthly_token_limit
+        if not daily and not monthly:
+            return None
+        try:
+            await self.check_budget(db, user_id, daily_limit=daily, monthly_limit=monthly)
+        except BudgetExceededError as exc:
+            logger.warning("Token budget exceeded for user=%s: %s", user_id[:8], exc)
+            return str(exc) + " — upgrade your plan at /pricing to continue."
+        except Exception:
+            logger.warning("Token budget check failed; allowing request", exc_info=True)
+        return None
+
     async def get_period_comparison(
         self,
         db: AsyncSession,
