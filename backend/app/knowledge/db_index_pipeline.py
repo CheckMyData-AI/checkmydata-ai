@@ -274,9 +274,10 @@ class DbIndexPipeline:
         *,
         preferred_provider: str | None = None,
         model: str | None = None,
+        wf_id: str | None = None,
     ) -> dict:
         """Run the full database indexing pipeline. Returns status dict."""
-        wf_id = await self._tracker.begin(
+        wf_id = wf_id or await self._tracker.begin(
             "db_index",
             {
                 "connection_id": connection_id,

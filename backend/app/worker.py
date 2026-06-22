@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> None:  # noqa: ARG001
+async def run_db_index(  # noqa: ARG001
+    ctx: dict, *, connection_id: str, project_id: str, wf_id: str
+) -> None:
     """Background DB index for a single connection."""
     from app.models.base import async_session_factory
     from app.services.connection_service import ConnectionService
@@ -57,6 +59,7 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
             connection_id=connection_id,
             connection_config=config,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
