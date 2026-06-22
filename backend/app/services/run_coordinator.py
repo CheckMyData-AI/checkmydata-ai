@@ -100,7 +100,7 @@ class RunCoordinator:
     ) -> IndexingRun:
         existing = await self._find_active(db, project_id, kind, connection_id)
         if existing is not None:
-            raise RunAlreadyActive(existing.id)
+            raise RunAlreadyActiveError(existing.id)
 
         manifest = resolve_manifest(kind, flags=_manifest_flags())
         wf_id = await tracker.begin(
