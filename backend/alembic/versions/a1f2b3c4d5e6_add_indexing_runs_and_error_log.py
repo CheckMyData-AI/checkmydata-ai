@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("detail", sa.Text(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("failure_kind", sa.String(length=20), nullable=True),
-        sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default="0"),
         sa.Column("version", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
