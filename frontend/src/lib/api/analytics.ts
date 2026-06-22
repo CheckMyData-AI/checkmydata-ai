@@ -5,6 +5,7 @@ import type {
   CatalogMetricDTO,
   DataGraphMetric,
   DataGraphRelationship,
+  ErrorLogItem,
   ExplorationReportDTO,
   InsightDTO,
   LagResultDTO,
@@ -16,6 +17,7 @@ import type {
   NormalizationResultDTO,
   OpportunityDTO,
   ReconciliationReportDTO,
+  RunHistoryItem,
   TemporalReportDTO,
 } from "./types";
 
@@ -184,6 +186,44 @@ export const logs = {
     request<LogTraceDetail>(`/logs/${projectId}/requests/${traceId}`),
   getSummary: (projectId: string, days: number = 7) =>
     request<LogSummary>(`/logs/${projectId}/summary?days=${days}`),
+  errors: (
+    projectId: string,
+    params: {
+      source?: string;
+      kind?: string;
+      failure_kind?: string;
+      status?: string;
+      date_from?: string;
+      date_to?: string;
+      page?: number;
+      page_size?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return request<{
+      items: ErrorLogItem[];
+      total: number;
+      page: number;
+      page_size: number;
+    }>(`/logs/${projectId}/errors${q ? `?${q}` : ""}`);
+  },
+  updateError: (projectId: string, id: string, status: string) =>
+    request<{ ok: boolean }>(`/logs/${projectId}/errors/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  runs: (projectId: string, params: { kind?: string; status?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return request<RunHistoryItem[]>(`/logs/${projectId}/runs${q ? `?${q}` : ""}`);
+  },
 };
 
 export const dataGraph = {

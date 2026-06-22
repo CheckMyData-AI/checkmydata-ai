@@ -357,10 +357,18 @@ export interface KnowledgeHealth {
   };
 }
 
-export interface RepoPipelineStatus {
+export interface RunProgressFields {
+  run_id?: string | null;
+  workflow_id?: string | null;
+  current_step?: string | null;
+  step_index?: number;
+  total_steps?: number;
+  progress_pct?: number;
+  failure_kind?: string | null;
+}
+
+export interface RepoPipelineStatus extends RunProgressFields {
   is_indexing: boolean;
-  checkpoint_status: string | null;
-  workflow_id: string | null;
   last_indexed_at: string | null;
   last_indexed_commit: string | null;
 }
@@ -368,18 +376,18 @@ export interface RepoPipelineStatus {
 export interface ConnectionPipelineStatus {
   connection_id: string;
   connection_name: string;
-  db_index: {
+  db_index: RunProgressFields & {
     is_indexing: boolean;
-    indexing_status: string;
-    indexed_at: string | null;
-    table_count: number;
+    indexing_status?: string;
+    indexed_at?: string | null;
+    table_count?: number;
   };
-  code_db_sync: {
+  code_db_sync: RunProgressFields & {
     is_syncing: boolean;
-    sync_status: string;
-    synced_at: string | null;
-    total_tables: number;
-    synced_tables: number;
+    sync_status?: string;
+    synced_at?: string | null;
+    total_tables?: number;
+    synced_tables?: number;
   };
 }
 
@@ -388,6 +396,56 @@ export interface PipelineStatusResponse {
   repo: RepoPipelineStatus;
   connections: ConnectionPipelineStatus[];
   any_running: boolean;
+}
+
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RunTask {
+  runId: string;
+  workflowId: string;
+  kind: string;
+  status: RunStatus;
+  projectId: string;
+  connectionId: string | null;
+  currentStep: string;
+  stepIndex: number;
+  totalSteps: number;
+  progressPct: number;
+  error?: string;
+  startedAt: number;
+  source: "sse" | "poll" | "optimistic";
+}
+
+export interface RunHistoryItem {
+  id: string;
+  kind: string;
+  status: RunStatus;
+  trigger: string;
+  progress_pct: number;
+  connection_id: string | null;
+  error: string | null;
+  failure_kind: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ErrorLogItem {
+  id: string;
+  source: string;
+  kind: string;
+  failure_kind: string | null;
+  message: string;
+  occurrences: number;
+  status: "open" | "acknowledged" | "resolved";
+  sample_ref: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
 }
 
 export interface LLMModel {

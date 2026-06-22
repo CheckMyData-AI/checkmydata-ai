@@ -11,6 +11,11 @@ export interface WorkflowEvent {
   timestamp: number;
   pipeline: string;
   extra: Record<string, unknown>;
+  run_id?: string;
+  kind?: string;
+  step_index?: number;
+  total_steps?: number;
+  progress_pct?: number;
 }
 
 export type WorkflowEventHandler = (event: WorkflowEvent) => void;

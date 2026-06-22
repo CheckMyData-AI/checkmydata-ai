@@ -17,6 +17,7 @@ import { billing } from "./billing";
 import { projects } from "./projects";
 import { connections } from "./connections";
 import { chat } from "./chat";
+import { runs } from "./runs";
 import {
   batch,
   dashboards,
@@ -68,6 +69,7 @@ export {
   reconciliation,
   repos,
   rules,
+  runs,
   schedules,
   semanticLayer,
   sshKeys,
@@ -86,6 +88,7 @@ export const api = {
   chat,
   sshKeys,
   repos,
+  runs,
   rules,
   invites,
   notes,
