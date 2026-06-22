@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server: remote multi-tenant HTTP mount.** The MCP server can now be
+  mounted into the FastAPI app as an ASGI sub-app at `/mcp` (streamable-HTTP,
+  stateless), gated behind **both** `MCP_ENABLED` and the new
+  `MCP_MOUNT_ENABLED` (default off — enabling the stdio surface no longer
+  exposes the network endpoint). On the mounted transport, every request is
+  authenticated **per request**: a pure-ASGI `McpAuthMiddleware` resolves the
+  `Authorization: Bearer` token (`cmd_mcp_…` or JWT; `X-API-Key` fallback) to a
+  principal carried in a `ContextVar`, so two clients with two tokens resolve to
+  two different users — closing the prior gap where the network transport bound
+  every caller to one env-configured user. Fails closed (`401` +
+  `WWW-Authenticate: Bearer`) on missing/invalid/errored auth. New config:
+  `MCP_MOUNT_ENABLED`, `MCP_MOUNT_PATH` (default `/mcp`), `MCP_ALLOWED_HOSTS`
+  (opt-in DNS-rebinding Host validation; empty = permissive). Transport runs
+  `stateless_http=True, json_response=True` for horizontal scaling. The stdio
+  entry point (`python -m app.mcp_server`) is unchanged. New tests prove
+  per-request isolation under both sequential and concurrent (`asyncio.gather`)
+  load. Design/plan: `docs/superpowers/specs/2026-06-22-mcp-server-hardening-design.md`,
+  `docs/superpowers/plans/2026-06-22-mcp-remote-hardening.md`.
+
+### Changed
+
+- **MCP agent tools enforce token budgets + concurrency.**
+  `checkmydata_query_database` and `checkmydata_search_codebase` now run the
+  shared token-budget gate before invoking the orchestrator (returning an
+  upgrade hint when a plan's budget is exhausted), and all three agent-invoking
+  tools acquire a per-user slot from the existing `agent_limiter` (concurrency +
+  hourly cap, shared with chat). The budget gate logic was extracted from the
+  chat route into `UsageService.check_token_budget` so both surfaces share one
+  implementation (chat behaviour unchanged). MCP request traces now persist
+  under the mount via a runtime trace-service holder, replacing the
+  `app.main` reach-through that never resolved in the standalone process.
+
+### Fixed
+
+- Pinned `mcp` to exactly `==1.27.2` (was `>=1.2.0`) for CI reproducibility,
+  matching the ruff/mypy pinning convention.
+
 ## [1.14.0] - 2026-06-21 - Audit remediation, MCP tokens & sync-workflow reliability
 
 ### Added

@@ -181,7 +181,7 @@ Admin-only endpoints gated by `ADMIN_EMAILS` in config (backup trigger, cluster 
 - `Project` is the workspace boundary. `ProjectMember` carries roles (owner/editor/viewer); every project-scoped route must check membership via `app/api/deps.py`.
 - DB credentials are Fernet-encrypted at rest with `MASTER_ENCRYPTION_KEY`; the key is required to even boot.
 - SSH: `SSH_HOST_KEY_POLICY` defaults to `tofu` and **fail-closes** to `strict` on unknown values. `SSH_PRE_COMMAND_ALLOWLIST_ENABLED` validates pre-commands against an allowlist. Security-sensitive: `backend/app/connectors/ssh_tunnel.py`, `app/services/ssh_key_service.py`, `app/connectors/ssh_pre_commands.py`.
-- MCP server (`backend/app/mcp_server/`) is **off by default** (`MCP_ENABLED`). Two auth modes coexist: (1) per-user `cmd_mcp_…` tokens minted via `/api/auth/mcp-tokens` (recommended; resolved by SHA-256 hash to the issuing user), and (2) a server-level `CHECKMYDATA_API_KEY` bound to `MCP_API_KEY_USER_ID` for single-tenant self-hosted deployments. A revoked/expired per-user token never silently falls through to the server key. MCP resources reuse the tools' principal/ownership checks. Tool names are prefixed `checkmydata_*` to avoid collisions with other MCP servers. See `docs/MCP_SERVER.md` for the integration guide and `.claude/skills/checkmydata-mcp/SKILL.md` for the drop-in agent skill.
+- MCP server (`backend/app/mcp_server/`) is **off by default** (`MCP_ENABLED`). Two auth modes coexist: (1) per-user `cmd_mcp_…` tokens minted via `/api/auth/mcp-tokens` (recommended; resolved by SHA-256 hash to the issuing user), and (2) a server-level `CHECKMYDATA_API_KEY` bound to `MCP_API_KEY_USER_ID` for single-tenant self-hosted deployments. A revoked/expired per-user token never silently falls through to the server key. For **remote multi-tenant** use the server can be ASGI-mounted into the API at `/mcp` (`MCP_MOUNT_ENABLED`, default off — requires `MCP_ENABLED` too), where a pure-ASGI middleware resolves the bearer token **per request** to a principal carried in a `ContextVar` (many users, one endpoint, each scoped to their own projects; the standalone `--transport streamable-http` mode is single-principal/env-bound). The mounted transport is stateless; `MCP_ALLOWED_HOSTS` opt-in enables DNS-rebinding Host validation. MCP agent tools also run the shared token-budget gate (`UsageService.check_token_budget`) and acquire `agent_limiter` concurrency slots. MCP resources reuse the tools' principal/ownership checks. Tool names are prefixed `checkmydata_*` to avoid collisions with other MCP servers. See `docs/MCP_SERVER.md` for the integration guide and `.claude/skills/checkmydata-mcp/SKILL.md` for the drop-in agent skill.
 
 ### Billing & entitlements
 
@@ -255,7 +255,7 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 
 **Platform / security:**
 
-`billing_enabled`, `mcp_enabled`, `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).
+`billing_enabled`, `mcp_enabled`, `mcp_mount_enabled` (HTTP mount, requires `mcp_enabled`), `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).
 
 **Crash recovery / heartbeat:**
 

@@ -105,19 +105,43 @@ Token shape:
 
 ## Transports
 
+### stdio (default — desktop / IDE clients)
+
 ```bash
-# stdio (default — Claude Desktop, Cursor, local dev)
 MCP_ENABLED=true CHECKMYDATA_API_KEY=cmd_mcp_... \
   python -m app.mcp_server
-
-# streamable HTTP (remote / multi-client)
-MCP_ENABLED=true CHECKMYDATA_API_KEY=cmd_mcp_... \
-  python -m app.mcp_server --transport streamable-http --port 8100
 ```
 
-- `stdio` — preferred for desktop / IDE clients. No HTTP, no network.
-- `streamable-http` — preferred for remote / multi-client deployments.
-- `sse` — legacy, kept only for older clients; prefer streamable HTTP.
+Each client runs **its own** server process with **its own** token in the
+environment — identity is that per-process token. No HTTP, no network.
+Preferred for Claude Desktop, Cursor, and local dev.
+
+### Mounted HTTP (remote multi-tenant)
+
+For a shared remote endpoint, the MCP server is mounted into the main API
+process as an ASGI sub-app at `MCP_MOUNT_PATH` (default `/mcp`), gated behind
+**both** flags (so turning on the stdio surface does not auto-expose the
+network endpoint):
+
+```bash
+MCP_ENABLED=true MCP_MOUNT_ENABLED=true \
+  uvicorn app.main:app          # the normal API process; /mcp is mounted
+```
+
+Here identity is resolved **per request**: the `Authorization: Bearer <token>`
+(a `cmd_mcp_…` token or a JWT — `X-API-Key` is also accepted) is resolved to a
+principal for *that request only* and carried in a `ContextVar`, so many users
+share one endpoint and each is scoped to their own projects. Missing, invalid,
+or errored auth **fails closed** with `401` + `WWW-Authenticate: Bearer`. The
+transport is stateless (`stateless_http`, `json_response`) for horizontal
+scaling; set `MCP_ALLOWED_HOSTS` to enable DNS-rebinding Host validation
+(empty = permissive). Agent tools additionally enforce the per-user token
+budget and concurrency limits.
+
+> ⚠️ The standalone `python -m app.mcp_server --transport streamable-http` mode
+> still exists but binds the **whole process** to one env token — it is **not**
+> multi-tenant. Use the mounted `/mcp` endpoint above for shared deployments.
+> `sse` is legacy; prefer streamable HTTP.
 
 ---
 
