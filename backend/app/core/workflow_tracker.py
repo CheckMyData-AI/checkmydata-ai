@@ -6,6 +6,7 @@ and broadcasts them to SSE subscribers for real-time progress reporting.
 
 import asyncio
 import contextvars
+import dataclasses
 import json
 import logging
 import time
@@ -42,6 +43,13 @@ class WorkflowEvent:
     # One of: llm_call | db_query | rag | tool_call | sub_agent | viz |
     # validation | other. ``None`` preserves the heuristic fallback.
     span_type: str | None = None
+    # First-class run/progress fields (sync & observability redesign). Background
+    # runs carry these so the frontend renders N/M + percent without parsing.
+    run_id: str | None = None
+    kind: str | None = None
+    step_index: int | None = None
+    total_steps: int | None = None
+    progress_pct: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)
@@ -285,6 +293,11 @@ class WorkflowTracker:
         detail: str = "",
         *,
         span_type: str | None = None,
+        run_id: str | None = None,
+        kind: str | None = None,
+        step_index: int | None = None,
+        total_steps: int | None = None,
+        progress_pct: int | None = None,
         **extra: Any,
     ) -> None:
         event = WorkflowEvent(
@@ -295,6 +308,11 @@ class WorkflowTracker:
             pipeline=self._resolve_pipeline(workflow_id),
             extra=extra,
             span_type=span_type,
+            run_id=run_id,
+            kind=kind,
+            step_index=step_index,
+            total_steps=total_steps,
+            progress_pct=progress_pct,
         )
         await self._broadcast(event)
 
@@ -351,6 +369,11 @@ class WorkflowTracker:
 
     async def broadcast_external(self, event: WorkflowEvent) -> None:
         """Deliver an event received from another process (Redis) to local SSE only."""
+        # Tolerate unknown/extra keys as the event contract evolves (greenfield-safe):
+        # rebuild from known dataclass fields so a future field never drops an event.
+        _fields = {f.name for f in dataclasses.fields(WorkflowEvent)}
+        if any(k not in _fields for k in vars(event)):
+            event = WorkflowEvent(**{k: v for k, v in vars(event).items() if k in _fields})
         self._external_rebroadcast = True
         try:
             if event.step == "pipeline_start" and event.pipeline in BACKGROUND_PIPELINES:
