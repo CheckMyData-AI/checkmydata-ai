@@ -115,11 +115,11 @@ class UsageService:
 ### 4.3 Rate-limit + concurrency (F3 → G3)
 
 - **Concurrency:** wrap the agent-invoking tools (`query_database`, `search_codebase`, `execute_raw_query`) with `app.core.agent_limiter` (same pool as chat) so MCP shares the global agent-slot budget.
-- **Rate-limit (per-user):** slowapi `limiter` is route-decorator + remote-address keyed → not applicable to the mounted ASGI sub-app. Introduce a **per-principal** token-bucket check in `_with_principal` keyed on `user_id`, backed by the existing rate-limit backend (Redis with in-memory fallback). New config `mcp_rate_limit_per_minute` (default conservative, e.g. 30). On exceed → `{"error": "rate limit exceeded, retry in …"}`.
+- **Rate-limit (per-user):** slowapi `limiter` is route-decorator + remote-address keyed → not applicable to the mounted ASGI sub-app. **Resolved in plan:** `agent_limiter` already enforces a per-user **hourly cap** (`max_agent_calls_per_hour`) alongside concurrency (Redis + in-memory fallback), so a separate token-bucket is unnecessary (YAGNI). `_with_principal(limited=True)` calls `agent_limiter.acquire(user_id)` and returns `{"error": <limiter msg>}` on rejection. No new rate-limit config key.
 
 ### 4.4 Observability / trace (F4 → G4)
 
-- Under ASGI-mount the FastAPI lifespan runs, so `app.state.trace_persistence_service` is populated. Replace the fragile `import app.main` reach-through in `tools.py:_get_trace_svc` with access via the request/app state (the mounted app shares the parent's `app.state`). stdio path degrades explicitly (returns `None`, logged once) rather than silently.
+- Under ASGI-mount the FastAPI lifespan runs. **Resolved in plan:** the mounted sub-app is a *separate* Starlette app with its own `state`, so `request.app.state` does NOT expose the parent's trace service. Instead a module-level holder (`runtime.set_trace_service` / `get_trace_service`) is populated by the lifespan; `tools._get_trace_svc` reads it. This removes the fragile `import app.main` reach-through entirely and works under both mount and stdio (stdio → `None` → traces skipped explicitly).
 - `finalize_trace(...)` calls in `query_database`/`search_codebase` are unchanged but now actually fire on the HTTP path.
 
 ### 4.5 Dependency + config (F7 → G5)
@@ -128,7 +128,7 @@ class UsageService:
 - `app/config.py` + `backend/.env.example`: add
   - `mcp_mount_enabled: bool = False` — gates the **HTTP mount** specifically, kept distinct from `mcp_enabled` so enabling the stdio MCP surface does NOT auto-expose the remote HTTP endpoint (safer default; the mount requires both `mcp_enabled` and `mcp_mount_enabled`).
   - `mcp_mount_path: str = "/mcp"`
-  - `mcp_rate_limit_per_minute: int = 30`
+  - (No `mcp_rate_limit_per_minute` — `agent_limiter` reuse covers per-user limits; see §4.3.)
 - `main.py`: conditional mount of `build_mounted_mcp_app()` + lifespan `session_manager.run()`, all behind the flag (no behaviour change when off).
 
 ---
