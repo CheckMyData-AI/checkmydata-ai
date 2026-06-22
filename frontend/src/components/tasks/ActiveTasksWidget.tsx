@@ -127,7 +127,7 @@ function TaskItem({ task }: { task: BgTask }) {
           </span>
           {isFinished && (
             <button
-              onClick={() => dismissTask(task.workflowId)}
+              onClick={() => dismissTask(task.runId)}
               className="text-text-muted hover:text-text-secondary p-0.5 rounded"
               aria-label="Dismiss"
             >
@@ -214,7 +214,7 @@ export function ActiveTasksWidget() {
   }
 
   const sorted = [...taskList].sort((a, b) => {
-    const statusOrder = { running: 0, failed: 1, completed: 2 };
+    const statusOrder: Record<string, number> = { running: 0, queued: 0, failed: 1, completed: 2 };
     const diff = (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
     if (diff !== 0) return diff;
     return b.startedAt - a.startedAt;
@@ -267,7 +267,7 @@ export function ActiveTasksWidget() {
 
           <div className="max-h-72 overflow-y-auto sidebar-scroll">
             {sorted.map((task) => (
-              <TaskItem key={task.workflowId} task={task} />
+              <TaskItem key={task.runId} task={task} />
             ))}
           </div>
         </div>

@@ -6,127 +6,91 @@ const BACKGROUND_PIPELINES = new Set(["index_repo", "db_index", "code_db_sync", 
 const COMPLETED_DISMISS_MS = 5_000;
 const FAILED_DISMISS_MS = 30_000;
 
-export type BgStatus = "running" | "completed" | "failed";
+export type BgStatus = "queued" | "running" | "completed" | "failed";
+export type BgSource = "sse" | "poll" | "optimistic";
 
 export interface BgTask {
+  /** Stable key: the run id when known, else the workflow id. */
+  runId: string;
   workflowId: string;
   pipeline: string;
+  kind: string;
   status: BgStatus;
   currentStep: string;
   currentStepDetail: string;
+  stepIndex: number;
+  totalSteps: number;
+  progressPct: number;
+  connectionId: string | null;
   startedAt: number;
   completedAt?: number;
   error?: string;
   extra: Record<string, unknown>;
-  /** Provenance: set to "sse" when updated via applySseEvent, "poll" when gap-filled by reconcile. */
-  source: "sse" | "poll";
+  source: BgSource;
 }
 
 export type BgPipeline = "index_repo" | "db_index" | "code_db_sync" | "daily_sync";
 
 export interface ApiActiveTask {
   workflow_id: string;
+  run_id?: string;
   pipeline: string;
+  kind?: string;
   started_at: number;
+  progress_pct?: number;
   extra: Record<string, unknown>;
+}
+
+export interface OptimisticRun {
+  runId: string;
+  workflowId: string;
+  kind: string;
+  projectId: string;
+  connectionId: string | null;
 }
 
 interface BackgroundTasksState {
   tasks: Record<string, BgTask>;
   pinnedRunningIds: Set<string>;
   applySseEvent: (event: WorkflowEvent) => void;
+  insertOptimistic: (run: OptimisticRun) => void;
   reconcileFromActive: (apiTasks: ApiActiveTask[]) => void;
   reconcileFromPipelineStatus: (status: PipelineStatusResponse) => void;
-  dismissTask: (workflowId: string) => void;
+  dismissTask: (key: string) => void;
 }
 
 const _dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function cancelDismiss(workflowId: string) {
-  const existing = _dismissTimers.get(workflowId);
+function cancelDismiss(key: string) {
+  const existing = _dismissTimers.get(key);
   if (existing) {
     clearTimeout(existing);
-    _dismissTimers.delete(workflowId);
+    _dismissTimers.delete(key);
   }
 }
 
-function scheduleDismiss(workflowId: string, ms: number) {
-  if (useBackgroundTasks.getState().pinnedRunningIds.has(workflowId)) {
-    return;
-  }
-  cancelDismiss(workflowId);
+function scheduleDismiss(key: string, ms: number) {
+  if (useBackgroundTasks.getState().pinnedRunningIds.has(key)) return;
+  cancelDismiss(key);
   const timer = setTimeout(() => {
-    _dismissTimers.delete(workflowId);
-    useBackgroundTasks.getState().dismissTask(workflowId);
+    _dismissTimers.delete(key);
+    useBackgroundTasks.getState().dismissTask(key);
   }, ms);
-  _dismissTimers.set(workflowId, timer);
+  _dismissTimers.set(key, timer);
 }
 
-/**
- * Returns true when a poll-sourced upsert is allowed to create or refresh a task.
- *
- * A poll must NOT touch:
- * - A terminal task (completed/failed) — never downgrade.
- * - A running task whose source is "sse" — SSE provenance wins.
- *
- * It MAY touch:
- * - Nothing (no existing task) — gap-fill is the whole point.
- * - A poll-running task — refresh/merge is fine.
- */
-function pollMayCreate(existing: BgTask | undefined): boolean {
+const TERMINAL = (s: BgStatus) => s === "completed" || s === "failed";
+
+/** A poll/optimistic source may refresh only non-terminal, non-SSE-running tasks. */
+function pollMayTouch(existing: BgTask | undefined): boolean {
   if (!existing) return true;
-  if (existing.status === "completed" || existing.status === "failed") return false;
-  if (existing.status === "running" && existing.source === "sse") return false;
-  return true; // poll-running or other: allowed to refresh
+  if (TERMINAL(existing.status)) return false;
+  if (existing.source === "sse") return false;
+  return true;
 }
 
-/**
- * Upsert a task in the running state.
- *
- * Precedence rules:
- * - If the task is already terminal (completed/failed), do NOT touch it.
- * - If the task is already running, merge extra only (keep existing source).
- * - Otherwise create a new running task with the given source.
- */
-function upsertRunningTask(
-  tasks: Record<string, BgTask>,
-  workflowId: string,
-  pipeline: string,
-  extra: Record<string, unknown>,
-  startedAt: number,
-  source: "sse" | "poll",
-): Record<string, BgTask> {
-  const existing = tasks[workflowId];
-  if (existing) {
-    // Terminal guard: never downgrade a completed/failed task.
-    if (existing.status === "completed" || existing.status === "failed") {
-      return tasks;
-    }
-    // Task is running — merge extra, keep the existing source provenance.
-    if (existing.status === "running") {
-      return {
-        ...tasks,
-        [workflowId]: {
-          ...existing,
-          extra: { ...existing.extra, ...extra },
-        },
-      };
-    }
-    return tasks;
-  }
-  return {
-    ...tasks,
-    [workflowId]: {
-      workflowId,
-      pipeline,
-      status: "running",
-      currentStep: "",
-      currentStepDetail: "",
-      startedAt,
-      extra,
-      source,
-    },
-  };
+function keyOf(runId: string | undefined | null, workflowId: string): string {
+  return runId || workflowId;
 }
 
 export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
@@ -135,61 +99,56 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
 
   applySseEvent: (event: WorkflowEvent) => {
     const pipeline = event.pipeline || "";
-    const wfId = event.workflow_id;
+    const kind = event.kind || pipeline;
+    const key = keyOf(event.run_id, event.workflow_id);
     const isBackground = BACKGROUND_PIPELINES.has(pipeline);
-    const existing = get().tasks[wfId];
+    const existing = get().tasks[key];
 
-    if (event.step === "pipeline_start") {
-      if (!isBackground) return;
-      set((state) => ({
-        tasks: upsertRunningTask(
-          state.tasks,
-          wfId,
-          pipeline,
-          event.extra || {},
-          event.timestamp,
-          "sse",
-        ),
-      }));
-      return;
-    }
+    const progress = {
+      ...(event.step_index !== undefined ? { stepIndex: event.step_index } : {}),
+      ...(event.total_steps !== undefined ? { totalSteps: event.total_steps } : {}),
+      ...(event.progress_pct !== undefined ? { progressPct: event.progress_pct } : {}),
+    };
 
     if (event.step === "pipeline_end") {
       if (!existing) return;
       const finalStatus: BgStatus = event.status === "failed" ? "failed" : "completed";
       set((state) => {
         const nextPinned = new Set(state.pinnedRunningIds);
-        nextPinned.delete(wfId);
+        nextPinned.delete(key);
         return {
           pinnedRunningIds: nextPinned,
           tasks: {
             ...state.tasks,
-            [wfId]: {
-              ...state.tasks[wfId],
+            [key]: {
+              ...state.tasks[key],
               status: finalStatus,
               completedAt: event.timestamp,
               currentStep: "pipeline_end",
               currentStepDetail: event.detail,
+              progressPct: finalStatus === "completed" ? 100 : state.tasks[key].progressPct,
               error: finalStatus === "failed" ? event.detail : undefined,
               source: "sse",
             },
           },
         };
       });
-      scheduleDismiss(wfId, finalStatus === "failed" ? FAILED_DISMISS_MS : COMPLETED_DISMISS_MS);
+      scheduleDismiss(key, finalStatus === "failed" ? FAILED_DISMISS_MS : COMPLETED_DISMISS_MS);
       return;
     }
 
-    // Intermediate step event.
     if (existing) {
-      if (existing.status !== "running") return;
+      // Never resurrect a terminal task from a late step event.
+      if (TERMINAL(existing.status)) return;
       set((state) => ({
         tasks: {
           ...state.tasks,
-          [wfId]: {
-            ...state.tasks[wfId],
-            currentStep: event.step,
+          [key]: {
+            ...state.tasks[key],
+            status: "running",
+            currentStep: event.step === "pipeline_start" ? state.tasks[key].currentStep : event.step,
             currentStepDetail: event.detail,
+            ...progress,
             source: "sse",
           },
         },
@@ -197,25 +156,52 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
       return;
     }
 
-    // Unknown workflow mid-stream — create it if it's a background pipeline.
+    // Unknown run mid-stream — create it if it's a background pipeline.
     if (!isBackground) return;
+    set((state) => ({
+      tasks: {
+        ...state.tasks,
+        [key]: {
+          runId: event.run_id || key,
+          workflowId: event.workflow_id,
+          pipeline,
+          kind,
+          status: "running",
+          currentStep: event.step === "pipeline_start" ? "" : event.step,
+          currentStepDetail: event.detail,
+          stepIndex: event.step_index ?? 0,
+          totalSteps: event.total_steps ?? 0,
+          progressPct: event.progress_pct ?? 0,
+          connectionId: (event.extra?.connection_id as string | undefined) ?? null,
+          startedAt: event.timestamp,
+          extra: event.extra || {},
+          source: "sse",
+        },
+      },
+    }));
+  },
+
+  insertOptimistic: (run: OptimisticRun) => {
     set((state) => {
-      const updated = upsertRunningTask(
-        state.tasks,
-        wfId,
-        pipeline,
-        event.extra || {},
-        event.timestamp,
-        "sse",
-      );
+      if (state.tasks[run.runId]) return state; // never downgrade an existing task
       return {
         tasks: {
-          ...updated,
-          [wfId]: {
-            ...updated[wfId],
-            currentStep: event.step,
-            currentStepDetail: event.detail,
-            source: "sse",
+          ...state.tasks,
+          [run.runId]: {
+            runId: run.runId,
+            workflowId: run.workflowId,
+            pipeline: run.kind,
+            kind: run.kind,
+            status: "queued",
+            currentStep: "",
+            currentStepDetail: "",
+            stepIndex: 0,
+            totalSteps: 0,
+            progressPct: 0,
+            connectionId: run.connectionId,
+            startedAt: Date.now() / 1000,
+            extra: { project_id: run.projectId, connection_id: run.connectionId },
+            source: "optimistic",
           },
         },
       };
@@ -224,19 +210,28 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
 
   reconcileFromActive: (apiTasks: ApiActiveTask[]) => {
     set((state) => {
-      let updated = { ...state.tasks };
+      const updated = { ...state.tasks };
       for (const t of apiTasks) {
-        const existing = updated[t.workflow_id];
-        // Never overwrite a terminal task or an SSE-sourced running task.
-        if (!pollMayCreate(existing)) continue;
-        updated = upsertRunningTask(
-          updated,
-          t.workflow_id,
-          t.pipeline,
-          t.extra || {},
-          t.started_at,
-          "poll",
-        );
+        const key = keyOf(t.run_id, t.workflow_id);
+        const existing = updated[key];
+        if (!pollMayTouch(existing)) continue;
+        const connId = (t.extra?.connection_id as string | undefined) ?? null;
+        updated[key] = {
+          runId: t.run_id || key,
+          workflowId: t.workflow_id,
+          pipeline: t.pipeline,
+          kind: t.kind || t.pipeline,
+          status: "running",
+          currentStep: existing?.currentStep ?? "",
+          currentStepDetail: existing?.currentStepDetail ?? "",
+          stepIndex: existing?.stepIndex ?? 0,
+          totalSteps: existing?.totalSteps ?? 0,
+          progressPct: t.progress_pct ?? existing?.progressPct ?? 0,
+          connectionId: connId,
+          startedAt: existing?.startedAt ?? t.started_at,
+          extra: { ...(existing?.extra ?? {}), ...(t.extra || {}) },
+          source: existing?.source === "optimistic" ? "poll" : (existing?.source ?? "poll"),
+        };
       }
       return { tasks: updated };
     });
@@ -246,72 +241,72 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
     const now = Date.now() / 1000;
     const pinned = new Set<string>();
 
-    set((state) => {
-      let updated = { ...state.tasks };
+    const apply = (
+      updated: Record<string, BgTask>,
+      block: {
+        run_id?: string | null;
+        workflow_id?: string | null;
+        progress_pct?: number;
+        step_index?: number;
+        total_steps?: number;
+        current_step?: string | null;
+      },
+      kind: string,
+      connectionId: string | null,
+      fallbackKey: string,
+    ) => {
+      const key = block.run_id || block.workflow_id || fallbackKey;
+      pinned.add(key);
+      cancelDismiss(key);
+      const existing = updated[key];
+      if (!pollMayTouch(existing)) return;
+      updated[key] = {
+        runId: block.run_id || key,
+        workflowId: block.workflow_id || existing?.workflowId || key,
+        pipeline: kind,
+        kind,
+        status: "running",
+        currentStep: block.current_step ?? existing?.currentStep ?? "",
+        currentStepDetail: existing?.currentStepDetail ?? "",
+        stepIndex: block.step_index ?? existing?.stepIndex ?? 0,
+        totalSteps: block.total_steps ?? existing?.totalSteps ?? 0,
+        progressPct: block.progress_pct ?? existing?.progressPct ?? 0,
+        connectionId,
+        startedAt: existing?.startedAt ?? now,
+        extra: { project_id: status.project_id, connection_id: connectionId },
+        source: existing?.source === "sse" ? "sse" : "poll",
+      };
+    };
 
+    set((state) => {
+      const updated = { ...state.tasks };
       if (status.repo.is_indexing) {
-        const wfId = status.repo.workflow_id || `repo:${status.project_id}`;
-        pinned.add(wfId);
-        cancelDismiss(wfId);
-        const existing = updated[wfId];
-        // Only gap-fill; do not overwrite terminal or SSE-running tasks.
-        if (pollMayCreate(existing)) {
-          updated = upsertRunningTask(
+        apply(updated, status.repo, "index_repo", null, `repo:${status.project_id}`);
+      }
+      for (const conn of status.connections) {
+        if (conn.db_index.is_indexing) {
+          apply(updated, conn.db_index, "db_index", conn.connection_id, `db:${conn.connection_id}`);
+        }
+        if (conn.code_db_sync.is_syncing) {
+          apply(
             updated,
-            wfId,
-            "index_repo",
-            { project_id: status.project_id },
-            now,
-            "poll",
+            conn.code_db_sync,
+            "code_db_sync",
+            conn.connection_id,
+            `sync:${conn.connection_id}`,
           );
         }
       }
-
-      for (const conn of status.connections) {
-        if (conn.db_index.is_indexing) {
-          const wfId = `db:${conn.connection_id}`;
-          pinned.add(wfId);
-          cancelDismiss(wfId);
-          const existing = updated[wfId];
-          if (pollMayCreate(existing)) {
-            updated = upsertRunningTask(
-              updated,
-              wfId,
-              "db_index",
-              { project_id: status.project_id, connection_id: conn.connection_id },
-              now,
-              "poll",
-            );
-          }
-        }
-        if (conn.code_db_sync.is_syncing) {
-          const wfId = `sync:${conn.connection_id}`;
-          pinned.add(wfId);
-          cancelDismiss(wfId);
-          const existing = updated[wfId];
-          if (pollMayCreate(existing)) {
-            updated = upsertRunningTask(
-              updated,
-              wfId,
-              "code_db_sync",
-              { project_id: status.project_id, connection_id: conn.connection_id },
-              now,
-              "poll",
-            );
-          }
-        }
-      }
-
       return { tasks: updated, pinnedRunningIds: pinned };
     });
   },
 
-  dismissTask: (workflowId: string) => {
-    cancelDismiss(workflowId);
+  dismissTask: (key: string) => {
+    cancelDismiss(key);
     set((state) => {
       const nextPinned = new Set(state.pinnedRunningIds);
-      nextPinned.delete(workflowId);
-      const { [workflowId]: _, ...rest } = state.tasks;
+      nextPinned.delete(key);
+      const { [key]: _, ...rest } = state.tasks;
       return { tasks: rest, pinnedRunningIds: nextPinned };
     });
   },
