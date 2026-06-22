@@ -460,29 +460,14 @@ async def project_sync_history(
 ):
     """Recent scheduled daily-sync runs for a project (viewer access).
 
-    Returns up to *limit* (clamped 1–50) runs ordered newest-first.
-    Maps ``steps_json`` → ``steps`` so the frontend contract is stable.
+    Sourced from ``indexing_runs`` (kind=daily_sync); ordered newest-first.
     """
-    from app.services.knowledge_sync_run_service import KnowledgeSyncRunService
+    from app.services.sync_history_service import SyncHistoryService
 
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    runs = await KnowledgeSyncRunService().list_for_project(db, project_id, limit=limit)
-    return {
-        "runs": [
-            {
-                "id": r.id,
-                "trigger": r.trigger,
-                "status": r.status,
-                "duration_seconds": r.duration_seconds,
-                "error_message": r.error_message,
-                # created_at is a non-null column (server default), so it is
-                # always present — the frontend types it as a non-null string.
-                "created_at": r.created_at.isoformat(),
-                "steps": r.steps_json,
-            }
-            for r in runs
-        ]
-    }
+    limit = max(1, min(limit, 50))
+    runs = await SyncHistoryService().list_for_project(db, project_id, limit=limit)
+    return {"runs": runs}
 
 
 @router.get("/{project_id}/pipeline-status")
