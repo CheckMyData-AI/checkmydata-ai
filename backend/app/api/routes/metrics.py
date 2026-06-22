@@ -79,6 +79,7 @@ async def get_metrics(_user: dict = Depends(require_admin)):
     # Prometheus one) lets the operator dashboard chart "graph rebuilt N
     # times, K symbols, J clusters" without scraping text format.
     code_graph_counters = collector.snapshot_counters(prefix="code_graph_")
+    run_counters = collector.snapshot_counters(prefix="indexing_run")
 
     return {
         "active_workflows": len(active_workflows),
@@ -86,6 +87,7 @@ async def get_metrics(_user: dict = Depends(require_admin)):
         "uptime_seconds": round(time.monotonic(), 1),
         "orchestrator_recent": orchestrator_recent,
         "code_graph": code_graph_counters,
+        "runs": run_counters,
     }
 
 

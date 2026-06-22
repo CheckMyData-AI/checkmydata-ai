@@ -460,29 +460,124 @@ async def project_sync_history(
 ):
     """Recent scheduled daily-sync runs for a project (viewer access).
 
-    Returns up to *limit* (clamped 1–50) runs ordered newest-first.
-    Maps ``steps_json`` → ``steps`` so the frontend contract is stable.
+    Sourced from ``indexing_runs`` (kind=daily_sync); ordered newest-first.
     """
-    from app.services.knowledge_sync_run_service import KnowledgeSyncRunService
+    from app.services.sync_history_service import SyncHistoryService
 
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    runs = await KnowledgeSyncRunService().list_for_project(db, project_id, limit=limit)
-    return {
-        "runs": [
-            {
-                "id": r.id,
-                "trigger": r.trigger,
-                "status": r.status,
-                "duration_seconds": r.duration_seconds,
-                "error_message": r.error_message,
-                # created_at is a non-null column (server default), so it is
-                # always present — the frontend types it as a non-null string.
-                "created_at": r.created_at.isoformat(),
-                "steps": r.steps_json,
-            }
-            for r in runs
-        ]
-    }
+    limit = max(1, min(limit, 50))
+    runs = await SyncHistoryService().list_for_project(db, project_id, limit=limit)
+    return {"runs": runs}
+
+
+class SyncScheduleBody(BaseModel):
+    enabled: bool | None = None
+    hour: int | None = Field(default=None, ge=0, le=23)
+
+
+@router.get("/{project_id}/sync-schedule")
+async def get_sync_schedule(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Effective daily-sync schedule for a project (project override → global)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.services.daily_knowledge_sync_service import compute_next_scheduled_run
+    from app.services.sync_schedule_service import SyncScheduleService
+
+    eff = await SyncScheduleService().effective(db, project_id)
+    next_run = None
+    if eff["enabled"]:
+        tz = eff["timezone"]
+        next_run = compute_next_scheduled_run(
+            datetime.now(ZoneInfo(tz)), hour=eff["hour"], timezone_name=tz
+        ).isoformat()
+    return {**eff, "next_run": next_run}
+
+
+@router.put("/{project_id}/sync-schedule")
+@limiter.limit("20/minute")
+async def put_sync_schedule(
+    request: Request,
+    project_id: str,
+    body: SyncScheduleBody,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Set a per-project daily-sync override (editor)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    from app.services.sync_schedule_service import SyncScheduleService
+
+    try:
+        return await SyncScheduleService().set_override(
+            db, project_id, enabled=body.enabled, hour=body.hour
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+
+
+@router.post("/{project_id}/sync-now", status_code=202)
+@limiter.limit("5/minute")
+async def sync_now(
+    request: Request,
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Trigger a daily-sync run on demand (editor)."""
+    import uuid
+
+    await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+    from app.core import task_queue
+    from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+    coord = RunCoordinator()
+    try:
+        run = await coord.start(
+            db, kind="daily_sync", project_id=project_id, connection_id=None, trigger="manual"
+        )
+    except RunAlreadyActiveError:
+        active = await coord._find_active(db, project_id, "daily_sync", None)
+        if active is None:
+            raise HTTPException(status_code=409, detail="Daily sync already in progress") from None
+        return {"run_id": active.id, "workflow_id": active.workflow_id, "status": "running"}
+
+    if task_queue.is_arq_active():
+        await task_queue.enqueue(
+            "run_daily_project_knowledge_sync",
+            task_id=f"daily_sync_manual:{project_id}:{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+        )
+    else:
+        import asyncio
+
+        from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+
+        asyncio.create_task(
+            DailyKnowledgeSyncService().run_for_project(project_id, trigger="manual")
+        )
+    return {"run_id": run.id, "workflow_id": run.workflow_id, "status": "started"}
+
+
+@router.get("/{project_id}/runs")
+async def project_runs(
+    project_id: str,
+    kind: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Background-run history for a project (viewer access)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    from app.services.logs_service import LogsService
+
+    limit = max(1, min(limit, 200))
+    return await LogsService().list_runs(db, project_id, kind=kind, status=status, limit=limit)
 
 
 @router.get("/{project_id}/pipeline-status")

@@ -57,7 +57,6 @@ describe("background-tasks-store", () => {
       project_id: "proj1",
       repo: {
         is_indexing: false,
-        checkpoint_status: null,
         workflow_id: null,
         last_indexed_at: null,
         last_indexed_commit: null,

@@ -62,6 +62,8 @@ function AppPageContent() {
   const activeConnection = useAppStore((s) => s.activeConnection);
   const activeSession = useAppStore((s) => s.activeSession);
   const messages = useAppStore((s) => s.messages);
+  const lastViewByProject = useAppStore((s) => s.lastViewByProject);
+  const setLastView = useAppStore((s) => s.setLastView);
   const projects = useAppStore((s) => s.projects);
   const user = useAuthStore((s) => s.user);
   const notesOpen = useNotesStore((s) => s.isOpen);
@@ -93,9 +95,19 @@ function AppPageContent() {
     if (panel === "chat") return "chat";
 
     if (!activeProject) return null;
+    // Deterministic default: honour the remembered view for this project first
+    // so the panel never flashes overview -> chat while session state restores.
+    const remembered = lastViewByProject[activeProject.id];
+    if (remembered === "chat" || remembered === "overview") return remembered;
     if (activeSession || messages.length > 0) return "chat";
     return "overview";
-  }, [panel, activeProject, activeSession, messages.length]);
+  }, [panel, activeProject, activeSession, messages.length, lastViewByProject]);
+
+  useEffect(() => {
+    if (activeProject && (effectivePanel === "overview" || effectivePanel === "chat")) {
+      setLastView(activeProject.id, effectivePanel);
+    }
+  }, [effectivePanel, activeProject, setLastView]);
 
   useEffect(() => {
     const store = useAppStore.getState();

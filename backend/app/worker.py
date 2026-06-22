@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> None:  # noqa: ARG001
+async def run_db_index(  # noqa: ARG001
+    ctx: dict, *, connection_id: str, project_id: str, wf_id: str
+) -> None:
     """Background DB index for a single connection."""
     from app.models.base import async_session_factory
     from app.services.connection_service import ConnectionService
@@ -57,6 +59,7 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
             connection_id=connection_id,
             connection_config=config,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
@@ -115,7 +118,9 @@ async def run_db_index(ctx: dict, *, connection_id: str, project_id: str) -> Non
             logger.debug("Failed to update indexing_status", exc_info=True)
 
 
-async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) -> None:  # noqa: ARG001
+async def run_code_db_sync(  # noqa: ARG001
+    ctx: dict, *, connection_id: str, project_id: str, wf_id: str
+) -> None:
     """Background code-DB sync for a single connection."""
     from app.models.base import async_session_factory
     from app.services.code_db_sync_service import CodeDbSyncService
@@ -133,6 +138,7 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
         result = await pipeline.run(
             connection_id=connection_id,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
@@ -171,7 +177,9 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
             logger.debug("Failed to update sync_status", exc_info=True)
 
 
-async def run_repo_index(ctx: dict, *, project_id: str, force_full: bool = False) -> None:  # noqa: ARG001
+async def run_repo_index(  # noqa: ARG001
+    ctx: dict, *, project_id: str, force_full: bool = False, wf_id: str | None = None
+) -> None:
     """Background repository index for a single project (Phase 2 trigger target).
 
     Enqueued by the git webhook / cron poll / manual route when ARQ is active.
@@ -181,7 +189,7 @@ async def run_repo_index(ctx: dict, *, project_id: str, force_full: bool = False
     """
     from app.api.routes.repos import run_repo_index_task
 
-    await run_repo_index_task(project_id, force_full=force_full)
+    await run_repo_index_task(project_id, force_full=force_full, wf_id=wf_id)
 
 
 async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: str) -> None:  # noqa: ARG001
@@ -194,30 +202,9 @@ async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: st
 
 async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> None:  # noqa: ARG001
     """Daily orchestrator: repo index → DB index → code↔DB sync for one project."""
-    from app.core.workflow_tracker import tracker
-    from app.services.daily_knowledge_sync_service import (
-        DailyKnowledgeSyncService,
-        KnowledgeSyncRunResult,
-        _daily_wf_status,
-    )
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
 
-    svc = DailyKnowledgeSyncService()
-    wf_id = await tracker.begin("daily_sync", {"project_id": project_id, "trigger": "scheduled"})
-    result = None
-    try:
-        result = await svc.run_for_project(project_id)
-        await tracker.end(
-            wf_id, "daily_sync", _daily_wf_status(result.status), f"daily sync {result.status}"
-        )
-    finally:
-        if result is None:
-            result = KnowledgeSyncRunResult(
-                project_id=project_id,
-                status="failed",
-                error_message="interrupted before completion",
-            )
-            await tracker.end(wf_id, "daily_sync", "failed", "daily sync interrupted")
-        await svc.persist_run(result)
+    await DailyKnowledgeSyncService().run_for_project(project_id)
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +228,9 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     redis_url = os.getenv("REDIS_URL")
     await redis_client.connect(redis_url)
     tracker.enable_cross_process_publish()
+    from app.services.run_coordinator import RunCoordinator
+
+    RunCoordinator().attach()
     from app.core.reaper_loop import reaper_loop, run_reaper_sweep
 
     await run_reaper_sweep()

@@ -55,6 +55,11 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "explain_check": "validation",
     "error_classify": "validation",
     "query_repair": "validation",
+    "data_gate": "validation",
+    "answer_validate": "validation",
+    "answer": "validation",
+    "validate": "validation",
+    "validate_tables": "validation",
     # Standalone LLM endpoints
     "generate_title:llm_call": "llm_call",
     "explain_sql:llm_call": "llm_call",
@@ -468,6 +473,13 @@ class TracePersistenceService:
                     session.add(span)
 
                 await session.commit()
+                if trace_status == "failed":
+                    try:
+                        from app.services.error_log_service import ErrorLogService
+
+                        await ErrorLogService().upsert_from_trace(session, trace)
+                    except Exception:
+                        logger.debug("error_log upsert from trace failed", exc_info=True)
                 logger.debug(
                     "TracePersistence: saved trace wf=%s with %d spans",
                     buf.workflow_id[:8],

@@ -4,10 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type KnowledgeHealth, type KnowledgeActionKind } from "@/lib/api";
 import { POLL_INTERVAL_MS } from "@/lib/polling";
 import { useAppStore } from "@/stores/app-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/stores/toast-store";
 import { SyncHistoryPanel } from "@/components/knowledge/SyncHistoryPanel";
+import { RunCard } from "@/components/knowledge/RunCard";
 
 interface KnowledgeHealthPanelProps {
   projectId: string;
@@ -78,20 +80,49 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
     const cid = actionConnId || connectionId;
     setActionRunning(key);
     try {
+      const { insertOptimistic } = useBackgroundTasks.getState();
       if (kind === "reindex_db" && cid) {
-        await api.connections.indexDb(cid);
+        const r = await api.connections.indexDb(cid);
+        insertOptimistic({
+          runId: r.run_id,
+          workflowId: r.workflow_id,
+          kind: "db_index",
+          projectId,
+          connectionId: cid,
+        });
         toast("Database indexing started", "success");
       } else if (kind === "resync" && cid) {
-        await api.connections.triggerSync(cid);
+        const r = await api.connections.triggerSync(cid);
+        insertOptimistic({
+          runId: r.run_id,
+          workflowId: r.workflow_id,
+          kind: "code_db_sync",
+          projectId,
+          connectionId: cid,
+        });
         toast("Code-DB sync started", "success");
       } else if (kind === "reindex_repo") {
-        await api.repos.index(projectId);
+        const r = await api.repos.index(projectId);
+        insertOptimistic({
+          runId: r.run_id,
+          workflowId: r.workflow_id,
+          kind: "index_repo",
+          projectId,
+          connectionId: null,
+        });
         toast("Repository indexing started", "success");
       } else {
         setActionRunning(null);
         return;
       }
-      // Re-poll once shortly after so the panel reflects the new running state.
+      // Immediate status refetch — kills the up-to-30s gap before the poll notices.
+      void api.projects
+        .pipelineStatus(projectId)
+        .then((s) => {
+          useAppStore.getState().setPipelineStatus(projectId, s);
+          useBackgroundTasks.getState().reconcileFromPipelineStatus(s);
+        })
+        .catch(() => {});
       setTimeout(() => {
         if (mountedRef.current) fetchHealth();
       }, 1500);
@@ -152,6 +183,35 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
                 <span className="text-[10px] text-text-tertiary">{label}</span>
               </div>
             ))}
+          </div>
+
+          <div className="grid gap-2">
+            <RunCard
+              title="Repository"
+              kind="index_repo"
+              projectId={projectId}
+              connectionId={null}
+              onTrigger={() => runAction("reindex_repo", null, "card-repo")}
+              triggerLabel="Re-index"
+            />
+            <RunCard
+              title="Database"
+              kind="db_index"
+              projectId={projectId}
+              connectionId={connectionId}
+              onTrigger={() => runAction("reindex_db", connectionId, "card-db")}
+              triggerLabel="Index DB"
+              triggerDisabled={!connectionId}
+            />
+            <RunCard
+              title="Code-DB Sync"
+              kind="code_db_sync"
+              projectId={projectId}
+              connectionId={connectionId}
+              onTrigger={() => runAction("resync", connectionId, "card-sync")}
+              triggerLabel="Sync"
+              triggerDisabled={!connectionId}
+            />
           </div>
 
           {!health.freshness.overall_stale ? (

@@ -303,6 +303,12 @@ class Settings(BaseSettings):
     reaper_interval_seconds: int = 60
     stale_running_heartbeat_timeout_seconds: int = 300
 
+    # Telemetry retention (run-event journal + error catalog). Swept by the
+    # maintenance cron.
+    indexing_run_events_ttl_days: int = 30
+    indexing_run_events_max_per_run: int = 500
+    error_log_ttl_days: int = 90
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2

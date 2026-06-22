@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -13,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.base import async_session_factory
 from app.models.connection import Connection
-from app.models.knowledge_sync_run import KnowledgeSyncRun
+from app.models.indexing_run import IndexingRun
 from app.models.project import Project
 from app.services.checkpoint_service import CheckpointService
 from app.services.connection_service import ConnectionService
 from app.services.project_service import ProjectService
+from app.services.run_coordinator import RunCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -76,17 +78,66 @@ class DailyKnowledgeSyncService:
         self._checkpoint_svc = CheckpointService()
 
     async def list_eligible_projects(self, session: AsyncSession) -> list[Project]:
+        from app.services.sync_schedule_service import SyncScheduleService
+
+        sched = SyncScheduleService()
         projects = await self._project_svc.list_all(session)
         eligible: list[Project] = []
         for project in projects:
             if not project.repo_url:
+                continue
+            eff = await sched.effective(session, project.id)
+            if not eff["enabled"]:
                 continue
             connections = await self._active_connections(session, project.id)
             if connections:
                 eligible.append(project)
         return eligible
 
-    async def run_for_project(self, project_id: str) -> KnowledgeSyncRunResult:
+    async def run_for_project(
+        self, project_id: str, *, trigger: str = "schedule"
+    ) -> KnowledgeSyncRunResult:
+        """Run the daily sync under a first-class ``daily_sync`` IndexingRun.
+
+        Adopts an already-active run for the project (e.g. a manual ``sync-now``
+        that minted the run before enqueueing) instead of creating a duplicate.
+        The orchestration body is unchanged; per-operation progress comes from the
+        child runs created by the repo/db/sync sub-steps.
+        """
+        coord = RunCoordinator()
+        async with async_session_factory() as db:
+            existing = await coord._find_active(db, project_id, "daily_sync", None)
+            run_id = (
+                existing.id
+                if existing
+                else (
+                    await coord.start(
+                        db,
+                        kind="daily_sync",
+                        project_id=project_id,
+                        connection_id=None,
+                        trigger=trigger,
+                    )
+                ).id
+            )
+
+        result = await self._orchestrate(project_id)
+
+        terminal = "failed" if result.status == _STATUS_FAILED else "completed"
+        failure_kind = "fatal" if terminal == "failed" else None
+        async with async_session_factory() as db:
+            run = await db.get(IndexingRun, run_id)
+            if run is not None and run.status not in ("completed", "failed", "cancelled"):
+                run.meta_json = json.dumps(
+                    {"status": result.status, "steps": result.steps_json}, default=str
+                )
+                await db.commit()
+                await coord.finish(
+                    db, run, terminal, error=result.error_message, failure_kind=failure_kind
+                )
+        return result
+
+    async def _orchestrate(self, project_id: str) -> KnowledgeSyncRunResult:
         started = time.monotonic()
         result = KnowledgeSyncRunResult(project_id=project_id)
 
@@ -205,20 +256,6 @@ class DailyKnowledgeSyncService:
         )
         return result
 
-    async def persist_run(self, result: KnowledgeSyncRunResult) -> None:
-        async with async_session_factory() as session:
-            session.add(
-                KnowledgeSyncRun(
-                    project_id=result.project_id,
-                    trigger=result.trigger,
-                    status=result.status,
-                    duration_seconds=result.duration_seconds,
-                    steps_json=result.steps_json,
-                    error_message=result.error_message,
-                )
-            )
-            await session.commit()
-
     async def _active_connections(
         self,
         session: AsyncSession,
@@ -237,8 +274,11 @@ class DailyKnowledgeSyncService:
             if cp and cp.status == "running":
                 return _STEP_SKIPPED, "repo index already running"
 
+        child_wf = await self._start_child_wf("index_repo", None, project_id)
         try:
-            await run_repo_index_task(project_id, force_full=False, chain_sync=False)
+            await run_repo_index_task(
+                project_id, force_full=False, chain_sync=False, wf_id=child_wf
+            )
         except Exception as exc:
             logger.exception(
                 "Cron: daily knowledge sync repo index raised project=%s",
@@ -257,6 +297,29 @@ class DailyKnowledgeSyncService:
             return _STEP_FAILED, cp.error_detail
         return _STEP_FAILED, f"checkpoint status={cp.status}"
 
+    async def _start_child_wf(
+        self, kind: str, connection_id: str | None, project_id: str
+    ) -> str | None:
+        """Create a child IndexingRun for a daily-sync sub-operation and return its
+        workflow id. The pipeline's emitted events are mapped onto the run (and
+        finalised) by the RunCoordinator persistence hook. Returns ``None`` when a
+        run is already active (the pipeline then begins its own untracked workflow).
+        """
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        try:
+            async with async_session_factory() as rdb:
+                run = await RunCoordinator().start(
+                    rdb,
+                    kind=kind,
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    trigger="schedule",
+                )
+                return run.workflow_id
+        except RunAlreadyActiveError:
+            return None
+
     async def _run_db_index(
         self,
         connection_id: str,
@@ -274,6 +337,7 @@ class DailyKnowledgeSyncService:
                 return _STEP_FAILED, "connection not found"
             config = await self._conn_svc.to_config(session, conn)
 
+        child_wf = await self._start_child_wf("db_index", connection_id, project_id)
         final_status = _STEP_FAILED
         error: str | None = None
         pipeline_result: dict | str | None = None
@@ -291,6 +355,7 @@ class DailyKnowledgeSyncService:
                 connection_id=connection_id,
                 connection_config=config,
                 project_id=project_id,
+                wf_id=child_wf,
             )
             if isinstance(pipeline_result, dict) and pipeline_result.get("status") == "failed":
                 error = pipeline_result.get("error", "unknown")
@@ -352,6 +417,7 @@ class DailyKnowledgeSyncService:
             if not await idx_svc.is_indexed(session, connection_id):
                 return _STEP_SKIPPED, "connection not DB-indexed"
 
+        child_wf = await self._start_child_wf("code_db_sync", connection_id, project_id)
         final_status = _STEP_FAILED
         error: str | None = None
         try:
@@ -365,6 +431,7 @@ class DailyKnowledgeSyncService:
             pipeline_result = await pipeline.run(
                 connection_id=connection_id,
                 project_id=project_id,
+                wf_id=child_wf,
             )
             if isinstance(pipeline_result, dict) and pipeline_result.get("status") == "failed":
                 error = pipeline_result.get("error", "unknown")

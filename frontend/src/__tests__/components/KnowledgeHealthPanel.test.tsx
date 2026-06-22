@@ -3,14 +3,27 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const knowledgeHealthMock = vi.fn();
-const indexDbMock = vi.fn().mockResolvedValue({});
-const triggerSyncMock = vi.fn().mockResolvedValue({});
-const repoIndexMock = vi.fn().mockResolvedValue({ workflow_id: "w1" });
+const indexDbMock = vi
+  .fn()
+  .mockResolvedValue({ status: "started", run_id: "r9", workflow_id: "w9", connection_id: "c1" });
+const triggerSyncMock = vi
+  .fn()
+  .mockResolvedValue({ status: "started", run_id: "rs", workflow_id: "ws", connection_id: "c1" });
+const repoIndexMock = vi
+  .fn()
+  .mockResolvedValue({ status: "started", run_id: "rr", workflow_id: "w1" });
+const pipelineStatusMock = vi.fn().mockResolvedValue({
+  project_id: "p1",
+  any_running: true,
+  repo: { is_indexing: false, last_indexed_at: null, last_indexed_commit: null },
+  connections: [],
+});
 
 vi.mock("@/lib/api", () => ({
   api: {
     projects: {
       knowledgeHealth: (...args: unknown[]) => knowledgeHealthMock(...args),
+      pipelineStatus: (...args: unknown[]) => pipelineStatusMock(...args),
     },
     connections: {
       indexDb: (...args: unknown[]) => indexDbMock(...args),
@@ -100,12 +113,16 @@ describe("KnowledgeHealthPanel", () => {
       },
     });
 
+    const { useBackgroundTasks } = await import("@/stores/background-tasks-store");
+    const insertSpy = vi.spyOn(useBackgroundTasks.getState(), "insertOptimistic");
+
     const btn = await screen.findByRole("button", { name: "Re-index database" });
     await userEvent.click(btn);
 
     await waitFor(() => {
       expect(indexDbMock).toHaveBeenCalledWith("c1");
     });
+    expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({ runId: "r9" }));
   });
 
   it("shows an error state when the request fails", async () => {

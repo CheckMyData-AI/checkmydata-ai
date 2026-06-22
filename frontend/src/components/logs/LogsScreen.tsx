@@ -14,6 +14,10 @@ import { LogsUserFilter } from "./LogsUserFilter";
 import { LogsRequestList } from "./LogsRequestList";
 import { LogsTraceDetail } from "./LogsTraceDetail";
 import { LogsDateFilter } from "./LogsDateFilter";
+import { ErrorsTab } from "./ErrorsTab";
+import { RunsTab } from "./RunsTab";
+
+type LogsTab = "queries" | "runs" | "errors";
 
 interface LogsScreenProps {
   onClose?: () => void;
@@ -42,6 +46,7 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<LogsTab>("queries");
 
   const projectId = activeProject?.id;
 
@@ -122,7 +127,24 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
         </button>
       </div>
 
-      {error && (
+      {/* Tabs */}
+      <div className="flex items-center gap-1 px-4 border-b border-border-subtle shrink-0">
+        {(["queries", "runs", "errors"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`text-xs px-3 py-2 border-b-2 transition-colors capitalize ${
+              tab === t
+                ? "border-accent text-text-primary"
+                : "border-transparent text-text-tertiary hover:text-text-secondary"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {error && tab === "queries" && (
         <div className="px-4 py-2 bg-error/5 text-xs text-error border-b border-border-subtle flex items-center gap-2">
           <span>{error}</span>
           <button onClick={loadData} className="underline hover:no-underline">
@@ -131,14 +153,18 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
         </div>
       )}
 
+      {tab === "runs" && <RunsTab projectId={projectId} />}
+      {tab === "errors" && <ErrorsTab projectId={projectId} />}
+
       {/* Summary cards */}
-      {summary && (
+      {tab === "queries" && summary && (
         <div className="px-4 py-3 border-b border-border-subtle shrink-0">
           <LogsSummary summary={summary} />
         </div>
       )}
 
       {/* Main content: user filter + request list + trace detail */}
+      {tab === "queries" && (
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* User sidebar */}
         <div className="w-48 lg:w-56 border-r border-border-subtle overflow-y-auto shrink-0 py-2 px-1.5 hidden sm:block">
@@ -186,6 +212,7 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

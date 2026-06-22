@@ -13,7 +13,6 @@ describe("background-tasks-store reconcileFromPipelineStatus", () => {
       any_running: true,
       repo: {
         is_indexing: true,
-        checkpoint_status: "running",
         workflow_id: "wf-repo",
         last_indexed_at: null,
         last_indexed_commit: null,

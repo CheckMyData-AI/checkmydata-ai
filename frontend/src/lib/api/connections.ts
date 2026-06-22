@@ -38,7 +38,7 @@ export const connections = {
       { method: "POST" },
     ),
   indexDb: (id: string) =>
-    request<{ status: string; connection_id: string }>(
+    request<{ status: string; run_id: string; workflow_id: string; connection_id: string }>(
       `/connections/${id}/index-db`,
       { method: "POST" },
     ),
@@ -49,9 +49,10 @@ export const connections = {
     request<{ ok: boolean }>(`/connections/${id}/index-db`, { method: "DELETE" }),
 
   triggerSync: (id: string) =>
-    request<{ status: string; connection_id: string }>(`/connections/${id}/sync`, {
-      method: "POST",
-    }),
+    request<{ status: string; run_id: string; workflow_id: string; connection_id: string }>(
+      `/connections/${id}/sync`,
+      { method: "POST" },
+    ),
   syncStatus: (id: string) => request<SyncStatus>(`/connections/${id}/sync/status`),
   getSync: (id: string) => request<SyncResponse>(`/connections/${id}/sync`),
   deleteSync: (id: string) =>

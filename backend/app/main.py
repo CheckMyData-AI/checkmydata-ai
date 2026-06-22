@@ -46,6 +46,7 @@ from app.api.routes import (
     reconciliation,
     repos,
     rules,
+    runs,
     schedules,
     semantic_layer,
     ssh_keys,
@@ -123,6 +124,11 @@ async def lifespan(app: FastAPI):
     from app.core.workflow_events import start_workflow_event_subscriber
 
     await start_workflow_event_subscriber()
+
+    # Map pipeline-emitted workflow events onto the IndexingRun projection/journal.
+    from app.services.run_coordinator import RunCoordinator
+
+    RunCoordinator().attach()
 
     if settings.backup_enabled:
         _backup_task = asyncio.create_task(_backup_cron_loop())
@@ -399,6 +405,7 @@ app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(metrics.router, prefix="/api", tags=["metrics"])
 app.include_router(data_validation.router, prefix="/api/data-validation", tags=["data-validation"])
 app.include_router(
@@ -697,36 +704,11 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                 pid = project.id
 
                 async def _run_in_process(*, project_id: str = pid) -> None:
-                    from app.core.workflow_tracker import tracker
                     from app.services.daily_knowledge_sync_service import (
-                        KnowledgeSyncRunResult,
-                        _daily_wf_status,
+                        DailyKnowledgeSyncService,
                     )
 
-                    wf_id = await tracker.begin(
-                        "daily_sync",
-                        {"project_id": project_id, "trigger": "scheduled"},
-                    )
-                    result = None
-                    try:
-                        result = await svc.run_for_project(project_id)
-                        await tracker.end(
-                            wf_id,
-                            "daily_sync",
-                            _daily_wf_status(result.status),
-                            f"daily sync {result.status}",
-                        )
-                    finally:
-                        if result is None:
-                            result = KnowledgeSyncRunResult(
-                                project_id=project_id,
-                                status="failed",
-                                error_message="interrupted before completion",
-                            )
-                            await tracker.end(
-                                wf_id, "daily_sync", "failed", "daily sync interrupted"
-                            )
-                        await svc.persist_run(result)
+                    await DailyKnowledgeSyncService().run_for_project(project_id)
 
                 await task_queue.enqueue(
                     "run_daily_project_knowledge_sync",
@@ -1049,10 +1031,28 @@ async def _maintenance_loop() -> None:
                 await _periodic_learning_decay()
                 await _periodic_insight_maintenance()
                 await _freshness_reconcile()
+                await _sweep_telemetry_retention()
         except asyncio.CancelledError:
             break
         except Exception:
             logger.exception("Maintenance loop iteration failed; will retry next cycle")
+
+
+async def _sweep_telemetry_retention() -> None:
+    """Trim the run-event journal and expire old error-catalog rows."""
+    from app.services.telemetry_retention import TelemetryRetention
+
+    try:
+        async with async_session_factory() as session:
+            await TelemetryRetention().sweep(
+                session,
+                ttl_days=settings.indexing_run_events_ttl_days,
+                max_per_run=settings.indexing_run_events_max_per_run,
+                error_ttl_days=settings.error_log_ttl_days,
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("Telemetry retention sweep failed", exc_info=True)
 
 
 async def _maybe_initial_backup() -> None:

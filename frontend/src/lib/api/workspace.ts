@@ -33,7 +33,8 @@ export const repos = {
   index: (projectId: string, forceFull = false) =>
     request<{
       status: string;
-      workflow_id: string | null;
+      run_id: string;
+      workflow_id: string;
       resumed?: boolean;
       commit_sha?: string;
       files_indexed?: number;
@@ -211,8 +212,11 @@ export const tasks = {
     request<
       {
         workflow_id: string;
+        run_id?: string;
         pipeline: string;
+        kind?: string;
         started_at: number;
+        progress_pct?: number;
         extra: Record<string, unknown>;
       }[]
     >("/tasks/active"),

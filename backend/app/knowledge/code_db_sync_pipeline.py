@@ -54,9 +54,10 @@ class CodeDbSyncPipeline:
         *,
         preferred_provider: str | None = None,
         model: str | None = None,
+        wf_id: str | None = None,
     ) -> dict:
         """Run the full sync pipeline. Returns status dict."""
-        wf_id = await self._tracker.begin(
+        wf_id = wf_id or await self._tracker.begin(
             "code_db_sync",
             {"connection_id": connection_id, "project_id": project_id},
         )

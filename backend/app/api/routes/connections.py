@@ -56,59 +56,118 @@ def _log_task_error(label: str, resource_id: str) -> Callable[[asyncio.Task], No
     return _cb
 
 
+async def _ensure_db_index_wf(connection_id: str, project_id: str) -> str:
+    """Return a workflow id for a db_index run, creating an :class:`IndexingRun`
+    (or reusing the active one) so the pipeline's events land on a run record.
+
+    Used by auto-index callers (reconciler / post-test) that do not mint the run
+    themselves the way the manual ``index_database`` route does.
+    """
+    from app.models.base import async_session_factory
+    from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+    coord = RunCoordinator()
+    async with async_session_factory() as rdb:
+        try:
+            run = await coord.start(
+                rdb,
+                kind="db_index",
+                project_id=project_id,
+                connection_id=connection_id,
+                trigger="auto",
+            )
+            return run.workflow_id
+        except RunAlreadyActiveError:
+            active = await coord._find_active(rdb, project_id, "db_index", connection_id)
+            return active.workflow_id if active else ""
+
+
 async def _dispatch_db_index(
     connection_id: str,
     config: ConnectionConfig,
     project_id: str,
+    *,
+    wf_id: str | None = None,
 ) -> None:
     """Single entry point for starting a DB index run.
 
-    Consolidates the previously divergent execution paths (Phase 0): when an
-    ARQ/Redis worker is configured the run is enqueued out-of-process via
-    :func:`task_queue.enqueue` (the worker's ``run_db_index`` mirrors the
-    in-process logic, so post-index steps and status transitions match). When
-    no Redis is configured the work runs in-process and is tracked in
+    When ARQ/Redis is configured the run is enqueued out-of-process via
+    :func:`task_queue.enqueue`; otherwise it runs in-process and is tracked in
     ``_db_index_tasks`` so the status endpoint and the 409 conflict guard keep
-    working exactly as before.
+    working. ``wf_id`` is minted by the manual route (so it can return the id);
+    auto-index callers omit it and a run is created here.
 
     Callers must already hold the per-connection start lock and have set the
     persisted ``indexing_status`` to ``running``.
     """
+    if wf_id is None:
+        wf_id = await _ensure_db_index_wf(connection_id, project_id)
     if task_queue.is_arq_active():
         await task_queue.enqueue(
             "run_db_index",
             task_id=f"db_index:{connection_id}:{uuid.uuid4().hex[:8]}",
             connection_id=connection_id,
             project_id=project_id,
+            wf_id=wf_id,
         )
         # No local handle in ARQ mode — the persisted status is authoritative.
         return
 
-    task = asyncio.create_task(_run_db_index_background(connection_id, config, project_id))
+    task = asyncio.create_task(
+        _run_db_index_background(connection_id, config, project_id, wf_id=wf_id)
+    )
     task.add_done_callback(_log_task_error("DB index", connection_id))
     _db_index_tasks[connection_id] = task
+
+
+async def _ensure_sync_wf(connection_id: str, project_id: str) -> str:
+    """Return a workflow id for a code_db_sync run, creating an :class:`IndexingRun`
+    (or reusing the active one) so the pipeline's events land on a run record.
+    """
+    from app.models.base import async_session_factory
+    from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+    coord = RunCoordinator()
+    async with async_session_factory() as rdb:
+        try:
+            run = await coord.start(
+                rdb,
+                kind="code_db_sync",
+                project_id=project_id,
+                connection_id=connection_id,
+                trigger="chain",
+            )
+            return run.workflow_id
+        except RunAlreadyActiveError:
+            active = await coord._find_active(rdb, project_id, "code_db_sync", connection_id)
+            return active.workflow_id if active else ""
 
 
 async def _dispatch_code_db_sync(
     connection_id: str,
     project_id: str,
+    *,
+    wf_id: str | None = None,
 ) -> None:
     """Single entry point for starting a code↔DB sync run.
 
-    Mirrors :func:`_dispatch_db_index` (Phase 0 consolidation): enqueue to the
-    ARQ worker's ``run_code_db_sync`` when Redis is configured, otherwise run
-    in-process and track in ``_sync_tasks`` so the status endpoint and 409 guard
-    keep working. Also used by the Phase 2 auto index→sync chain.
+    Enqueue to the ARQ worker's ``run_code_db_sync`` when Redis is configured,
+    otherwise run in-process and track in ``_sync_tasks``. ``wf_id`` is minted by
+    the manual ``trigger_sync`` route; chain/auto callers omit it and a run is
+    created here.
 
     Callers must already hold the per-connection sync start lock and have set the
     persisted ``sync_status`` to ``running``.
     """
+    if wf_id is None:
+        wf_id = await _ensure_sync_wf(connection_id, project_id)
     if task_queue.is_arq_active():
         await task_queue.enqueue(
             "run_code_db_sync",
             task_id=f"code_db_sync:{connection_id}:{uuid.uuid4().hex[:8]}",
             connection_id=connection_id,
             project_id=project_id,
+            wf_id=wf_id,
         )
         logger.info(
             "code_db_sync dispatched mode=arq connection=%s project=%s",
@@ -122,7 +181,7 @@ async def _dispatch_code_db_sync(
         connection_id[:8],
         project_id[:8],
     )
-    task = asyncio.create_task(_run_sync_background(connection_id, project_id))
+    task = asyncio.create_task(_run_sync_background(connection_id, project_id, wf_id=wf_id))
     task.add_done_callback(_log_task_error("Code-DB sync", connection_id))
     _sync_tasks[connection_id] = task
 
@@ -651,10 +710,26 @@ async def index_database(
                 detail="Database indexing already in progress for this connection",
             )
 
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        try:
+            run = await RunCoordinator().start(
+                db,
+                kind="db_index",
+                project_id=project_id,
+                connection_id=connection_id,
+                trigger="manual",
+            )
+        except RunAlreadyActiveError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Database indexing already in progress for this connection",
+            ) from exc
+
         await _db_index_svc.set_indexing_status(db, connection_id, "running")
         await db.commit()
 
-        await _dispatch_db_index(connection_id, config, project_id)
+        await _dispatch_db_index(connection_id, config, project_id, wf_id=run.workflow_id)
 
     logger.info(
         "DB index started: connection=%s type=%s project=%s",
@@ -665,7 +740,12 @@ async def index_database(
 
     return JSONResponse(
         status_code=202,
-        content={"status": "started", "connection_id": connection_id},
+        content={
+            "status": "started",
+            "run_id": run.id,
+            "workflow_id": run.workflow_id,
+            "connection_id": connection_id,
+        },
     )
 
 
@@ -809,6 +889,8 @@ async def _run_db_index_background(
     connection_id: str,
     connection_config: ConnectionConfig,
     project_id: str,
+    *,
+    wf_id: str,
 ) -> None:
     from app.models.base import async_session_factory
 
@@ -824,6 +906,7 @@ async def _run_db_index_background(
             connection_id=connection_id,
             connection_config=connection_config,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
@@ -959,11 +1042,27 @@ async def trigger_sync(
                 detail="Database must be indexed before running sync. Run 'Index DB' first.",
             )
 
+        project_id = conn.project_id
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        try:
+            run = await RunCoordinator().start(
+                db,
+                kind="code_db_sync",
+                project_id=project_id,
+                connection_id=connection_id,
+                trigger="manual",
+            )
+        except RunAlreadyActiveError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Code-DB sync already in progress for this connection",
+            ) from exc
+
         await _sync_svc.set_sync_status(db, connection_id, "running")
         await db.commit()
 
-        project_id = conn.project_id
-        await _dispatch_code_db_sync(connection_id, project_id)
+        await _dispatch_code_db_sync(connection_id, project_id, wf_id=run.workflow_id)
 
     logger.info(
         "Code-DB sync started: connection=%s project=%s",
@@ -973,7 +1072,12 @@ async def trigger_sync(
 
     return JSONResponse(
         status_code=202,
-        content={"status": "started", "connection_id": connection_id},
+        content={
+            "status": "started",
+            "run_id": run.id,
+            "workflow_id": run.workflow_id,
+            "connection_id": connection_id,
+        },
     )
 
 
@@ -1054,6 +1158,8 @@ async def delete_sync(
 async def _run_sync_background(
     connection_id: str,
     project_id: str,
+    *,
+    wf_id: str,
 ) -> None:
     from app.models.base import async_session_factory
 
@@ -1065,6 +1171,7 @@ async def _run_sync_background(
         result = await pipeline.run(
             connection_id=connection_id,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(

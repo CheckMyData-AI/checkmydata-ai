@@ -14,10 +14,11 @@ from app.models.custom_rule import CustomRule  # noqa: F401
 from app.models.dashboard import Dashboard  # noqa: F401
 from app.models.data_validation import DataInvestigation, DataValidationFeedback  # noqa: F401
 from app.models.db_index import DbIndex  # noqa: F401
+from app.models.error_log import ErrorLog  # noqa: F401
 from app.models.indexing_checkpoint import IndexingCheckpoint  # noqa: F401
+from app.models.indexing_run import IndexingRun, IndexingRunEvent  # noqa: F401
 from app.models.insight_record import InsightRecord, TrustScore  # noqa: F401
 from app.models.knowledge_doc import KnowledgeDoc  # noqa: F401
-from app.models.knowledge_sync_run import KnowledgeSyncRun  # noqa: F401
 from app.models.mcp_api_key import McpApiKey  # noqa: F401
 from app.models.metric_definition import MetricDefinition, MetricRelationship  # noqa: F401
 from app.models.notification import Notification  # noqa: F401

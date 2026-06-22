@@ -10,7 +10,6 @@ import pytest
 
 from app.services.daily_knowledge_sync_service import (
     DailyKnowledgeSyncService,
-    KnowledgeSyncRunResult,
     compute_next_scheduled_run,
 )
 
@@ -52,7 +51,7 @@ async def test_eligible_project_skips_no_repo():
         with patch("app.services.daily_knowledge_sync_service.async_session_factory") as mock_sf:
             mock_sf.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
-            result = await svc.run_for_project("proj-1")
+            result = await svc._orchestrate("proj-1")
 
     assert result.status == "skipped"
     assert result.steps_json.get("reason") == "no_repo"
@@ -95,7 +94,7 @@ async def test_run_for_project_sequential_order():
         mock_proj.get = AsyncMock(return_value=project)
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
-        result = await svc.run_for_project("proj-seq")
+        result = await svc._orchestrate("proj-seq")
 
     assert call_order == ["repo", "db", "sync"]
     assert result.status == "success"
@@ -133,7 +132,7 @@ async def test_run_for_project_all_active_connections():
         mock_proj.get = AsyncMock(return_value=project)
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
-        result = await svc.run_for_project("proj-multi")
+        result = await svc._orchestrate("proj-multi")
 
     assert db_calls == ["c1", "c2"]
     assert len(result.steps_json["connections"]) == 2
@@ -168,32 +167,6 @@ async def test_chain_sync_disabled_for_daily():
 
 
 @pytest.mark.asyncio
-async def test_persist_run_writes_row():
-    svc = DailyKnowledgeSyncService()
-    result = KnowledgeSyncRunResult(
-        project_id="proj-db",
-        status="success",
-        duration_seconds=12.5,
-        steps_json={"repo_index": {"status": "completed"}},
-    )
-
-    mock_session = AsyncMock()
-    mock_session.add = MagicMock()
-    mock_session.commit = AsyncMock()
-
-    with patch("app.services.daily_knowledge_sync_service.async_session_factory") as mock_sf:
-        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
-        await svc.persist_run(result)
-
-    mock_session.add.assert_called_once()
-    row = mock_session.add.call_args[0][0]
-    assert row.project_id == "proj-db"
-    assert row.status == "success"
-    mock_session.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_partial_status_on_connection_failure():
     svc = DailyKnowledgeSyncService()
 
@@ -217,52 +190,9 @@ async def test_partial_status_on_connection_failure():
         mock_proj.get = AsyncMock(return_value=project)
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
-        result = await svc.run_for_project("proj-partial")
+        result = await svc._orchestrate("proj-partial")
 
     assert result.status == "partial"
     conn_steps = result.steps_json["connections"][0]
     assert conn_steps["db_index"]["status"] == "failed"
     assert conn_steps["code_db_sync"]["status"] == "skipped"
-
-
-@pytest.mark.asyncio
-async def test_persist_run_called_even_when_run_for_project_raises(monkeypatch):
-    import sys
-    import types
-
-    # arq is not installed in the unit-test venv (known pre-existing gap); stub it
-    # so that `import app.worker` doesn't fail at module evaluation.
-    # Use monkeypatch.setitem so pytest tears the stubs down after this test.
-    if "arq" not in sys.modules:
-
-        class _FakeRedisSettings:
-            @classmethod
-            def from_dsn(cls, url: str) -> _FakeRedisSettings:
-                return cls()
-
-        arq_stub = types.ModuleType("arq")
-        conn_stub = types.ModuleType("arq.connections")
-        conn_stub.RedisSettings = _FakeRedisSettings  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "arq", arq_stub)
-        monkeypatch.setitem(sys.modules, "arq.connections", conn_stub)
-
-    import app.worker as worker_mod
-    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
-
-    persisted = {}
-
-    async def boom(self, project_id):
-        raise RuntimeError("crash mid-run")
-
-    async def capture(self, result):
-        persisted["status"] = result.status
-
-    monkeypatch.setattr(DailyKnowledgeSyncService, "run_for_project", boom)
-    monkeypatch.setattr(DailyKnowledgeSyncService, "persist_run", capture)
-
-    try:
-        await worker_mod.run_daily_project_knowledge_sync({}, project_id="p1")
-    except RuntimeError:
-        pass
-
-    assert persisted.get("status") == "failed"
