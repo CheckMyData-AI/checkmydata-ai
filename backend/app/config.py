@@ -522,6 +522,12 @@ class Settings(BaseSettings):
     mcp_enabled: bool = False
     mcp_api_key_user_id: str = ""
 
+    # MCP HTTP mount (remote multi-tenant). Gated SEPARATELY from mcp_enabled so
+    # turning on the stdio MCP surface does not auto-expose the remote HTTP
+    # endpoint. The mount requires BOTH mcp_enabled and mcp_mount_enabled.
+    mcp_mount_enabled: bool = False
+    mcp_mount_path: str = "/mcp"
+
     # GeoIP cache settings
     geoip_cache_enabled: bool = True
     geoip_cache_dir: str = "./data"
