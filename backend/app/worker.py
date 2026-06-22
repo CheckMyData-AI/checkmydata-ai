@@ -202,30 +202,9 @@ async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: st
 
 async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> None:  # noqa: ARG001
     """Daily orchestrator: repo index → DB index → code↔DB sync for one project."""
-    from app.core.workflow_tracker import tracker
-    from app.services.daily_knowledge_sync_service import (
-        DailyKnowledgeSyncService,
-        KnowledgeSyncRunResult,
-        _daily_wf_status,
-    )
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
 
-    svc = DailyKnowledgeSyncService()
-    wf_id = await tracker.begin("daily_sync", {"project_id": project_id, "trigger": "scheduled"})
-    result = None
-    try:
-        result = await svc.run_for_project(project_id)
-        await tracker.end(
-            wf_id, "daily_sync", _daily_wf_status(result.status), f"daily sync {result.status}"
-        )
-    finally:
-        if result is None:
-            result = KnowledgeSyncRunResult(
-                project_id=project_id,
-                status="failed",
-                error_message="interrupted before completion",
-            )
-            await tracker.end(wf_id, "daily_sync", "failed", "daily sync interrupted")
-        await svc.persist_run(result)
+    await DailyKnowledgeSyncService().run_for_project(project_id)
 
 
 # ---------------------------------------------------------------------------

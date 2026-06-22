@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -13,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.base import async_session_factory
 from app.models.connection import Connection
-from app.models.knowledge_sync_run import KnowledgeSyncRun
+from app.models.indexing_run import IndexingRun
 from app.models.project import Project
 from app.services.checkpoint_service import CheckpointService
 from app.services.connection_service import ConnectionService
 from app.services.project_service import ProjectService
+from app.services.run_coordinator import RunCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,50 @@ class DailyKnowledgeSyncService:
                 eligible.append(project)
         return eligible
 
-    async def run_for_project(self, project_id: str) -> KnowledgeSyncRunResult:
+    async def run_for_project(
+        self, project_id: str, *, trigger: str = "schedule"
+    ) -> KnowledgeSyncRunResult:
+        """Run the daily sync under a first-class ``daily_sync`` IndexingRun.
+
+        Adopts an already-active run for the project (e.g. a manual ``sync-now``
+        that minted the run before enqueueing) instead of creating a duplicate.
+        The orchestration body is unchanged; per-operation progress comes from the
+        child runs created by the repo/db/sync sub-steps.
+        """
+        coord = RunCoordinator()
+        async with async_session_factory() as db:
+            existing = await coord._find_active(db, project_id, "daily_sync", None)
+            run_id = (
+                existing.id
+                if existing
+                else (
+                    await coord.start(
+                        db,
+                        kind="daily_sync",
+                        project_id=project_id,
+                        connection_id=None,
+                        trigger=trigger,
+                    )
+                ).id
+            )
+
+        result = await self._orchestrate(project_id)
+
+        terminal = "failed" if result.status == _STATUS_FAILED else "completed"
+        failure_kind = "fatal" if terminal == "failed" else None
+        async with async_session_factory() as db:
+            run = await db.get(IndexingRun, run_id)
+            if run is not None and run.status not in ("completed", "failed", "cancelled"):
+                run.meta_json = json.dumps(
+                    {"status": result.status, "steps": result.steps_json}, default=str
+                )
+                await db.commit()
+                await coord.finish(
+                    db, run, terminal, error=result.error_message, failure_kind=failure_kind
+                )
+        return result
+
+    async def _orchestrate(self, project_id: str) -> KnowledgeSyncRunResult:
         started = time.monotonic()
         result = KnowledgeSyncRunResult(project_id=project_id)
 
@@ -204,20 +249,6 @@ class DailyKnowledgeSyncService:
             result.duration_seconds,
         )
         return result
-
-    async def persist_run(self, result: KnowledgeSyncRunResult) -> None:
-        async with async_session_factory() as session:
-            session.add(
-                KnowledgeSyncRun(
-                    project_id=result.project_id,
-                    trigger=result.trigger,
-                    status=result.status,
-                    duration_seconds=result.duration_seconds,
-                    steps_json=result.steps_json,
-                    error_message=result.error_message,
-                )
-            )
-            await session.commit()
 
     async def _active_connections(
         self,
