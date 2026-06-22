@@ -49,6 +49,9 @@ class Project(Base):
     default_rule_initialized: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )
+    # Per-project daily-sync schedule override (NULL = inherit global defaults).
+    sync_schedule_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    sync_schedule_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
