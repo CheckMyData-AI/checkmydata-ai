@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -51,7 +52,10 @@ async def _subscribe_loop() -> None:
                 continue
             try:
                 payload = json.loads(raw)
-                event = WorkflowEvent(**payload)
+                # Filter to known dataclass fields so a future/extra key never
+                # drops an event during reconstruction.
+                _known = {f.name for f in dataclasses.fields(WorkflowEvent)}
+                event = WorkflowEvent(**{k: v for k, v in payload.items() if k in _known})
             except Exception:
                 logger.debug("Invalid workflow event payload from Redis", exc_info=True)
                 continue
