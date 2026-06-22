@@ -15,6 +15,7 @@ import { useAppPanel } from "@/hooks/useAppPanel";
 import { WorkflowProgress } from "./workflow/WorkflowProgress";
 import { PendingInvites } from "./invites/PendingInvites";
 import { useAppStore } from "@/stores/app-store";
+import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
 import type { RepoStatus, UpdateCheck } from "@/lib/api";
@@ -127,6 +128,20 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     try {
       const result = await api.repos.index(activeProject.id);
       setIndexWorkflowId(result.workflow_id);
+      useBackgroundTasks.getState().insertOptimistic({
+        runId: result.run_id,
+        workflowId: result.workflow_id,
+        kind: "index_repo",
+        projectId: activeProject.id,
+        connectionId: null,
+      });
+      void api.projects
+        .pipelineStatus(activeProject.id)
+        .then((s) => {
+          useAppStore.getState().setPipelineStatus(activeProject.id, s);
+          useBackgroundTasks.getState().reconcileFromPipelineStatus(s);
+        })
+        .catch(() => {});
       useLogStore.getState().setOpen(true);
     } catch (err) {
       setIndexResult(
