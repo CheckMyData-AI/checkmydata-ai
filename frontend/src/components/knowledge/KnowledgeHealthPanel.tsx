@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/stores/toast-store";
 import { SyncHistoryPanel } from "@/components/knowledge/SyncHistoryPanel";
+import { RunCard } from "@/components/knowledge/RunCard";
 
 interface KnowledgeHealthPanelProps {
   projectId: string;
@@ -182,6 +183,35 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
                 <span className="text-[10px] text-text-tertiary">{label}</span>
               </div>
             ))}
+          </div>
+
+          <div className="grid gap-2">
+            <RunCard
+              title="Repository"
+              kind="index_repo"
+              projectId={projectId}
+              connectionId={null}
+              onTrigger={() => runAction("reindex_repo", null, "card-repo")}
+              triggerLabel="Re-index"
+            />
+            <RunCard
+              title="Database"
+              kind="db_index"
+              projectId={projectId}
+              connectionId={connectionId}
+              onTrigger={() => runAction("reindex_db", connectionId, "card-db")}
+              triggerLabel="Index DB"
+              triggerDisabled={!connectionId}
+            />
+            <RunCard
+              title="Code-DB Sync"
+              kind="code_db_sync"
+              projectId={projectId}
+              connectionId={connectionId}
+              onTrigger={() => runAction("resync", connectionId, "card-sync")}
+              triggerLabel="Sync"
+              triggerDisabled={!connectionId}
+            />
           </div>
 
           {!health.freshness.overall_stale ? (
