@@ -268,8 +268,11 @@ class DailyKnowledgeSyncService:
             if cp and cp.status == "running":
                 return _STEP_SKIPPED, "repo index already running"
 
+        child_wf = await self._start_child_wf("index_repo", None, project_id)
         try:
-            await run_repo_index_task(project_id, force_full=False, chain_sync=False)
+            await run_repo_index_task(
+                project_id, force_full=False, chain_sync=False, wf_id=child_wf
+            )
         except Exception as exc:
             logger.exception(
                 "Cron: daily knowledge sync repo index raised project=%s",
@@ -288,6 +291,29 @@ class DailyKnowledgeSyncService:
             return _STEP_FAILED, cp.error_detail
         return _STEP_FAILED, f"checkpoint status={cp.status}"
 
+    async def _start_child_wf(
+        self, kind: str, connection_id: str | None, project_id: str
+    ) -> str | None:
+        """Create a child IndexingRun for a daily-sync sub-operation and return its
+        workflow id. The pipeline's emitted events are mapped onto the run (and
+        finalised) by the RunCoordinator persistence hook. Returns ``None`` when a
+        run is already active (the pipeline then begins its own untracked workflow).
+        """
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        try:
+            async with async_session_factory() as rdb:
+                run = await RunCoordinator().start(
+                    rdb,
+                    kind=kind,
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    trigger="schedule",
+                )
+                return run.workflow_id
+        except RunAlreadyActiveError:
+            return None
+
     async def _run_db_index(
         self,
         connection_id: str,
@@ -305,6 +331,7 @@ class DailyKnowledgeSyncService:
                 return _STEP_FAILED, "connection not found"
             config = await self._conn_svc.to_config(session, conn)
 
+        child_wf = await self._start_child_wf("db_index", connection_id, project_id)
         final_status = _STEP_FAILED
         error: str | None = None
         pipeline_result: dict | str | None = None
@@ -322,6 +349,7 @@ class DailyKnowledgeSyncService:
                 connection_id=connection_id,
                 connection_config=config,
                 project_id=project_id,
+                wf_id=child_wf,
             )
             if isinstance(pipeline_result, dict) and pipeline_result.get("status") == "failed":
                 error = pipeline_result.get("error", "unknown")
@@ -383,6 +411,7 @@ class DailyKnowledgeSyncService:
             if not await idx_svc.is_indexed(session, connection_id):
                 return _STEP_SKIPPED, "connection not DB-indexed"
 
+        child_wf = await self._start_child_wf("code_db_sync", connection_id, project_id)
         final_status = _STEP_FAILED
         error: str | None = None
         try:
@@ -396,6 +425,7 @@ class DailyKnowledgeSyncService:
             pipeline_result = await pipeline.run(
                 connection_id=connection_id,
                 project_id=project_id,
+                wf_id=child_wf,
             )
             if isinstance(pipeline_result, dict) and pipeline_result.get("status") == "failed":
                 error = pipeline_result.get("error", "unknown")
