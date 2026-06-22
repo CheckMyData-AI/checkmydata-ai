@@ -55,6 +55,11 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "explain_check": "validation",
     "error_classify": "validation",
     "query_repair": "validation",
+    "data_gate": "validation",
+    "answer_validate": "validation",
+    "answer": "validation",
+    "validate": "validation",
+    "validate_tables": "validation",
     # Standalone LLM endpoints
     "generate_title:llm_call": "llm_call",
     "explain_sql:llm_call": "llm_call",

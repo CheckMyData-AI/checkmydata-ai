@@ -2392,10 +2392,28 @@ class OrchestratorAgent(BaseAgent):
                 "orchestrator:answer_validator",
                 "completed",
                 f"answer addresses question = {verdict.addresses_question}",
+                span_type="validation",
                 addresses_question=verdict.addresses_question,
                 confidence=verdict.confidence,
                 reason=verdict.reason,
             )
+            if not verdict.addresses_question:
+                # Fail-closed answer → catalog so the errors screen surfaces it.
+                try:
+                    from app.models.base import async_session_factory
+                    from app.services.error_log_service import ErrorLogService
+
+                    owner = self._tracker.get_owner(wf_id)
+                    async with async_session_factory() as db:
+                        await ErrorLogService().upsert_validation_failure(
+                            db,
+                            project_id=owner.get("project_id") or None,
+                            kind="answer",
+                            message="answer did not address the question (fail-closed)",
+                            sample_ref=wf_id,
+                        )
+                except Exception:  # noqa: BLE001 — observability must never break the answer
+                    logger.debug("answer validation error_log upsert failed", exc_info=True)
             return verdict.addresses_question
         except Exception:
             logger.debug("Answer validator failed (non-critical)", exc_info=True)
