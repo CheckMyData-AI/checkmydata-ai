@@ -10,6 +10,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.error_log import ErrorLog
+from app.models.indexing_run import IndexingRun
 from app.models.request_trace import RequestTrace
 from app.models.user import User
 
@@ -249,3 +251,116 @@ class LogsService:
             "by_status": by_status,
             "by_type": by_type,
         }
+
+    async def list_errors(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        *,
+        source: str | None = None,
+        kind: str | None = None,
+        failure_kind: str | None = None,
+        status: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        base = select(ErrorLog).where(ErrorLog.project_id == project_id)
+        cnt = select(func.count(ErrorLog.id)).where(ErrorLog.project_id == project_id)
+        for col, val in (
+            ("source", source),
+            ("kind", kind),
+            ("failure_kind", failure_kind),
+            ("status", status),
+        ):
+            if val:
+                base = base.where(getattr(ErrorLog, col) == val)
+                cnt = cnt.where(getattr(ErrorLog, col) == val)
+        if date_from:
+            base = base.where(ErrorLog.last_seen_at >= date_from)
+            cnt = cnt.where(ErrorLog.last_seen_at >= date_from)
+        if date_to:
+            base = base.where(ErrorLog.last_seen_at <= date_to)
+            cnt = cnt.where(ErrorLog.last_seen_at <= date_to)
+        total = (await db.execute(cnt)).scalar_one()
+        rows = (
+            (
+                await db.execute(
+                    base.order_by(ErrorLog.last_seen_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {
+            "items": [
+                {
+                    "id": r.id,
+                    "source": r.source,
+                    "kind": r.kind,
+                    "failure_kind": r.failure_kind,
+                    "message": r.message,
+                    "occurrences": r.occurrences,
+                    "status": r.status,
+                    "sample_ref": r.sample_ref,
+                    "first_seen_at": r.first_seen_at.isoformat() if r.first_seen_at else None,
+                    "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+                }
+                for r in rows
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    async def update_error_status(
+        self, db: AsyncSession, project_id: str, error_id: str, status: str
+    ) -> bool:
+        e = await db.get(ErrorLog, error_id)
+        if (
+            e is None
+            or e.project_id != project_id
+            or status not in ("open", "acknowledged", "resolved")
+        ):
+            return False
+        e.status = status
+        await db.commit()
+        return True
+
+    async def list_runs(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        *,
+        kind: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        stmt = select(IndexingRun).where(IndexingRun.project_id == project_id)
+        if kind:
+            stmt = stmt.where(IndexingRun.kind == kind)
+        if status:
+            stmt = stmt.where(IndexingRun.status == status)
+        rows = (
+            (await db.execute(stmt.order_by(IndexingRun.created_at.desc()).limit(limit)))
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "status": r.status,
+                "trigger": r.trigger,
+                "progress_pct": r.progress_pct,
+                "connection_id": r.connection_id,
+                "error": r.error,
+                "failure_kind": r.failure_kind,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            }
+            for r in rows
+        ]

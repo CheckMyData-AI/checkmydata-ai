@@ -563,6 +563,23 @@ async def sync_now(
     return {"run_id": run.id, "workflow_id": run.workflow_id, "status": "started"}
 
 
+@router.get("/{project_id}/runs")
+async def project_runs(
+    project_id: str,
+    kind: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Background-run history for a project (viewer access)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    from app.services.logs_service import LogsService
+
+    limit = max(1, min(limit, 200))
+    return await LogsService().list_runs(db, project_id, kind=kind, status=status, limit=limit)
+
+
 @router.get("/{project_id}/pipeline-status")
 async def project_pipeline_status(
     project_id: str,
