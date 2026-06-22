@@ -41,6 +41,7 @@ class RequestTrace(Base):
     response_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default="text")
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="started")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
     total_duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_llm_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_db_queries: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
