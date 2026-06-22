@@ -72,35 +72,10 @@ _background_finalize_tasks: set[asyncio.Task] = set()
 async def _check_token_budget(db: AsyncSession, user_id: str) -> str | None:
     """F-FIN-1: enforce per-user token budgets before running the agent.
 
-    Returns an error message when the budget is exhausted, ``None`` when the
-    request may proceed. Budget *checks* fail open (an infrastructure error
-    must not take chat down), budget *breaches* always block.
-
-    Limits come from the user's plan entitlements (T-BILL-3) combined with
-    the global config caps — the strictest non-zero limit wins.
+    Thin delegate to the shared helper so the MCP surface enforces the same
+    gate. Returns an error message when exhausted, ``None`` to proceed.
     """
-    from app.services.usage_service import BudgetExceededError
-
-    try:
-        from app.services.entitlement_service import EntitlementService
-
-        daily, monthly = await EntitlementService().effective_token_limits(db, user_id)
-    except Exception:
-        logger.warning("Entitlement lookup failed; using config limits", exc_info=True)
-        from app.config import settings
-
-        daily = settings.user_daily_token_limit
-        monthly = settings.user_monthly_token_limit
-    if not daily and not monthly:
-        return None
-    try:
-        await _usage_svc.check_budget(db, user_id, daily_limit=daily, monthly_limit=monthly)
-    except BudgetExceededError as exc:
-        logger.warning("Token budget exceeded for user=%s: %s", user_id[:8], exc)
-        return str(exc) + " — upgrade your plan at /pricing to continue."
-    except Exception:
-        logger.warning("Token budget check failed; allowing request", exc_info=True)
-    return None
+    return await _usage_svc.check_token_budget(db, user_id)
 
 
 async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
