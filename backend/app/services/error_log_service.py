@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.error_log import ErrorLog
 from app.models.indexing_run import IndexingRun
+from app.models.request_trace import RequestTrace
 
 _DIGITS = re.compile(r"\d+")
 _WS = re.compile(r"\s+")
@@ -85,4 +86,16 @@ class ErrorLogService:
             failure_kind=run.failure_kind,
             sample_ref=run.id,
             meta={"connection_id": run.connection_id},
+        )
+
+    async def upsert_from_trace(self, db: AsyncSession, trace: RequestTrace) -> ErrorLog:
+        return await self.upsert(
+            db,
+            project_id=trace.project_id,
+            source="query",
+            kind="chat",
+            message=trace.error_message,
+            failure_kind=getattr(trace, "failure_kind", None),
+            sample_ref=trace.id,
+            meta={"user_id": trace.user_id, "workflow_id": trace.workflow_id},
         )

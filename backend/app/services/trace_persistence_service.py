@@ -468,6 +468,13 @@ class TracePersistenceService:
                     session.add(span)
 
                 await session.commit()
+                if trace_status == "failed":
+                    try:
+                        from app.services.error_log_service import ErrorLogService
+
+                        await ErrorLogService().upsert_from_trace(session, trace)
+                    except Exception:
+                        logger.debug("error_log upsert from trace failed", exc_info=True)
                 logger.debug(
                     "TracePersistence: saved trace wf=%s with %d spans",
                     buf.workflow_id[:8],
