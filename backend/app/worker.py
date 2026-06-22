@@ -118,7 +118,9 @@ async def run_db_index(  # noqa: ARG001
             logger.debug("Failed to update indexing_status", exc_info=True)
 
 
-async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) -> None:  # noqa: ARG001
+async def run_code_db_sync(  # noqa: ARG001
+    ctx: dict, *, connection_id: str, project_id: str, wf_id: str
+) -> None:
     """Background code-DB sync for a single connection."""
     from app.models.base import async_session_factory
     from app.services.code_db_sync_service import CodeDbSyncService
@@ -136,6 +138,7 @@ async def run_code_db_sync(ctx: dict, *, connection_id: str, project_id: str) ->
         result = await pipeline.run(
             connection_id=connection_id,
             project_id=project_id,
+            wf_id=wf_id,
         )
         if isinstance(result, dict) and result.get("status") == "failed":
             logger.error(
