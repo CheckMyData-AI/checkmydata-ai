@@ -113,10 +113,16 @@ async def test_spawn_repo_index_enqueues_in_arq_mode():
     checkpoint_svc = AsyncMock()
     checkpoint_svc.get_active = AsyncMock(return_value=None)
 
+    fake_run = SimpleNamespace(id="run-x", workflow_id="wf-x")
+
     with (
         patch.object(repos_route.task_queue, "is_arq_active", return_value=True),
         patch.object(repos_route.task_queue, "enqueue", new=AsyncMock()) as enq,
         patch.object(repos_route, "_checkpoint_svc", checkpoint_svc),
+        patch(
+            "app.services.run_coordinator.RunCoordinator.start",
+            new=AsyncMock(return_value=fake_run),
+        ),
     ):
         result = await repos_route._spawn_repo_index(
             db, "p3", project, force_full=True, trigger="manual"
@@ -124,10 +130,13 @@ async def test_spawn_repo_index_enqueues_in_arq_mode():
 
     assert result is not None
     assert result["status"] == "queued"
+    assert result["run_id"] == "run-x"
+    assert result["workflow_id"] == "wf-x"
     enq.assert_awaited_once()
     _, kwargs = enq.call_args
     assert kwargs["project_id"] == "p3"
     assert kwargs["force_full"] is True
+    assert kwargs["wf_id"] == "wf-x"
 
 
 # ---------------------------------------------------------------------------

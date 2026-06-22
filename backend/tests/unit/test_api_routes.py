@@ -432,7 +432,7 @@ class TestDbIndexBackgroundPipelineFailure:
             mock_idx_svc.set_indexing_status = AsyncMock()
 
             config = MagicMock()
-            await _run_db_index_background("conn-1", config, "proj-1")
+            await _run_db_index_background("conn-1", config, "proj-1", wf_id="wf-test")
 
             mock_idx_svc.set_indexing_status.assert_called_once_with(
                 mock_session, "conn-1", "failed"
@@ -464,7 +464,7 @@ class TestDbIndexBackgroundPipelineFailure:
             mock_idx_svc.set_indexing_status = AsyncMock()
 
             config = MagicMock()
-            await _run_db_index_background("conn-1", config, "proj-1")
+            await _run_db_index_background("conn-1", config, "proj-1", wf_id="wf-test")
 
             mock_idx_svc.set_indexing_status.assert_called_once_with(
                 mock_session, "conn-1", "completed"
@@ -501,7 +501,7 @@ class TestSyncBackgroundPipelineFailure:
             patch("app.api.routes.connections.logger") as mock_logger,
         ):
             mock_sync_svc.set_sync_status = AsyncMock()
-            await _run_sync_background("conn-1", "proj-1")
+            await _run_sync_background("conn-1", "proj-1", wf_id="wf-test")
 
             mock_logger.error.assert_called_once()
             assert "failure" in mock_logger.error.call_args[0][0].lower()
@@ -534,7 +534,7 @@ class TestSyncBackgroundPipelineFailure:
             patch("app.api.routes.connections.logger") as mock_logger,
         ):
             mock_sync_svc.set_sync_status = AsyncMock()
-            await _run_sync_background("conn-1", "proj-1")
+            await _run_sync_background("conn-1", "proj-1", wf_id="wf-test")
 
             mock_logger.info.assert_called_once()
             mock_logger.error.assert_not_called()

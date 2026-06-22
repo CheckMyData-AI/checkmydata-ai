@@ -120,13 +120,17 @@ async def test_dispatch_db_index_uses_enqueue_when_arq_active(monkeypatch):
     monkeypatch.setattr(conn_routes.task_queue, "enqueue", fake_enqueue)
     conn_routes._db_index_tasks.clear()
 
-    await conn_routes._dispatch_db_index("conn123", object(), "proj456")
+    await conn_routes._dispatch_db_index("conn123", object(), "proj456", wf_id="wf-x")
 
     assert captured["task_name"] == "run_db_index"
     # Task IDs include a random suffix (e.g. "db_index:conn123:abc12345") so
     # each retry gets a unique ARQ job id and is never silently de-duplicated.
     assert captured["task_id"].startswith("db_index:conn123")
-    assert captured["kwargs"] == {"connection_id": "conn123", "project_id": "proj456"}
+    assert captured["kwargs"] == {
+        "connection_id": "conn123",
+        "project_id": "proj456",
+        "wf_id": "wf-x",
+    }
     # No local handle in ARQ mode — persisted status is authoritative.
     assert "conn123" not in conn_routes._db_index_tasks
 
@@ -139,14 +143,15 @@ async def test_dispatch_db_index_falls_back_in_process(monkeypatch):
 
     ran: dict = {}
 
-    async def fake_bg(connection_id, config, project_id):
+    async def fake_bg(connection_id, config, project_id, *, wf_id=None):
         ran["connection_id"] = connection_id
+        ran["wf_id"] = wf_id
 
     monkeypatch.setattr(conn_routes.task_queue, "is_arq_active", lambda: False)
     monkeypatch.setattr(conn_routes, "_run_db_index_background", fake_bg)
     conn_routes._db_index_tasks.clear()
 
-    await conn_routes._dispatch_db_index("connA", object(), "projB")
+    await conn_routes._dispatch_db_index("connA", object(), "projB", wf_id="wf-y")
 
     assert "connA" in conn_routes._db_index_tasks
     await asyncio.sleep(0.05)
