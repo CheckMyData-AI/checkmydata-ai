@@ -234,3 +234,35 @@ class RunCoordinator:
         if status == "failed":
             await self._error_log.upsert_from_run(db, run)
         self._manifests.pop(run.id, None)
+
+    async def request_cancel(self, db: AsyncSession, run_id: str) -> bool:
+        run = await db.get(IndexingRun, run_id)
+        if run is None or run.status not in _ACTIVE_STATUSES:
+            return False
+        run.cancel_requested = True
+        await db.commit()
+        try:
+            from app.core import redis_client
+
+            client = redis_client.get_redis()
+            if client is not None:
+                await client.set(f"cmd:cancel:{run_id}", "1", ex=3600)
+        except Exception:  # noqa: BLE001 — Redis is best-effort
+            logger.debug("cancel flag redis set failed", exc_info=True)
+        return True
+
+    async def retry(self, db: AsyncSession, run_id: str, *, force_full: bool) -> IndexingRun:
+        old = await db.get(IndexingRun, run_id)
+        if old is None:
+            raise KeyError(f"run not found: {run_id}")
+        new = await self.start(
+            db,
+            kind=old.kind,
+            project_id=old.project_id,
+            connection_id=old.connection_id,
+            trigger="manual",
+            force_full=force_full,
+        )
+        new.meta_json = json.dumps({"force_full": force_full, "retried_from": old.id})
+        await db.commit()
+        return new

@@ -134,3 +134,34 @@ async def test_finish_failed_upserts_error_log_and_dedups(session: AsyncSession)
     assert len(rows) == 1  # digit-skeleton dedup collapses host 12/99
     assert rows[0].occurrences == 2
     assert rows[0].source == "run"
+
+
+# --- cancel + retry ------------------------------------------------------
+
+
+async def test_request_cancel_sets_flag(session: AsyncSession):
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="db_index", project_id="p7", connection_id="c1")
+    ok = await coord.request_cancel(session, run.id)
+    assert ok is True
+    await session.refresh(run)
+    assert run.cancel_requested is True
+
+
+async def test_request_cancel_returns_false_for_terminal(session: AsyncSession):
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="db_index", project_id="p8", connection_id="c1")
+    await coord.finish(session, run, "completed")
+    assert await coord.request_cancel(session, run.id) is False
+
+
+async def test_retry_starts_new_run_with_provenance(session: AsyncSession):
+    import json as _json
+
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="db_index", project_id="p9", connection_id="c1")
+    await coord.finish(session, run, "failed", error="x", failure_kind="fatal")
+    new = await coord.retry(session, run.id, force_full=True)
+    assert new.id != run.id
+    assert new.status == "running"
+    assert _json.loads(new.meta_json)["retried_from"] == run.id
