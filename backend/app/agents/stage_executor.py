@@ -1026,12 +1026,30 @@ class StageExecutor:
             "passed" if outcome.passed else "failed",
             outcome.error_summary
             or ("warnings: " + "; ".join(outcome.warnings) if outcome.warnings else "OK"),
+            span_type="validation",
             stage_id=stage.stage_id,
             passed=outcome.passed,
             warnings=outcome.warnings,
             errors=outcome.errors,
             suggestions=outcome.suggestions,
         )
+        if outcome.errors:
+            # Hard data-gate block → catalog it so the logs/errors screen surfaces it.
+            try:
+                from app.models.base import async_session_factory
+                from app.services.error_log_service import ErrorLogService
+
+                owner = self._tracker.get_owner(wf_id)
+                async with async_session_factory() as db:
+                    await ErrorLogService().upsert_validation_failure(
+                        db,
+                        project_id=owner.get("project_id") or None,
+                        kind="data_gate",
+                        message=outcome.error_summary,
+                        sample_ref=wf_id,
+                    )
+            except Exception:  # noqa: BLE001 — observability must never break the stage
+                logger.debug("data_gate error_log upsert failed", exc_info=True)
 
     async def _emit_checkpoint(self, wf_id: str, stage: PlanStage, result: StageResult) -> None:
         preview: dict[str, Any] = {"stage_id": stage.stage_id}
