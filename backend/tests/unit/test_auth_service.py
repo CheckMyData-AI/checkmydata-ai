@@ -208,6 +208,22 @@ class TestAuthenticate:
         assert await svc.authenticate(db, "ghost@test.com", "any") is None
 
     @pytest.mark.asyncio
+    async def test_unknown_email_still_runs_a_verify(self, db):
+        """F-AUTH-05: unknown emails must still cost one bcrypt verify so response
+        time doesn't leak whether an account exists (timing oracle)."""
+        with patch.object(svc, "verify_password_async", wraps=svc.verify_password_async) as spy:
+            assert await svc.authenticate(db, "ghost@test.com", "any") is None
+            spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_google_user_no_password_still_runs_a_verify(self, db):
+        """F-AUTH-05: a passwordless (Google) account must also equalise timing."""
+        await _seed_user(db, email="gtiming@test.com", password_hash=None, auth_provider="google")
+        with patch.object(svc, "verify_password_async", wraps=svc.verify_password_async) as spy:
+            assert await svc.authenticate(db, "gtiming@test.com", "anything") is None
+            spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_google_user_no_password_returns_none(self, db):
         await _seed_user(
             db,

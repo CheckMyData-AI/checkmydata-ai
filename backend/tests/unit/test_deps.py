@@ -12,8 +12,10 @@ from app.core.auth_cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 # ── get_current_user ───────────────────────────────────────────────────
 
 
-def _fake_user(*, user_id="u1", email="a@b.com", is_active=True):
-    return SimpleNamespace(id=user_id, email=email, is_active=is_active)
+def _fake_user(*, user_id="u1", email="a@b.com", is_active=True, token_version=0):
+    return SimpleNamespace(
+        id=user_id, email=email, is_active=is_active, token_version=token_version
+    )
 
 
 def _req(method: str = "GET", cookies: dict | None = None, headers: dict | None = None):
@@ -92,6 +94,17 @@ class TestGetCurrentUser:
             instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1", email="a@b.com"))
             result = await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
             assert result == {"user_id": "u1", "email": "a@b.com"}
+
+    @pytest.mark.asyncio
+    async def test_token_version_mismatch_raises_401(self):
+        # F-AUTH-02: a token minted at an older token_version is revoked.
+        with patch("app.services.auth_service.AuthService") as mock_auth_cls:
+            instance = mock_auth_cls.return_value
+            instance.decode_token.return_value = {"sub": "u1", "ver": 0}
+            instance.get_by_id = AsyncMock(return_value=_fake_user(user_id="u1", token_version=5))
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(_req(), authorization="Bearer tok", db=AsyncMock())
+            assert exc_info.value.status_code == 401
 
     # ── cookie session + CSRF (T-SEC-3) ──────────────────────────────
 

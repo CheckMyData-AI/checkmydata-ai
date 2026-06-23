@@ -13,6 +13,12 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+# Constant bcrypt hash used to equalise login timing for unknown / passwordless
+# accounts (F-AUTH-05). Without a dummy verify, the missing-user path returns
+# near-instantly while a real account costs ~one bcrypt — a "does this email exist?"
+# timing oracle. Computed once at import.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"timing-equalization", bcrypt.gensalt()).decode()
+
 
 class AuthService:
     def _hash_password(self, password: str) -> str:
@@ -95,6 +101,9 @@ class AuthService:
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user or not user.password_hash:
+            # Equalise timing (F-AUTH-05): spend ~one bcrypt verify even when there
+            # is nothing to check, so the response time doesn't leak account existence.
+            await self.verify_password_async(password, _DUMMY_PASSWORD_HASH)
             logger.warning("Login failed for %s: user not found or no password", email)
             return None
         if not await self.verify_password_async(password, user.password_hash):

@@ -21,6 +21,27 @@ _invite_svc = InviteService()
 _email_svc = EmailService()
 
 
+def _auth_response(user, token: str) -> "AuthResponse":  # noqa: ANN001
+    """Build the auth response.
+
+    Under cookie auth the JWT is omitted from the JSON body (F-AUTH-04) so the SPA
+    relies solely on the httpOnly cookie (no token for XSS to read / for the SPA to
+    persist). Non-browser Bearer clients (cookie auth off) still receive it.
+    """
+    return AuthResponse(
+        token="" if settings.auth_cookie_enabled else token,
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "picture_url": user.picture_url,
+            "auth_provider": user.auth_provider,
+            "is_onboarded": user.is_onboarded,
+            "can_create_projects": user.can_create_projects,
+        },
+    )
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr = Field(max_length=255)
     password: str = Field(min_length=8, max_length=128)
@@ -84,18 +105,7 @@ async def register(
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
-    return AuthResponse(
-        token=token,
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "picture_url": user.picture_url,
-            "auth_provider": user.auth_provider,
-            "is_onboarded": user.is_onboarded,
-            "can_create_projects": user.can_create_projects,
-        },
-    )
+    return _auth_response(user, token)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -114,18 +124,7 @@ async def login(
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
-    return AuthResponse(
-        token=token,
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "picture_url": user.picture_url,
-            "auth_provider": user.auth_provider,
-            "is_onboarded": user.is_onboarded,
-            "can_create_projects": user.can_create_projects,
-        },
-    )
+    return _auth_response(user, token)
 
 
 @router.post("/google", response_model=AuthResponse)
@@ -136,10 +135,12 @@ async def google_login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    if body.g_csrf_token:
-        cookie_token = request.cookies.get("g_csrf_token")
-        if cookie_token and cookie_token != body.g_csrf_token:
-            raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    # F-AUTH-06: enforce the double-submit based on the *cookie*, not the body. If
+    # Google set the g_csrf_token cookie, a matching body token is required — omitting
+    # it (the old bypass) is now rejected.
+    cookie_token = request.cookies.get("g_csrf_token")
+    if cookie_token and (not body.g_csrf_token or cookie_token != body.g_csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF token mismatch")
 
     try:
         payload = _auth.verify_google_token(body.credential)
@@ -165,18 +166,7 @@ async def google_login(
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
-    return AuthResponse(
-        token=token,
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "picture_url": user.picture_url,
-            "auth_provider": user.auth_provider,
-            "is_onboarded": user.is_onboarded,
-            "can_create_projects": user.can_create_projects,
-        },
-    )
+    return _auth_response(user, token)
 
 
 @router.post("/change-password")
@@ -212,30 +202,22 @@ async def change_password(
 
 
 @router.post("/refresh", response_model=AuthResponse)
+@limiter.limit("30/minute")
 async def refresh_token(
+    request: Request,
     response: Response,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Issue a fresh JWT for an already-authenticated user."""
+    """Issue a fresh JWT for an already-authenticated user. Rate-limited (F-AUTH-09):
+    it is a token-minting endpoint and must be bounded."""
     user = await _auth.get_by_id(db, current_user["user_id"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
-    return AuthResponse(
-        token=token,
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "picture_url": user.picture_url,
-            "auth_provider": user.auth_provider,
-            "is_onboarded": user.is_onboarded,
-            "can_create_projects": user.can_create_projects,
-        },
-    )
+    return _auth_response(user, token)
 
 
 @router.post("/logout")

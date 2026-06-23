@@ -316,9 +316,33 @@ class TestCookieSession:
     @pytest.fixture(autouse=True)
     def _insecure_cookies(self, monkeypatch):
         # httpx won't store Secure cookies over http://test, so relax for tests.
+        # The suite runs in Bearer mode by default (tests/conftest.py); this class
+        # exercises the cookie path, so enable it explicitly.
         from app.config import settings
 
         monkeypatch.setattr(settings, "auth_cookie_secure", False)
+        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
+
+    async def test_token_absent_from_body_under_cookie_auth(self, client):
+        # F-AUTH-04: under cookie auth the JWT must NOT be echoed in the JSON body
+        # (the SPA relies solely on the httpOnly cookie); the cookie carries it.
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": _email(), "password": "secret123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["token"] == ""
+        assert client.cookies.get("cmd_session"), "session JWT must live in the cookie"
+
+    async def test_google_csrf_missing_body_token_rejected(self, client):
+        # F-AUTH-06: when the g_csrf_token cookie is present, a POST omitting the
+        # body token must be rejected (the old opt-in check let attackers skip it).
+        client.cookies.set("g_csrf_token", "cookie-csrf-value")
+        resp = await client.post(
+            "/api/auth/google",
+            json={"credential": "fake"},  # no g_csrf_token in body
+        )
+        assert resp.status_code == 403
 
     async def test_register_sets_session_and_csrf_cookies(self, client):
         resp = await client.post(
