@@ -28,7 +28,7 @@ Order = audit fix-first priority, then ascending module number. `▶` = current 
 
 | Order | Module | Report | Findings | Status | Phase |
 |------:|--------|--------|---------:|--------|-------|
-| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A done; B–E next) |
+| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A,B done; C–E next) |
 | 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | pending | — |
 | 3 | 11 Rules engine | [11](reports/11-rules-engine.md) | 4 (🟠 F-RULE-01 cross-tenant) | pending | — |
 | 4 | 15 MCP Server | [15](reports/15-mcp-server.md) | 4 (🟠 F-MCP-01 budget bypass) | pending | — |
@@ -66,4 +66,16 @@ All loop commits stage files explicitly to avoid sweeping this WIP into unrelate
 - **2026-06-24** — Module 01 P1 **Task-group A** done (`a8d3b2a`): F-AUTH-01 SQLite FK
   enforcement (`enable_sqlite_fk`) + new cascade test; fixed 17 orphan-insert tests surfaced by
   enforcement via new conftest seeding helpers. Full integration suite green (491 passed).
-  Next: group B (JWT token_version revocation + async bcrypt, C1–C3/C5/C7).
+- **2026-06-24** — Module 01 P1 **Task-group B** done (`f35ac10`): F-AUTH-02/03 JWT
+  `token_version` revocation (`User.token_version` + migration **`f4a5b6c7d8e9`** — spec C2's
+  `b2c3d4e5f6a7` collided with an existing revision, so a unique id was used) + `ver` claim
+  enforced in `get_current_user` (defaults 0 → no forced logout) + async bcrypt + cookie
+  re-issue + audit log in `change_password`. 93 auth tests green; mypy/ruff clean.
+
+  **⚠ Next-iteration risk (group C / C6, F-AUTH-04):** omitting the JWT from the response body
+  when `auth_cookie_enabled` will break the test harness (`register_user`/`auth_client` read
+  `resp.json()["token"]` for Bearer auth, default `auth_cookie_enabled=True`). Resolve by
+  running the suite in Bearer mode (set `AUTH_COOKIE_ENABLED=false` in `tests/conftest.py`) while
+  the dedicated cookie tests set it True themselves — verify `test_auth_cookies.py` /
+  `test_ws_auth.py` / `test_mcp_asgi_auth.py` configure cookie mode explicitly before flipping.
+  Next: group C (C4 timing-equalise, C6 body-token omission, C8 Google CSRF, C11 /refresh limit).
