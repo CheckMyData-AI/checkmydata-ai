@@ -21,6 +21,7 @@ import {
   EMPTY_FORM,
   EXEC_TEMPLATE_PRESETS,
   type FormState,
+  applyConnectionString,
   connToForm,
   formatAge,
   halfInputCls,
@@ -47,6 +48,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   const [useConnString, setUseConnString] = useState(false);
+  const [detectedType, setDetectedType] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<
@@ -301,6 +303,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
     setUseConnString(false);
+    setDetectedType(null);
   };
 
   const isMCP = form.db_type === "mcp";
@@ -749,6 +752,24 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             />
           ) : (
             <>
+              <div className="space-y-1">
+                <input
+                  onChange={(e) => {
+                    const { form: next, detected } = applyConnectionString(form, e.target.value);
+                    setDetectedType(detected);
+                    if (detected) setForm(next);
+                  }}
+                  placeholder="Paste a connection string to autofill…"
+                  aria-label="Paste a connection string"
+                  className={inputCls}
+                  maxLength={500}
+                />
+                {detectedType && (
+                  <p className="text-[10px] text-success px-1">
+                    Detected: {detectedType} — fields filled below, review &amp; add password if needed.
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   value={form.db_host}
