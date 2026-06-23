@@ -53,6 +53,33 @@ class TestChangePasswordExtended:
 
 
 @pytest.mark.asyncio
+class TestTokenVersionRevocation:
+    async def test_password_change_invalidates_old_token(self, client):
+        """F-AUTH-02: changing the password bumps token_version, so a JWT minted
+        with the old version is rejected — even a Bearer token an attacker captured."""
+        from app.services.auth_service import AuthService
+
+        email = _email()
+        reg = await register_user(client, email)
+        # Mint an old-version (ver=0) token directly so this is robust against the
+        # later F-AUTH-04 change that omits the token from the response body.
+        old_token = AuthService().create_token(reg["user_id"], email, 0)
+
+        before = await client.get("/api/auth/me", headers=auth_headers(old_token))
+        assert before.status_code == 200, "old token should work before password change"
+
+        changed = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "testpass123", "new_password": "brandnew99"},
+            headers=auth_headers(old_token),
+        )
+        assert changed.status_code == 200
+
+        after = await client.get("/api/auth/me", headers=auth_headers(old_token))
+        assert after.status_code == 401, "old-version token must be rejected after change"
+
+
+@pytest.mark.asyncio
 class TestRefreshTokenExtended:
     async def test_refresh_with_valid_token(self, client):
         reg = await register_user(client)

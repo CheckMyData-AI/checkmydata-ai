@@ -37,10 +37,16 @@ class AuthService:
         """Off-thread bcrypt verify (T21). See :meth:`hash_password_async`."""
         return await asyncio.to_thread(self._verify_password, plain, hashed)
 
-    def create_token(self, user_id: str, email: str) -> str:
+    def create_token(self, user_id: str, email: str, token_version: int = 0) -> str:
         now = datetime.now(UTC)
         expire = now + timedelta(minutes=settings.jwt_expire_minutes)
-        payload = {"sub": user_id, "email": email, "iat": now, "exp": expire}
+        payload = {
+            "sub": user_id,
+            "email": email,
+            "ver": token_version,
+            "iat": now,
+            "exp": expire,
+        }
         return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
     def decode_token(self, token: str) -> dict | None:

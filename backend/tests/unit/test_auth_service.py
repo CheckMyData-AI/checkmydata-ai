@@ -101,6 +101,18 @@ class TestCreateToken:
         assert "exp" in payload
         assert "iat" in payload
 
+    @patch("app.services.auth_service.settings", _settings_mock())
+    def test_embeds_token_version(self):
+        token = svc.create_token("uid-9", "v@b.com", token_version=3)
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        assert payload["ver"] == 3
+
+    @patch("app.services.auth_service.settings", _settings_mock())
+    def test_token_version_defaults_to_zero(self):
+        token = svc.create_token("uid-9", "v@b.com")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        assert payload["ver"] == 0
+
 
 class TestDecodeToken:
     @patch("app.services.auth_service.settings", _settings_mock())

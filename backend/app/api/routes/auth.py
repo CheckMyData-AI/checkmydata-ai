@@ -81,7 +81,7 @@ async def register(
     await _email_svc.send_welcome_email(
         user_id=user.id, email=user.email, display_name=user.display_name
     )
-    token = _auth.create_token(user.id, user.email)
+    token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
     return AuthResponse(
@@ -111,7 +111,7 @@ async def login(
         audit_log("auth.login_failed", detail=body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     audit_log("auth.login", user_id=user.id, detail=user.email)
-    token = _auth.create_token(user.id, user.email)
+    token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
     return AuthResponse(
@@ -162,7 +162,7 @@ async def google_login(
         await _email_svc.send_welcome_email(
             user_id=user.id, email=user.email, display_name=user.display_name
         )
-    token = _auth.create_token(user.id, user.email)
+    token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
     return AuthResponse(
@@ -184,6 +184,7 @@ async def google_login(
 async def change_password(
     request: Request,
     body: ChangePasswordRequest,
+    response: Response,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -193,11 +194,20 @@ async def change_password(
             status_code=400,
             detail="Password login is not enabled for this account",
         )
-    if not _auth._verify_password(body.current_password, user.password_hash):
+    # Off-thread bcrypt (F-AUTH-03): the sync path stalled the event loop ~200ms/call.
+    if not await _auth.verify_password_async(body.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
-    user.password_hash = _auth._hash_password(body.new_password)
+    user.password_hash = await _auth.hash_password_async(body.new_password)
+    # Revoke all previously issued tokens (F-AUTH-02): the canonical "I've been
+    # compromised" action must lock out any stolen/leaked session, cookie or Bearer.
+    user.token_version = (user.token_version or 0) + 1
     await db.commit()
-    logger.info("Password changed for user %s", user.email)
+    # Keep the *current* session valid by re-issuing a cookie at the new version;
+    # every other outstanding token is now rejected by get_current_user.
+    if settings.auth_cookie_enabled:
+        set_session_cookies(response, _auth.create_token(user.id, user.email, user.token_version))
+    audit_log("auth.change_password", user_id=user.id, detail=user.email)
+    logger.info("Password changed for user %s (token_version bumped)", user.email)
     return {"ok": True}
 
 
@@ -211,7 +221,7 @@ async def refresh_token(
     user = await _auth.get_by_id(db, current_user["user_id"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    token = _auth.create_token(user.id, user.email)
+    token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
     return AuthResponse(
