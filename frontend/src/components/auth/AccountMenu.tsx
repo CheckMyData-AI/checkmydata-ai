@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { PopoverPortal } from "@/components/ui/PopoverPortal";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 type View = "menu" | "password" | "delete";
 
@@ -63,6 +64,10 @@ export function AccountMenu() {
           >
             {view === "menu" && (
               <div className="py-1">
+                <div className="px-2.5 py-2 border-b border-border-subtle">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Appearance</p>
+                  <ThemeToggle />
+                </div>
                 {!isGoogleOnly && (
                   <button
                     onClick={() => setView("password")}
