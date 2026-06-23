@@ -482,9 +482,9 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 <p className="text-[11px] font-semibold text-accent">Getting Started</p>
                 <div className="space-y-2 text-[11px]">
                   {[
-                    { done: sshKeys.length > 0, step: 1, label: "Add an SSH key" },
-                    { done: projects.length > 0, step: 2, label: "Create your first project" },
-                    { done: connections.length > 0, step: 3, label: "Add a database connection" },
+                    { done: projects.length > 0, step: 1, label: "Create your first project" },
+                    { done: connections.length > 0, step: 2, label: "Add a database connection" },
+                    { done: projects.some((p) => p.repo_url), step: 3, label: "Connect your code (optional)" },
                   ].map((item) => (
                     <div key={item.step} className="flex items-center gap-2.5">
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
@@ -677,19 +677,19 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             <div className="space-y-2 text-[11px]">
               {[
                 {
-                  done: sshKeys.length > 0,
-                  step: 1,
-                  label: "Add an SSH key",
-                },
-                {
                   done: projects.length > 0,
-                  step: 2,
+                  step: 1,
                   label: "Create your first project",
                 },
                 {
                   done: connections.length > 0,
-                  step: 3,
+                  step: 2,
                   label: "Add a database connection",
+                },
+                {
+                  done: projects.some((p) => p.repo_url),
+                  step: 3,
+                  label: "Connect your code (optional)",
                 },
               ].map((item) => (
                 <div key={item.step} className="flex items-center gap-2.5">
