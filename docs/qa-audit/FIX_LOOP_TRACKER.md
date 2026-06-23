@@ -28,7 +28,7 @@ Order = audit fix-first priority, then ascending module number. `▶` = current 
 
 | Order | Module | Report | Findings | Status | Phase |
 |------:|--------|--------|---------:|--------|-------|
-| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P0 |
+| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A done; B–E next) |
 | 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | pending | — |
 | 3 | 11 Rules engine | [11](reports/11-rules-engine.md) | 4 (🟠 F-RULE-01 cross-tenant) | pending | — |
 | 4 | 15 MCP Server | [15](reports/15-mcp-server.md) | 4 (🟠 F-MCP-01 budget bypass) | pending | — |
@@ -50,6 +50,20 @@ Order = audit fix-first priority, then ascending module number. `▶` = current 
 
 Legend: pending · in progress · done
 
+## Pre-existing uncommitted WIP (do not clobber)
+
+A prior session began module-07 fixes; these live uncommitted in the working tree on this
+branch and must be **completed/committed when the loop reaches module 07**, not duplicated:
+- `backend/app/knowledge/repo_url.py` (+ `test_repo_url.py`) — F-KNOW-01 repo_url transport allowlist
+- `backend/app/core/safety.py` (modified) (+ `test_safety_hardening.py`)
+- `backend/app/knowledge/repo_analyzer.py`, `backend/app/api/routes/repos.py` (modified)
+- `backend/app/core/background.py` (+ `test_background.py`) — fire-and-forget task GC fix
+All loop commits stage files explicitly to avoid sweeping this WIP into unrelated commits.
+
 ## Change log (loop)
 
-- **2026-06-24** — Loop initialized. Module 01 selected; spec + plan being written (P0).
+- **2026-06-24** — Loop initialized. Module 01 P0 done: tracker + spec + plan committed (`8d721b8`).
+- **2026-06-24** — Module 01 P1 **Task-group A** done (`a8d3b2a`): F-AUTH-01 SQLite FK
+  enforcement (`enable_sqlite_fk`) + new cascade test; fixed 17 orphan-insert tests surfaced by
+  enforcement via new conftest seeding helpers. Full integration suite green (491 passed).
+  Next: group B (JWT token_version revocation + async bcrypt, C1–C3/C5/C7).
