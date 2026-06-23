@@ -178,8 +178,13 @@ class AuthService:
 
         if user:
             user.google_id = google_id
-            user.auth_provider = "google"
-            user.picture_url = picture
+            # F-AUTH-07: don't wipe an existing avatar when Google sends no picture,
+            # and don't misreport auth_provider — a password user keeps "email"
+            # (password login still works) while gaining the linked google_id.
+            if picture:
+                user.picture_url = picture
+            if user.password_hash is None:
+                user.auth_provider = "google"
             await session.commit()
             await session.refresh(user)
             logger.info("Google account linked for existing user: %s", email)

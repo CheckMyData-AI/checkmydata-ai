@@ -194,6 +194,39 @@ class TestDeleteAccountExtended:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
+    async def test_delete_account_removes_mcp_keys_and_audits(self, client, db_session, caplog):
+        """F-AUTH-10: account deletion revokes MCP keys and writes an audit entry."""
+        import logging
+
+        from sqlalchemy import select
+
+        from app.models.mcp_api_key import McpApiKey
+
+        reg = await register_user(client)
+        headers = auth_headers(reg["token"])
+
+        db_session.add(
+            McpApiKey(
+                user_id=reg["user_id"],
+                name="cli",
+                token_hash="h" * 64,
+                token_prefix="cmd_mcp_xxxx",
+            )
+        )
+        await db_session.commit()
+
+        with caplog.at_level(logging.INFO, logger="audit"):
+            resp = await client.delete("/api/auth/account", headers=headers)
+        assert resp.status_code == 200
+
+        remaining = (
+            (await db_session.execute(select(McpApiKey).where(McpApiKey.user_id == reg["user_id"])))
+            .scalars()
+            .all()
+        )
+        assert remaining == [], "MCP keys must be revoked on account deletion"
+        assert any("auth.delete_account" in r.getMessage() for r in caplog.records)
+
 
 @pytest.mark.asyncio
 class TestRegistrationValidation:

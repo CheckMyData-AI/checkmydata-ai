@@ -274,22 +274,55 @@ async def delete_account(
     """Permanently delete the current user and all associated data."""
     from sqlalchemy import delete, select
 
+    from app.models.connection import Connection
+    from app.models.mcp_api_key import McpApiKey
     from app.models.project import Project
     from app.models.project_member import ProjectMember
     from app.models.user import User
+    from app.services.indexing_artifacts import (
+        cleanup_connection_artifacts,
+        cleanup_project_artifacts,
+    )
 
     user_id = current_user["user_id"]
+    email = current_user.get("email", "")
+
+    # Enumerate owned projects + their connections BEFORE deletion so we can clean up
+    # the on-disk artifacts (ChromaDB collection, BM25 snapshots) that DB FK cascade
+    # cannot reach (F-AUTH-10).
+    owned_ids = (
+        (await db.execute(select(Project.id).where(Project.owner_id == user_id))).scalars().all()
+    )
+    connection_ids: list[str] = []
+    if owned_ids:
+        connection_ids = list(
+            (await db.execute(select(Connection.id).where(Connection.project_id.in_(owned_ids))))
+            .scalars()
+            .all()
+        )
 
     async with db.begin_nested():
-        owned_project_ids_q = select(Project.id).where(Project.owner_id == user_id)
-        owned_ids = (await db.execute(owned_project_ids_q)).scalars().all()
         if owned_ids:
             await db.execute(delete(Project).where(Project.id.in_(owned_ids)))
-
+        # Explicit MCP-key revocation (defensive; FK cascade also covers it now that
+        # SQLite FKs are enforced — F-AUTH-01).
+        await db.execute(delete(McpApiKey).where(McpApiKey.user_id == user_id))
         await db.execute(delete(ProjectMember).where(ProjectMember.user_id == user_id))
         await db.execute(delete(User).where(User.id == user_id))
 
     await db.commit()
 
-    logger.info("Account deleted: user_id=%s", user_id)
+    # Best-effort on-disk cleanup (idempotent, never throws) after the DB delete commits.
+    for cid in connection_ids:
+        cleanup_connection_artifacts(cid)
+    for pid in owned_ids:
+        cleanup_project_artifacts(pid)
+
+    audit_log("auth.delete_account", user_id=user_id, detail=email)
+    logger.info(
+        "Account deleted: user_id=%s (projects=%d, connections=%d)",
+        user_id,
+        len(owned_ids),
+        len(connection_ids),
+    )
     return {"ok": True}

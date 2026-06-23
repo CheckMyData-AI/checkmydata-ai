@@ -328,6 +328,29 @@ class TestFindOrCreateGoogleUser:
         assert created is False
         assert user.id == existing.id
         assert user.google_id == "google-link"
+        # F-AUTH-07: a password user keeps auth_provider="email" (password login still
+        # works → the field stays truthful) but gains the linked google_id.
+        assert user.auth_provider == "email"
+        assert user.password_hash is not None
+
+    @pytest.mark.asyncio
+    async def test_link_does_not_wipe_avatar_when_payload_has_no_picture(self, db):
+        # F-AUTH-07: linking with a payload missing `picture` must not null an avatar.
+        existing = await svc.register(db, "avatar@test.com", "pw123")
+        existing.picture_url = "https://existing-avatar.jpg"
+        await db.commit()
+
+        payload = self._payload(email="avatar@test.com", sub="google-avatar")
+        payload.pop("picture", None)
+        user, _ = await svc.find_or_create_google_user(db, payload)
+        assert user.picture_url == "https://existing-avatar.jpg"
+
+    @pytest.mark.asyncio
+    async def test_link_passwordless_user_flips_provider_to_google(self, db):
+        # A passwordless account linking Google does set provider to google.
+        await _seed_user(db, email="pwless@test.com", password_hash=None, auth_provider="email")
+        payload = self._payload(email="pwless@test.com", sub="google-pwless")
+        user, _ = await svc.find_or_create_google_user(db, payload)
         assert user.auth_provider == "google"
 
     @pytest.mark.asyncio
