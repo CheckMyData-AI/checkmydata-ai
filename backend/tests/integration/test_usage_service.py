@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.usage_service import UsageService
+from tests.integration.conftest import make_project, make_user
 
 
 @pytest.fixture
@@ -16,8 +17,8 @@ def svc():
 @pytest.mark.asyncio
 class TestRecordUsage:
     async def test_record_basic(self, db_session: AsyncSession, svc: UsageService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
         usage = await svc.record_usage(
             db_session,
             user_id=uid,
@@ -31,8 +32,8 @@ class TestRecordUsage:
         assert usage.provider == "openai"
 
     async def test_total_tokens_auto_calculated(self, db_session: AsyncSession, svc: UsageService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
         usage = await svc.record_usage(
             db_session,
             user_id=uid,
@@ -43,8 +44,8 @@ class TestRecordUsage:
         assert usage.total_tokens == 300
 
     async def test_explicit_total_overrides(self, db_session: AsyncSession, svc: UsageService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
         usage = await svc.record_usage(
             db_session,
             user_id=uid,
@@ -56,8 +57,8 @@ class TestRecordUsage:
         assert usage.total_tokens == 999
 
     async def test_record_with_cost(self, db_session: AsyncSession, svc: UsageService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
         usage = await svc.record_usage(
             db_session,
             user_id=uid,
@@ -79,8 +80,8 @@ class TestPeriodComparison:
         assert result["period_days"] == 30
 
     async def test_with_usage_data(self, db_session: AsyncSession, svc: UsageService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
         await svc.record_usage(
             db_session,
             user_id=uid,

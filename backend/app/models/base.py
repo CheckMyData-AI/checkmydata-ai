@@ -24,7 +24,30 @@ if not settings.database_url.startswith("sqlite"):
         pool_timeout=settings.db_pool_timeout,
     )
 
+
+def enable_sqlite_fk(async_engine) -> None:  # noqa: ANN001
+    """Enforce foreign keys on SQLite connections.
+
+    SQLite does not enforce ``FOREIGN KEY`` constraints unless
+    ``PRAGMA foreign_keys=ON`` is issued on **every** connection, so without this
+    every ``ondelete=CASCADE`` is a silent no-op in dev/tests (F-AUTH-01) — leaving
+    orphaned rows (including Fernet-encrypted secrets) and making cascade tests pass
+    for the wrong reason. Registering it on ``sync_engine`` covers the aiosqlite
+    DBAPI connection. Reused by the integration test engine so cascade tests exercise
+    the real path. No-op for non-SQLite engines (Postgres enforces FKs natively).
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(async_engine.sync_engine, "connect")
+    def _fk_pragma(dbapi_conn, _record):  # noqa: ANN001, ANN202
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 engine = create_async_engine(settings.database_url, **_engine_kwargs)
+if settings.database_url.startswith("sqlite"):
+    enable_sqlite_fk(engine)
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

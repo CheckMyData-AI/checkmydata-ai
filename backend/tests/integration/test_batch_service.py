@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.batch_service import BatchService
+from tests.integration.conftest import make_connection, make_project, make_user
 
 
 @pytest.fixture
@@ -17,11 +18,14 @@ def svc():
 @pytest.mark.asyncio
 class TestBatchCRUD:
     async def test_create_batch(self, db_session: AsyncSession, svc: BatchService):
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
+        cid = await make_connection(db_session, project_id=pid)
         batch = await svc.create_batch(
             db_session,
-            user_id=str(uuid.uuid4()),
-            project_id=str(uuid.uuid4()),
-            connection_id=str(uuid.uuid4()),
+            user_id=uid,
+            project_id=pid,
+            connection_id=cid,
             title="Test Batch",
             queries=[
                 {"sql": "SELECT 1", "title": "Query 1"},
@@ -34,11 +38,14 @@ class TestBatchCRUD:
         assert len(queries) == 2
 
     async def test_get_batch(self, db_session: AsyncSession, svc: BatchService):
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
+        cid = await make_connection(db_session, project_id=pid)
         batch = await svc.create_batch(
             db_session,
-            user_id=str(uuid.uuid4()),
-            project_id=str(uuid.uuid4()),
-            connection_id=str(uuid.uuid4()),
+            user_id=uid,
+            project_id=pid,
+            connection_id=cid,
             title="Find Me",
             queries=[{"sql": "SELECT 1", "title": "Q1"}],
         )
@@ -51,14 +58,15 @@ class TestBatchCRUD:
         assert found is None
 
     async def test_list_batches(self, db_session: AsyncSession, svc: BatchService):
-        uid = str(uuid.uuid4())
-        pid = str(uuid.uuid4())
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
+        cid = await make_connection(db_session, project_id=pid)
         for i in range(3):
             await svc.create_batch(
                 db_session,
                 user_id=uid,
                 project_id=pid,
-                connection_id=str(uuid.uuid4()),
+                connection_id=cid,
                 title=f"Batch {i}",
                 queries=[{"sql": "SELECT 1"}],
             )
@@ -66,11 +74,14 @@ class TestBatchCRUD:
         assert len(batches) == 3
 
     async def test_delete_batch(self, db_session: AsyncSession, svc: BatchService):
+        uid = await make_user(db_session)
+        pid = await make_project(db_session, owner_id=uid)
+        cid = await make_connection(db_session, project_id=pid)
         batch = await svc.create_batch(
             db_session,
-            user_id=str(uuid.uuid4()),
-            project_id=str(uuid.uuid4()),
-            connection_id=str(uuid.uuid4()),
+            user_id=uid,
+            project_id=pid,
+            connection_id=cid,
             title="Delete Me",
             queries=[],
         )

@@ -1,11 +1,10 @@
 """Tests for BenchmarkService and normalize_metric_key."""
 
-import uuid
-
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.benchmark_service import BenchmarkService, normalize_metric_key
+from tests.integration.conftest import make_connection
 
 
 class TestNormalizeMetricKey:
@@ -37,7 +36,7 @@ def svc():
 @pytest.mark.asyncio
 class TestBenchmarkCRUD:
     async def test_create_benchmark(self, db_session: AsyncSession, svc: BenchmarkService):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         bm = await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -53,7 +52,7 @@ class TestBenchmarkCRUD:
     async def test_confirm_increases_confidence(
         self, db_session: AsyncSession, svc: BenchmarkService
     ):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         bm1 = await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -74,7 +73,7 @@ class TestBenchmarkCRUD:
         assert bm2.times_confirmed == 2
 
     async def test_find_benchmark(self, db_session: AsyncSession, svc: BenchmarkService):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -86,7 +85,7 @@ class TestBenchmarkCRUD:
         assert found.value == "5%"
 
     async def test_find_by_raw_description(self, db_session: AsyncSession, svc: BenchmarkService):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -99,7 +98,7 @@ class TestBenchmarkCRUD:
     async def test_flag_stale_reduces_confidence(
         self, db_session: AsyncSession, svc: BenchmarkService
     ):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         bm = await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -116,7 +115,7 @@ class TestBenchmarkCRUD:
     async def test_get_all_filters_by_min_confidence(
         self, db_session: AsyncSession, svc: BenchmarkService
     ):
-        conn_id = str(uuid.uuid4())
+        conn_id = await make_connection(db_session)
         await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,

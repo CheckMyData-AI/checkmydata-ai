@@ -58,7 +58,10 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
+    from app.models.base import enable_sqlite_fk
+
     eng = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    enable_sqlite_fk(eng)  # F-AUTH-01: cascade tests must exercise real FK enforcement
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(
@@ -177,3 +180,77 @@ async def register_user(
 def auth_headers(token: str) -> dict[str, str]:
     """Build Authorization header dict from a JWT token."""
     return {"Authorization": f"Bearer {token}"}
+
+
+# ---------------------------------------------------------------------------
+# Parent-row seeding helpers (F-AUTH-01).
+#
+# With SQLite FK enforcement now on, service-level tests can no longer insert
+# child rows (token_usage, batch_queries, benchmarks, …) against random
+# non-existent user/project/connection ids. These helpers create the real
+# parent rows so the inserts are valid and the tests assert against the real
+# cascade path instead of passing for the wrong reason.
+# ---------------------------------------------------------------------------
+
+
+async def make_user(db_session: AsyncSession, *, user_id: str | None = None) -> str:
+    """Insert a User and return its id."""
+    from app.models.user import User
+
+    uid = user_id or str(uuid.uuid4())
+    db_session.add(User(id=uid, email=f"u-{uid[:8]}@test.com", display_name="Seed"))
+    await db_session.commit()
+    return uid
+
+
+async def make_project(
+    db_session: AsyncSession, *, project_id: str | None = None, owner_id: str | None = None
+) -> str:
+    """Insert a Project (owner auto-seeded if not given) and return its id."""
+    from app.models.project import Project
+
+    if owner_id is None:
+        owner_id = await make_user(db_session)
+    pid = project_id or str(uuid.uuid4())
+    db_session.add(Project(id=pid, name=f"proj-{pid[:6]}", owner_id=owner_id))
+    await db_session.commit()
+    return pid
+
+
+async def make_connection(
+    db_session: AsyncSession, *, connection_id: str | None = None, project_id: str | None = None
+) -> str:
+    """Insert a Connection (project auto-seeded if not given) and return its id."""
+    from app.models.connection import Connection
+
+    if project_id is None:
+        project_id = await make_project(db_session)
+    cid = connection_id or str(uuid.uuid4())
+    db_session.add(
+        Connection(
+            id=cid,
+            project_id=project_id,
+            name=f"conn-{cid[:6]}",
+            db_type="postgresql",
+            db_host="localhost",
+            db_port=5432,
+            db_name="test",
+            db_user="user",
+        )
+    )
+    await db_session.commit()
+    return cid
+
+
+async def make_chat_session(
+    db_session: AsyncSession, *, session_id: str | None = None, project_id: str | None = None
+) -> str:
+    """Insert a ChatSession (project auto-seeded if not given) and return its id."""
+    from app.models.chat_session import ChatSession
+
+    if project_id is None:
+        project_id = await make_project(db_session)
+    sid = session_id or str(uuid.uuid4())
+    db_session.add(ChatSession(id=sid, project_id=project_id, title="seed"))
+    await db_session.commit()
+    return sid

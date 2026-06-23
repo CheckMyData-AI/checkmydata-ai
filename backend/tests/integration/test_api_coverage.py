@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from tests.integration.conftest import auth_headers, register_user
+from tests.integration.conftest import auth_headers, make_chat_session, register_user
 
 
 def _email():
@@ -82,14 +82,15 @@ class TestChatSessionCoverage:
 
 @pytest.mark.asyncio
 class TestDataValidationCoverage:
-    async def test_submit_validation(self, client):
+    async def test_submit_validation(self, client, db_session):
         ctx = await _setup(client)
+        sid = await make_chat_session(db_session, project_id=ctx["pid"])
         resp = await client.post(
             "/api/data-validation/validate-data",
             json={
                 "connection_id": ctx["cid"],
                 "project_id": ctx["pid"],
-                "session_id": str(uuid.uuid4()),
+                "session_id": sid,
                 "message_id": str(uuid.uuid4()),
                 "query": "SELECT COUNT(*) FROM users",
                 "verdict": "confirmed",
