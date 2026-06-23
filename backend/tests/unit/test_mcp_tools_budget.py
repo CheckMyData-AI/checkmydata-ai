@@ -6,7 +6,6 @@ and raise ToolError when the token budget is exhausted.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -104,8 +103,9 @@ async def test_query_database_proceeds_when_budget_ok():
     ):
         out = await tools.query_database(principal, "p1", "how many users?")
 
-    payload = json.loads(out)
-    assert payload.get("error") is None
+    # query_database now returns a dict (structured output).
+    assert isinstance(out, dict)
+    assert out.get("error") is None
     mock_orch.run.assert_awaited_once()
 
 
@@ -141,6 +141,7 @@ async def test_search_codebase_proceeds_when_budget_ok():
     ):
         out = await tools.search_codebase(principal, "p1", "where is auth handled?")
 
-    payload = json.loads(out)
-    assert payload.get("error") is None
+    # search_codebase now returns a dict (structured output).
+    assert isinstance(out, dict)
+    assert out.get("error") is None
     mock_orch.run.assert_awaited_once()

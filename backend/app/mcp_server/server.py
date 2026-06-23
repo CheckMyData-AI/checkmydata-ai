@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel
 
 from app.config import settings
 from app.core.agent_limiter import agent_limiter
@@ -33,12 +35,68 @@ from app.mcp_server import resources as res
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Structured output models — Pydantic annotations drive FastMCP's outputSchema
+# generation and structuredContent population on the success path.
+# Only tools whose success path is always JSON use these; tools with a
+# response_format switch (list_projects, list_connections, get_schema) continue
+# to return str so the markdown path is not broken.
+# ---------------------------------------------------------------------------
+
+
+class _PrincipalInfo(BaseModel):
+    user_id: str
+
+
+class PingOutput(BaseModel):
+    ok: bool
+    principal: _PrincipalInfo
+    version: int
+
+
+class _QueryResultOutput(BaseModel):
+    columns: list[str]
+    rows: list[Any]
+    returned_rows: int
+    row_count: int | None
+    truncated: bool
+    execution_time_ms: float | None
+    error: str | None = None
+
+
+class _KnowledgeSource(BaseModel):
+    source_path: str
+    doc_type: str
+
+
+class AgentResponseOutput(BaseModel):
+    answer: str
+    response_type: str | None = None
+    query: str | None = None
+    query_explanation: str | None = None
+    results: _QueryResultOutput | None = None
+    viz_type: str | None = None
+    viz_config: Any | None = None
+    sources: list[_KnowledgeSource] | None = None
+    error: str | None = None
+
+
+class RawQueryOutput(BaseModel):
+    columns: list[str]
+    rows: list[Any]
+    returned_rows: int
+    row_count: int | None
+    truncated: bool
+    execution_time_ms: float | None
+    error: str | None = None
+
+
 async def _with_principal(
-    run: Callable[[dict], Awaitable[str]],
+    run: Callable[[dict], Awaitable[Any]],
     *,
     tool_name: str | None = None,
     limited: bool = False,
-) -> str:
+) -> Any:
     """Resolve the caller's identity, then run a tool bound to that principal.
 
     Identity comes from the request-scoped ContextVar set by the HTTP auth
@@ -143,9 +201,11 @@ def create_mcp_server() -> FastMCP:
             "new client."
         ),
         annotations=_PING,
+        structured_output=True,
     )
-    async def checkmydata_ping() -> str:
-        return await _with_principal(tools.ping, tool_name="checkmydata_ping")
+    async def checkmydata_ping() -> PingOutput:
+        raw: dict = await _with_principal(tools.ping, tool_name="checkmydata_ping")
+        return PingOutput(**raw)
 
     @mcp.tool(
         name="checkmydata_query_database",
@@ -165,17 +225,19 @@ def create_mcp_server() -> FastMCP:
             "viz_type, viz_config, sources[]."
         ),
         annotations=_READ_ONLY_NONIDEMPOTENT,
+        structured_output=True,
     )
     async def checkmydata_query_database(
         project_id: str,
         question: str,
         connection_id: str | None = None,
-    ) -> str:
-        return await _with_principal(
+    ) -> AgentResponseOutput:
+        raw: dict = await _with_principal(
             lambda p: tools.query_database(p, project_id, question, connection_id),
             tool_name="checkmydata_query_database",
             limited=True,
         )
+        return AgentResponseOutput(**raw)
 
     @mcp.tool(
         name="checkmydata_search_codebase",
@@ -187,13 +249,15 @@ def create_mcp_server() -> FastMCP:
             "sources used."
         ),
         annotations=_READ_ONLY_NONIDEMPOTENT,
+        structured_output=True,
     )
-    async def checkmydata_search_codebase(project_id: str, question: str) -> str:
-        return await _with_principal(
+    async def checkmydata_search_codebase(project_id: str, question: str) -> AgentResponseOutput:
+        raw: dict = await _with_principal(
             lambda p: tools.search_codebase(p, project_id, question),
             tool_name="checkmydata_search_codebase",
             limited=True,
         )
+        return AgentResponseOutput(**raw)
 
     @mcp.tool(
         name="checkmydata_list_projects",
@@ -283,13 +347,15 @@ def create_mcp_server() -> FastMCP:
             idempotentHint=True,
             openWorldHint=True,
         ),
+        structured_output=True,
     )
-    async def checkmydata_execute_raw_query(connection_id: str, query: str) -> str:
-        return await _with_principal(
+    async def checkmydata_execute_raw_query(connection_id: str, query: str) -> RawQueryOutput:
+        raw: dict = await _with_principal(
             lambda p: tools.execute_raw_query(p, connection_id, query),
             tool_name="checkmydata_execute_raw_query",
             limited=True,
         )
+        return RawQueryOutput(**raw)
 
     # ------------------------------------------------------------------
     # Resources — same auth + tenancy gate as tools (F-SEC-1)

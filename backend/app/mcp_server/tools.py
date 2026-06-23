@@ -5,11 +5,15 @@ MCP protocol into the existing agent infrastructure.
 
 Response contract
 -----------------
-All tools return a JSON-encoded string on success. Actionable failures
-raise ``ToolError`` (from ``mcp.server.fastmcp.exceptions``) so the MCP
-transport layer signals ``isError=True`` to clients. List tools support
-pagination (``offset`` / ``limit``) and a ``response_format`` switch
-between ``"json"`` (default) and ``"markdown"`` for human-readable output.
+Pure-JSON tools (ping, query_database, search_codebase, execute_raw_query)
+return a ``dict`` on success so the MCP transport layer can populate
+``structuredContent`` and expose a typed ``outputSchema`` to clients.
+Tools with a ``response_format`` switch (list_projects, list_connections,
+get_schema) continue to return a ``str`` because they support a markdown
+path that cannot fit a single typed schema.
+Actionable failures raise ``ToolError`` (from
+``mcp.server.fastmcp.exceptions``) so the MCP transport layer signals
+``isError=True`` to clients.
 """
 
 from __future__ import annotations
@@ -225,16 +229,14 @@ def _emit(payload: dict[str, Any], response_format: str, md_render) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def ping(principal: dict) -> str:
+async def ping(principal: dict) -> dict[str, Any]:
     """Minimal health-check tool. Returns the resolved principal so clients
     can verify the server, auth, and user binding all work end-to-end."""
-    return json.dumps(
-        {
-            "ok": True,
-            "principal": {"user_id": _principal_user_id(principal)},
-            "version": 1,
-        }
-    )
+    return {
+        "ok": True,
+        "principal": {"user_id": _principal_user_id(principal)},
+        "version": 1,
+    }
 
 
 async def query_database(
@@ -242,7 +244,7 @@ async def query_database(
     project_id: str,
     question: str,
     connection_id: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Ask a natural-language question about data in a project's database.
 
     Returns the answer, SQL query, results, and visualization config.
@@ -314,10 +316,10 @@ async def query_database(
     except Exception:
         logger.warning("MCP: failed to finalize trace", exc_info=True)
 
-    return json.dumps(_agent_response_to_dict(resp), default=str)
+    return _agent_response_to_dict(resp)
 
 
-async def search_codebase(principal: dict, project_id: str, question: str) -> str:
+async def search_codebase(principal: dict, project_id: str, question: str) -> dict[str, Any]:
     """Search the indexed project codebase for information."""
     user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
@@ -368,7 +370,7 @@ async def search_codebase(principal: dict, project_id: str, question: str) -> st
     except Exception:
         logger.warning("MCP: failed to finalize trace", exc_info=True)
 
-    return json.dumps(_agent_response_to_dict(resp), default=str)
+    return _agent_response_to_dict(resp)
 
 
 async def list_projects(
@@ -479,7 +481,7 @@ async def get_schema(
     return _emit(payload, response_format, _md_schema)
 
 
-async def execute_raw_query(principal: dict, connection_id: str, query: str) -> str:
+async def execute_raw_query(principal: dict, connection_id: str, query: str) -> dict[str, Any]:
     """Execute a raw SQL query against a connection the principal can access.
 
     Requires the connection to be in read-only mode for safety.
@@ -516,4 +518,4 @@ async def execute_raw_query(principal: dict, connection_id: str, query: str) -> 
         logger.exception("Raw query execution failed")
         raise ToolError(str(e))
 
-    return json.dumps(_format_query_result(result), default=str)
+    return _format_query_result(result)

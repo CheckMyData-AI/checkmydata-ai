@@ -775,9 +775,10 @@ class TestMCPPing:
         from app.mcp_server.tools import ping
 
         result = await ping(_PRINCIPAL)
-        data = json.loads(result)
-        assert data["ok"] is True
-        assert data["principal"]["user_id"] == "owner-1"
+        # ping() now returns a dict (structured output).
+        assert isinstance(result, dict)
+        assert result["ok"] is True
+        assert result["principal"]["user_id"] == "owner-1"
 
 
 class TestFormatQueryResult:
