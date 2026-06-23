@@ -47,6 +47,12 @@ class AgentSettingsView:
 
 _config_logger = logging.getLogger(__name__)
 
+# Environments treated as non-production. The production secret guard fails *closed*
+# (F-AUTH-11): any environment NOT in this allow-list — including unset/empty, a typo,
+# "staging" used as prod, "live", "prod-eu" — is treated as production and must pass
+# the secret checks. Only these explicit dev/test names relax them.
+_SAFE_ENVIRONMENTS = frozenset({"development", "dev", "test", "testing", "local", "ci"})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -99,6 +105,11 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = True  # set False only for local http dev
     auth_cookie_samesite: str = "lax"  # lax | strict | none
     auth_cookie_domain: str = ""  # empty = host-only cookie
+
+    # Default lifetime (days) for newly minted MCP tokens when the caller doesn't
+    # specify one (F-AUTH-12). 0 = never expire (opt-out). Bounds long-lived bearer
+    # credentials by default; an explicit per-token expiry still overrides this.
+    mcp_token_default_expiry_days: int = 90
 
     google_client_id: str = ""
 
@@ -655,8 +666,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
-        """Prevent insecure defaults from being used in production."""
-        is_prod = self.environment.lower() in ("production", "prod")
+        """Prevent insecure defaults from being used in production.
+
+        Fail closed (F-AUTH-11): treat *any* environment as production unless it is
+        an explicit dev/test name, so a missing/mistyped ENVIRONMENT can't silently
+        boot with the default JWT secret.
+        """
+        is_prod = self.environment.strip().lower() not in _SAFE_ENVIRONMENTS
         if not is_prod:
             return self
         if self.jwt_secret == "change-me-in-production":
@@ -749,6 +765,15 @@ class Settings(BaseSettings):
         # validates but never issues a correction directive).
         if self.orchestrator_max_result_corrections < 0:
             raise ValueError("ORCHESTRATOR_MAX_RESULT_CORRECTIONS must be >= 0.")
+        # F-AUTH-08: browsers reject SameSite=None cookies that aren't also Secure,
+        # which silently drops the session/CSRF cookies and breaks login. Fail closed.
+        if self.auth_cookie_samesite.strip().lower() == "none" and not self.auth_cookie_secure:
+            raise ValueError(
+                "AUTH_COOKIE_SAMESITE=none requires AUTH_COOKIE_SECURE=true "
+                "(browsers drop non-Secure SameSite=None cookies)."
+            )
+        if self.mcp_token_default_expiry_days < 0:
+            raise ValueError("MCP_TOKEN_DEFAULT_EXPIRY_DAYS must be >= 0 (0 = never).")
         return self
 
 

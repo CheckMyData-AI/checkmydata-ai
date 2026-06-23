@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.datetime_utils import ensure_aware
 from app.models.mcp_api_key import McpApiKey
 
@@ -63,11 +64,17 @@ class McpKeyService:
 
         plaintext = _generate_plaintext()
         token_hash = _hash_token(plaintext)
+        # F-AUTH-12: when the caller doesn't specify an expiry, fall back to the
+        # configured default so tokens aren't unbounded bearer credentials. An
+        # explicit value is honoured as-is (and explicit 0 is still rejected).
+        effective_days = expires_in_days
+        if effective_days is None:
+            effective_days = settings.mcp_token_default_expiry_days or None
         expires_at: datetime | None = None
-        if expires_in_days is not None:
-            if expires_in_days <= 0:
+        if effective_days is not None:
+            if effective_days <= 0:
                 raise ValueError("expires_in_days must be positive")
-            expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
+            expires_at = datetime.now(UTC) + timedelta(days=effective_days)
 
         record = McpApiKey(
             user_id=user_id,
