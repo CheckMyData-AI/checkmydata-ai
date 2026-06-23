@@ -1,5 +1,6 @@
 import type { Connection } from "@/lib/api";
 import { inputBaseCls } from "@/components/ui/Input";
+import { parseConnectionString } from "@/lib/connection-string";
 
 export const DB_TYPES = ["postgres", "mysql", "mongodb", "clickhouse", "mcp"] as const;
 
@@ -99,4 +100,22 @@ export function connToForm(c: Connection): FormState {
     mcp_server_url: c.mcp_server_url || "",
     mcp_env: "",
   };
+}
+
+export function applyConnectionString(
+  form: FormState,
+  raw: string,
+): { form: FormState; detected: string | null } {
+  const parsed = parseConnectionString(raw);
+  if (!parsed) return { form, detected: null };
+  const next: FormState = {
+    ...form,
+    db_type: parsed.db_type,
+    ...(parsed.db_host ? { db_host: parsed.db_host } : {}),
+    ...(parsed.db_port ? { db_port: parsed.db_port } : {}),
+    ...(parsed.db_name ? { db_name: parsed.db_name } : {}),
+    ...(parsed.db_user ? { db_user: parsed.db_user } : {}),
+    ...(parsed.db_password ? { db_password: parsed.db_password } : {}),
+  };
+  return { form: next, detected: parsed.db_type };
 }
