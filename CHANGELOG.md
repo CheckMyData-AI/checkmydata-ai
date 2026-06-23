@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **MCP protocol-polish (F5/F6/F9).** Shipped in three batched releases on top
+  of the remote mount. **F6 — error contract:** actionable tool/resource failures
+  now raise `ToolError` so MCP clients receive a proper `isError=true` result
+  (access denied, not-found, budget-exhausted, safety block, rate-limit, internal
+  error) instead of a normal result whose body is an `{"error": …}` string.
+  **F5 — structured output:** `checkmydata_ping`, `checkmydata_query_database`,
+  `checkmydata_search_codebase`, and `checkmydata_execute_raw_query` return typed
+  Pydantic models, emitting `structuredContent` + an auto-generated `outputSchema`
+  for machine-parseable results; the three `response_format` list tools stay text
+  (a single schema can't cover the json+markdown switch — intentional). **F9 —
+  cleanups:** `query_database` prefers an `is_active` connection when defaulting;
+  the `project_schema` resource caps aggregation at 500 tables with
+  `total_tables`/`truncated`; `sse` is marked deprecated in the CLI help (still
+  accepted); the principal is a typed `Principal` `TypedDict`; and the benign
+  userless-sync `TracePersistence` "skipping initial persist" log dropped from
+  WARNING to DEBUG to quiet prod logs. Plan:
+  `docs/superpowers/plans/2026-06-23-mcp-protocol-polish.md`.
+
 - **MCP server: remote multi-tenant HTTP mount.** The MCP server can now be
   mounted into the FastAPI app as an ASGI sub-app at `/mcp` (streamable-HTTP,
   stateless), gated behind **both** `MCP_ENABLED` and the new
