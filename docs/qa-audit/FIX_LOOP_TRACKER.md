@@ -28,7 +28,7 @@ Order = audit fix-first priority, then ascending module number. `▶` = current 
 
 | Order | Module | Report | Findings | Status | Phase |
 |------:|--------|--------|---------:|--------|-------|
-| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A,B,C done; D,E next) |
+| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P2 (impl A–E done; verify+deploy next) |
 | 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | pending | — |
 | 3 | 11 Rules engine | [11](reports/11-rules-engine.md) | 4 (🟠 F-RULE-01 cross-tenant) | pending | — |
 | 4 | 15 MCP Server | [15](reports/15-mcp-server.md) | 4 (🟠 F-MCP-01 budget bypass) | pending | — |
@@ -87,3 +87,17 @@ All loop commits stage files explicitly to avoid sweeping this WIP into unrelate
   to `_fake_user` + a mismatch→401 test). Full suite was 4320 passed/4 failed → now fixed.
   Next: group D (C9 Google-link avatar/provider guard, C10 delete_account hardening:
   on-disk artifact cleanup + explicit MCP-key delete + audit_log).
+- **2026-06-24** — Module 01 P1 **Task-group D** done (`ed54b48`): F-AUTH-07 (Google link no
+  longer wipes avatar / misreports provider) + F-AUTH-10 (`delete_account` cleans on-disk
+  ChromaDB/BM25 artifacts, explicitly revokes MCP keys, writes `auth.delete_account` audit).
+- **2026-06-24** — Module 01 P1 **Task-group E** done (`2475114`): F-AUTH-08 (SameSite=none
+  requires Secure), F-AUTH-11 (fail-closed prod detection via `_SAFE_ENVIRONMENTS` allow-list),
+  F-AUTH-12 (`mcp_token_default_expiry_days=90`, wired into `mcp_key_service.issue`). `.env.example`
+  updated. **All 12 findings (F-AUTH-01..12) implemented.** Per-area suites green; ruff/mypy clean.
+
+  **Next iteration = P2/P3/P4:** run full `make check` (ruff format+check, mypy, full unit+integration,
+  coverage ≥72%) from repo root; annotate each finding in `reports/01-auth-session.md` as fixed;
+  then P3 deploy (merge `fix/security-audit-2026-06-24` → `main`, push) + P4 verify prod health.
+  ⚠ Deploy gate: P3 only after P2 fully green. The branch also carries the module-07 WIP (see above)
+  — that is unrelated to auth and must NOT be swept into the deploy; decide handling before merging
+  to main (either finish module 07 first, or stash/exclude its WIP from the auth deploy).
