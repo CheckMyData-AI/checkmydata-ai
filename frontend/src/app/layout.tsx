@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { DM_Sans, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ClientShell } from "@/components/ui/ClientShell";
+import { THEME_STORAGE_KEY } from "@/stores/theme-store";
+import { ThemeWatcher } from "@/components/theme/ThemeWatcher";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -88,9 +90,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const themeScript = `(function(){try{var k='${THEME_STORAGE_KEY}';var t=localStorage.getItem(k)||'light';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={`${dmSans.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable} font-sans antialiased`}>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <ThemeWatcher />
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-accent focus:text-white focus:rounded-lg focus:text-sm">
           Skip to main content
         </a>
