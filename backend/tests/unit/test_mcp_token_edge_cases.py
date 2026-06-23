@@ -323,6 +323,8 @@ class TestWithPrincipalLogging:
 
     @pytest.mark.asyncio
     async def test_tool_wrapper_logs_and_swallows_crash(self, caplog, monkeypatch):
+        from mcp.server.fastmcp.exceptions import ToolError
+
         from app.mcp_server import server as srv
 
         async def fake_authenticate(*a, **kw):
@@ -334,15 +336,15 @@ class TestWithPrincipalLogging:
             raise RuntimeError("boom")
 
         with caplog.at_level(logging.ERROR, logger="app.mcp_server.server"):
-            result = await srv._with_principal(crashing_tool)
+            with pytest.raises(ToolError, match="Internal tool error"):
+                await srv._with_principal(crashing_tool)
 
-        import json as _json
-
-        assert _json.loads(result) == {"error": "Internal tool error"}
         assert any("crashed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_tool_wrapper_logs_auth_failure(self, caplog, monkeypatch):
+        from mcp.server.fastmcp.exceptions import ToolError
+
         from app.mcp_server import server as srv
 
         async def fake_authenticate(*a, **kw):
@@ -354,9 +356,7 @@ class TestWithPrincipalLogging:
             raise AssertionError("must not be called when auth fails")
 
         with caplog.at_level(logging.WARNING, logger="app.mcp_server.server"):
-            result = await srv._with_principal(never_runs)
+            with pytest.raises(ToolError, match="nope"):
+                await srv._with_principal(never_runs)
 
-        import json as _json
-
-        assert _json.loads(result) == {"error": "nope"}
         assert any("rejected" in r.message for r in caplog.records)

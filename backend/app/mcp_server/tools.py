@@ -5,9 +5,9 @@ MCP protocol into the existing agent infrastructure.
 
 Response contract
 -----------------
-All tools return a JSON-encoded string. Errors are JSON objects with an
-``error`` field; this is by design so a tool failure surfaces inside the
-tool result rather than as a protocol error. List tools support
+All tools return a JSON-encoded string on success. Actionable failures
+raise ``ToolError`` (from ``mcp.server.fastmcp.exceptions``) so the MCP
+transport layer signals ``isError=True`` to clients. List tools support
 pagination (``offset`` / ``limit``) and a ``response_format`` switch
 between ``"json"`` (default) and ``"markdown"`` for human-readable output.
 """
@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+
+from mcp.server.fastmcp.exceptions import ToolError
 
 from app.agents.base import AgentContext
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent
@@ -249,16 +251,16 @@ async def query_database(
     async with async_session_factory() as session:
         project = await _project_svc.get(session, project_id)
         if not project:
-            return json.dumps({"error": f"Project '{project_id}' not found"})
+            raise ToolError(f"Project '{project_id}' not found")
 
         try:
             await _require_project_access(session, project_id, user_id)
         except _AccessDeniedError as exc:
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
 
         connections = await _connection_svc.list_by_project(session, project_id)
         if not connections:
-            return json.dumps({"error": "No connections configured for this project"})
+            raise ToolError("No connections configured for this project")
 
         conn = None
         if connection_id:
@@ -266,13 +268,13 @@ async def query_database(
             # A connection_id must both exist and belong to the named project,
             # otherwise a caller could read across projects by id.
             if not conn or conn.project_id != project_id:
-                return json.dumps({"error": f"Connection '{connection_id}' not found"})
+                raise ToolError(f"Connection '{connection_id}' not found")
         else:
             conn = connections[0]
 
         budget_error = await _usage_svc.check_token_budget(session, user_id)
         if budget_error:
-            return json.dumps({"error": budget_error})
+            raise ToolError(budget_error)
 
         config = await _connection_svc.to_config(session, conn)
         config.connection_id = conn.id
@@ -321,15 +323,15 @@ async def search_codebase(principal: dict, project_id: str, question: str) -> st
     async with async_session_factory() as session:
         project = await _project_svc.get(session, project_id)
         if not project:
-            return json.dumps({"error": f"Project '{project_id}' not found"})
+            raise ToolError(f"Project '{project_id}' not found")
         try:
             await _require_project_access(session, project_id, user_id)
         except _AccessDeniedError as exc:
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
 
         budget_error = await _usage_svc.check_token_budget(session, user_id)
         if budget_error:
-            return json.dumps({"error": budget_error})
+            raise ToolError(budget_error)
 
     wf_id = await _singleton_tracker.begin(
         "mcp_search_codebase",
@@ -409,7 +411,7 @@ async def list_connections(
         try:
             await _require_project_access(session, project_id, user_id)
         except _AccessDeniedError as exc:
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
         connections = await _connection_svc.list_by_project(session, project_id)
 
     rows = [
@@ -445,11 +447,11 @@ async def get_schema(
         try:
             await _require_connection_access(session, connection_id, user_id)
         except _AccessDeniedError as exc:
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
         entries = await _db_index_svc.get_index(session, connection_id)
 
     if not entries:
-        return json.dumps({"error": "No schema index found for this connection"})
+        raise ToolError("No schema index found for this connection")
 
     tables = []
     for entry in entries:
@@ -489,17 +491,15 @@ async def execute_raw_query(principal: dict, connection_id: str, query: str) -> 
         try:
             conn = await _require_connection_access(session, connection_id, user_id)
         except _AccessDeniedError as exc:
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
 
         if not conn.is_read_only:
-            return json.dumps(
-                {"error": "Raw query execution is only allowed on read-only connections"}
-            )
+            raise ToolError("Raw query execution is only allowed on read-only connections")
 
         guard = SafetyGuard(SafetyLevel.READ_ONLY)
         safety_result = guard.validate(query, conn.db_type)
         if not safety_result.is_safe:
-            return json.dumps({"error": f"Query blocked: {safety_result.reason}"})
+            raise ToolError(f"Query blocked: {safety_result.reason}")
 
         config = await _connection_svc.to_config(session, conn)
 
@@ -514,6 +514,6 @@ async def execute_raw_query(principal: dict, connection_id: str, query: str) -> 
             await connector.disconnect()
     except Exception as e:
         logger.exception("Raw query execution failed")
-        return json.dumps({"error": str(e)})
+        raise ToolError(str(e))
 
     return json.dumps(_format_query_result(result), default=str)

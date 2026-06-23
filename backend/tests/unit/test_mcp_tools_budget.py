@@ -1,13 +1,16 @@
 """Budget gate tests for MCP agent tools.
 
 Verifies that query_database and search_codebase block the orchestrator
-and return an error JSON when the token budget is exhausted.
+and raise ToolError when the token budget is exhausted.
 """
 
 from __future__ import annotations
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from app.mcp_server import tools
 
@@ -35,10 +38,8 @@ async def test_query_database_blocks_when_budget_exhausted():
         ),
         patch.object(tools, "_make_orchestrator") as make_orch,
     ):
-        out = await tools.query_database(principal, "p1", "how many users?")
-
-    payload = json.loads(out)
-    assert "/pricing" in payload["error"]
+        with pytest.raises(ToolError, match="/pricing"):
+            await tools.query_database(principal, "p1", "how many users?")
     make_orch.assert_not_called()
 
 
@@ -60,10 +61,8 @@ async def test_search_codebase_blocks_when_budget_exhausted():
         ),
         patch.object(tools, "_make_orchestrator") as make_orch,
     ):
-        out = await tools.search_codebase(principal, "p1", "where is auth handled?")
-
-    payload = json.loads(out)
-    assert "/pricing" in payload["error"]
+        with pytest.raises(ToolError, match="/pricing"):
+            await tools.search_codebase(principal, "p1", "where is auth handled?")
     make_orch.assert_not_called()
 
 

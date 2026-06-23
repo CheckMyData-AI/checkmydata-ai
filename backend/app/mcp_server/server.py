@@ -17,11 +17,11 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
@@ -53,21 +53,23 @@ async def _with_principal(
             principal = await auth.authenticate()
         except auth.MCPAuthError as exc:
             logger.warning("MCP tool %s rejected: auth failed (%s)", name, exc)
-            return json.dumps({"error": str(exc)})
+            raise ToolError(str(exc))
 
     user_id = principal.get("user_id") or ""
     if limited:
         rejection = await agent_limiter.acquire(user_id)
         if rejection:
             logger.info("MCP tool %s rate-limited (user=%s)", name, user_id)
-            return json.dumps({"error": rejection})
+            raise ToolError(rejection)
 
     logger.info("MCP tool %s starting (user=%s)", name, user_id)
     try:
         result = await run(principal)
+    except ToolError:
+        raise
     except Exception:
         logger.exception("MCP tool %s crashed", name)
-        return json.dumps({"error": "Internal tool error"})
+        raise ToolError("Internal tool error")
     finally:
         if limited:
             await agent_limiter.release(user_id)

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 
+from mcp.server.fastmcp.exceptions import ToolError
+
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -38,8 +40,8 @@ async def _require_project_access(session, project_id: str, user_id: str) -> Non
         raise ResourceAccessDeniedError(f"Access denied to project '{project_id}'")
 
 
-def _denied(exc: Exception) -> str:
-    return json.dumps({"error": str(exc)})
+def _denied(exc: Exception) -> None:
+    raise ToolError(str(exc))
 
 
 async def get_project_schema(principal: dict, project_id: str) -> str:
@@ -49,7 +51,7 @@ async def get_project_schema(principal: dict, project_id: str) -> str:
         try:
             await _require_project_access(session, project_id, user_id)
         except ResourceAccessDeniedError as exc:
-            return _denied(exc)
+            _denied(exc)
         connections = await _connection_svc.list_by_project(session, project_id)
 
         all_tables: list[dict] = []
@@ -88,7 +90,7 @@ async def get_project_rules(principal: dict, project_id: str) -> str:
         try:
             await _require_project_access(session, project_id, user_id)
         except ResourceAccessDeniedError as exc:
-            return _denied(exc)
+            _denied(exc)
         rules = await _rule_svc.list_all(session, project_id=project_id)
 
     return json.dumps(
@@ -114,7 +116,7 @@ async def get_project_knowledge(principal: dict, project_id: str) -> str:
         try:
             await _require_project_access(session, project_id, user_id)
         except ResourceAccessDeniedError as exc:
-            return _denied(exc)
+            _denied(exc)
     try:
         from app.knowledge.vector_store import VectorStore
 

@@ -7,6 +7,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 # ---------------------------------------------------------------------------
 # Auth tests
@@ -192,11 +193,9 @@ class TestMCPTools:
                 mock_svc.list_by_project = AsyncMock(return_value=[MagicMock()])
                 from app.mcp_server.tools import list_connections
 
-                result = await list_connections(_PRINCIPAL, "someone-elses-project")
+                with pytest.raises(ToolError, match="Access denied"):
+                    await list_connections(_PRINCIPAL, "someone-elses-project")
 
-        data = json.loads(result)
-        assert "error" in data
-        assert "Access denied" in data["error"]
         # We must never have listed another tenant's connections.
         mock_svc.list_by_project.assert_not_called()
 
@@ -219,10 +218,8 @@ class TestMCPTools:
                 mock_svc.get_index = AsyncMock(return_value=[])
                 from app.mcp_server.tools import get_schema
 
-                result = await get_schema(_PRINCIPAL, "c-missing")
-
-        data = json.loads(result)
-        assert "error" in data
+                with pytest.raises(ToolError):
+                    await get_schema(_PRINCIPAL, "c-missing")
 
     @pytest.mark.asyncio
     async def test_get_schema_cross_tenant_denied(self):
@@ -243,10 +240,8 @@ class TestMCPTools:
                 mock_svc.get_index = AsyncMock(return_value=[MagicMock()])
                 from app.mcp_server.tools import get_schema
 
-                result = await get_schema(_PRINCIPAL, "c1")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await get_schema(_PRINCIPAL, "c1")
         mock_svc.get_index.assert_not_called()
 
     @pytest.mark.asyncio
@@ -293,11 +288,8 @@ class TestMCPTools:
                 mock_svc.get = AsyncMock(return_value=None)
                 from app.mcp_server.tools import query_database
 
-                result = await query_database(_PRINCIPAL, "missing-id", "how many users?")
-
-        data = json.loads(result)
-        assert "error" in data
-        assert "not found" in data["error"]
+                with pytest.raises(ToolError, match="not found"):
+                    await query_database(_PRINCIPAL, "missing-id", "how many users?")
 
     @pytest.mark.asyncio
     async def test_query_database_cross_tenant_denied(self):
@@ -320,10 +312,8 @@ class TestMCPTools:
                 mock_csvc.list_by_project = AsyncMock(return_value=[MagicMock()])
                 from app.mcp_server.tools import query_database
 
-                result = await query_database(_PRINCIPAL, "p1", "how many users?")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await query_database(_PRINCIPAL, "p1", "how many users?")
         # Denied before touching connections / running the orchestrator.
         mock_csvc.list_by_project.assert_not_called()
 
@@ -347,11 +337,8 @@ class TestMCPTools:
                 mock_msvc.can_access = AsyncMock(return_value=True)
                 from app.mcp_server.tools import execute_raw_query
 
-                result = await execute_raw_query(_PRINCIPAL, "c1", "DELETE FROM users")
-
-        data = json.loads(result)
-        assert "error" in data
-        assert "read-only" in data["error"]
+                with pytest.raises(ToolError, match="read-only"):
+                    await execute_raw_query(_PRINCIPAL, "c1", "DELETE FROM users")
 
     @pytest.mark.asyncio
     async def test_execute_raw_query_cross_tenant_denied(self):
@@ -373,10 +360,8 @@ class TestMCPTools:
                 mock_msvc.can_access = AsyncMock(return_value=False)
                 from app.mcp_server.tools import execute_raw_query
 
-                result = await execute_raw_query(_PRINCIPAL, "c1", "SELECT 1")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await execute_raw_query(_PRINCIPAL, "c1", "SELECT 1")
 
 
 # ---------------------------------------------------------------------------
@@ -427,10 +412,8 @@ class TestMCPResources:
                 mock_svc.list_all = AsyncMock(return_value=[MagicMock()])
                 from app.mcp_server.resources import get_project_rules
 
-                result = await get_project_rules(_PRINCIPAL, "someone-elses-project")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await get_project_rules(_PRINCIPAL, "someone-elses-project")
         mock_svc.list_all.assert_not_called()
 
     @pytest.mark.asyncio
@@ -492,10 +475,8 @@ class TestMCPResources:
                 mock_msvc.can_access = AsyncMock(return_value=False)
                 from app.mcp_server.resources import get_project_knowledge
 
-                result = await get_project_knowledge(_PRINCIPAL, "someone-elses-project")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await get_project_knowledge(_PRINCIPAL, "someone-elses-project")
 
     @pytest.mark.asyncio
     async def test_get_project_schema(self):
@@ -545,10 +526,8 @@ class TestMCPResources:
                 mock_conn_svc.list_by_project = AsyncMock(return_value=[MagicMock()])
                 from app.mcp_server.resources import get_project_schema
 
-                result = await get_project_schema(_PRINCIPAL, "someone-elses-project")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await get_project_schema(_PRINCIPAL, "someone-elses-project")
         mock_conn_svc.list_by_project.assert_not_called()
 
     @pytest.mark.asyncio
@@ -562,10 +541,8 @@ class TestMCPResources:
                 mock_msvc.can_access = AsyncMock(return_value=True)
                 from app.mcp_server.resources import get_project_rules
 
-                result = await get_project_rules({"user_id": ""}, "p1")
-
-        data = json.loads(result)
-        assert "Access denied" in data["error"]
+                with pytest.raises(ToolError, match="Access denied"):
+                    await get_project_rules({"user_id": ""}, "p1")
         # An empty principal must be denied before any membership lookup.
         mock_msvc.can_access.assert_not_called()
 
@@ -895,3 +872,33 @@ class TestGetProjectSchemaColumns:
             {"name": "email", "note": "unique"},
         ]
         assert by_name["logs"]["columns"] == []
+
+
+# ---------------------------------------------------------------------------
+# isError contract: end-to-end verification
+# ---------------------------------------------------------------------------
+
+
+class TestMCPIsErrorContract:
+    """Verify that actionable tool failures raise ToolError (isError=True)
+    rather than returning successful JSON with an 'error' field."""
+
+    @pytest.mark.asyncio
+    async def test_project_not_found_raises_tool_error(self):
+        """query_database with a missing project must raise ToolError, not
+        return a successful JSON response containing an error field."""
+        with patch("app.mcp_server.tools.async_session_factory") as mock_sf:
+            mock_session = AsyncMock()
+            mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("app.mcp_server.tools._project_svc") as mock_svc:
+                mock_svc.get = AsyncMock(return_value=None)
+                from app.mcp_server.tools import query_database
+
+                with pytest.raises(ToolError) as exc_info:
+                    await query_database(_PRINCIPAL, "ghost-project", "count rows")
+
+        # The ToolError message is surfaced in the isError content by the MCP
+        # transport layer — it must identify the missing resource.
+        assert "ghost-project" in str(exc_info.value)
