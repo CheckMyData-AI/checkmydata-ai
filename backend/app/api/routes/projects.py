@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
+from app.core.background import spawn_tracked
 from app.core.datetime_utils import ensure_aware
 from app.core.rate_limit import limiter
+from app.knowledge.repo_url import validate_repo_url
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -55,6 +57,11 @@ class ProjectCreate(BaseModel):
     def strip_name(cls, v: str) -> str:
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator("repo_url")
+    @classmethod
+    def _validate_repo_url(cls, v: str | None) -> str | None:
+        return validate_repo_url(v) if v else v
+
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
@@ -63,6 +70,11 @@ class ProjectUpdate(BaseModel):
     @classmethod
     def strip_name(cls, v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("repo_url")
+    @classmethod
+    def _validate_repo_url(cls, v: str | None) -> str | None:
+        return validate_repo_url(v) if v else v
 
     description: str | None = Field(None, max_length=2000)
     repo_url: str | None = Field(None, max_length=1024)
@@ -553,12 +565,11 @@ async def sync_now(
             project_id=project_id,
         )
     else:
-        import asyncio
-
         from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
 
-        asyncio.create_task(
-            DailyKnowledgeSyncService().run_for_project(project_id, trigger="manual")
+        spawn_tracked(
+            DailyKnowledgeSyncService().run_for_project(project_id, trigger="manual"),
+            name=f"daily_sync:{project_id}",
         )
     return {"run_id": run.id, "workflow_id": run.workflow_id, "status": "started"}
 

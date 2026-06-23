@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core import task_queue
+from app.core.background import spawn_tracked
 from app.core.rate_limit import limiter
 from app.models.indexing_run import IndexingRun, IndexingRunEvent
 from app.services.membership_service import MembershipService
@@ -180,6 +180,7 @@ async def _dispatch_for_kind(db: AsyncSession, run: IndexingRun) -> None:
         else:
             from app.api.routes.repos import run_repo_index_task
 
-            asyncio.create_task(
-                run_repo_index_task(run.project_id, force_full=True, wf_id=run.workflow_id)
+            spawn_tracked(
+                run_repo_index_task(run.project_id, force_full=True, wf_id=run.workflow_id),
+                name=f"repo_index:{run.project_id}",
             )

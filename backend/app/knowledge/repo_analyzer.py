@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from git import Repo
 
+from app.knowledge.repo_url import GIT_ALLOWED_PROTOCOLS, validate_repo_url
+
 if TYPE_CHECKING:
     from app.knowledge.project_profiler import ProjectProfile
 
@@ -217,7 +219,9 @@ class RepoAnalyzer:
         import subprocess
         import tempfile
 
+        repo_url = validate_repo_url(repo_url)
         env = {**os.environ}
+        env["GIT_ALLOW_PROTOCOL"] = GIT_ALLOWED_PROTOCOLS
         temp_key_file: str | None = None
         agent_pid: str | None = None
         agent_sock: str | None = None
@@ -255,7 +259,7 @@ class RepoAnalyzer:
                         )
                         proc.communicate(input=unprotected_pem.encode(), timeout=30)
                         env["SSH_AUTH_SOCK"] = agent_sock
-                        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
+                        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=accept-new"
                 except Exception:
                     logger.debug(
                         "ssh-agent failed, falling back to temp file",
@@ -269,7 +273,9 @@ class RepoAnalyzer:
                     with os.fdopen(fd, "w") as f:
                         f.write(unprotected_pem)
                     os.chmod(temp_key_file, 0o600)
-                    env["GIT_SSH_COMMAND"] = f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
+                    env["GIT_SSH_COMMAND"] = (
+                        f"ssh -i {temp_key_file} -o StrictHostKeyChecking=accept-new"
+                    )
 
             result = subprocess.run(
                 ["git", "ls-remote", "--heads", repo_url],
@@ -350,8 +356,9 @@ class RepoAnalyzer:
         import subprocess
         import tempfile
 
+        repo_url = validate_repo_url(repo_url)
         repo_dir = self._clone_base_dir / project_id
-        env: dict[str, str] = {}
+        env: dict[str, str] = {"GIT_ALLOW_PROTOCOL": GIT_ALLOWED_PROTOCOLS}
         temp_key_file: str | None = None
         agent_pid: str | None = None
         agent_sock: str | None = None
@@ -391,7 +398,7 @@ class RepoAnalyzer:
                         )
                         proc.communicate(input=unprotected_pem.encode(), timeout=30)
                         env["SSH_AUTH_SOCK"] = agent_sock
-                        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
+                        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=accept-new"
                 except Exception:
                     logger.debug(
                         "ssh-agent approach failed, falling back to temp file",
@@ -405,7 +412,9 @@ class RepoAnalyzer:
                     with os.fdopen(fd, "w") as f:
                         f.write(unprotected_pem)
                     os.chmod(temp_key_file, 0o600)
-                    env["GIT_SSH_COMMAND"] = f"ssh -i {temp_key_file} -o StrictHostKeyChecking=no"
+                    env["GIT_SSH_COMMAND"] = (
+                        f"ssh -i {temp_key_file} -o StrictHostKeyChecking=accept-new"
+                    )
 
             if repo_dir.exists() and (repo_dir / ".git").exists():
                 repo = Repo(str(repo_dir))

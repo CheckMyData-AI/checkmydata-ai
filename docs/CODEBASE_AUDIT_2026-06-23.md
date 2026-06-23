@@ -8,6 +8,16 @@
 
 ---
 
+## Remediation status (2026-06-24)
+
+- **H1 — FIXED:** `app/knowledge/repo_url.py` (`validate_repo_url` transport allowlist) wired into `RepoAnalyzer` (both git sinks) + `GIT_ALLOW_PROTOCOL=http:https:ssh` pinned; validators on `RepoCheckRequest` and `ProjectCreate/Update`. Tests: `test_repo_url.py` (17).
+- **M1 — FIXED:** `core/safety.py` denylist extended (COPY / INTO OUTFILE/DUMPFILE / LOAD DATA / REPLACE INTO / CALL / DO) + SQL-comment stripping (defeats `DELETE/**/FROM`). Tests: `test_safety_hardening.py` (18). *(Connector-level read-only session remains a recommended deeper defense-in-depth.)*
+- **M2 — FIXED:** git SSH `StrictHostKeyChecking=no` → `accept-new` (TOFU).
+- **M3 — FIXED:** `core/background.py` `spawn_tracked()` (strong ref + exception logging) replaces the two fire-and-forget `create_task` sites (`projects.py`, `runs.py`). Tests: `test_background.py` (2).
+- **M4 (god-files), M5 (broad excepts):** deferred — larger refactors, tracked for a follow-up pass.
+
+3826 backend unit tests pass; ruff + mypy clean.
+
 ## Severity-ranked findings
 
 ### 🔴 HIGH

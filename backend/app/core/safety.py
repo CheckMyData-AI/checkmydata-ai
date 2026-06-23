@@ -19,6 +19,12 @@ DANGEROUS_PATTERNS_SQL = [
     re.compile(r"\b(ALTER)\s+(TABLE|DATABASE|SCHEMA)\b", re.IGNORECASE),
     re.compile(r"\b(GRANT|REVOKE)\s+", re.IGNORECASE),
     re.compile(r"\b(CREATE)\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW|USER|ROLE)\b", re.IGNORECASE),
+    # Server-side filesystem / command execution — blocked even when DML is allowed.
+    # COPY/DO are statement-initial keywords so an identifier named "copy" is safe.
+    re.compile(r"(^|;)\s*COPY\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"\bINTO\s+(OUTFILE|DUMPFILE)\b", re.IGNORECASE),
+    re.compile(r"\bLOAD\s+DATA\b", re.IGNORECASE),
+    re.compile(r"(^|;)\s*DO\s+(\$|LANGUAGE\b|')", re.IGNORECASE | re.MULTILINE),
 ]
 
 DML_PATTERNS_SQL = [
@@ -27,7 +33,18 @@ DML_PATTERNS_SQL = [
     re.compile(r"\b(DELETE)\s+FROM\b", re.IGNORECASE),
     re.compile(r"\b(MERGE)\s+INTO\b", re.IGNORECASE),
     re.compile(r"\b(UPSERT)\s+INTO\b", re.IGNORECASE),
+    re.compile(r"\b(REPLACE)\s+INTO\b", re.IGNORECASE),
+    re.compile(r"(^|;)\s*CALL\b", re.IGNORECASE | re.MULTILINE),
 ]
+
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_LINE_COMMENT = re.compile(r"--[^\n]*")
+
+
+def _strip_sql_comments(query: str) -> str:
+    """Replace SQL comments with a space so they cannot be used as token
+    separators to evade keyword detection (e.g. ``DELETE/**/FROM``)."""
+    return _LINE_COMMENT.sub(" ", _BLOCK_COMMENT.sub(" ", query))
 
 
 @dataclass
@@ -44,7 +61,7 @@ class SafetyGuard:
         self.level = level
 
     def validate_sql(self, query: str) -> SafetyResult:
-        stripped = query.strip().rstrip(";")
+        stripped = _strip_sql_comments(query).strip().rstrip(";")
 
         for pattern in DANGEROUS_PATTERNS_SQL:
             match = pattern.search(stripped)

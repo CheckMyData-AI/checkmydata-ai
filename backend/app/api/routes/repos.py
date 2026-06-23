@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from git import Repo
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -23,6 +23,7 @@ from app.knowledge.doc_store import DocStore
 from app.knowledge.git_tracker import GitTracker
 from app.knowledge.pipeline_runner import IndexingPipelineRunner
 from app.knowledge.repo_analyzer import RepoAnalyzer
+from app.knowledge.repo_url import validate_repo_url
 from app.knowledge.vector_store import VectorStore
 from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
@@ -85,6 +86,11 @@ async def cancel_background_tasks() -> None:
 class RepoCheckRequest(BaseModel):
     repo_url: str
     ssh_key_id: str | None = None
+
+    @field_validator("repo_url")
+    @classmethod
+    def _validate_repo_url(cls, v: str) -> str:
+        return validate_repo_url(v)
 
 
 class RepoCheckResponse(BaseModel):
