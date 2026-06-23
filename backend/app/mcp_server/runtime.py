@@ -10,9 +10,17 @@ mounted, so tools can persist traces without reaching into ``app.main``.
 from __future__ import annotations
 
 from contextvars import ContextVar
+from typing import TypedDict
 
-# Principal dict shape: {"user_id": str, "email": str}.
-current_principal: ContextVar[dict | None] = ContextVar("mcp_current_principal", default=None)
+
+class Principal(TypedDict):
+    """Authenticated identity carried through MCP tool/resource calls."""
+
+    user_id: str
+    email: str
+
+
+current_principal: ContextVar[Principal | None] = ContextVar("mcp_current_principal", default=None)
 
 _trace_service: object | None = None
 

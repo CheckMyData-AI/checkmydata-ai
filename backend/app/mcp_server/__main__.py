@@ -27,8 +27,9 @@ def main() -> None:
         help=(
             "MCP transport mode. 'stdio' (default) for local clients "
             "(Claude Desktop, Cursor); 'streamable-http' for remote / "
-            "multi-client deployments; 'sse' is legacy and only kept "
-            "for older clients."
+            "multi-client deployments; 'sse' is DEPRECATED — kept for "
+            "back-compat with older clients but will be removed in a "
+            "future release; prefer 'streamable-http'."
         ),
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host for SSE/HTTP transport")

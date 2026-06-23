@@ -428,7 +428,10 @@ class TracePersistenceService:
             user_id = context.get("user_id") or ""
 
             if not project_id or not user_id:
-                logger.warning(
+                # Userless/sync workflows legitimately have no user_id; they
+                # call finalize_trace() later with the real context. This is
+                # expected and benign — use debug, not warning.
+                logger.debug(
                     "TracePersistence: skipping initial persist for wf=%s — "
                     "empty project_id=%r / user_id=%r (finalize_trace will create it)",
                     buf.workflow_id[:8],

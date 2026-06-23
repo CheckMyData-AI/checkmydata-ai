@@ -24,6 +24,7 @@ import logging
 import os
 
 from app.config import settings
+from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
 from app.services.auth_service import AuthService
 from app.services.mcp_key_service import TOKEN_PREFIX, McpKeyService
@@ -54,7 +55,7 @@ def _redact_token(token: str | None) -> str:
     return f"{token[:12]}…"
 
 
-async def resolve_user_from_personal_token(token: str) -> dict | None:
+async def resolve_user_from_personal_token(token: str) -> Principal | None:
     """Resolve a per-user ``cmd_mcp_…`` token to its owning user.
 
     Returns ``None`` (not raises) when the token doesn't have the per-user
@@ -88,7 +89,7 @@ async def resolve_user_from_personal_token(token: str) -> dict | None:
         return {"user_id": user.id, "email": user.email}
 
 
-async def resolve_user_from_server_key(api_key: str) -> dict:
+async def resolve_user_from_server_key(api_key: str) -> Principal:
     """Validate the legacy server-level API key and return the bound user.
 
     The key is matched in constant time against the server secret, then
@@ -119,7 +120,7 @@ async def resolve_user_from_server_key(api_key: str) -> dict:
 resolve_user_from_api_key = resolve_user_from_server_key
 
 
-async def resolve_user_from_jwt(token: str) -> dict:
+async def resolve_user_from_jwt(token: str) -> Principal:
     """Validate a JWT token and verify the user exists and is active."""
     payload = _auth_svc.decode_token(token)
     if not payload:
@@ -139,7 +140,7 @@ async def resolve_user_from_jwt(token: str) -> dict:
 async def authenticate(
     api_key: str | None = None,
     token: str | None = None,
-) -> dict:
+) -> Principal:
     """Resolve user identity from whichever credential is provided.
 
     Resolution order:

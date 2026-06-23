@@ -92,7 +92,7 @@ class RawQueryOutput(BaseModel):
 
 
 async def _with_principal(
-    run: Callable[[dict], Awaitable[Any]],
+    run: Callable[..., Awaitable[Any]],
     *,
     tool_name: str | None = None,
     limited: bool = False,

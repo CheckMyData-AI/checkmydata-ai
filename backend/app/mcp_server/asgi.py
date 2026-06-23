@@ -16,6 +16,7 @@ from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from app.mcp_server import auth, runtime
+from app.mcp_server.runtime import Principal
 from app.mcp_server.server import create_mcp_server
 from app.services.mcp_key_service import TOKEN_PREFIX
 
@@ -33,7 +34,7 @@ def get_mcp_instance():
     return _mcp_instance
 
 
-async def _resolve_principal(token: str | None) -> dict:
+async def _resolve_principal(token: str | None) -> Principal:
     """Resolve a bearer token to a principal, raising MCPAuthError on failure."""
     if not token:
         raise auth.MCPAuthError("MCP authentication required: missing bearer token")

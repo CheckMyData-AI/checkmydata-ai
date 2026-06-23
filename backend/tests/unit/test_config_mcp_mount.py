@@ -1,6 +1,9 @@
-from app.config import settings
+from app.config import Settings
 
 
 def test_mcp_mount_defaults_off():
-    assert settings.mcp_mount_enabled is False
-    assert settings.mcp_mount_path == "/mcp"
+    # Use a fresh Settings() instance so the test is not affected by env vars
+    # loaded into the module-level singleton by other tests or the test runner.
+    s = Settings()
+    assert s.mcp_mount_enabled is False
+    assert s.mcp_mount_path == "/mcp"

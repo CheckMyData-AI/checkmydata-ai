@@ -29,6 +29,7 @@ from app.agents.orchestrator import AgentResponse, OrchestratorAgent
 from app.connectors.base import QueryResult
 from app.core.workflow_tracker import tracker as _singleton_tracker
 from app.llm.router import LLMRouter
+from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -53,7 +54,7 @@ MAX_PAGE_LIMIT = 200
 MAX_RESULT_ROWS = 100
 
 
-def _principal_user_id(principal: dict) -> str:
+def _principal_user_id(principal: Principal) -> str:
     """Extract the authenticated user id from a resolved MCP principal.
 
     Defends against a tool being called without a real identity: an empty /
@@ -229,7 +230,7 @@ def _emit(payload: dict[str, Any], response_format: str, md_render) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def ping(principal: dict) -> dict[str, Any]:
+async def ping(principal: Principal) -> dict[str, Any]:
     """Minimal health-check tool. Returns the resolved principal so clients
     can verify the server, auth, and user binding all work end-to-end."""
     return {
@@ -240,7 +241,7 @@ async def ping(principal: dict) -> dict[str, Any]:
 
 
 async def query_database(
-    principal: dict,
+    principal: Principal,
     project_id: str,
     question: str,
     connection_id: str | None = None,
@@ -272,7 +273,10 @@ async def query_database(
             if not conn or conn.project_id != project_id:
                 raise ToolError(f"Connection '{connection_id}' not found")
         else:
-            conn = connections[0]
+            conn = next(
+                (c for c in connections if getattr(c, "is_active", True)),
+                connections[0],
+            )
 
         budget_error = await _usage_svc.check_token_budget(session, user_id)
         if budget_error:
@@ -319,7 +323,7 @@ async def query_database(
     return _agent_response_to_dict(resp)
 
 
-async def search_codebase(principal: dict, project_id: str, question: str) -> dict[str, Any]:
+async def search_codebase(principal: Principal, project_id: str, question: str) -> dict[str, Any]:
     """Search the indexed project codebase for information."""
     user_id = _principal_user_id(principal)
     async with async_session_factory() as session:
@@ -374,7 +378,7 @@ async def search_codebase(principal: dict, project_id: str, question: str) -> di
 
 
 async def list_projects(
-    principal: dict,
+    principal: Principal,
     offset: int = 0,
     limit: int = DEFAULT_PAGE_LIMIT,
     response_format: str = "json",
@@ -401,7 +405,7 @@ async def list_projects(
 
 
 async def list_connections(
-    principal: dict,
+    principal: Principal,
     project_id: str,
     offset: int = 0,
     limit: int = DEFAULT_PAGE_LIMIT,
@@ -433,7 +437,7 @@ async def list_connections(
 
 
 async def get_schema(
-    principal: dict,
+    principal: Principal,
     connection_id: str,
     offset: int = 0,
     limit: int = 50,
@@ -481,7 +485,7 @@ async def get_schema(
     return _emit(payload, response_format, _md_schema)
 
 
-async def execute_raw_query(principal: dict, connection_id: str, query: str) -> dict[str, Any]:
+async def execute_raw_query(principal: Principal, connection_id: str, query: str) -> dict[str, Any]:
     """Execute a raw SQL query against a connection the principal can access.
 
     Requires the connection to be in read-only mode for safety.
