@@ -1,0 +1,8 @@
+# Worker image: reuses the fully-built backend image and only overrides the
+# command to run the ARQ background worker instead of the uvicorn web server.
+# Heroku container deploys run the IMAGE's CMD per process type, so the `worker`
+# formation needs its own image with this CMD (the repo Procfile is not honored
+# for Container Registry releases). Built in CI from the just-built backend image.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+CMD ["sh", "-c", "arq app.worker.WorkerSettings"]

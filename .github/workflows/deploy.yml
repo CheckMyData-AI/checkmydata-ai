@@ -38,6 +38,14 @@ jobs:
             -t registry.heroku.com/${{ env.BACKEND_APP }}/web \
             -f Dockerfile.backend .
 
+      - name: Build worker image
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg BASE_IMAGE=registry.heroku.com/${{ env.BACKEND_APP }}/web \
+            -t registry.heroku.com/${{ env.BACKEND_APP }}/worker \
+            -f Dockerfile.worker .
+
       - name: Build frontend image
         run: |
           docker build \
@@ -51,17 +59,21 @@ jobs:
       - name: Push backend image
         run: docker push registry.heroku.com/${{ env.BACKEND_APP }}/web
 
+      - name: Push worker image
+        run: docker push registry.heroku.com/${{ env.BACKEND_APP }}/worker
+
       - name: Push frontend image
         run: docker push registry.heroku.com/${{ env.FRONTEND_APP }}/web
 
       - name: Release backend
         run: |
-          IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/web)
+          WEB_IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/web)
+          WORKER_IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/worker)
           curl -s -X PATCH https://api.heroku.com/apps/${{ env.BACKEND_APP }}/formation \
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"},{"type":"worker","docker_image":"'"$IMAGE_ID"'"}]}'
+            -d '{"updates":[{"type":"web","docker_image":"'"$WEB_IMAGE_ID"'"},{"type":"worker","docker_image":"'"$WORKER_IMAGE_ID"'"}]}'
 
       - name: Release frontend
         run: |
