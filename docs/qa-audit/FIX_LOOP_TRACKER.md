@@ -28,7 +28,7 @@ Order = audit fix-first priority, then ascending module number. `▶` = current 
 
 | Order | Module | Report | Findings | Status | Phase |
 |------:|--------|--------|---------:|--------|-------|
-| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A,B done; C–E next) |
+| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P1 (A,B,C done; D,E next) |
 | 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | pending | — |
 | 3 | 11 Rules engine | [11](reports/11-rules-engine.md) | 4 (🟠 F-RULE-01 cross-tenant) | pending | — |
 | 4 | 15 MCP Server | [15](reports/15-mcp-server.md) | 4 (🟠 F-MCP-01 budget bypass) | pending | — |
@@ -79,3 +79,11 @@ All loop commits stage files explicitly to avoid sweeping this WIP into unrelate
   the dedicated cookie tests set it True themselves — verify `test_auth_cookies.py` /
   `test_ws_auth.py` / `test_mcp_asgi_auth.py` configure cookie mode explicitly before flipping.
   Next: group C (C4 timing-equalise, C6 body-token omission, C8 Google CSRF, C11 /refresh limit).
+- **2026-06-24** — Module 01 P1 **Task-group C** done (`03dad44`): F-AUTH-04/05/06/09.
+  `_auth_response` omits the body JWT under cookie auth; suite runs Bearer-mode by default
+  (`AUTH_COOKIE_ENABLED=false` in `tests/conftest.py`), `TestCookieSession` opts into cookie
+  auth. Login timing equalised (dummy bcrypt); Google CSRF enforced on cookie presence; `/refresh`
+  rate-limited. Fixed 4 `test_deps.py` regressions from the C5 version check (added `token_version`
+  to `_fake_user` + a mismatch→401 test). Full suite was 4320 passed/4 failed → now fixed.
+  Next: group D (C9 Google-link avatar/provider guard, C10 delete_account hardening:
+  on-disk artifact cleanup + explicit MCP-key delete + audit_log).
