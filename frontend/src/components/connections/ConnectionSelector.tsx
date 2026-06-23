@@ -755,9 +755,10 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               <div className="space-y-1">
                 <input
                   onChange={(e) => {
-                    const { form: next, detected } = applyConnectionString(form, e.target.value);
+                    const value = e.target.value;
+                    const { detected } = applyConnectionString(form, value);
                     setDetectedType(detected);
-                    if (detected) setForm(next);
+                    if (detected) setForm((prev) => applyConnectionString(prev, value).form);
                   }}
                   placeholder="Paste a connection string to autofill…"
                   aria-label="Paste a connection string"
