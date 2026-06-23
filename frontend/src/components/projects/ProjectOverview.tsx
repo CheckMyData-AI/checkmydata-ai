@@ -8,6 +8,7 @@ import { UsageStatsPanel } from "@/components/usage/UsageStatsPanel";
 import { useAppStore } from "@/stores/app-store";
 import { useLogStore } from "@/stores/log-store";
 import { Icon } from "@/components/ui/Icon";
+import { HomeAsk } from "@/components/home/HomeAsk";
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString("en-GB", {
@@ -50,6 +51,8 @@ export function ProjectOverview() {
           <h2 className="text-sm font-semibold text-text-primary">{activeProject.name}</h2>
           <p className="text-xs text-text-tertiary mt-0.5">Project overview and health</p>
         </div>
+
+        <HomeAsk />
 
         <section className="rounded-lg border border-border-subtle bg-surface-1/50 p-4 space-y-3">
           <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">

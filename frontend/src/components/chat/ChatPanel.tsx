@@ -36,6 +36,8 @@ export function ChatPanel() {
   const activeSession = useAppStore((s) => s.activeSession);
   const messages = useAppStore((s) => s.messages);
   const isThinking = useAppStore((s) => s.isThinking);
+  const pendingQuestion = useAppStore((s) => s.pendingQuestion);
+  const setPendingQuestion = useAppStore((s) => s.setPendingQuestion);
   const chatMode = useAppStore((s) => s.chatMode);
 
   const restoringState = useAppStore((s) => s.restoringState);
@@ -698,6 +700,18 @@ export function ChatPanel() {
       abortRef.current?.abort();
     };
   }, []);
+
+  // Pick up a question handed in from the home "Ask" entry: send it once the
+  // chat is ready, guarding with a ref so it can never fire twice for the same value.
+  const pendingSentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingQuestion || isThinking || !canChat) return;
+    if (pendingSentRef.current === pendingQuestion) return;
+    pendingSentRef.current = pendingQuestion;
+    const q = pendingQuestion;
+    setPendingQuestion(null);
+    void handleSend(q);
+  }, [pendingQuestion, isThinking, canChat, handleSend, setPendingQuestion]);
 
   if (restoringState) {
     return (

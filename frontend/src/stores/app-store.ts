@@ -120,6 +120,7 @@ interface AppState {
   sessionTokens: number;
   sessionCost: number;
   logsOpen: boolean;
+  pendingQuestion: string | null;
 
   setSshKeys: (keys: SshKey[]) => void;
   setProjects: (projects: Project[]) => void;
@@ -153,6 +154,7 @@ interface AppState {
   addSessionUsage: (tokens: number, cost: number) => void;
   resetSessionUsage: () => void;
   setLogsOpen: (open: boolean) => void;
+  setPendingQuestion: (q: string | null) => void;
   lastViewByProject: Record<string, string>;
   setLastView: (projectId: string, view: string) => void;
 }
@@ -167,6 +169,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeSession: null,
   messages: [],
   messagesBySession: {},
+  pendingQuestion: null,
   isLoading: false,
   isThinking: false,
   userRole: null,
@@ -286,6 +289,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { messagesBySession: cache };
     }),
   clearAllSessionMessages: () => set({ messages: [], messagesBySession: {} }),
+  setPendingQuestion: (q) => set({ pendingQuestion: q }),
   hasSessionCache: (sessionId) => sessionId in get().messagesBySession,
   setLoading: (loading) => set({ isLoading: loading }),
   setThinking: (thinking) => set({ isThinking: thinking }),
