@@ -94,6 +94,20 @@ class TestTokenIssuance:
         with pytest.raises(ValueError, match="positive"):
             await svc.issue(AsyncMock(), user_id="u1", name="x", expires_in_days=0)
 
+    @pytest.mark.asyncio
+    async def test_issue_applies_default_expiry_when_unspecified(self):
+        # F-AUTH-12: an omitted expiry falls back to the configured default (90d)
+        # rather than minting a never-expiring bearer credential.
+        svc = McpKeyService()
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+        issued = await svc.issue(session, user_id="u1", name="laptop")
+        assert issued.record.expires_at is not None
+        delta = issued.record.expires_at - datetime.now(UTC)
+        assert timedelta(days=89) < delta <= timedelta(days=90, hours=1)
+
 
 class TestLookupByToken:
     @pytest.mark.asyncio

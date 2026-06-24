@@ -1,6 +1,33 @@
 import pytest
 
-from app.knowledge.repo_url import GIT_ALLOWED_PROTOCOLS, validate_repo_url
+from app.knowledge.repo_url import GIT_ALLOWED_PROTOCOLS, validate_git_ref, validate_repo_url
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["main", "develop", "feature/new-thing", "release/v1.2.3", "v1.2.3", "a_b.c-d", "  main  "],
+)
+def test_validate_git_ref_accepts_safe_refs(ref):
+    assert validate_git_ref(ref) == ref.strip()
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "",
+        "   ",
+        "-main",  # leading dash -> option injection
+        "--upload-pack=evil",
+        "feature..main",  # ".." range syntax
+        "foo/",  # trailing slash
+        "x.lock",  # reserved .lock suffix
+        "has space",
+        "weird~name",
+    ],
+)
+def test_validate_git_ref_rejects_dangerous_refs(ref):
+    with pytest.raises(ValueError):
+        validate_git_ref(ref)
 
 
 @pytest.mark.parametrize(

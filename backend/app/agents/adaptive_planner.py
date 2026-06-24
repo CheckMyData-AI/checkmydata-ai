@@ -27,6 +27,7 @@ from app.agents.stage_context import (
 )
 from app.llm.base import Message
 from app.llm.router import LLMRouter
+from app.llm.usage_sink import UsageSink
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,9 @@ logger = logging.getLogger(__name__)
 class AdaptivePlanner:
     """Generates execution plans via LLM-based decomposition."""
 
-    def __init__(self, llm_router: LLMRouter) -> None:
+    def __init__(self, llm_router: LLMRouter, usage_sink: UsageSink | None = None) -> None:
         self._llm = llm_router
+        self._sink = usage_sink
 
     async def plan(
         self,
@@ -131,6 +133,7 @@ class AdaptivePlanner:
                     tools=[_CREATE_PLAN_TOOL],
                     preferred_provider=preferred_provider,
                     model=model,
+                    usage_sink=self._sink,
                 )
             except Exception:
                 logger.exception("Replan LLM call failed (attempt %d)", attempt + 1)
@@ -278,6 +281,7 @@ class AdaptivePlanner:
                 tools=[_CREATE_PLAN_TOOL],
                 preferred_provider=preferred_provider,
                 model=model,
+                usage_sink=self._sink,
             )
         except Exception:
             logger.exception("Planner LLM call failed")

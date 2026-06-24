@@ -824,6 +824,20 @@ class ToolDispatcher:
                         _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
                         return result_text
 
+                    if action in ("update", "delete"):
+                        # Tenant isolation (F-RULE-05): a prompted agent must only
+                        # mutate rules belonging to its own project. Reject foreign
+                        # rules and global rules (project_id is None).
+                        existing = await rule_svc.get(session, rule_id)
+                        if existing is None:
+                            result_text = f"Error: rule with id '{rule_id}' not found."
+                            _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
+                            return result_text
+                        if existing.project_id != ctx.project_id:
+                            result_text = "Permission denied: that rule belongs to another project."
+                            _sd_rules["output_preview"] = result_text[:_PREVIEW_MAX]
+                            return result_text
+
                     if action == "update":
                         update_kwargs: dict = {}
                         if name:

@@ -45,12 +45,19 @@ class PostgresConnector(BaseConnector):
             self._pool = None
         self._config = config
 
+        # R1/C1: enforce read-only at the DB session, not just the app-layer
+        # regex. asyncpg applies ``server_settings`` as a server-side SET on
+        # every pooled connection, so PG raises "cannot execute ... in a
+        # read-only transaction" for any write/DDL. ``None`` is ignored.
+        server_settings = {"default_transaction_read_only": "on"} if config.is_read_only else None
+
         if config.connection_string:
             self._pool = await asyncpg.create_pool(
                 config.connection_string,
                 min_size=1,
                 max_size=5,
                 command_timeout=settings.query_timeout_seconds,
+                server_settings=server_settings,
             )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
@@ -63,6 +70,7 @@ class PostgresConnector(BaseConnector):
                 min_size=1,
                 max_size=5,
                 command_timeout=settings.query_timeout_seconds,
+                server_settings=server_settings,
             )
 
     async def disconnect(self) -> None:

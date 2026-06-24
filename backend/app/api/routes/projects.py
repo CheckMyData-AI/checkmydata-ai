@@ -10,7 +10,7 @@ from app.core.audit import audit_log
 from app.core.background import spawn_tracked
 from app.core.datetime_utils import ensure_aware
 from app.core.rate_limit import limiter
-from app.knowledge.repo_url import validate_repo_url
+from app.knowledge.repo_url import validate_git_ref, validate_repo_url
 from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
@@ -62,6 +62,11 @@ class ProjectCreate(BaseModel):
     def _validate_repo_url(cls, v: str | None) -> str | None:
         return validate_repo_url(v) if v else v
 
+    @field_validator("repo_branch")
+    @classmethod
+    def _validate_repo_branch(cls, v: str | None) -> str | None:
+        return validate_git_ref(v) if v else v
+
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
@@ -75,6 +80,11 @@ class ProjectUpdate(BaseModel):
     @classmethod
     def _validate_repo_url(cls, v: str | None) -> str | None:
         return validate_repo_url(v) if v else v
+
+    @field_validator("repo_branch")
+    @classmethod
+    def _validate_repo_branch(cls, v: str | None) -> str | None:
+        return validate_git_ref(v) if v else v
 
     description: str | None = Field(None, max_length=2000)
     repo_url: str | None = Field(None, max_length=1024)

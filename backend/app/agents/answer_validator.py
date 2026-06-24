@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from app.llm.base import Message
 from app.llm.router import LLMRouter
+from app.llm.usage_sink import UsageSink
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,9 @@ _VALIDATOR_SYSTEM = (
 class AnswerValidator:
     """Tiny LLM-driven sanity check for final orchestrator answers."""
 
-    def __init__(self, llm: LLMRouter) -> None:
+    def __init__(self, llm: LLMRouter, usage_sink: UsageSink | None = None) -> None:
         self._llm = llm
+        self._sink = usage_sink
 
     async def validate(
         self,
@@ -99,6 +101,7 @@ class AnswerValidator:
                 max_tokens=200,
                 preferred_provider=preferred_provider,
                 model=model,
+                usage_sink=self._sink,
             )
         except Exception:
             # R5-6: fail closed by default for ANY validator failure (not just

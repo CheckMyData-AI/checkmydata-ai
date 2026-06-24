@@ -57,13 +57,22 @@ class ClickHouseConnector(BaseConnector):
             username = config.db_user or "default"
             password = config.db_password or ""
 
+        client_kwargs: dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "database": database,
+            "username": username,
+            "password": password,
+        }
+        if config.is_read_only:
+            # C3 (R1): DB-enforced read-only session. readonly=1 makes the
+            # ClickHouse server reject writes and setting changes — an
+            # authoritative backstop behind the app-layer SafetyGuard.
+            client_kwargs["settings"] = {"readonly": 1}
+
         self._client = await asyncio.to_thread(
             clickhouse_connect.get_client,
-            host=host,
-            port=port,
-            database=database,
-            username=username,
-            password=password,
+            **client_kwargs,
         )
 
     async def disconnect(self) -> None:

@@ -18,7 +18,10 @@ class TestSafetyGuardReadOnly:
     def test_insert_blocked(self):
         result = self.guard.validate_sql("INSERT INTO users (name) VALUES ('test')")
         assert not result.is_safe
-        assert "DML" in result.reason
+        # R1/C5: INSERT is now caught by the statement-initial read-only allow-list
+        # (it doesn't start with SELECT/WITH/…), which fires before the DML denylist.
+        # Same security outcome (blocked in read-only), clearer reason.
+        assert "read-only" in result.reason.lower()
 
     def test_update_blocked(self):
         result = self.guard.validate_sql("UPDATE users SET name = 'test' WHERE id = 1")

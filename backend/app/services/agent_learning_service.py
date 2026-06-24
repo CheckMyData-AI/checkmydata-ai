@@ -1037,6 +1037,7 @@ class AgentLearningService:
         self,
         session: AsyncSession,
         *,
+        owner_user_id: str | None = None,
         min_connections: int = 2,
         min_confidence: float = 0.7,
         limit: int = 15,
@@ -1047,20 +1048,34 @@ class AgentLearningService:
         discovered on at least *min_connections* different connections,
         suggesting they are universally applicable (e.g. "amounts are
         stored in cents").
+
+        Tenant isolation (R3 / F-LEARN-07): when *owner_user_id* is provided,
+        the aggregation is restricted to connections under projects owned by
+        that user, so a pattern learned on another tenant's connection is never
+        promoted across the tenant boundary. ``owner_user_id=None`` preserves the
+        legacy unscoped behavior for internal/admin callers that pass no scope.
         """
-        stmt = (
-            select(
-                AgentLearning.lesson_hash,
-                AgentLearning.category,
-                AgentLearning.subject,
-                func.max(AgentLearning.lesson).label("lesson"),
-                func.max(AgentLearning.confidence).label("max_confidence"),
-                func.count(func.distinct(AgentLearning.connection_id)).label("conn_count"),
-                func.sum(AgentLearning.times_confirmed).label("total_confirmed"),
+        from app.models.connection import Connection
+        from app.models.project import Project
+
+        stmt = select(
+            AgentLearning.lesson_hash,
+            AgentLearning.category,
+            AgentLearning.subject,
+            func.max(AgentLearning.lesson).label("lesson"),
+            func.max(AgentLearning.confidence).label("max_confidence"),
+            func.count(func.distinct(AgentLearning.connection_id)).label("conn_count"),
+            func.sum(AgentLearning.times_confirmed).label("total_confirmed"),
+        )
+        if owner_user_id is not None:
+            stmt = stmt.join(Connection, Connection.id == AgentLearning.connection_id).join(
+                Project, Project.id == Connection.project_id
             )
-            .where(
+        stmt = (
+            stmt.where(
                 AgentLearning.is_active.is_(True),
                 AgentLearning.confidence >= min_confidence,
+                *((Project.owner_id == owner_user_id,) if owner_user_id is not None else ()),
             )
             .group_by(
                 AgentLearning.lesson_hash,
@@ -1101,8 +1116,25 @@ class AgentLearningService:
 
         Returns learnings that appear on 2+ other connections but are not
         yet present on *connection_id*.
+
+        Tenant isolation (R3 / F-LEARN-07): patterns are aggregated only across
+        connections owned by the same user as *connection_id*'s project. If the
+        owner cannot be resolved (orphaned/unknown connection), promote nothing
+        (fail closed) rather than leaking another tenant's patterns.
         """
-        patterns = await self.get_global_patterns(session)
+        from app.models.connection import Connection
+        from app.models.project import Project
+
+        owner_result = await session.execute(
+            select(Project.owner_id)
+            .join(Connection, Connection.project_id == Project.id)
+            .where(Connection.id == connection_id)
+        )
+        owner_user_id = owner_result.scalar_one_or_none()
+        if not owner_user_id:
+            return []
+
+        patterns = await self.get_global_patterns(session, owner_user_id=owner_user_id)
         if not patterns:
             return []
 

@@ -143,28 +143,47 @@ async def authenticate(
 ) -> Principal:
     """Resolve user identity from whichever credential is provided.
 
-    Resolution order:
-      1. ``api_key`` (or env-var fallback) that starts with ``cmd_mcp_`` →
-         per-user DB lookup.
-      2. ``token`` (JWT) — explicit per-call credential.
-      3. ``api_key`` (or env-var fallback) → legacy server-key path bound to
-         ``MCP_API_KEY_USER_ID``.
+    Resolution order (strongest binding first):
+      1. **Explicit** ``api_key`` argument that starts with ``cmd_mcp_`` →
+         per-user DB lookup. Caller-supplied per-user token wins over
+         everything else.
+      2. **Explicit** ``token`` (JWT) — per-call credential beats any
+         env-derived default (F-MCP-03). If the JWT fails to resolve, we
+         raise — NEVER silently fall through to the env candidate, since
+         the caller explicitly handed us this JWT.
+      3. Env-derived candidate key (``CHECKMYDATA_API_KEY`` / ``MCP_API_KEY``):
+         either a ``cmd_mcp_…`` personal token or the legacy server-level
+         key bound to ``MCP_API_KEY_USER_ID``.
 
     Fail-closed when no credential is provided.
     """
-    candidate_key = api_key or _get_api_key()
-    if candidate_key and candidate_key.startswith(TOKEN_PREFIX):
-        resolved = await resolve_user_from_personal_token(candidate_key)
+    # 1) Explicit per-call ``cmd_mcp_…`` token — most authoritative.
+    if api_key and api_key.startswith(TOKEN_PREFIX):
+        resolved = await resolve_user_from_personal_token(api_key)
         if resolved is not None:
             return resolved
         # A `cmd_mcp_` token MUST NOT silently fall through to the server-key
         # path — if it doesn't resolve, it's invalid/revoked/expired.
         raise MCPAuthError("MCP token is invalid, revoked, or expired")
 
+    # 2) Explicit JWT — preferred over env candidate (F-MCP-03). A
+    #    misconfigured env ``CHECKMYDATA_API_KEY`` (e.g. set to a stale
+    #    ``cmd_mcp_…`` value) used to shadow a real per-call JWT under the
+    #    old order; the explicit caller credential now wins.
     if token:
         return await resolve_user_from_jwt(token)
+
+    # 3) Env candidate — personal token or legacy server key.
+    candidate_key = _get_api_key()
+    if candidate_key and candidate_key.startswith(TOKEN_PREFIX):
+        resolved = await resolve_user_from_personal_token(candidate_key)
+        if resolved is not None:
+            return resolved
+        # Same fail-closed rule as the explicit path.
+        raise MCPAuthError("MCP token is invalid, revoked, or expired")
     if candidate_key:
         return await resolve_user_from_server_key(candidate_key)
+
     logger.warning("MCP auth: no credentials presented")
     raise MCPAuthError(
         "MCP authentication required: configure CHECKMYDATA_API_KEY or provide a token"

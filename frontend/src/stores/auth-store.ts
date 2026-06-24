@@ -53,11 +53,20 @@ function getTokenExpMs(token: string): number | null {
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleRefresh(set: (s: Partial<AuthState>) => void, token: string | null) {
+function scheduleRefresh(
+  set: (s: Partial<AuthState>) => void,
+  res: { token: string | null; expires_in?: number },
+) {
   if (refreshTimer) clearTimeout(refreshTimer);
-  if (!token) return;
 
-  const expMs = getTokenExpMs(token);
+  // Prefer the server-provided lifetime (works under cookie auth where the token
+  // body is empty — F-AUTH-04); fall back to decoding the JWT for Bearer clients.
+  let expMs: number | null = null;
+  if (res.expires_in && res.expires_in > 0) {
+    expMs = Date.now() + res.expires_in * 1000;
+  } else if (res.token) {
+    expMs = getTokenExpMs(res.token);
+  }
   if (!expMs) return;
 
   const remaining = expMs - Date.now();
@@ -73,7 +82,7 @@ function scheduleRefresh(set: (s: Partial<AuthState>) => void, token: string | n
     try {
       const res = await api.auth.refresh();
       storeAuth(set, res);
-      scheduleRefresh(set, res.token);
+      scheduleRefresh(set, res);
     } catch {
       toast("Your session has expired. Please log in again.", "error");
       useAuthStore.getState().logout();
@@ -92,7 +101,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await api.auth.login(email, password);
       storeAuth(set, res);
-      scheduleRefresh(set, res.token);
+      scheduleRefresh(set, res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Login failed";
       set({ error: msg, isLoading: false });
@@ -105,7 +114,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await api.auth.register(email, password, displayName);
       storeAuth(set, res);
-      scheduleRefresh(set, res.token);
+      scheduleRefresh(set, res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Registration failed";
       set({ error: msg, isLoading: false });
@@ -118,7 +127,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await api.auth.googleLogin(credential, nonce, csrfToken);
       storeAuth(set, res);
-      scheduleRefresh(set, res.token);
+      scheduleRefresh(set, res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Google sign-in failed";
       set({ error: msg, isLoading: false });
@@ -180,7 +189,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await api.auth.refresh();
       storeAuth(set, res);
-      scheduleRefresh(set, res.token);
+      scheduleRefresh(set, res);
     } catch {
       storage.removeItem("auth_token");
       storage.removeItem("auth_user");

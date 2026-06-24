@@ -171,6 +171,37 @@ class EmailService:
             tags=[{"name": "category", "value": "welcome"}],
         )
 
+    async def send_verification_email(
+        self, *, user_id: str, email: str, token: str, display_name: str = ""
+    ) -> None:
+        """Send the email-verification link (F-PROJ-01)."""
+        name = escape(display_name or email.split("@")[0])
+        verify_link = f"{settings.app_url.rstrip('/')}/verify-email?token={token}"
+
+        body = f"""\
+<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">Verify your email, {name}</h2>
+<p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 16px">
+  Confirm this address to activate your <strong>CheckMyData.ai</strong> account and
+  receive any pending project invitations.
+</p>
+<p style="margin:0 0 24px">
+  <a href="{verify_link}" style="display:inline-block;background:{_BRAND_COLOR};color:#fff;
+     padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
+    Verify email
+  </a>
+</p>
+<p style="color:#94a3b8;font-size:13px;margin:0">
+  If you did not create this account you can safely ignore this email.
+</p>"""
+
+        await self._send(
+            to=email,
+            subject="Verify your CheckMyData.ai email",
+            html=_base_html("Verify your email", body),
+            idempotency_key=f"verify/{user_id}/{token[:8]}",
+            tags=[{"name": "category", "value": "verify"}],
+        )
+
     async def send_invite_email(
         self,
         *,

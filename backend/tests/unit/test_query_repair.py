@@ -83,3 +83,41 @@ class TestQueryRepairer:
         call_args = mock_router.complete.call_args
         msgs = call_args.kwargs.get("messages") or call_args[0][0]
         assert len([m for m in msgs if m.role == "user"]) >= 2
+
+
+class TestQueryRepairerUsageSink:
+    """R2 / C3 — repairer must forward its UsageSink to the LLM call."""
+
+    @pytest.mark.asyncio
+    async def test_forwards_usage_sink_to_llm_call(self):
+        from app.llm.usage_sink import AccumUsageSink
+
+        mock_router = MagicMock()
+        mock_response = MagicMock()
+        mock_tc = MagicMock()
+        mock_tc.name = "execute_query"
+        mock_tc.arguments = {"query": "SELECT 1", "explanation": "ok"}
+        mock_response.tool_calls = [mock_tc]
+        mock_router.complete = AsyncMock(return_value=mock_response)
+
+        accum = AccumUsageSink()
+        repairer = QueryRepairer(mock_router, usage_sink=accum)
+        await repairer.repair(repair_context="ctx", db_type="postgresql")
+
+        assert mock_router.complete.call_args.kwargs.get("usage_sink") is accum
+
+    @pytest.mark.asyncio
+    async def test_default_usage_sink_is_none(self):
+        """Back-compat: existing callers without usage_sink keep kwarg=None."""
+        mock_router = MagicMock()
+        mock_response = MagicMock()
+        mock_tc = MagicMock()
+        mock_tc.name = "execute_query"
+        mock_tc.arguments = {"query": "SELECT 1", "explanation": "ok"}
+        mock_response.tool_calls = [mock_tc]
+        mock_router.complete = AsyncMock(return_value=mock_response)
+
+        repairer = QueryRepairer(mock_router)
+        await repairer.repair(repair_context="ctx", db_type="postgresql")
+
+        assert mock_router.complete.call_args.kwargs.get("usage_sink") is None

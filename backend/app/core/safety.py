@@ -37,6 +37,19 @@ DML_PATTERNS_SQL = [
     re.compile(r"(^|;)\s*CALL\b", re.IGNORECASE | re.MULTILINE),
 ]
 
+# Statement-initial allow-list (read-only mode only). A read-only query must
+# *start* with one of these tokens; anything else (CREATE OR REPLACE VIEW,
+# ALTER ROLE, SET, VACUUM, REFRESH, COMMENT ON, …) is rejected even though it
+# never trips the denylist above. This closes the regex-evasion class
+# (F-SQL-08 / F-CONN-02). Defense-in-depth: the denylists still run first.
+_READ_ONLY_LEADING = frozenset(
+    {"SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "TABLE", "VALUES", "EXISTS"}
+)
+
+# Splits off the first token: leading whitespace and an opening paren are both
+# valid statement starts (e.g. ``(SELECT 1)``), so they delimit the token too.
+_LEADING_TOKEN = re.compile(r"^[\s(]*([A-Za-z]+)")
+
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 
@@ -74,6 +87,31 @@ class SafetyGuard:
                 )
 
         if self.level == SafetyLevel.READ_ONLY:
+            # Single-statement: a ``;`` followed by further non-whitespace means
+            # a stacked statement (``SELECT 1; DROP TABLE t``) — reject it. A bare
+            # trailing ``;`` was already removed by ``.rstrip(";")`` above.
+            if ";" in stripped:
+                logger.warning("Blocked multi-statement query in read-only mode")
+                return SafetyResult(
+                    is_safe=False,
+                    reason="Multiple statements not allowed in read-only mode",
+                    query=query,
+                )
+
+            # Positive allow-list: the first token must be a read keyword.
+            leading_match = _LEADING_TOKEN.match(stripped)
+            leading = leading_match.group(1).upper() if leading_match else ""
+            if leading not in _READ_ONLY_LEADING:
+                logger.warning("Blocked non-read statement in read-only mode: %s", leading or "?")
+                return SafetyResult(
+                    is_safe=False,
+                    reason=(
+                        "Only read-only statements (SELECT/WITH/SHOW/EXPLAIN/…) "
+                        "are allowed in read-only mode"
+                    ),
+                    query=query,
+                )
+
             for pattern in DML_PATTERNS_SQL:
                 match = pattern.search(stripped)
                 if match:

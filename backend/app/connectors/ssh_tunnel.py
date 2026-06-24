@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 
@@ -210,9 +211,35 @@ class SSHTunnelManager:
         self._refs: dict[str, set[str]] = {}
 
     def _key(self, config: ConnectionConfig) -> str:
+        """Cache key for a tunnel, scoped to its credential material.
+
+        F-SSH-08 (R3 cross-tenant isolation): the transport endpoint
+        (ssh host/port/user + db host/port) alone is *not* a safe cache key —
+        two tenants reaching the same DB through the same bastion user but with
+        DIFFERENT keys would otherwise collide onto one cached tunnel, so one
+        tenant's transport could carry another tenant's traffic. We append a
+        credential discriminator (mirroring ``connectors/base.py::connector_key``):
+        a short SHA-256 of the credential material. The raw secret is never put
+        in the key.
+
+        We deliberately discriminate on credential material rather than
+        ``connection_id``: sibling connections that share the same bastion +
+        credentials are *meant* to share one tunnel (the ref-counting design in
+        ``close_for_config``). Hashing the credentials keeps that legitimate
+        sharing while still isolating tenants that differ by key/passphrase.
+        """
+        cred_material = "|".join(
+            [
+                config.ssh_key_content or "",
+                config.ssh_key_passphrase or "",
+                config.db_user or "",
+                config.db_password or "",
+            ]
+        )
+        disc = "cred=" + hashlib.sha256(cred_material.encode("utf-8")).hexdigest()[:16]
         return (
             f"{config.ssh_host}:{config.ssh_port}:{config.ssh_user}"
-            f":{config.db_host}:{config.db_port}"
+            f":{config.db_host}:{config.db_port}:{disc}"
         )
 
     def _register_ref(self, key: str, config: ConnectionConfig) -> None:

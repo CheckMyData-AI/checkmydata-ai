@@ -441,11 +441,13 @@ async def test_reaper_recovers_stuck_running(db_session: AsyncSession):
 
     from app.models.db_index import DbIndexSummary
     from app.services.stale_run_reaper import StaleRunReaper
+    from tests.integration.conftest import make_connection
 
+    cid = await make_connection(db_session)
     old = datetime.now(UTC) - timedelta(seconds=600)
     db_session.add(
         DbIndexSummary(
-            connection_id="e2e-reaper",
+            connection_id=cid,
             indexing_status="running",
             heartbeat_at=old,
         )

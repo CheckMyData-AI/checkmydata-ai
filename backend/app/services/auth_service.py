@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -12,6 +14,18 @@ from app.config import settings
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_token(token: str) -> str:
+    """SHA-256 hex digest — what we persist for verify/reset tokens (never plaintext)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+# Constant bcrypt hash used to equalise login timing for unknown / passwordless
+# accounts (F-AUTH-05). Without a dummy verify, the missing-user path returns
+# near-instantly while a real account costs ~one bcrypt — a "does this email exist?"
+# timing oracle. Computed once at import.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"timing-equalization", bcrypt.gensalt()).decode()
 
 
 class AuthService:
@@ -37,10 +51,16 @@ class AuthService:
         """Off-thread bcrypt verify (T21). See :meth:`hash_password_async`."""
         return await asyncio.to_thread(self._verify_password, plain, hashed)
 
-    def create_token(self, user_id: str, email: str) -> str:
+    def create_token(self, user_id: str, email: str, token_version: int = 0) -> str:
         now = datetime.now(UTC)
         expire = now + timedelta(minutes=settings.jwt_expire_minutes)
-        payload = {"sub": user_id, "email": email, "iat": now, "exp": expire}
+        payload = {
+            "sub": user_id,
+            "email": email,
+            "ver": token_version,
+            "iat": now,
+            "exp": expire,
+        }
         return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
     def decode_token(self, token: str) -> dict | None:
@@ -89,6 +109,9 @@ class AuthService:
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user or not user.password_hash:
+            # Equalise timing (F-AUTH-05): spend ~one bcrypt verify even when there
+            # is nothing to check, so the response time doesn't leak account existence.
+            await self.verify_password_async(password, _DUMMY_PASSWORD_HASH)
             logger.warning("Login failed for %s: user not found or no password", email)
             return None
         if not await self.verify_password_async(password, user.password_hash):
@@ -100,6 +123,37 @@ class AuthService:
     async def get_by_id(self, session: AsyncSession, user_id: str) -> User | None:
         result = await session.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
+
+    # ------------------------------------------------------------------
+    # Email verification (F-PROJ-01)
+    # ------------------------------------------------------------------
+
+    async def issue_email_verification(self, session: AsyncSession, user: User) -> str:
+        """Generate a one-time email-verification token, persist its hash, return plaintext.
+
+        The plaintext is emailed to the user; only the SHA-256 hash is stored, so a
+        DB read can't reveal a usable token.
+        """
+        token = secrets.token_urlsafe(32)
+        user.email_verify_token = _hash_token(token)
+        await session.commit()
+        return token
+
+    async def verify_email(self, session: AsyncSession, token: str) -> User | None:
+        """Mark the user owning *token* as verified; clears the token. Returns the user."""
+        if not token:
+            return None
+        token_hash = _hash_token(token)
+        result = await session.execute(select(User).where(User.email_verify_token == token_hash))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+        user.email_verified = True
+        user.email_verify_token = None
+        await session.commit()
+        await session.refresh(user)
+        logger.info("Email verified for user: %s", user.email)
+        return user
 
     # ------------------------------------------------------------------
     # Google OAuth
@@ -163,8 +217,15 @@ class AuthService:
 
         if user:
             user.google_id = google_id
-            user.auth_provider = "google"
-            user.picture_url = picture
+            # F-AUTH-07: don't wipe an existing avatar when Google sends no picture,
+            # and don't misreport auth_provider — a password user keeps "email"
+            # (password login still works) while gaining the linked google_id.
+            if picture:
+                user.picture_url = picture
+            if user.password_hash is None:
+                user.auth_provider = "google"
+            # F-PROJ-01: Google proved ownership of this address.
+            user.email_verified = True
             await session.commit()
             await session.refresh(user)
             logger.info("Google account linked for existing user: %s", email)
@@ -177,6 +238,7 @@ class AuthService:
             google_id=google_id,
             picture_url=picture,
             password_hash=None,
+            email_verified=True,  # F-PROJ-01: Google-verified address.
         )
         session.add(user)
         await session.commit()

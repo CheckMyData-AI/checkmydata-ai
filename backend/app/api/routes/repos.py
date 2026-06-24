@@ -23,7 +23,7 @@ from app.knowledge.doc_store import DocStore
 from app.knowledge.git_tracker import GitTracker
 from app.knowledge.pipeline_runner import IndexingPipelineRunner
 from app.knowledge.repo_analyzer import RepoAnalyzer
-from app.knowledge.repo_url import validate_repo_url
+from app.knowledge.repo_url import validate_git_ref, validate_repo_url
 from app.knowledge.vector_store import VectorStore
 from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
@@ -786,6 +786,16 @@ class AddRepoRequest(BaseModel):
     branch: str = Field("main", max_length=200)
     provider: Literal["git_ssh", "git_https", "github", "gitlab", "bitbucket"] = "git_ssh"
     ssh_key_id: str | None = Field(None, max_length=64)
+
+    @field_validator("repo_url")
+    @classmethod
+    def _validate_repo_url(cls, v: str) -> str:
+        return validate_repo_url(v)
+
+    @field_validator("branch")
+    @classmethod
+    def _validate_branch(cls, v: str) -> str:
+        return validate_git_ref(v)
 
 
 class RepoResponse(BaseModel):

@@ -8,6 +8,7 @@ from app.agents.tools.sql_tools import EXECUTE_QUERY_TOOL
 from app.config import settings
 from app.llm.base import Message
 from app.llm.router import LLMRouter
+from app.llm.usage_sink import UsageSink
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,9 @@ CRITICAL: Use ONLY the exact column and table names shown in the schema. Do NOT 
 class QueryRepairer:
     """Uses an LLM to repair a failed database query."""
 
-    def __init__(self, llm_router: LLMRouter):
+    def __init__(self, llm_router: LLMRouter, usage_sink: UsageSink | None = None):
         self._llm = llm_router
+        self._sink = usage_sink
 
     async def repair(
         self,
@@ -70,6 +72,7 @@ class QueryRepairer:
                 tools=[EXECUTE_QUERY_TOOL],
                 preferred_provider=preferred_provider,
                 model=model,
+                usage_sink=self._sink,
             )
         except Exception as exc:
             logger.error("LLM repair call failed: %s", exc)

@@ -27,8 +27,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 from app.agents.base import AgentContext
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent
 from app.connectors.base import QueryResult
+from app.core.agent_limiter import agent_limiter
 from app.core.workflow_tracker import tracker as _singleton_tracker
 from app.llm.router import LLMRouter
+from app.llm.usage_sink import DbUsageSink
 from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
@@ -91,8 +93,8 @@ def _get_trace_svc():
     return runtime.get_trace_service()
 
 
-def _make_orchestrator() -> OrchestratorAgent:
-    return OrchestratorAgent(llm_router=LLMRouter())
+def _make_orchestrator(router: LLMRouter | None = None) -> OrchestratorAgent:
+    return OrchestratorAgent(llm_router=router or LLMRouter())
 
 
 def _clamp_pagination(offset: int | None, limit: int | None) -> tuple[int, int]:
@@ -290,37 +292,53 @@ async def query_database(
         context={"project_id": project_id, "user_id": user_id},
     )
 
+    # Per-request usage sink: every LLM call inside the orchestrator now records
+    # a TokenUsage row (F-MCP-01) and re-checks the user's budget for a sticky
+    # hard-stop at the next safe boundary (F-BILL-05).
+    sink = DbUsageSink(user_id=user_id, project_id=project_id)
+    router = LLMRouter(usage_sink=sink)
+
     ctx = AgentContext(
         project_id=project_id,
         connection_config=config,
         user_question=question,
         chat_history=[],
-        llm_router=LLMRouter(),
+        llm_router=router,
         tracker=_singleton_tracker,
         workflow_id=wf_id,
         user_id=user_id,
         project_name=project.name if project else None,
     )
 
-    orchestrator = _make_orchestrator()
-    resp: AgentResponse = await orchestrator.run(ctx)
+    orchestrator = _make_orchestrator(router)
 
+    # Acquire the shared agent concurrency slot before running the orchestrator
+    # (F-MCP-02 — parity with chat). Release in finally so a crash or short-
+    # circuit cannot leak a slot.
+    limit_err = await agent_limiter.acquire(user_id)
+    if limit_err:
+        raise ToolError(limit_err)
     try:
-        trace_svc = _get_trace_svc()
-        if trace_svc is not None:
-            await trace_svc.finalize_trace(
-                wf_id,
-                project_id=project_id,
-                user_id=user_id,
-                question=question,
-                response_type=resp.response_type or "text",
-                status="failed" if resp.error else "completed",
-                error_message=resp.error,
-            )
-    except Exception:
-        logger.warning("MCP: failed to finalize trace", exc_info=True)
+        resp: AgentResponse = await orchestrator.run(ctx)
 
-    return _agent_response_to_dict(resp)
+        try:
+            trace_svc = _get_trace_svc()
+            if trace_svc is not None:
+                await trace_svc.finalize_trace(
+                    wf_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    question=question,
+                    response_type=resp.response_type or "text",
+                    status="failed" if resp.error else "completed",
+                    error_message=resp.error,
+                )
+        except Exception:
+            logger.warning("MCP: failed to finalize trace", exc_info=True)
+
+        return _agent_response_to_dict(resp)
+    finally:
+        await agent_limiter.release(user_id)
 
 
 async def search_codebase(principal: Principal, project_id: str, question: str) -> dict[str, Any]:
@@ -344,37 +362,51 @@ async def search_codebase(principal: Principal, project_id: str, question: str) 
         context={"project_id": project_id, "user_id": user_id},
     )
 
+    # Per-request usage sink — see query_database for the F-MCP-01 / F-BILL-05
+    # rationale. The orchestrator picks the sink off the router and threads it
+    # to the planner / validator / repair sub-helpers.
+    sink = DbUsageSink(user_id=user_id, project_id=project_id)
+    router = LLMRouter(usage_sink=sink)
+
     ctx = AgentContext(
         project_id=project_id,
         connection_config=None,
         user_question=question,
         chat_history=[],
-        llm_router=LLMRouter(),
+        llm_router=router,
         tracker=_singleton_tracker,
         workflow_id=wf_id,
         user_id=user_id,
         project_name=project.name if project else None,
     )
 
-    orchestrator = _make_orchestrator()
-    resp: AgentResponse = await orchestrator.run(ctx)
+    orchestrator = _make_orchestrator(router)
 
+    # F-MCP-02 — acquire/release the agent concurrency slot around the run.
+    limit_err = await agent_limiter.acquire(user_id)
+    if limit_err:
+        raise ToolError(limit_err)
     try:
-        trace_svc = _get_trace_svc()
-        if trace_svc is not None:
-            await trace_svc.finalize_trace(
-                wf_id,
-                project_id=project_id,
-                user_id=user_id,
-                question=question,
-                response_type=resp.response_type or "text",
-                status="failed" if resp.error else "completed",
-                error_message=resp.error,
-            )
-    except Exception:
-        logger.warning("MCP: failed to finalize trace", exc_info=True)
+        resp: AgentResponse = await orchestrator.run(ctx)
 
-    return _agent_response_to_dict(resp)
+        try:
+            trace_svc = _get_trace_svc()
+            if trace_svc is not None:
+                await trace_svc.finalize_trace(
+                    wf_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    question=question,
+                    response_type=resp.response_type or "text",
+                    status="failed" if resp.error else "completed",
+                    error_message=resp.error,
+                )
+        except Exception:
+            logger.warning("MCP: failed to finalize trace", exc_info=True)
+
+        return _agent_response_to_dict(resp)
+    finally:
+        await agent_limiter.release(user_id)
 
 
 async def list_projects(

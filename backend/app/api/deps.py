@@ -72,6 +72,12 @@ async def get_current_user(
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
+    # Token revocation: a JWT carries the user's token_version at mint time. Bumping
+    # the column (password change, "sign out everywhere") invalidates all prior tokens.
+    # ``ver`` defaults to 0 for tokens minted before this claim existed (no forced logout).
+    if payload.get("ver", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail="Session expired, please sign in again")
+
     return {"user_id": user.id, "email": user.email}
 
 

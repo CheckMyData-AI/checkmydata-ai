@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from git import Repo
 
-from app.knowledge.repo_url import GIT_ALLOWED_PROTOCOLS, validate_repo_url
+from app.knowledge.repo_url import GIT_ALLOWED_PROTOCOLS, validate_git_ref, validate_repo_url
 
 if TYPE_CHECKING:
     from app.knowledge.project_profiler import ProjectProfile
@@ -357,6 +357,7 @@ class RepoAnalyzer:
         import tempfile
 
         repo_url = validate_repo_url(repo_url)
+        branch = validate_git_ref(branch)
         repo_dir = self._clone_base_dir / project_id
         env: dict[str, str] = {"GIT_ALLOW_PROTOCOL": GIT_ALLOWED_PROTOCOLS}
         temp_key_file: str | None = None
@@ -418,6 +419,17 @@ class RepoAnalyzer:
 
             if repo_dir.exists() and (repo_dir / ".git").exists():
                 repo = Repo(str(repo_dir))
+                # F-KNOW-03: if repo_url changed since the clone was created, re-point
+                # origin — otherwise we'd keep indexing the *old* repository.
+                try:
+                    current_url = repo.remotes.origin.url
+                except Exception:
+                    current_url = None
+                if current_url != repo_url:
+                    repo.remotes.origin.set_url(repo_url)
+                    logger.info(
+                        "Re-pointed clone for %s: %s -> %s", project_id, current_url, repo_url
+                    )
                 with repo.git.custom_environment(**env):
                     repo.remotes.origin.fetch()
                     repo.git.checkout(branch)

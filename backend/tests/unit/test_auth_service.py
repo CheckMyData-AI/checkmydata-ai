@@ -101,6 +101,18 @@ class TestCreateToken:
         assert "exp" in payload
         assert "iat" in payload
 
+    @patch("app.services.auth_service.settings", _settings_mock())
+    def test_embeds_token_version(self):
+        token = svc.create_token("uid-9", "v@b.com", token_version=3)
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        assert payload["ver"] == 3
+
+    @patch("app.services.auth_service.settings", _settings_mock())
+    def test_token_version_defaults_to_zero(self):
+        token = svc.create_token("uid-9", "v@b.com")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        assert payload["ver"] == 0
+
 
 class TestDecodeToken:
     @patch("app.services.auth_service.settings", _settings_mock())
@@ -194,6 +206,22 @@ class TestAuthenticate:
     @pytest.mark.asyncio
     async def test_nonexistent_email_returns_none(self, db):
         assert await svc.authenticate(db, "ghost@test.com", "any") is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_email_still_runs_a_verify(self, db):
+        """F-AUTH-05: unknown emails must still cost one bcrypt verify so response
+        time doesn't leak whether an account exists (timing oracle)."""
+        with patch.object(svc, "verify_password_async", wraps=svc.verify_password_async) as spy:
+            assert await svc.authenticate(db, "ghost@test.com", "any") is None
+            spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_google_user_no_password_still_runs_a_verify(self, db):
+        """F-AUTH-05: a passwordless (Google) account must also equalise timing."""
+        await _seed_user(db, email="gtiming@test.com", password_hash=None, auth_provider="google")
+        with patch.object(svc, "verify_password_async", wraps=svc.verify_password_async) as spy:
+            assert await svc.authenticate(db, "gtiming@test.com", "anything") is None
+            spy.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_google_user_no_password_returns_none(self, db):
@@ -300,6 +328,29 @@ class TestFindOrCreateGoogleUser:
         assert created is False
         assert user.id == existing.id
         assert user.google_id == "google-link"
+        # F-AUTH-07: a password user keeps auth_provider="email" (password login still
+        # works → the field stays truthful) but gains the linked google_id.
+        assert user.auth_provider == "email"
+        assert user.password_hash is not None
+
+    @pytest.mark.asyncio
+    async def test_link_does_not_wipe_avatar_when_payload_has_no_picture(self, db):
+        # F-AUTH-07: linking with a payload missing `picture` must not null an avatar.
+        existing = await svc.register(db, "avatar@test.com", "pw123")
+        existing.picture_url = "https://existing-avatar.jpg"
+        await db.commit()
+
+        payload = self._payload(email="avatar@test.com", sub="google-avatar")
+        payload.pop("picture", None)
+        user, _ = await svc.find_or_create_google_user(db, payload)
+        assert user.picture_url == "https://existing-avatar.jpg"
+
+    @pytest.mark.asyncio
+    async def test_link_passwordless_user_flips_provider_to_google(self, db):
+        # A passwordless account linking Google does set provider to google.
+        await _seed_user(db, email="pwless@test.com", password_hash=None, auth_provider="email")
+        payload = self._payload(email="pwless@test.com", sub="google-pwless")
+        user, _ = await svc.find_or_create_google_user(db, payload)
         assert user.auth_provider == "google"
 
     @pytest.mark.asyncio

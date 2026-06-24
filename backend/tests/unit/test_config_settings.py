@@ -51,6 +51,39 @@ class TestProductionValidation:
         s = Settings(environment="development")
         assert s.environment == "development"
 
+    def test_unknown_environment_fails_closed(self):
+        # F-AUTH-11: any env that isn't an explicit dev/test name is treated as prod,
+        # so a missing/mistyped ENVIRONMENT can't boot with the default JWT secret.
+        for env in ("staging", "prod-eu", "live", "", "typo"):
+            with pytest.raises(Exception, match="JWT_SECRET"):
+                Settings(
+                    environment=env,
+                    debug=False,
+                    jwt_secret="change-me-in-production",
+                    master_encryption_key="dGVzdC1rZXktMTIzNDU2Nzg5MDEyMzQ1Ng==",
+                )
+
+    def test_explicit_dev_envs_allow_defaults(self):
+        for env in ("development", "dev", "test", "testing", "local", "ci"):
+            s = Settings(environment=env, jwt_secret="change-me-in-production")
+            assert s.environment == env
+
+
+class TestSameSiteNoneRequiresSecure:
+    """F-AUTH-08: SameSite=None cookies must also be Secure or browsers drop them."""
+
+    def test_samesite_none_without_secure_raises(self):
+        with pytest.raises(Exception, match="SAMESITE"):
+            Settings(auth_cookie_samesite="none", auth_cookie_secure=False)
+
+    def test_samesite_none_with_secure_ok(self):
+        s = Settings(auth_cookie_samesite="none", auth_cookie_secure=True)
+        assert s.auth_cookie_samesite == "none"
+
+    def test_samesite_lax_without_secure_ok(self):
+        s = Settings(auth_cookie_samesite="lax", auth_cookie_secure=False)
+        assert s.auth_cookie_samesite == "lax"
+
     def test_production_rejects_short_jwt(self):
         with pytest.raises(Exception, match="at least 32"):
             Settings(
