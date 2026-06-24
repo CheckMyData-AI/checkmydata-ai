@@ -22,14 +22,21 @@
 **Deploy safety:** deploy only at module boundaries, only after P2 is fully green locally.
 Work happens on `fix/security-audit-2026-06-24`; P3 merges to `main`.
 
+> **⚠ Deploy is gated (2026-06-24).** Direct `git push origin …:main` is blocked by the
+> harness safety classifier (pushing to the default branch triggers a prod deploy). The loop
+> therefore does **deploy-prep**: it pushes the branch and opens/updates a PR, but the actual
+> prod merge is a **human step** (the user merges the PR, or adds a Bash permission rule to allow
+> the loop to push to `main`). P4 (prod health verify) runs only after the merge. The loop keeps
+> making progress on later modules meanwhile — their commits accumulate on the branch / PR.
+
 ## Module order & status
 
 Order = audit fix-first priority, then ascending module number. `▶` = current pointer.
 
 | Order | Module | Report | Findings | Status | Phase |
 |------:|--------|--------|---------:|--------|-------|
-| ▶ 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **in progress** | P2 (impl A–E done; verify+deploy next) |
-| 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | pending | — |
+| 1 | 01 Auth & Session | [01](reports/01-auth-session.md) | 12 (2 High, 4 Med, 6 Low) | **done (PR #172, merge gated)** | P2✅ → P3 PR open |
+| ▶ 2 | 07 Knowledge & Indexing | [07](reports/07-knowledge-indexing.md) | 5 (🔴 F-KNOW-01 RCE) | next — check `e642c67` overlap | — |
 | 3 | 11 Rules engine | [11](reports/11-rules-engine.md) | 4 (🟠 F-RULE-01 cross-tenant) | pending | — |
 | 4 | 15 MCP Server | [15](reports/15-mcp-server.md) | 4 (🟠 F-MCP-01 budget bypass) | pending | — |
 | 5 | 03 Connections & Connectors | [03](reports/03-connections-connectors.md) | 7 (read-only invariant) | pending | — |
@@ -98,6 +105,13 @@ All loop commits stage files explicitly to avoid sweeping this WIP into unrelate
   **Next iteration = P2/P3/P4:** run full `make check` (ruff format+check, mypy, full unit+integration,
   coverage ≥72%) from repo root; annotate each finding in `reports/01-auth-session.md` as fixed;
   then P3 deploy (merge `fix/security-audit-2026-06-24` → `main`, push) + P4 verify prod health.
-  ⚠ Deploy gate: P3 only after P2 fully green. The branch also carries the module-07 WIP (see above)
-  — that is unrelated to auth and must NOT be swept into the deploy; decide handling before merging
-  to main (either finish module 07 first, or stash/exclude its WIP from the auth deploy).
+  ⚠ Deploy gate: P3 only after P2 fully green. (Module-07 WIP is now committed as `e642c67` and
+  already on `origin/main`, so no uncommitted-WIP risk remains.)
+- **2026-06-24** — Module 01 **P2 ✅ + P3 PR**. Full `make check` green: ruff format (648) + check,
+  mypy (328 files), **4334 backend tests, coverage 74.41%**; frontend **472 tests**, eslint, tsc.
+  Discovered + fixed an F-AUTH-04 frontend regression (empty body token broke proactive refresh →
+  added `expires_in`; `1343fc3`). Branch pushed; **PR [#172](https://github.com/CheckMyData-AI/checkmydata-ai/pull/172) opened**.
+  Direct push to `main` **denied by safety classifier** → prod merge is now a human step (see deploy-gate
+  note above). `origin/main` already carries `e642c67` + `8d721b8`.
+  Next: module 07 — first confirm what `e642c67` already fixed (repo_url transport allowlist for
+  F-KNOW-01) to avoid duplication, then address the remaining module-07 findings.
