@@ -84,6 +84,7 @@ def _fallback_create_all() -> None:
 
     from app.models import (  # noqa: F401
         agent_learning,
+        audit_log,
         batch_query,
         benchmark,
         chat_session,
@@ -136,6 +137,7 @@ async def init_db():
     """Called at app startup. Imports all models so relationships are registered."""
     from app.models import (  # noqa: F401
         agent_learning,
+        audit_log,
         batch_query,
         benchmark,
         chat_session,

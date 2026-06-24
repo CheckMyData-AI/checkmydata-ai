@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -12,6 +14,12 @@ from app.config import settings
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_token(token: str) -> str:
+    """SHA-256 hex digest — what we persist for verify/reset tokens (never plaintext)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 # Constant bcrypt hash used to equalise login timing for unknown / passwordless
 # accounts (F-AUTH-05). Without a dummy verify, the missing-user path returns
@@ -117,6 +125,37 @@ class AuthService:
         return result.scalar_one_or_none()
 
     # ------------------------------------------------------------------
+    # Email verification (F-PROJ-01)
+    # ------------------------------------------------------------------
+
+    async def issue_email_verification(self, session: AsyncSession, user: User) -> str:
+        """Generate a one-time email-verification token, persist its hash, return plaintext.
+
+        The plaintext is emailed to the user; only the SHA-256 hash is stored, so a
+        DB read can't reveal a usable token.
+        """
+        token = secrets.token_urlsafe(32)
+        user.email_verify_token = _hash_token(token)
+        await session.commit()
+        return token
+
+    async def verify_email(self, session: AsyncSession, token: str) -> User | None:
+        """Mark the user owning *token* as verified; clears the token. Returns the user."""
+        if not token:
+            return None
+        token_hash = _hash_token(token)
+        result = await session.execute(select(User).where(User.email_verify_token == token_hash))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+        user.email_verified = True
+        user.email_verify_token = None
+        await session.commit()
+        await session.refresh(user)
+        logger.info("Email verified for user: %s", user.email)
+        return user
+
+    # ------------------------------------------------------------------
     # Google OAuth
     # ------------------------------------------------------------------
 
@@ -185,6 +224,8 @@ class AuthService:
                 user.picture_url = picture
             if user.password_hash is None:
                 user.auth_provider = "google"
+            # F-PROJ-01: Google proved ownership of this address.
+            user.email_verified = True
             await session.commit()
             await session.refresh(user)
             logger.info("Google account linked for existing user: %s", email)
@@ -197,6 +238,7 @@ class AuthService:
             google_id=google_id,
             picture_url=picture,
             password_hash=None,
+            email_verified=True,  # F-PROJ-01: Google-verified address.
         )
         session.add(user)
         await session.commit()

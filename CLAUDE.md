@@ -178,6 +178,7 @@ Admin-only endpoints gated by `ADMIN_EMAILS` in config (backup trigger, cluster 
 
 - Browser auth: **httpOnly session cookie + CSRF double-submit** (`auth_cookie_enabled`). No `localStorage` JWT. `Authorization: Bearer` still works for non-browser API clients. Set `AUTH_COOKIE_DOMAIN` (e.g. `.checkmydata.ai`) when SPA and API are on different subdomains — otherwise CSRF cookie is unreadable and login fails.
 - All routes except `/api/auth/*` and `/api/health` require authentication.
+- **Email verification (F-PROJ-01):** email/password registrations start `email_verified=False` and do **not** auto-accept email-based invites until the address is verified via `POST /api/auth/verify-email`; Google logins are pre-verified. Sensitive auth actions persist to a durable `audit_logs` table (F-AUTH-15) in addition to the `audit` logger line.
 - **Tenant isolation (R3):** resource mutations are project-scoped — never a bare resource id. Global rules / SSH keys / SSH tunnels are owner-scoped (admin gate for global rules; tunnel cache key carries a credential discriminator; SSH-key lookups are owner-strict; cross-connection learning promotion stays within the project owner).
 - `Project` is the workspace boundary. `ProjectMember` carries roles (owner/editor/viewer); every project-scoped route must check membership via `app/api/deps.py`.
 - DB credentials are Fernet-encrypted at rest with `MASTER_ENCRYPTION_KEY`; the key is required to even boot.

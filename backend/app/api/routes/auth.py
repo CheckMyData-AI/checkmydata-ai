@@ -65,6 +65,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+
+
 class AuthResponse(BaseModel):
     token: str
     user: dict
@@ -101,9 +105,14 @@ async def register(
             detail="An account with this email already exists.",
         ) from e
 
-    await _invite_svc.auto_accept_for_user(db, user.id, user.email)
-
+    # F-PROJ-01: an email/password registration is NOT proof the registrant owns the
+    # address, so we do NOT auto-accept email-based invites here. A verification link is
+    # sent; pending invites are auto-accepted only once the address is verified (below).
     audit_log("auth.register", user_id=user.id, detail=user.email)
+    verify_token = await _auth.issue_email_verification(db, user)
+    await _email_svc.send_verification_email(
+        user_id=user.id, email=user.email, token=verify_token, display_name=user.display_name
+    )
     await _email_svc.send_welcome_email(
         user_id=user.id, email=user.email, display_name=user.display_name
     )
@@ -111,6 +120,23 @@ async def register(
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
     return _auth_response(user, token)
+
+
+@router.post("/verify-email")
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm an email address (F-PROJ-01). On success, auto-accept the now-verified
+    user's pending email-based invites."""
+    user = await _auth.verify_email(db, body.token)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    members = await _invite_svc.auto_accept_for_user(db, user.id, user.email)
+    audit_log("auth.verify_email", user_id=user.id, detail=user.email)
+    return {"ok": True, "invites_accepted": len(members)}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -222,17 +248,34 @@ async def refresh_token(
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
+    audit_log("auth.refresh", user_id=user.id, detail=user.email)  # F-AUTH-16
     return _auth_response(user, token)
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(
+    response: Response,
+    request: Request,
+):
     """Clear the browser session + CSRF cookies.
 
     Safe to call unauthenticated (idempotent) so the SPA can always reach a
     clean logged-out state even with an expired session.
     """
     clear_session_cookies(response)
+    # F-AUTH-16: best-effort audit (logout may be unauthenticated, so resolve the
+    # subject from the session cookie if present without failing the request).
+    subject = None
+    try:
+        from app.core.auth_cookies import SESSION_COOKIE
+
+        cookie_token = request.cookies.get(SESSION_COOKIE)
+        if cookie_token:
+            payload = _auth.decode_token(cookie_token)
+            subject = payload.get("sub") if payload else None
+    except Exception:
+        subject = None
+    audit_log("auth.logout", user_id=subject)
     return {"ok": True}
 
 

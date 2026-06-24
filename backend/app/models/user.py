@@ -29,4 +29,10 @@ class User(Base):
     token_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Email verification (F-PROJ-01): email/password registrations start unverified and
+    # must not auto-accept email-based invites until the address is proven owned. Google
+    # logins are verified by Google (set True on link/create). ``email_verify_token`` holds
+    # a SHA-256 hash of the one-time verification token (never the plaintext).
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    email_verify_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

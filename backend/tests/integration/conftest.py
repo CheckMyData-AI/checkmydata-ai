@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import (  # noqa: F401
     agent_learning,
+    audit_log,
     backup_record,
     batch_query,
     benchmark,
