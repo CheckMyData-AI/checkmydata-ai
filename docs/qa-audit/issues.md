@@ -8,12 +8,15 @@ git (see "Already fixed" below). This document tracks only what is **still open*
 
 ## Already fixed (not tracked here — for reference)
 
-16 findings are closed and verified (backend 4334 tests green / 74.41% coverage; frontend 472
-tests green), in branch `fix/security-audit-2026-06-24` → PR
+**24 findings closed and verified** (backend 4420 tests / 74.57% coverage; frontend 472 tests),
+in branch `fix/security-audit-2026-06-24` → PR
 [#172](https://github.com/CheckMyData-AI/checkmydata-ai/pull/172):
-**Module 01 Auth** F-AUTH-01…12, and **Module 07 Knowledge** F-KNOW-01/02/03/05. Per-fix detail is
-in the git history (commits `a8d3b2a`, `f35ac10`, `03dad44`, `ed54b48`, `2475114`, `1343fc3`,
-`e642c67`, `81e3d75`).
+- **Module 01 Auth** F-AUTH-01…12 (commits `a8d3b2a`, `f35ac10`, `03dad44`, `ed54b48`, `2475114`, `1343fc3`).
+- **Module 07 Knowledge** F-KNOW-01/02/03/05 (commits `e642c67`, `81e3d75`).
+- **Release R1 — DB-level read-only enforcement** F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03,
+  F-CONN-10, F-SCHED-02, F-NOTE-01 (commit `50ce7c8`): per-dialect read-only DB session (PG
+  `server_settings`, MySQL `init_command`, ClickHouse `settings.readonly`, Mongo write-stage/JS
+  guard) + SafetyGuard statement-initial allow-list + batch/notes call-site guards.
 
 This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` baseline + manual
 review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =
@@ -30,12 +33,12 @@ frontend **A** (563 smells, 7 SOLID).
 | Severity | Open |
 |---|---|
 | 🔴 Critical | 0 |
-| 🟠 High | 7 |
-| 🟡 Medium | ~39 |
+| 🟠 High | 4 |
+| 🟡 Medium | ~36 |
 | 🟢 Low | ~51 |
 | ⚪ Info | ~15 |
 
-*(Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
+*(R1 closed 3 High + 5 Medium. Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
 
 **Single highest-leverage fix:** enforce **read-only at the DB session/connector level** (per
 dialect). It closes the largest cluster (F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01, MCP
@@ -48,9 +51,6 @@ database-level backstop.
 
 | ID | Sev | Title | Where | Fix |
 |---|---|---|---|---|
-| **F-SQL-08** | 🟠 | Read-only `SafetyGuard` regex is **evadable** (`SELECT…INTO`, `CREATE OR REPLACE/TEMP/MATERIALIZED VIEW`, `ALTER ROLE/USER`, `DROP ROLE/FUNCTION`) **and** no DB-session read-only fallback (MySQL `autocommit=True`). Reachable via raw-SQL at notes/schedules/batch/MCP. | `core/safety.py:16-34`, `connectors/*` | DB-session read-only (`default_transaction_read_only`/`readonly=1`/`SET TRANSACTION READ ONLY`) **+** statement-initial allow-list. **#1 leverage item.** |
-| **F-CONN-01** | 🟠 | Read-only enforced at scattered call sites, not at the connector/DB chokepoint. | `connectors/` | Same DB-level fix as F-SQL-08. |
-| **F-CONN-02** | 🟠 | `SafetyGuard` regex blocklist has multiple bypasses (umbrella of F-SQL-08). | `core/safety.py` | Same. |
 | **F-SSH-08** | 🟠 | SSH tunnel cache key omits the credential → **cross-tenant tunnel sharing** (bypasses SSH-key auth). | `connectors/ssh_tunnel.py:212-216` | Include a credential discriminator (key fingerprint hash) in `_key`. |
 | **F-PROJ-01** | 🟠 | Unverified-email registration + email-based auto-accept = invite/access harvesting. | `routes/auth.py`, `services/invite_service.py` | Email verification before invite auto-accept. |
 | **F-RULE-01** | 🟠 | No authz on **global** (`project_id=null`) rule creation → cross-tenant prompt injection. | `routes/rules.py` | Require admin for global rules; gate by membership otherwise. |
@@ -60,12 +60,10 @@ database-level backstop.
 
 ## 3. Cross-cutting clusters (fix once, close many)
 
-1. **Read-only enforcement chokepoint** — F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01, MCP
-   raw-query. **Fix:** per-dialect DB-session read-only (PG `default_transaction_read_only=on`,
-   ClickHouse `readonly=1`, MySQL `SET TRANSACTION READ ONLY` / read-only user, Mongo read-only
-   user + `--noscripting` which also kills F-CONN-10) **+** replace the DDL blocklist with a
-   statement-initial allow-list. *(Partially mitigated by `e642c67`'s denylist hardening, but the
-   High items still need the DB-session backstop.)*
+1. ~~**Read-only enforcement chokepoint** — F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01,
+   F-CONN-03/10.~~ **CLOSED by R1 (`50ce7c8`)**: per-dialect DB-session read-only + statement-
+   initial allow-list + batch/notes call-site guards. (Hardening of the MCP raw-query path that
+   reuses connectors inherits the DB-session backstop automatically.)
 2. **Object-ownership IDOR family** — F-DG-07, F-DG-09, F-GRAPH-01, F-RULE-05: route checks
    URL-project membership but the mutation/load uses a bare resource id. **Fix:** scope every
    resource load/mutation by `project_id`.
@@ -117,16 +115,12 @@ database-level backstop.
 ### 03 — Connections & Connectors
 | ID | Sev | Issue |
 |---|---|---|
-| F-CONN-01 | 🟠 | Read-only enforced at scattered call sites, not at the connector/DB chokepoint |
-| F-CONN-02 | 🟠 | `SafetyGuard` regex blocklist has multiple bypasses |
-| F-CONN-03 | 🟡 | Mongo `$out`/`$merge` stages bypass read-only guard |
 | F-CONN-04 | 🟡 | Arbitrary `db_host`/`db_port` (+SSH) → internal-network reach (SSRF) |
 | F-CONN-05 | 🟡 | Fernet encryption has no key rotation/versioning |
 | F-CONN-06 | 🟢 | `_dict_to_positional` regex mis-handles `::type` casts / `:param` in literals |
 | F-CONN-07 | 🟢 | Pool `min_size=1` per cached connector → remote connection exhaustion |
 | F-CONN-08 | 🟡 | `QueryResult.error=str(e)` unredacted → DSN/password leak to members + logs |
 | F-CONN-09 | 🟢 | Agent connector cache FIFO/instance-scoped |
-| F-CONN-10 | 🟡 | Mongo server-side JS (`$where`/`$function`) + write stages bypass op-level guard |
 
 ### 04 — SSH Tunnel & Keys
 | ID | Sev | Issue |
@@ -156,11 +150,9 @@ database-level backstop.
 ### 06 — SQL Agent & Query Execution
 | ID | Sev | Issue |
 |---|---|---|
-| F-SQL-08 | 🟠 | Read-only guard regex evadable + no DB-session fallback (see §2) |
 | F-SQL-01 | 🟡 | Indirect prompt injection via DB content (comments/sampled/distinct values) |
 | F-SQL-02 | 🟡 | `row_count` returned-vs-total ambiguity → inaccurate counts |
 | F-SQL-03 | 🟡 | Multiplicative retry blow-up (replans × iterations × repairs) |
-| F-SQL-04 | 🟢 | Read-only guard only in ValidationLoop; sibling callers bypass |
 | F-SQL-05 | 🟢 | `_try_repair` no-op `error_classify` tracker span |
 | F-SQL-06 | 🟡 | Repair LLM calls entirely uncounted → biggest budget under-count |
 | F-SQL-07 | 🟢 | EXPLAIN validation asymmetric across dialects |
@@ -229,7 +221,6 @@ database-level backstop.
 ### 13 — Schedules, Batch & Worker
 | ID | Sev | Issue |
 |---|---|---|
-| F-SCHED-02 | 🟠 | Batch `/execute` runs viewer's raw SQL with **no SafetyGuard** → arbitrary writes/DDL (most reachable read-only bypass) |
 | F-SCHED-07 | 🟡 | `execute_batch` no idempotency guard + ARQ default `max_tries=5` → retry duplicates writes |
 | F-SCHED-01 | 🟡 | Schedules keep running after creator loses access |
 | F-SCHED-03 | 🟡 | `_stale_run` NULL-heartbeat immediate-reap race (mitigated by heartbeat beacon) |
@@ -260,7 +251,6 @@ database-level backstop.
 ### 16 — Notifications, Notes & Feed
 | ID | Sev | Issue |
 |---|---|---|
-| F-NOTE-01 | 🟢 | Note exec uses call-site regex guard + direct execute (reachable F-SQL-08 surface) |
 | F-NOTE-02 | 🟢 | Fresh connect/disconnect per note execution (no pool reuse) |
 | F-NOTE-03 | ⚪ | Notes cache `last_result_json` snapshot — staleness like dashboards |
 
@@ -372,8 +362,8 @@ its bug IDs; every open finding is assigned to exactly one release.
 
 | Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
 |---|---|---|---|---|---|
-| **R1** | DB-level read-only enforcement | 🟠 | F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03, F-CONN-10, F-SCHED-02, F-NOTE-01 | `core/safety.py`, `connectors/*`, `core/validation_loop.py`, batch/notes exec | One root cause: read-only rests on an evadable regex with no DB-session backstop. Per-dialect read-only session + statement-initial allow-list closes the whole cluster (+ MCP raw-SQL). **#1 leverage.** |
-| **R2** | Usage accounting & MCP auth | 🟠 | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Single per-request usage sink threaded through `LLMRouter` closes every budget under-count; bundle MCP auth/concurrency hardening (same surface). |
+| ~~**R1**~~ | DB-level read-only enforcement | ✅ DONE | F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03, F-CONN-10, F-SCHED-02, F-NOTE-01 | `core/safety.py`, `connectors/*`, `services/batch_service.py`, `routes/notes.py` | Closed by commit `50ce7c8` — per-dialect DB-session read-only + statement-initial allow-list + batch/notes call-site guards. **All 8 bugs closed.** |
+| ▶ **R2** | Usage accounting & MCP auth | 🟠 | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Single per-request usage sink threaded through `LLMRouter` closes every budget under-count; bundle MCP auth/concurrency hardening (same surface). |
 | **R3** | Cross-tenant isolation & IDOR | 🟠 | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping." One ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. |
 
 #### Wave B — security / correctness (Medium)
@@ -397,6 +387,6 @@ its bug IDs; every open finding is assigned to exactly one release.
 | **R13** | Visualizations, dashboards, exploration & demo | 🟡 | F-VIZ-01, F-VIZ-02, F-VIZ-03, F-VIZ-04, F-EXP-01, F-EXP-02, F-EXP-03, F-EXP-04 | `routes/{visualizations,dashboards,exploration,demo}.py`, `agents/viz_agent.py` | Modules 12/18; CSV-injection neutralization, snapshot freshness, `cards_json` validation, demo seeding/read-only/dedup. |
 | **R14** | Frontend polish, notes & tech-debt | 🟢 | F-FE-03, F-FE-04, F-NOTE-02, F-NOTE-03, CB-M4, CB-L1 | `frontend/src/*`, `routes/notes.py`, god-file decomposition | a11y/design-token sweep, JSON-LD assertion, note pool reuse/staleness, god-file decomposition (CB-M4), suppression-debt cleanup (CB-L1). |
 
-**Coverage check:** R1–R14 partition all open findings (Modules 01–19 + codebase-wide CB-*). The 7
-open High items land in Wave A + R4 (F-SQL-08, F-CONN-01/02 → R1; F-MCP-01 → R2; F-RULE-01,
-F-SSH-08 → R3; F-PROJ-01 → R4); after Wave A + R4 there are **0 open High**.
+**Coverage check:** R1–R14 partition all open findings (Modules 01–19 + codebase-wide CB-*).
+**R1 done** (`50ce7c8`); the 4 remaining open High items land in R2 (F-MCP-01), R3 (F-RULE-01,
+F-SSH-08) and R4 (F-PROJ-01); after R2 + R3 + R4 there are **0 open High**.
