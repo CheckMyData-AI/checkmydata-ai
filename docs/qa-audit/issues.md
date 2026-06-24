@@ -15,6 +15,14 @@ tests green), in branch `fix/security-audit-2026-06-24` → PR
 in the git history (commits `a8d3b2a`, `f35ac10`, `03dad44`, `ed54b48`, `2475114`, `1343fc3`,
 `e642c67`, `81e3d75`).
 
+This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` baseline + manual
+review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =
+the read-only cluster (F-SQL-08 / F-CONN-01/02, open — denylist hardened in `e642c67` but the
+DB-session backstop is still owed); **M3** partially fixed (`projects.py`/`runs.py` via
+`spawn_tracked`; the `pipeline_runner` site remains = F-KNOW-09); **M4/M5/L1/L2** are the
+codebase-wide items in §7. Automated baseline grades: backend **B** (1,934 smells, 55 SOLID),
+frontend **A** (563 smells, 7 SOLID).
+
 ---
 
 ## 1. Open severity tally
@@ -23,9 +31,11 @@ in the git history (commits `a8d3b2a`, `f35ac10`, `03dad44`, `ed54b48`, `2475114
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | 7 |
-| 🟡 Medium | ~38 |
-| 🟢 Low | ~50 |
-| ⚪ Info | ~12 |
+| 🟡 Medium | ~39 |
+| 🟢 Low | ~51 |
+| ⚪ Info | ~15 |
+
+*(Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
 
 **Single highest-leverage fix:** enforce **read-only at the DB session/connector level** (per
 dialect). It closes the largest cluster (F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01, MCP
@@ -162,6 +172,7 @@ database-level backstop.
 | F-KNOW-06 | 🟢 | `pickle.load` for BM25 is a latent RCE primitive (swap to safe format **before** F-KNOW-07) |
 | F-KNOW-07 | 🟡 | BM25 snapshots on local ephemeral disk → hybrid silently dense-only in prod (needs shared storage; add `load()`-miss metric first) |
 | F-KNOW-08 | 🟡 | Git clone dir not removed on project delete → orphaned source on disk |
+| F-KNOW-09 | 🟡 | Fire-and-forget `asyncio.create_task(_parse_one(rp))` in a loop (`pipeline_runner.py:1428`) → tasks GC'd / exceptions dropped (codebase-audit M3; `projects.py`/`runs.py` already fixed via `spawn_tracked`, this site not) |
 
 ### 08 — GitAgent (live Git)
 | ID | Sev | Issue |
@@ -275,6 +286,7 @@ database-level backstop.
 | ID | Sev | Issue |
 |---|---|---|
 | F-FE-03 | 🟢 | a11y / design-token conformance not audited |
+| F-FE-04 | ⚪ | `dangerouslySetInnerHTML` in marketing pages (about/contact/support/pricing) = static JSON-LD SEO schema — almost certainly safe; assert the injected object has no user input (codebase-audit L2) |
 
 ---
 
@@ -303,3 +315,21 @@ database-level backstop.
   (not yet audited).
 - Code locations and proposed fixes are summarized inline above; deeper reproduction notes for the
   fixed items live in git history.
+
+---
+
+## 7. Codebase-wide maintainability & tech-debt (2026-06-23 codebase audit)
+
+Cross-cutting items that don't belong to one module. Not behavioral security bugs, but the dominant
+maintainability / reliability risks.
+
+| ID | Sev | Issue | Fix |
+|---|---|---|---|
+| CB-M4 | 🟢 | **God-files / long functions** (backend grade B, 1,934 smells): `agents/orchestrator.py` (2,525 LOC), `agents/sql_agent.py` (2,017), `knowledge/pipeline_runner.py` (1,769), `api/routes/chat.py` (1,724), `services/agent_learning_service.py` (1,259), `main.py` (1,248), `api/routes/connections.py` (1,199). High blast-radius, hard to test in isolation. | Decompose by responsibility (extract per-stage / per-concern modules); fold into the ongoing dashboard-rebuild altitude work. |
+| CB-M5 | ⚪ | **Silent error swallowing** — 51 `except …: pass` + 516 `except Exception` across `app/`. Some benign (cache writes), but blanket swallowing in request paths (`chat.py`, `health_monitor.py`) hides real failures (vision invariant #5, honest degradation). Overlaps **F-CHAT-05**. | Narrow exception types + log at appropriate level; reserve bare `pass` for provably-benign cleanup. |
+| CB-L1 | ⚪ | **Suppression debt** — 47 `# type: ignore`, 104 `# noqa` in `app/` (type-safety / lint gaps). (0 TODO/FIXME/HACK markers — clean.) | Revisit and remove suppressions where feasible; track the rest. |
+
+**Verified-good in the codebase audit (no issue):** SQL identifier quoting (`connectors/base.py:262`
+doubles quotes correctly), credential exposure (`ConnectionResponse` returns no secrets; Fernet at
+rest), SSH pre-command allowlist (rejects metacharacters), frontend auth (no JWT in localStorage),
+no LLM-key/secret logging, MCP read-only gating present (subject to the M1 regex robustness).
