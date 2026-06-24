@@ -170,6 +170,17 @@ def create_mcp_server() -> FastMCP:
     # DNS-rebinding protection: enabled only when mcp_allowed_hosts is non-empty
     # so the default (empty list) is fully permissive and cannot lock out the
     # endpoint on existing deployments.
+    #
+    # C7 / F-MCP-04: when the server is being HTTP-mounted but no allowed
+    # hosts are configured, the silent off-state is itself the bug. Emit a
+    # startup WARNING so the operator notices on boot. We don't fail-closed
+    # because self-hosted operators may genuinely want this off.
+    if settings.mcp_mount_enabled and not settings.mcp_allowed_hosts:
+        logger.warning(
+            "MCP mounted with empty MCP_ALLOWED_HOSTS — DNS-rebinding Host "
+            "validation is disabled (F-MCP-04). Set MCP_ALLOWED_HOSTS to the "
+            "expected public hostnames to enable Host validation."
+        )
     transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=bool(settings.mcp_allowed_hosts),
         allowed_hosts=settings.mcp_allowed_hosts,

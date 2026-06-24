@@ -230,6 +230,63 @@ class OrchestratorAgent(BaseAgent):
     def name(self) -> str:
         return "orchestrator"
 
+    def _llm_sink(self) -> Any:
+        """Return the router's ``UsageSink`` (or ``None`` when absent).
+
+        R2 / C4 (F-BILL-05). Sub-agents that the orchestrator constructs at
+        runtime (``AdaptivePlanner``, ``AnswerValidator``) share this sink so
+        that their LLM calls participate in the same per-request token
+        accounting and the same sticky ``budget_exceeded`` flag.
+        """
+        return getattr(self._llm, "_sink", None)
+
+    def _budget_terminal_response(
+        self,
+        *,
+        wf_id: str,
+        total_usage: dict[str, int],
+        used_provider: str,
+        used_model: str,
+    ) -> AgentResponse | None:
+        """R2 / C4 (F-BILL-05): hard-stop response when the sink reports a breach.
+
+        Cheap getattr + dict lookup — safe to call at every iteration boundary.
+        Returns ``None`` when there is no sink or no breach. Otherwise emits a
+        warning, ends the workflow as a failure, and returns a terminal
+        ``AgentResponse`` with ``response_type="error"`` and the sticky reason
+        in ``error``.
+        """
+        sink = self._llm_sink()
+        if sink is None:
+            return None
+        try:
+            reason = sink.budget_exceeded()
+        except Exception:  # noqa: BLE001 — telemetry must never break the run
+            logger.debug("UsageSink.budget_exceeded() raised; ignoring", exc_info=True)
+            return None
+        # Protocol contract: ``budget_exceeded() -> str | None``. Anything that
+        # is not a non-empty string is treated as "no breach" — this guards
+        # against bare mocks (auto-vivified attributes return MagicMock) and
+        # against custom sinks that accidentally return non-string truthy
+        # sentinels.
+        if not isinstance(reason, str) or not reason:
+            return None
+
+        logger.warning(
+            "Orchestrator hard-stop: budget exceeded mid-run (wf=%s): %s",
+            wf_id,
+            reason,
+        )
+        return AgentResponse(
+            answer=reason,
+            error=reason,
+            workflow_id=wf_id,
+            response_type="error",
+            token_usage=dict(total_usage),
+            llm_provider=used_provider,
+            llm_model=used_model,
+        )
+
     def _cleanup_stale_results(self, stale_seconds: float) -> None:
         """Remove per-workflow SQL caches older than *stale_seconds*."""
         import time as _time
@@ -931,8 +988,32 @@ class OrchestratorAgent(BaseAgent):
             max_iter = int(max_iter * 1.5)
 
         emergency_pct = settings.agent_emergency_synthesis_pct
+
+        # R2 / C4 (F-BILL-05): post-call budget hard-stop.
+        # Once at run-start so an already-exhausted budget short-circuits before
+        # the very first LLM call; then re-checked at the top of every iteration
+        # so a breach observed by ``DbUsageSink`` between iterations terminates
+        # the loop at the next safe boundary.
+        early_stop = self._budget_terminal_response(
+            wf_id=wf_id,
+            total_usage=total_usage,
+            used_provider=used_provider,
+            used_model=used_model,
+        )
+        if early_stop is not None:
+            return early_stop
+
         iteration = 0
         for iteration in range(max_iter):
+            mid_stop = self._budget_terminal_response(
+                wf_id=wf_id,
+                total_usage=total_usage,
+                used_provider=used_provider,
+                used_model=used_model,
+            )
+            if mid_stop is not None:
+                return mid_stop
+
             messages, did_trim = trim_loop_messages(
                 messages, loop_budget, history_budget_tokens=history_budget
             )
@@ -1682,7 +1763,7 @@ class OrchestratorAgent(BaseAgent):
             "in_progress",
             "Complex query detected, creating execution plan…",
         )
-        adaptive = AdaptivePlanner(self._llm)
+        adaptive = AdaptivePlanner(self._llm, usage_sink=self._llm_sink())
 
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
         active_insights = await self._ctx_loader.load_relevant_insights(context.project_id)
@@ -2151,7 +2232,7 @@ class OrchestratorAgent(BaseAgent):
             # same bounded replan loop the initial path uses instead of
             # surfacing the first failure as a dead end.
             if exec_result.status == "stage_failed" and exec_result.replan_eligible:
-                adaptive = AdaptivePlanner(self._llm)
+                adaptive = AdaptivePlanner(self._llm, usage_sink=self._llm_sink())
                 resume_table_map = await self._load_table_map(context, wf_id)
                 resume_db_type = (
                     context.connection_config.db_type if context.connection_config else None
@@ -2374,7 +2455,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             from app.agents.answer_validator import AnswerValidator
 
-            validator = AnswerValidator(self._llm)
+            validator = AnswerValidator(self._llm, usage_sink=self._llm_sink())
             sql_summaries = [
                 (sr.query_explanation or sr.query or "")[:200]
                 for sr in sql_results

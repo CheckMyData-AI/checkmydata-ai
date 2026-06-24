@@ -210,6 +210,7 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
 ### LLM routing & observability
 
 - `backend/app/llm/router.py` fronts OpenAI, Anthropic, and OpenRouter. All LLM calls go through `llm_call_with_retry` with exponential backoff. `LLMAllProvidersFailedError` is **non-retryable**.
+- **Usage accounting & post-call budget gate** (`app/llm/usage_sink.py`): `LLMRouter(usage_sink=…)` observes `(prompt_tokens, completion_tokens, total_tokens, provider, model)` after every successful call; `DbUsageSink` persists each call via `UsageService.record_usage` **and** re-checks the user's budget so a long agent run hard-stops at the next safe boundary instead of overshooting. `AdaptivePlanner`, `AnswerValidator`, and `QueryRepairer` carry the sink so their LLM calls are counted too. **MCP tools** build the router with `DbUsageSink` and acquire `agent_limiter` for parity with the chat path (no usage/budget bypass via MCP). Streaming responses are not yet sinked (tracked as a known gap).
 - `MetricsCollector` records per-request route, complexity, response_type, replans, retries, SQL calls, wall-clock, plus M2/M5/M6 code-graph counters. Exposed via `/api/metrics` (JSON) and `/api/metrics/prometheus`.
 - Sentry on backend (`sentry-sdk[fastapi]`) and frontend (`@sentry/nextjs`) with PII/secret scrubbing.
 

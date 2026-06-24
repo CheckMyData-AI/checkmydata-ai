@@ -111,3 +111,27 @@ class TestAnswerValidator:
         assert verdict.addresses_question is False
         assert verdict.is_partial is True
         assert verdict.confidence == 0.0
+
+
+class TestAnswerValidatorUsageSink:
+    """R2 / C3 — validator must forward its UsageSink to the LLM call."""
+
+    @pytest.mark.asyncio
+    async def test_forwards_usage_sink_to_llm_call(self):
+        from app.llm.usage_sink import AccumUsageSink
+
+        llm = _llm_with_response('{"addresses_question": true, "confidence": 0.9, "reason": "ok"}')
+        accum = AccumUsageSink()
+        validator = AnswerValidator(llm, usage_sink=accum)
+        await validator.validate(question="q", answer="some answer")
+
+        assert llm.complete.call_args.kwargs.get("usage_sink") is accum
+
+    @pytest.mark.asyncio
+    async def test_default_usage_sink_is_none(self):
+        """Back-compat: callers that omit usage_sink stay at None."""
+        llm = _llm_with_response('{"addresses_question": true, "confidence": 0.9, "reason": "ok"}')
+        validator = AnswerValidator(llm)
+        await validator.validate(question="q", answer="some answer")
+
+        assert llm.complete.call_args.kwargs.get("usage_sink") is None

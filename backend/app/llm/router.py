@@ -15,6 +15,7 @@ from app.llm.errors import (
 )
 from app.llm.openai_adapter import OpenAIAdapter
 from app.llm.openrouter_adapter import OpenRouterAdapter
+from app.llm.usage_sink import NullUsageSink, UsageSink
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,12 @@ _DEFAULT_CONTEXT_WINDOW = 16_000
 class LLMRouter:
     """Selects LLM provider with automatic retry + fallback on failure."""
 
-    def __init__(self):
+    def __init__(self, *, usage_sink: UsageSink | None = None):
         self._instances: dict[str, BaseLLMProvider] = {}
         self._fallback_order = ["openai", "anthropic", "openrouter"]
         self._unhealthy: dict[str, float] = {}
         self._health_task: asyncio.Task | None = None
+        self._sink: UsageSink = usage_sink or NullUsageSink()
 
     def _get_provider(self, name: str) -> BaseLLMProvider:
         if name not in self._instances:
@@ -240,14 +242,16 @@ class LLMRouter:
         temperature: float = 0.0,
         max_tokens: int = 4096,
         preferred_provider: str | None = None,
+        usage_sink: UsageSink | None = None,
     ) -> LLMResponse:
         chain = self._get_fallback_chain(preferred_provider)
         last_error: Exception | None = None
+        sink = usage_sink or self._sink
 
         for provider_name in chain:
             try:
                 provider = self._get_provider(provider_name)
-                return await self._call_with_retry(
+                response = await self._call_with_retry(
                     provider,
                     provider_name,
                     messages,
@@ -256,6 +260,18 @@ class LLMRouter:
                     temperature,
                     max_tokens,
                 )
+                try:
+                    usage = response.usage or {}
+                    await sink.observe(
+                        prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                        completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                        total_tokens=int(usage.get("total_tokens", 0) or 0),
+                        provider=response.provider or provider_name,
+                        model=response.model or (model or ""),
+                    )
+                except Exception:
+                    logger.warning("usage sink observe failed", exc_info=True)
+                return response
             except LLMError as e:
                 logger.warning(
                     "Provider %s exhausted retries: [%s] %s",
