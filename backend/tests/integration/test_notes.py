@@ -256,6 +256,53 @@ class TestNotesMembership:
 
 
 @pytest.mark.asyncio
+class TestNotesExecuteSafetyGuard:
+    """C7 (F-NOTE-01): note execution must route SQL through the shared
+    SafetyGuard. On a read-only connection a write/DDL query is rejected with
+    a safety reason before the connector is ever opened."""
+
+    async def test_execute_ddl_blocked_on_read_only_connection(self, client):
+        user = await register_user(client)
+        pid = await _create_project(client, user["token"])
+        cid = await _create_connection(client, user["token"], pid)
+        note = await _create_note(
+            client,
+            user["token"],
+            pid,
+            connection_id=cid,
+            title="evil",
+            sql_query="DROP TABLE users",
+        )
+
+        resp = await client.post(
+            f"/api/notes/{note['id']}/execute",
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 400
+        assert "blocked" in resp.json()["detail"].lower()
+
+    async def test_execute_dml_blocked_on_read_only_connection(self, client):
+        user = await register_user(client)
+        pid = await _create_project(client, user["token"])
+        cid = await _create_connection(client, user["token"], pid)
+        note = await _create_note(
+            client,
+            user["token"],
+            pid,
+            connection_id=cid,
+            title="wipe",
+            sql_query="DELETE FROM accounts WHERE 1=1",
+        )
+
+        resp = await client.post(
+            f"/api/notes/{note['id']}/execute",
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 400
+        assert "blocked" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 class TestNotesUserScoping:
     async def test_notes_are_user_scoped(self, client):
         owner = await register_user(client)

@@ -44,6 +44,14 @@ class MySQLConnector(BaseConnector):
             self._pool = None
         self._config = config
 
+        # R1/C2: DB-enforced read-only backstop. ``init_command`` runs on every
+        # new pooled connection; ``SET SESSION TRANSACTION READ ONLY`` makes the
+        # session's default access mode read-only. Because ``autocommit=True``
+        # each statement is its own transaction, any write/DDL then raises
+        # ``ER_TRANSACTION_READ_ONLY`` at the database, not just the app-layer
+        # regex. ``None`` for writable connections leaves behaviour unchanged.
+        init_command = "SET SESSION TRANSACTION READ ONLY" if config.is_read_only else None
+
         if config.connection_string:
             parsed = urlparse(config.connection_string)
             self._pool = await aiomysql.create_pool(
@@ -56,6 +64,7 @@ class MySQLConnector(BaseConnector):
                 maxsize=5,
                 autocommit=True,
                 connect_timeout=30,
+                init_command=init_command,
             )
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
@@ -69,6 +78,7 @@ class MySQLConnector(BaseConnector):
                 maxsize=5,
                 autocommit=True,
                 connect_timeout=30,
+                init_command=init_command,
             )
 
     async def disconnect(self) -> None:

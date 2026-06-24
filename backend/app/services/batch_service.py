@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.connectors.registry import get_connector
+from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import tracker
 from app.models.base import async_session_factory
 from app.models.batch_query import BatchQuery
@@ -90,12 +91,19 @@ class BatchService:
         batch_id: str,
         total: int,
         wf_id: str,
+        guard: SafetyGuard,
+        db_type: str,
     ) -> dict:
         """Execute a single query against an already-connected *connector* (T19).
 
         The connector's lifetime is owned by the outer ``execute_batch``
         call, so we no longer open / close a connection per query. This
         eliminates the single biggest source of latency in large batches.
+
+        Before running, the SQL is validated through the shared
+        :class:`SafetyGuard` (F-SCHED-02): on a read-only connection any
+        write/DDL is rejected and the item is marked ``failed`` with the
+        safety reason instead of being executed.
         """
         sql = query_item.get("sql", "")
         q_title = query_item.get("title", f"Query {idx + 1}")
@@ -112,6 +120,33 @@ class BatchService:
 
         start = time.monotonic()
         row_cap = settings.batch_result_row_cap
+
+        safety_result = guard.validate(sql, db_type)
+        if not safety_result.is_safe:
+            logger.warning(
+                "Batch %s query %d blocked by safety guard: %s",
+                batch_id[:8],
+                idx,
+                safety_result.reason,
+            )
+            entry = {
+                "title": q_title,
+                "sql": sql,
+                "status": "failed",
+                "error": f"Query blocked: {safety_result.reason}",
+                "duration_ms": int((time.monotonic() - start) * 1000),
+            }
+            await tracker.emit(
+                wf_id,
+                "batch_progress",
+                "failed",
+                detail=f"Query {idx + 1}/{total}: blocked",
+                batch_id=batch_id,
+                query_index=idx,
+                total=total,
+            )
+            return entry
+
         try:
             result = await connector.execute_query(sql)
 
@@ -181,6 +216,14 @@ class BatchService:
             queries = json.loads(batch.queries_json)
             total = len(queries)
 
+            # F-SCHED-02: route every stored query through the shared SafetyGuard
+            # before execution, mirroring the agent path (core/validation_loop.py).
+            safety_level = (
+                SafetyLevel.READ_ONLY if conn_model.is_read_only else SafetyLevel.ALLOW_DML
+            )
+            guard = SafetyGuard(level=safety_level)
+            db_type = conn_model.db_type
+
             batch.status = "running"
             await db.commit()
 
@@ -212,6 +255,8 @@ class BatchService:
                                 batch_id,
                                 total,
                                 wf_id,
+                                guard=guard,
+                                db_type=db_type,
                             )
 
                     tasks = [_throttled(i, q) for i, q in enumerate(queries)]
@@ -240,6 +285,8 @@ class BatchService:
                             batch_id,
                             total,
                             wf_id,
+                            guard=guard,
+                            db_type=db_type,
                         )
                         results.append(entry)
             finally:

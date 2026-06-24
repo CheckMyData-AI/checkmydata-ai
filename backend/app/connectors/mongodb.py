@@ -24,6 +24,50 @@ logger = logging.getLogger(__name__)
 # R1-4: all connectors share one process-wide tunnel manager.
 _tunnel_mgr = shared_tunnel_manager
 
+# R1 C4 (F-CONN-03 / F-CONN-10): read-only enforcement for Mongo query specs.
+# Mongo has no transaction-level read-only mode the driver can request, so the
+# guard is applied in code before the spec runs. Operator hardening (a read-only
+# Mongo user + ``--noscripting``) is the authoritative backstop and is documented
+# for deployment; this guard is the app-layer defense.
+_MONGO_WRITE_OPS = {
+    "insert",
+    "update",
+    "delete",
+    "drop",
+    "rename",
+    "create_index",
+    "drop_index",
+    "replace",
+}
+_MONGO_JS_OPERATORS = ("$where", "$function", "$accumulator")  # server-side JS
+_MONGO_WRITE_STAGES = ("$out", "$merge")  # aggregation write stages
+
+
+def _assert_mongo_read_safe(spec: dict) -> None:
+    """Reject write ops, server-side JS, and aggregation write stages.
+
+    Raises ``ValueError`` with a human-readable reason if the spec would write
+    to the database or execute server-side JavaScript. Safe (read-only) specs
+    return ``None``. Callers translate the ``ValueError`` into a
+    ``QueryResult(error=...)`` so a blocked query degrades cleanly rather than
+    crashing the request.
+    """
+    op = spec.get("operation", "find")
+    if op in _MONGO_WRITE_OPS:
+        raise ValueError(f"Write operation '{op}' not allowed on a read-only connection")
+    # Serialize the whole spec so JS operators are caught no matter how deeply
+    # they are nested (e.g. inside ``$and`` / ``$expr`` sub-documents).
+    blob = json.dumps(spec, default=str)
+    for js in _MONGO_JS_OPERATORS:
+        if js in blob:
+            raise ValueError(f"Server-side JS operator '{js}' not allowed")
+    if op == "aggregate":
+        for stage in spec.get("pipeline", []):
+            if isinstance(stage, dict):
+                for w in _MONGO_WRITE_STAGES:
+                    if w in stage:
+                        raise ValueError(f"Aggregation write stage '{w}' not allowed")
+
 
 def _to_jsonable(value: Any) -> Any:
     """Coerce Mongo-specific BSON types in a result cell to serializable forms.
@@ -111,6 +155,11 @@ class MongoDBConnector(BaseConnector):
         start = time.monotonic()
         try:
             spec = json.loads(query)
+            # R1 C4: block writes / server-side JS on read-only connections.
+            # A ValueError here is caught below and returned as QueryResult.error
+            # so a blocked query degrades cleanly instead of crashing.
+            if self._config and self._config.is_read_only:
+                _assert_mongo_read_safe(spec)
             if "collection" not in spec:
                 return QueryResult(
                     error="Query spec must include a 'collection' key, e.g. "

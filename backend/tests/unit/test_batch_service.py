@@ -373,7 +373,9 @@ class TestExecuteBatch:
             proj.id,
             conn.id,
             "AllFail",
-            [{"sql": "BAD SQL", "title": "Q1"}, {"sql": "WORSE SQL", "title": "Q2"}],
+            # Guard-passing reads so the failure under test is the connector
+            # runtime error, not the read-only SafetyGuard rejection.
+            [{"sql": "SELECT bad", "title": "Q1"}, {"sql": "SELECT worse", "title": "Q2"}],
         )
 
         mock_get, mock_config = mock_conn_svc
@@ -402,7 +404,9 @@ class TestExecuteBatch:
             proj.id,
             conn.id,
             "Partial",
-            [{"sql": "SELECT 1", "title": "Good"}, {"sql": "BAD", "title": "Bad"}],
+            # Both reads pass the guard; the second fails at the connector so we
+            # exercise the partial-failure path rather than a guard rejection.
+            [{"sql": "SELECT 1", "title": "Good"}, {"sql": "SELECT bad", "title": "Bad"}],
         )
 
         mock_get, mock_config = mock_conn_svc
@@ -485,6 +489,11 @@ class TestExecuteBatch:
         self, db, mock_tracker, mock_conn_svc, mock_connector, mock_session_factory
     ):
         user, proj, conn = await self._setup(db)
+        # Writable connection so the empty-string fallback reaches the connector
+        # (a read-only SafetyGuard would otherwise block an empty statement).
+        conn.is_read_only = False
+        await db.commit()
+        await db.refresh(conn)
         batch = await svc.create_batch(
             db,
             user.id,

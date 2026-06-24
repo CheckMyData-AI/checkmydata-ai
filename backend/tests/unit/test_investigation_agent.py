@@ -834,9 +834,12 @@ class TestRunEdgeCases:
         mock_connector.disconnect = AsyncMock()
         mock_connector.execute_query = AsyncMock(return_value=QueryResult(error="syntax error"))
 
+        # R1/C5: the query must pass the read-only allow-list to reach the connector
+        # at all; this test exercises the disconnect-on-connector-error path, so use a
+        # guard-passing SELECT and let the mock return the error.
         with patch("app.agents.investigation_agent.get_connector", return_value=mock_connector):
             await agent._handle_run_diagnostic_query(
-                {"query": "BAD SQL", "hypothesis": "h"}, context
+                {"query": "SELECT * FROM bad_table", "hypothesis": "h"}, context
             )
 
         mock_connector.disconnect.assert_awaited_once()
