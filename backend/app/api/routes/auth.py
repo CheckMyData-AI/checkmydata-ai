@@ -30,6 +30,7 @@ def _auth_response(user, token: str) -> "AuthResponse":  # noqa: ANN001
     """
     return AuthResponse(
         token="" if settings.auth_cookie_enabled else token,
+        expires_in=settings.jwt_expire_minutes * 60,
         user={
             "id": user.id,
             "email": user.email,
@@ -67,6 +68,10 @@ class ChangePasswordRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: dict
+    # Session lifetime in seconds. Non-sensitive (it's just jwt_expire_minutes) and
+    # lets the SPA schedule proactive refresh without reading the JWT — required
+    # because under cookie auth `token` is empty (F-AUTH-04).
+    expires_in: int = 0
 
 
 class UserResponse(BaseModel):

@@ -125,6 +125,42 @@ describe("auth store", () => {
     expect(useAuthStore.getState().token).toBe("jwt-fresh");
   });
 
+  it("schedules proactive refresh from expires_in when the token body is empty (cookie auth)", async () => {
+    // F-AUTH-04: under cookie auth the response token is "" — refresh scheduling
+    // must use expires_in instead of decoding the (absent) JWT.
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            token: "",
+            expires_in: 3600, // 60 min; refresh fires 30 min before expiry
+            user: { id: "u1", email: "c@b.com", display_name: "C" },
+          }),
+      });
+      await useAuthStore.getState().login("c@b.com", "pass");
+      expect(useAuthStore.getState().user?.email).toBe("c@b.com");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            token: "",
+            expires_in: 3600,
+            user: { id: "u1", email: "c@b.com", display_name: "C" },
+          }),
+      });
+      await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[1][0])).toContain("/auth/refresh");
+    } finally {
+      useAuthStore.getState().logout();
+      vi.useRealTimers();
+    }
+  });
+
   it("restore clears state when refresh fails", async () => {
     localStorage.setItem("auth_user", JSON.stringify({ id: "u1", email: "x@b.com", display_name: "X" }));
 

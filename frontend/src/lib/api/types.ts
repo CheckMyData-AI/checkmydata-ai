@@ -549,8 +549,13 @@ export interface AuthUser {
 }
 
 export interface AuthResponse {
+  // Empty under cookie auth (the JWT lives in an httpOnly cookie); present only for
+  // non-browser Bearer clients.
   token: string;
   user: AuthUser;
+  // Session lifetime in seconds — used to schedule proactive refresh without
+  // reading the (possibly empty) token.
+  expires_in?: number;
 }
 
 export interface UsagePeriod {

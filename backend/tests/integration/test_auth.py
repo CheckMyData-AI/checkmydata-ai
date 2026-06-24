@@ -331,7 +331,11 @@ class TestCookieSession:
             json={"email": _email(), "password": "secret123"},
         )
         assert resp.status_code == 200
-        assert resp.json()["token"] == ""
+        body = resp.json()
+        assert body["token"] == ""
+        # The SPA needs the session lifetime to schedule proactive refresh without
+        # reading the JWT (the token is omitted under cookie auth).
+        assert body["expires_in"] > 0
         assert client.cookies.get("cmd_session"), "session JWT must live in the cookie"
 
     async def test_google_csrf_missing_body_token_rejected(self, client):

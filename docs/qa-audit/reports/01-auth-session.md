@@ -13,6 +13,29 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low · ⚪ Info
 
 ---
 
+## ✅ Remediation status — 2026-06-24 (QA fix loop)
+
+All 12 findings fixed (TDD; per-area suites green, ruff/mypy clean). Spec/plan:
+[`specs/2026-06-24-qa-fix-01-auth-session-design.md`](../../superpowers/specs/2026-06-24-qa-fix-01-auth-session-design.md),
+[`plans/2026-06-24-qa-fix-01-auth-session.md`](../../superpowers/plans/2026-06-24-qa-fix-01-auth-session.md).
+
+| Finding | Fix commit | Summary of fix |
+|---------|-----------|----------------|
+| F-AUTH-01 | `a8d3b2a` | `enable_sqlite_fk()` → `PRAGMA foreign_keys=ON` on app + test engines; +cascade test; fixed 17 orphan-insert tests |
+| F-AUTH-02 | `f35ac10` | `User.token_version` (+migration `f4a5b6c7d8e9`) + `ver` JWT claim; `get_current_user` rejects mismatch; bumped on password change |
+| F-AUTH-03 | `f35ac10` | `change_password` uses off-thread async bcrypt |
+| F-AUTH-04 | `03dad44` | `_auth_response` omits JWT from body under cookie auth |
+| F-AUTH-05 | `03dad44` | dummy bcrypt verify equalises unknown/passwordless login timing |
+| F-AUTH-06 | `03dad44` | Google CSRF enforced on cookie presence (no body-token bypass) |
+| F-AUTH-07 | `ed54b48` | Google link no longer wipes avatar / misreports provider |
+| F-AUTH-08 | `2475114` | config: `SameSite=None` requires `Secure` (fail-closed) |
+| F-AUTH-09 | `03dad44` | `/refresh` rate-limited (30/min) |
+| F-AUTH-10 | `ed54b48` | `delete_account`: on-disk artifact cleanup + explicit MCP-key revoke + `audit_log` |
+| F-AUTH-11 | `2475114` | prod secret guard fails closed via `_SAFE_ENVIRONMENTS` allow-list |
+| F-AUTH-12 | `2475114` | MCP tokens default to 90-day expiry (`mcp_token_default_expiry_days`) |
+
+---
+
 ## F-AUTH-01 — 🟠 High — SQLite has FK enforcement OFF, so every `ondelete=CASCADE` is a silent no-op in dev & tests
 
 **Type:** Bug / dev-prod parity trap / data retention
@@ -346,3 +369,34 @@ surface expiry prominently in the token UI.
 **Round 3 focus:** session-rotation summariser (does the auto-summary at context limit leak across
 sessions / preserve auth scope?); password-reset flow (does one exist? — none seen in R1); login
 lockout/throttle beyond the 10/min rate limit; `audit_log` coverage completeness.
+
+---
+
+# Round 3 — fix-verification pass (2026-06-24): all 12 F-AUTH fixes confirmed, no regressions
+
+Independent auditor re-check of the QA-fix-loop remediation (the table at the top of this report).
+**All verified correct; the specific regression risks were checked and are clean:**
+
+- **F-AUTH-01** ✅ `enable_sqlite_fk(async_engine)` installs an `@event.listens_for(sync_engine,
+  "connect")` `PRAGMA foreign_keys=ON` and is called on the app engine (`base.py:50`) **and** the
+  test engine (`tests/integration/conftest.py:64`, `tests/unit/test_services.py:50`). New
+  regression test `tests/integration/test_auth_cascade.py` exercises real cascade. Correct.
+- **F-AUTH-02** ✅ **No lockout regression** — the column is `nullable=False, default=0,
+  server_default="0"` (`user.py:29-31`) and the migration adds it `server_default="0"`, so existing
+  users backfill to `0`; **all 5 `create_token` call sites pass `user.token_version`**
+  (`auth.py:105/124/166/198/217`); `deps.py:78` rejects `payload.get("ver",0) != user.token_version`.
+  A freshly-minted token always matches. Correct.
+- **F-AUTH-04** ✅ `_auth_response` returns `token="" if settings.auth_cookie_enabled else token`
+  (`auth.py:32`) — JWT omitted from the body under cookie auth, used by all auth endpoints.
+- **F-AUTH-11** ✅ Inverted to a fail-closed allow-list: `_SAFE_ENVIRONMENTS = {"development","dev",
+  "test","testing","local","ci"}` (`config.py:54`) — **any** other `environment` value (unset →
+  default "development" is safe; but "staging"/"prod-eu"/"live"/typo) is treated as production and
+  must pass the secret checks. Correct (closes the original fail-open).
+- **F-AUTH-03/05/06/07/08/09/10/12** — fixes present per the remediation table; spot-checks
+  consistent with the proposed fixes.
+
+**Round 3 net: 0 new findings — remediation verified.** Module 01 is now closed (audit → fix →
+independent verify).
+
+**Round 4 focus (still open from R1/R2):** session-rotation summariser auth/PII scope;
+password-reset flow (still absent?); login lockout beyond rate-limit; `audit_log` completeness.
