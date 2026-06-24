@@ -333,3 +333,70 @@ maintainability / reliability risks.
 doubles quotes correctly), credential exposure (`ConnectionResponse` returns no secrets; Fernet at
 rest), SSH pre-command allowlist (rejects metacharacters), frontend auth (no JWT in localStorage),
 no LLM-key/secret logging, MCP read-only gating present (subject to the M1 regex robustness).
+
+---
+
+## 8. Release roadmap (grouped for delivery)
+
+The open findings are grouped into **14 releases**, each bundling bugs that share a root cause,
+module, or file set so they can be specced, built, and shipped **together**. One branch + PR per
+release; a release is "done" only when its bugs are closed end-to-end.
+
+### Per-release cycle (run for every release)
+
+1. **Deep study** — read the touched code + docs (CLAUDE.md, `vision.md` §7 invariants,
+   `ARCHITECTURE.md`, relevant `docs/*`); verify current external-lib APIs via Context7 **before**
+   writing the spec.
+2. **SPEC** — `docs/superpowers/specs/<date>-rel-NN-*-design.md`; lock shared contracts
+   (types/schemas/signatures/file layout) for a zero-context implementer.
+3. **DOC** — update the affected product docs (API.md, CLAUDE.md, feature flags, `.env.example`)
+   as part of the same change (Definition of Done).
+4. **PLAN** — `docs/superpowers/plans/<date>-rel-NN-*.md`; TDD tasks, non-overlapping file
+   ownership, explicit dependency graph + parallel groups.
+5. **Subagent-driven development** — execute the plan with parallel subagents where files don't
+   overlap; sequential glue tasks between groups.
+6. **Verify** — `make check` (ruff format+check, mypy, full unit+integration, coverage ≥ 72%) +
+   frontend `tsc`/`eslint`/`vitest` when frontend is touched; review **test logs** + **linter**.
+7. **Deploy** — branch → PR → merge `main` (prod auto-deploy). *(Direct push to `main` is gated by
+   the safety classifier; the merge is the human approval step unless a push-to-main permission
+   rule is added.)*
+8. **Post-deploy** — check prod health (`/api/health`) + Heroku logs for new errors; if clean,
+   **close the release's bugs** and move to the next.
+
+### Delivery order
+
+Ordered by **max severity × leverage** (security-critical / High-closing first). Each release lists
+its bug IDs; every open finding is assigned to exactly one release.
+
+#### Wave A — security-critical (closes all open High)
+
+| Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
+|---|---|---|---|---|---|
+| **R1** | DB-level read-only enforcement | 🟠 | F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03, F-CONN-10, F-SCHED-02, F-NOTE-01 | `core/safety.py`, `connectors/*`, `core/validation_loop.py`, batch/notes exec | One root cause: read-only rests on an evadable regex with no DB-session backstop. Per-dialect read-only session + statement-initial allow-list closes the whole cluster (+ MCP raw-SQL). **#1 leverage.** |
+| **R2** | Usage accounting & MCP auth | 🟠 | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Single per-request usage sink threaded through `LLMRouter` closes every budget under-count; bundle MCP auth/concurrency hardening (same surface). |
+| **R3** | Cross-tenant isolation & IDOR | 🟠 | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping." One ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. |
+
+#### Wave B — security / correctness (Medium)
+
+| Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
+|---|---|---|---|---|---|
+| **R4** | Identity, auth lifecycle & durable audit | 🟠 | F-PROJ-01, F-AUTH-13, F-AUTH-14, F-AUTH-15, F-AUTH-16 | `routes/auth.py`, `services/{auth,invite,email}_service.py`, `core/audit.py`, new `AuditLog` model | Shared email-verification + account-security infra; durable `AuditLog` table underpins F-AUTH-15/16. Closes the last open High (F-PROJ-01). |
+| **R5** | Connection & SSH hardening + credential redaction | 🟡 | F-CONN-04, F-CONN-05, F-CONN-06, F-CONN-07, F-CONN-08, F-CONN-09, F-SSH-01, F-SSH-02, F-SSH-03, F-SSH-04, F-SSH-05, F-SSH-07, F-SSH-09, F-LLM-03 | `connectors/*`, `connectors/ssh_*`, `services/connection_service.py` | Same files (connectors + ssh); SSRF host-validation, key rotation, error redaction at source (F-CONN-08 + F-LLM-03), pool caps, SSH template/escape/atomicity. |
+| **R6** | Memory & prompt-injection hygiene | 🟡 | F-RULE-02, F-RULE-03, F-RULE-04, F-LEARN-01, F-LEARN-02, F-LEARN-03, F-LEARN-04, F-LEARN-05, F-LEARN-06, F-LEARN-08, F-SQL-01 | `knowledge/custom_rules.py`, `services/agent_learning_service.py`, `agents/sql_agent.py` | Shared content-safety/provenance gate on every rule/learning ingest + dedup + idempotent feedback; F-SQL-01 (DB-content injection) is the upstream source. |
+| **R7** | Knowledge & GitAgent hardening | 🟡 | F-KNOW-04, F-KNOW-06, F-KNOW-07, F-KNOW-08, F-KNOW-09, F-GIT-01, F-GIT-02, F-GIT-03, F-GIT-04, F-GIT-05, F-GIT-06 | `knowledge/{repo_analyzer,bm25_index,pipeline_runner}.py`, `agents/git_agent.py` | Module 07/08 ingestion + live-git; F-GIT-01 (rev option-injection → arbitrary write) is the security driver; BM25 pickle→safe format precedes shared-storage (F-KNOW-07). |
+| **R8** | Schedules, batch & worker reliability | 🟡 | F-SCHED-01, F-SCHED-03, F-SCHED-04, F-SCHED-05, F-SCHED-06, F-SCHED-07 | `routes/schedules.py`, `batch.py`, `worker.py`, `core/task_queue.py` | Module 13; idempotency (F-SCHED-07 atomic claim), creator-access revocation, reap race, ARQ fallback hygiene. |
+| **R9** | Billing & entitlements | 🟡 | F-BILL-01, F-BILL-02, F-BILL-03, F-BILL-04, F-BILL-06, F-BILL-07, F-BILL-08 | `routes/billing.py`, `services/entitlement_service.py`, Stripe webhooks | Module 14; plan resolution from live price, service-level quota (TOCTOU + demo bypass), webhook hardening, chargeback→revoke. |
+
+#### Wave C — quality, correctness & tech-debt
+
+| Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
+|---|---|---|---|---|---|
+| **R10** | Projects, RBAC & invites lifecycle | 🟡 | F-PROJ-02, F-PROJ-03, F-PROJ-04, F-PROJ-05, F-PROJ-06, F-PROJ-07, F-PROJ-08, F-PROJ-09, F-PROJ-10, F-PROJ-11, F-PROJ-12, F-PROJ-13, F-PROJ-14, F-PROJ-15 | `routes/{projects,invites}.py`, `services/{project,invite}_service.py`, `api/deps.py` | Module 02; owner-model consistency, invite expiry/idempotency, ownership transfer, leave-project, pagination, role validation, prompt-meta sanitization. |
+| **R11** | Chat/orchestration, SQL-agent quality & LLM observability | 🟡 | F-CHAT-01, F-CHAT-02, F-CHAT-03, F-CHAT-04, F-CHAT-05, F-CHAT-06, F-CHAT-08, F-SQL-02, F-SQL-03, F-SQL-05, F-SQL-07, F-LLM-01, F-LLM-02, F-LLM-04, F-LLM-05, CB-M5 | `routes/chat.py`, `agents/{orchestrator,sql_agent,stage_executor}.py`, `llm/router.py` | WS authz/lifecycle, relay timeout, agent retry/accuracy, provider-fallback governance; CB-M5 (broad excepts) lives in these request paths (overlaps F-CHAT-05). |
+| **R12** | Data quality / DataGate robustness | 🟡 | F-DG-01, F-DG-02, F-DG-03, F-DG-04, F-DG-05, F-DG-06, F-DG-08 | `agents/data_gate.py`, `investigation_agent.py` | Module 09; hard-check robustness (Decimal/sample/fuzzy/JSON-cell), bounds, row_count reliability. |
+| **R13** | Visualizations, dashboards, exploration & demo | 🟡 | F-VIZ-01, F-VIZ-02, F-VIZ-03, F-VIZ-04, F-EXP-01, F-EXP-02, F-EXP-03, F-EXP-04 | `routes/{visualizations,dashboards,exploration,demo}.py`, `agents/viz_agent.py` | Modules 12/18; CSV-injection neutralization, snapshot freshness, `cards_json` validation, demo seeding/read-only/dedup. |
+| **R14** | Frontend polish, notes & tech-debt | 🟢 | F-FE-03, F-FE-04, F-NOTE-02, F-NOTE-03, CB-M4, CB-L1 | `frontend/src/*`, `routes/notes.py`, god-file decomposition | a11y/design-token sweep, JSON-LD assertion, note pool reuse/staleness, god-file decomposition (CB-M4), suppression-debt cleanup (CB-L1). |
+
+**Coverage check:** R1–R14 partition all open findings (Modules 01–19 + codebase-wide CB-*). The 7
+open High items land in Wave A + R4 (F-SQL-08, F-CONN-01/02 → R1; F-MCP-01 → R2; F-RULE-01,
+F-SSH-08 → R3; F-PROJ-01 → R4); after Wave A + R4 there are **0 open High**.
