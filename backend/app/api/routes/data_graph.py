@@ -239,7 +239,7 @@ async def delete_metric(
     project_id = validate_safe_id(project_id, "project_id")
     metric_id = validate_safe_id(metric_id, "metric_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
-    deleted = await _graph_svc.delete_metric(db, metric_id)
+    deleted = await _graph_svc.delete_metric(db, metric_id, project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Metric not found")
     await db.commit()

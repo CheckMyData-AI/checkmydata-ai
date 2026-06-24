@@ -273,6 +273,81 @@ class TestSSHTunnelManagerRefCounting:
         assert key not in mgr._refs
 
 
+class TestSSHTunnelManagerKeyCredentialDiscriminator:
+    """F-SSH-08 (R3 C5): the tunnel cache key must include a credential
+    discriminator so two tenants sharing a bastion host+user but using
+    DIFFERENT keys never collide onto one cached tunnel (cross-tenant leak)."""
+
+    def _base_cfg(self, **overrides):
+        from app.connectors.base import ConnectionConfig
+
+        defaults = dict(
+            db_type="postgresql",
+            db_host="db.example.com",
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="tunnel-user",
+        )
+        defaults.update(overrides)
+        return ConnectionConfig(**defaults)
+
+    def test_different_ssh_key_content_yields_different_key(self):
+        """Same host/port/user/db, different ssh_key_content, no connection_id →
+        the discriminator must keep the cache keys distinct."""
+        mgr = SSHTunnelManager()
+        cfg_a = self._base_cfg(ssh_key_content="-----TENANT-A-PRIVATE-KEY-----")
+        cfg_b = self._base_cfg(ssh_key_content="-----TENANT-B-PRIVATE-KEY-----")
+        assert mgr._key(cfg_a) != mgr._key(cfg_b)
+
+    def test_different_ssh_key_passphrase_yields_different_key(self):
+        mgr = SSHTunnelManager()
+        cfg_a = self._base_cfg(ssh_key_content="-----SHARED-KEY-----", ssh_key_passphrase="pass-a")
+        cfg_b = self._base_cfg(ssh_key_content="-----SHARED-KEY-----", ssh_key_passphrase="pass-b")
+        assert mgr._key(cfg_a) != mgr._key(cfg_b)
+
+    def test_different_db_password_yields_different_key(self):
+        mgr = SSHTunnelManager()
+        cfg_a = self._base_cfg(db_user="svc", db_password="secret-a")
+        cfg_b = self._base_cfg(db_user="svc", db_password="secret-b")
+        assert mgr._key(cfg_a) != mgr._key(cfg_b)
+
+    def test_identical_credentials_yield_same_key(self):
+        """Sibling connections with identical credential material still share a
+        tunnel — the discriminator must not over-fragment the pool."""
+        mgr = SSHTunnelManager()
+        cfg_a = self._base_cfg(ssh_key_content="-----SHARED-KEY-----")
+        cfg_b = self._base_cfg(ssh_key_content="-----SHARED-KEY-----")
+        assert mgr._key(cfg_a) == mgr._key(cfg_b)
+
+    def test_raw_secret_never_appears_in_key(self):
+        """The cache key must never embed raw credential material."""
+        mgr = SSHTunnelManager()
+        secret_key = "-----BEGIN OPENSSH PRIVATE KEY-----SENSITIVE-----"
+        secret_pass = "super-secret-passphrase"
+        secret_db_pw = "db-password-12345"
+        cfg = self._base_cfg(
+            ssh_key_content=secret_key,
+            ssh_key_passphrase=secret_pass,
+            db_user="svc",
+            db_password=secret_db_pw,
+        )
+        key = mgr._key(cfg)
+        assert secret_key not in key
+        assert secret_pass not in key
+        assert secret_db_pw not in key
+
+    def test_key_includes_endpoint_components(self):
+        """The host/port/user/db endpoint identity is preserved in the key."""
+        mgr = SSHTunnelManager()
+        cfg = self._base_cfg(ssh_key_content="k")
+        key = mgr._key(cfg)
+        assert "jump.example.com" in key
+        assert "tunnel-user" in key
+        assert "db.example.com" in key
+        assert "5432" in key
+
+
 class TestSSHTunnelPortForwardFailure:
     @pytest.mark.asyncio
     async def test_conn_closed_on_forward_failure(self):

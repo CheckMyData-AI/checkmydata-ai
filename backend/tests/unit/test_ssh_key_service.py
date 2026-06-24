@@ -2,11 +2,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401 - ensure all models registered on Base.metadata
 import app.models.chat_session  # noqa: F401 - ensure all models resolved
 import app.models.connection  # noqa: F401
 import app.models.project  # noqa: F401
 import app.models.ssh_key  # noqa: F401
+from app.models.base import Base
+from app.models.user import User
 from app.services.ssh_key_service import SshKeyInUseError, SshKeyService
 
 _test_key = asyncssh.generate_private_key("ssh-ed25519")
@@ -240,3 +244,87 @@ class TestSshKeyServiceFindReferences:
         assert "connection:MyConn" in refs
         # R1-6: project_repositories must protect the key from deletion too.
         assert "repository:MyRepo" in refs
+
+
+@pytest.fixture
+async def db_session() -> AsyncSession:
+    """Real in-memory SQLite session so the WHERE clause is actually executed."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    s = sm()
+    try:
+        yield s
+    finally:
+        await s.close()
+        await engine.dispose()
+
+
+class TestSshKeyServiceTenantIsolation:
+    """F-SSH-06 (C6): a NULL-owner key must never leak to a tenant.
+
+    These tests run against a real DB session so the SQL ownership filter is
+    genuinely exercised (mocked sessions cannot validate a WHERE clause).
+    """
+
+    @staticmethod
+    async def _seed(session: AsyncSession) -> tuple[str, str]:
+        """Seed user A, a NULL-owner key, and a key owned by A.
+
+        Returns (null_key_id, a_key_id).
+        """
+        session.add(User(id="user-A", email="a@example.com"))
+        await session.flush()
+
+        svc = SshKeyService()
+        # System/legacy key with no owner.
+        null_key = await svc.create(session, "null-owner-key", VALID_ED25519_KEY, user_id=None)
+        # Key owned by user A (distinct name; SSH key names are unique).
+        a_key = await svc.create(
+            session,
+            "owned-by-A",
+            _test_key.export_private_key("openssh").decode(),
+            user_id="user-A",
+        )
+        return null_key.id, a_key.id
+
+    @pytest.mark.asyncio
+    async def test_list_all_excludes_null_owner_key(self, db_session: AsyncSession):
+        null_key_id, a_key_id = await self._seed(db_session)
+        svc = SshKeyService()
+
+        keys = await svc.list_all(db_session, user_id="user-A")
+        ids = {k.id for k in keys}
+
+        assert a_key_id in ids  # A still sees their own key
+        assert null_key_id not in ids  # the NULL-owner key must NOT leak to A
+
+    @pytest.mark.asyncio
+    async def test_get_null_owner_key_returns_none_for_user(self, db_session: AsyncSession):
+        null_key_id, _a_key_id = await self._seed(db_session)
+        svc = SshKeyService()
+
+        result = await svc.get(db_session, null_key_id, user_id="user-A")
+        assert result is None  # NULL-owner key is invisible to a scoped lookup
+
+    @pytest.mark.asyncio
+    async def test_get_own_key_still_returned_for_user(self, db_session: AsyncSession):
+        _null_key_id, a_key_id = await self._seed(db_session)
+        svc = SshKeyService()
+
+        result = await svc.get(db_session, a_key_id, user_id="user-A")
+        assert result is not None
+        assert result.id == a_key_id
+
+    @pytest.mark.asyncio
+    async def test_system_path_still_resolves_by_id_when_user_id_none(
+        self, db_session: AsyncSession
+    ):
+        """System/internal callers (user_id=None) keep resolving keys by id."""
+        null_key_id, a_key_id = await self._seed(db_session)
+        svc = SshKeyService()
+
+        # Both the NULL-owner key and an owned key are reachable by id.
+        assert (await svc.get(db_session, null_key_id, user_id=None)) is not None
+        assert (await svc.get(db_session, a_key_id, user_id=None)) is not None

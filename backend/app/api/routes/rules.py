@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.config import settings
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.membership_service import MembershipService
@@ -16,6 +17,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _svc = RuleService()
 _membership_svc = MembershipService()
+
+
+def _require_admin(user: dict) -> None:
+    """Gate global (non-project-scoped) rule mutations behind admin (F-RULE-01).
+
+    Global rules have no ``project_id`` and apply to every tenant, so creating
+    or modifying them must not be possible for an ordinary user — only admins
+    configured via ``ADMIN_EMAILS`` may manage them.
+    """
+    if not settings.is_admin_email(user.get("email")):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin privileges required to manage global rules",
+        )
 
 
 async def _regenerate_overview_for_project(project_id: str | None) -> None:
@@ -68,6 +83,8 @@ async def create_rule(
 ):
     if body.project_id:
         await _membership_svc.require_role(db, body.project_id, user["user_id"], "editor")
+    else:
+        _require_admin(user)
     rule = await _svc.create(db, **body.model_dump())
     audit_log(
         "rule.create",
@@ -123,6 +140,8 @@ async def update_rule(
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "editor")
     elif rule.is_default:
         raise HTTPException(status_code=403, detail="Default rules cannot be modified")
+    else:
+        _require_admin(user)
     updates = body.model_dump(exclude_unset=True)
     updated_rule = await _svc.update(db, rule_id, **updates)
     if not updated_rule:
@@ -153,6 +172,8 @@ async def delete_rule(
         await _membership_svc.require_role(db, rule.project_id, user["user_id"], "editor")
     elif rule.is_default:
         raise HTTPException(status_code=403, detail="Default rules cannot be deleted")
+    else:
+        _require_admin(user)
     project_id = rule.project_id
     await _svc.delete(db, rule_id)
     audit_log(

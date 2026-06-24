@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
+from app.models.chat_session import ChatSession as ChatSessionModel
 from app.models.data_validation import DataInvestigation
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -87,6 +88,22 @@ async def start_investigation(
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
 
+    # Cross-tenant isolation (F-DG-07/09): project membership alone does not
+    # authorize the caller-supplied connection/session/message ids. Re-scope
+    # every id to the verified project before trusting it, mirroring the
+    # ownership check in `get_investigation`. Mismatches are reported as 404 so
+    # we never confirm the existence of another tenant's resources.
+    conn = await _conn_svc.get(db, body.connection_id)
+    if not conn or conn.project_id != body.project_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    session_result = await db.execute(
+        select(ChatSessionModel).where(ChatSessionModel.id == body.session_id)
+    )
+    chat_session = session_result.scalar_one_or_none()
+    if not chat_session or chat_session.project_id != body.project_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     from app.services.investigation_service import InvestigationService
 
     inv_svc = InvestigationService()
@@ -98,7 +115,9 @@ async def start_investigation(
         select(ChatMessageModel).where(ChatMessageModel.id == body.message_id)
     )
     msg = result.scalar_one_or_none()
-    if msg and msg.metadata_json:
+    if not msg or msg.session_id != body.session_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.metadata_json:
         try:
             meta = json.loads(msg.metadata_json)
             original_query = meta.get("query", "")

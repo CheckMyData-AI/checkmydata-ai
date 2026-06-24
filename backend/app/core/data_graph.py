@@ -313,8 +313,17 @@ class DataGraphService:
         self,
         session: AsyncSession,
         metric_id: str,
+        project_id: str,
     ) -> bool:
-        metric = await session.get(MetricDefinition, metric_id)
+        # Scope the lookup to the caller's project so a member of one project
+        # cannot delete another project's metric by bare id (cross-tenant IDOR).
+        result = await session.execute(
+            select(MetricDefinition).where(
+                MetricDefinition.id == metric_id,
+                MetricDefinition.project_id == project_id,
+            )
+        )
+        metric = result.scalar_one_or_none()
         if not metric:
             return False
         await session.execute(

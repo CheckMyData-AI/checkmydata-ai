@@ -68,7 +68,12 @@ class SshKeyService:
     async def list_all(self, session: AsyncSession, user_id: str | None = None) -> list[SshKey]:
         stmt = select(SshKey)
         if user_id:
-            stmt = stmt.where((SshKey.user_id == user_id) | (SshKey.user_id.is_(None)))
+            # F-SSH-06: strictly owner-scoped. A NULL-owner key must NOT leak to
+            # a tenant, so do not union `SshKey.user_id.is_(None)` here. When
+            # user_id is None (internal/system call) we intentionally return all
+            # keys, since the only such callers resolve a key already linked to a
+            # resource they own (see git_agent / pipeline_runner).
+            stmt = stmt.where(SshKey.user_id == user_id)
         result = await session.execute(stmt.order_by(SshKey.created_at.desc()))
         return list(result.scalars().all())
 
@@ -80,7 +85,11 @@ class SshKeyService:
     ) -> SshKey | None:
         stmt = select(SshKey).where(SshKey.id == key_id)
         if user_id:
-            stmt = stmt.where((SshKey.user_id == user_id) | (SshKey.user_id.is_(None)))
+            # F-SSH-06: strictly owner-scoped — never union NULL-owner keys into
+            # a tenant's view (that would leak a key to every tenant). When
+            # user_id is None this is a trusted internal lookup-by-id (see
+            # git_agent / pipeline_runner); behavior is preserved.
+            stmt = stmt.where(SshKey.user_id == user_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 

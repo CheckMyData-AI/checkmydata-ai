@@ -2,12 +2,27 @@
 
 import pytest
 
+from app.config import settings
 from tests.integration.conftest import auth_headers, register_user
+
+
+async def _make_auth_client_admin(auth_client, monkeypatch) -> str:
+    """Promote the ``auth_client`` fixture user to admin and return its email.
+
+    Global rules (``project_id is None``) require admin privileges
+    (F-RULE-01), so CRUD tests that operate on global rules must run as an
+    admin user.
+    """
+    resp = await auth_client.get("/api/auth/me")
+    email = resp.json()["email"]
+    monkeypatch.setattr(settings, "admin_emails", [email])
+    return email
 
 
 @pytest.mark.asyncio
 class TestRulesCrud:
-    async def test_create_and_list(self, auth_client):
+    async def test_create_and_list(self, auth_client, monkeypatch):
+        await _make_auth_client_admin(auth_client, monkeypatch)
         resp = await auth_client.post(
             "/api/rules",
             json={
@@ -30,7 +45,8 @@ class TestRulesCrud:
         assert resp.status_code == 200
         assert resp.json()["content"] == "Always use UTC timestamps"
 
-    async def test_update_rule(self, auth_client):
+    async def test_update_rule(self, auth_client, monkeypatch):
+        await _make_auth_client_admin(auth_client, monkeypatch)
         resp = await auth_client.post(
             "/api/rules",
             json={
@@ -44,7 +60,8 @@ class TestRulesCrud:
         assert resp.status_code == 200
         assert resp.json()["content"] == "v2"
 
-    async def test_delete_rule(self, auth_client):
+    async def test_delete_rule(self, auth_client, monkeypatch):
+        await _make_auth_client_admin(auth_client, monkeypatch)
         resp = await auth_client.post(
             "/api/rules",
             json={
@@ -195,9 +212,10 @@ class TestDefaultRuleCreation:
         default_rules = [r for r in resp.json() if r.get("is_default")]
         assert len(default_rules) == 0
 
-    async def test_is_default_field_in_response(self, client):
+    async def test_is_default_field_in_response(self, client, monkeypatch):
         """All rule responses should include the is_default field."""
         user = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [user["email"]])
 
         resp = await client.post(
             "/api/rules",
@@ -207,3 +225,108 @@ class TestDefaultRuleCreation:
         assert resp.status_code == 200
         assert "is_default" in resp.json()
         assert resp.json()["is_default"] is False
+
+
+@pytest.mark.asyncio
+class TestGlobalRuleAdminOnly:
+    """F-RULE-01: global-rule create/update/delete require admin privileges."""
+
+    async def test_non_admin_cannot_create_global_rule(self, client):
+        user = await register_user(client)
+        resp = await client.post(
+            "/api/rules",
+            json={"name": "Global", "content": "applies everywhere"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 403
+        assert "global" in resp.json()["detail"].lower()
+
+    async def test_non_admin_cannot_update_global_rule(self, client, monkeypatch):
+        # An admin creates the global rule first.
+        admin = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [admin["email"]])
+        resp = await client.post(
+            "/api/rules",
+            json={"name": "Global", "content": "v1"},
+            headers=auth_headers(admin["token"]),
+        )
+        assert resp.status_code == 200
+        rid = resp.json()["id"]
+
+        # A different, non-admin user cannot update it.
+        non_admin = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [admin["email"]])
+        resp = await client.patch(
+            f"/api/rules/{rid}",
+            json={"content": "hacked"},
+            headers=auth_headers(non_admin["token"]),
+        )
+        assert resp.status_code == 403
+
+    async def test_non_admin_cannot_delete_global_rule(self, client, monkeypatch):
+        admin = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [admin["email"]])
+        resp = await client.post(
+            "/api/rules",
+            json={"name": "Global", "content": "v1"},
+            headers=auth_headers(admin["token"]),
+        )
+        assert resp.status_code == 200
+        rid = resp.json()["id"]
+
+        non_admin = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [admin["email"]])
+        resp = await client.delete(
+            f"/api/rules/{rid}",
+            headers=auth_headers(non_admin["token"]),
+        )
+        assert resp.status_code == 403
+
+    async def test_admin_can_create_update_delete_global_rule(self, client, monkeypatch):
+        admin = await register_user(client)
+        monkeypatch.setattr(settings, "admin_emails", [admin["email"]])
+
+        resp = await client.post(
+            "/api/rules",
+            json={"name": "Global", "content": "v1"},
+            headers=auth_headers(admin["token"]),
+        )
+        assert resp.status_code == 200
+        rid = resp.json()["id"]
+        assert resp.json()["project_id"] is None
+
+        resp = await client.patch(
+            f"/api/rules/{rid}",
+            json={"content": "v2"},
+            headers=auth_headers(admin["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "v2"
+
+        resp = await client.delete(
+            f"/api/rules/{rid}",
+            headers=auth_headers(admin["token"]),
+        )
+        assert resp.status_code == 200
+
+    async def test_non_admin_editor_can_create_project_rule(self, client, db_session):
+        """Project-scoped create by a project editor (owner) still works for non-admins."""
+        owner = await register_user(client, db_session=db_session)
+        # Ensure this user is NOT an admin (default empty admin_emails).
+        assert not settings.is_admin_email(owner["email"])
+
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Scoped Rules"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 200
+        pid = resp.json()["id"]
+
+        resp = await client.post(
+            "/api/rules",
+            json={"project_id": pid, "name": "Project Rule", "content": "scoped"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["project_id"] == pid
