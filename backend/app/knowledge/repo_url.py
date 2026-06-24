@@ -19,6 +19,30 @@ _ALLOWED_SCHEMES = ("https://", "http://", "ssh://")
 # scp-like syntax: user@host:path (always SSH transport, never with a scheme).
 _SCP_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.+-]*@[A-Za-z0-9_.-]+:[^\s]+$")
 
+# Git branch/ref names: letters, digits, '.', '_', '-', '/'; must start with an
+# alphanumeric or '.'/'_' (never '-', which git would parse as an option).
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
+
+
+def validate_git_ref(ref: str) -> str:
+    """Return the trimmed branch/ref if it is a safe git ref name, else raise.
+
+    GitPython passes the branch as an argument (no shell), so this guards against
+    option injection (leading ``-``, ``--upload-pack=…``) and malformed refs rather
+    than shell escapes. Rejects empty, leading-dash, ``..`` range syntax, trailing
+    ``/``, the reserved ``.lock`` suffix, and anything outside the ref charset.
+    """
+    if not isinstance(ref, str):
+        raise ValueError("Branch/ref must be a string")
+    r = ref.strip()
+    if not r:
+        raise ValueError("Branch/ref is required")
+    if r.startswith("-") or ".." in r or r.endswith("/") or r.endswith(".lock"):
+        raise ValueError("Invalid branch/ref name")
+    if not _GIT_REF_RE.match(r):
+        raise ValueError("Branch/ref may contain only letters, digits, '.', '_', '-', '/'")
+    return r
+
 
 def validate_repo_url(repo_url: str) -> str:
     """Return the trimmed URL if it uses a safe git transport, else raise.

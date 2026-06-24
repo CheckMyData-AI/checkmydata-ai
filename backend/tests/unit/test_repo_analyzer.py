@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.knowledge.repo_analyzer import RepoAnalyzer
 
 
@@ -301,3 +303,45 @@ class TestRepoAnalyzer:
             profile=profile,
         )
         assert len(results) == 0
+
+
+class TestCloneOrPullRepoint:
+    """F-KNOW-03: an existing clone must be re-pointed when repo_url changes."""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.analyzer = RepoAnalyzer(clone_base_dir=self.tmpdir)
+
+    def _existing_clone(self, project_id: str) -> None:
+        (Path(self.tmpdir) / project_id / ".git").mkdir(parents=True)
+
+    @patch("app.knowledge.repo_analyzer.Repo")
+    def test_repoint_origin_when_url_changes(self, mock_repo_cls):
+        self._existing_clone("proj-x")
+        repo = MagicMock()
+        repo.remotes.origin.url = "https://github.com/old/repo.git"
+        mock_repo_cls.return_value = repo
+
+        new_url = "https://github.com/new/repo.git"
+        self.analyzer.clone_or_pull(new_url, "proj-x", branch="main")
+
+        repo.remotes.origin.set_url.assert_called_once_with(new_url)
+        repo.remotes.origin.fetch.assert_called_once()
+
+    @patch("app.knowledge.repo_analyzer.Repo")
+    def test_no_repoint_when_url_unchanged(self, mock_repo_cls):
+        self._existing_clone("proj-y")
+        url = "https://github.com/same/repo.git"
+        repo = MagicMock()
+        repo.remotes.origin.url = url
+        mock_repo_cls.return_value = repo
+
+        self.analyzer.clone_or_pull(url, "proj-y", branch="main")
+        repo.remotes.origin.set_url.assert_not_called()
+
+    def test_invalid_branch_rejected(self):
+        self._existing_clone("proj-z")
+        with pytest.raises(ValueError):
+            self.analyzer.clone_or_pull(
+                "https://github.com/acme/repo.git", "proj-z", branch="--upload-pack=evil"
+            )
