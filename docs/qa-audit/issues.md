@@ -8,7 +8,7 @@ git (see "Already fixed" below). This document tracks only what is **still open*
 
 ## Already fixed (not tracked here — for reference)
 
-**24 findings closed and verified** (backend 4420 tests / 74.57% coverage; frontend 472 tests),
+**31 findings closed and verified** (backend 4458 tests / 74.62% coverage; frontend 472 tests),
 in branch `fix/security-audit-2026-06-24` → PR
 [#172](https://github.com/CheckMyData-AI/checkmydata-ai/pull/172):
 - **Module 01 Auth** F-AUTH-01…12 (commits `a8d3b2a`, `f35ac10`, `03dad44`, `ed54b48`, `2475114`, `1343fc3`).
@@ -17,6 +17,12 @@ in branch `fix/security-audit-2026-06-24` → PR
   F-CONN-10, F-SCHED-02, F-NOTE-01 (commit `50ce7c8`): per-dialect read-only DB session (PG
   `server_settings`, MySQL `init_command`, ClickHouse `settings.readonly`, Mongo write-stage/JS
   guard) + SafetyGuard statement-initial allow-list + batch/notes call-site guards.
+- **Release R2 — Usage accounting & MCP auth** F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07,
+  F-SQL-06, F-BILL-05 (commit `fda9ce5`): per-request `UsageSink` in `LLMRouter` (observed on every
+  call); `DbUsageSink` persists usage + re-checks budget for **post-call hard-stop**; planner/
+  validator/repair carry the sink; MCP tools build `DbUsageSink`-bound router + acquire
+  `agent_limiter` for parity with chat; explicit JWT preferred over env candidate; startup warning
+  for empty `MCP_ALLOWED_HOSTS`.
 
 This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` baseline + manual
 review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =
@@ -33,12 +39,12 @@ frontend **A** (563 smells, 7 SOLID).
 | Severity | Open |
 |---|---|
 | 🔴 Critical | 0 |
-| 🟠 High | 4 |
-| 🟡 Medium | ~36 |
-| 🟢 Low | ~51 |
+| 🟠 High | 3 |
+| 🟡 Medium | ~33 |
+| 🟢 Low | ~49 |
 | ⚪ Info | ~15 |
 
-*(R1 closed 3 High + 5 Medium. Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
+*(R1+R2 closed 4 High + 8 Medium + 3 Low. Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
 
 **Single highest-leverage fix:** enforce **read-only at the DB session/connector level** (per
 dialect). It closes the largest cluster (F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01, MCP
@@ -54,7 +60,6 @@ database-level backstop.
 | **F-SSH-08** | 🟠 | SSH tunnel cache key omits the credential → **cross-tenant tunnel sharing** (bypasses SSH-key auth). | `connectors/ssh_tunnel.py:212-216` | Include a credential discriminator (key fingerprint hash) in `_key`. |
 | **F-PROJ-01** | 🟠 | Unverified-email registration + email-based auto-accept = invite/access harvesting. | `routes/auth.py`, `services/invite_service.py` | Email verification before invite auto-accept. |
 | **F-RULE-01** | 🟠 | No authz on **global** (`project_id=null`) rule creation → cross-tenant prompt injection. | `routes/rules.py` | Require admin for global rules; gate by membership otherwise. |
-| **F-MCP-01** | 🟠 | MCP agent runs never record token usage → token-budget & billing limits bypassed (live in prod). | `mcp_server/tools.py` | Thread a per-request usage sink (shared with F-CHAT-07/F-SQL-06). |
 
 ---
 
@@ -67,8 +72,9 @@ database-level backstop.
 2. **Object-ownership IDOR family** — F-DG-07, F-DG-09, F-GRAPH-01, F-RULE-05: route checks
    URL-project membership but the mutation/load uses a bare resource id. **Fix:** scope every
    resource load/mutation by `project_id`.
-3. **Token-budget / billing under-count** — F-MCP-01, F-CHAT-07, F-SQL-06 (+ session-summary,
-   repairs). **Fix:** a single per-request usage sink threaded through `LLMRouter`.
+3. ~~**Token-budget / billing under-count** — F-MCP-01, F-CHAT-07, F-SQL-06.~~ **CLOSED by R2
+   (`fda9ce5`)**: per-request `UsageSink` threaded through `LLMRouter`; `DbUsageSink` records every
+   call + post-call budget hard-stop (also closes F-BILL-05). MCP path gets full parity with chat.
 4. **Credential leakage in errors** — F-CONN-08 returns `str(e)` (DSN/password) in the API response
    and logs; the Sentry scrubber only covers Sentry egress. **Fix:** scrub at the
    `connection_service` error site.
@@ -144,7 +150,6 @@ database-level backstop.
 | F-CHAT-04 | 🟢 | WS uses connection config captured once; stale after mid-session edits |
 | F-CHAT-05 | ⚪ | ~51 silent exception handlers mask errors (cross-cutting) |
 | F-CHAT-06 | 🟢 | WS `receive_json` no explicit payload cap (mitigated: 20K model cap; uvicorn 16MB frame) |
-| F-CHAT-07 | 🟡 | AdaptivePlanner & AnswerValidator LLM calls never counted → budget under-count |
 | F-CHAT-08 | 🟢 | `fatal` parallel stage doesn't cancel in-flight siblings |
 
 ### 06 — SQL Agent & Query Execution
@@ -154,7 +159,6 @@ database-level backstop.
 | F-SQL-02 | 🟡 | `row_count` returned-vs-total ambiguity → inaccurate counts |
 | F-SQL-03 | 🟡 | Multiplicative retry blow-up (replans × iterations × repairs) |
 | F-SQL-05 | 🟢 | `_try_repair` no-op `error_classify` tracker span |
-| F-SQL-06 | 🟡 | Repair LLM calls entirely uncounted → biggest budget under-count |
 | F-SQL-07 | 🟢 | EXPLAIN validation asymmetric across dialects |
 
 ### 07 — Knowledge & Indexing
@@ -234,19 +238,13 @@ database-level backstop.
 | F-BILL-02 | 🟡 | Connection/project quota check count-then-compare → TOCTOU bypass |
 | F-BILL-07 | 🟡 | `demo_setup` bypasses quota gate (route-level, not service-level) |
 | F-BILL-01 | 🟡 | `_resolve_plan_id` trusts stale `metadata.plan_id` over live price |
-| F-BILL-05 | 🟡 | Token-budget gate pre-flight only → one request overshoots budget |
 | F-BILL-03 | 🟢 | `/webhook` no rate limit / body cap |
 | F-BILL-06 | 🟢 | Budget windows UTC-based, not per-user timezone |
 | F-BILL-08 | 🟢 | No `charge.dispute.*`/`charge.refunded` handler → chargeback ≠ revoke |
 | F-BILL-04 | ⚪ | Ledger payload truncated at 64KB |
 
 ### 15 — MCP Server
-| ID | Sev | Issue |
-|---|---|---|
-| F-MCP-01 | 🟠 | MCP runs never record token usage → budget/billing bypass (live in prod) |
-| F-MCP-02 | 🟡 | MCP tools don't acquire `agent_limiter` → concurrency cap bypassed |
-| F-MCP-03 | 🟢 | Env server-key tried before JWT if misconfigured to a `cmd_mcp_` value |
-| F-MCP-04 | 🟢 | `MCP_ALLOWED_HOSTS` DNS-rebinding validation is opt-in |
+*All R2 findings closed (`fda9ce5`). Module currently has no open issues.*
 
 ### 16 — Notifications, Notes & Feed
 | ID | Sev | Issue |
@@ -363,8 +361,8 @@ its bug IDs; every open finding is assigned to exactly one release.
 | Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
 |---|---|---|---|---|---|
 | ~~**R1**~~ | DB-level read-only enforcement | ✅ DONE | F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03, F-CONN-10, F-SCHED-02, F-NOTE-01 | `core/safety.py`, `connectors/*`, `services/batch_service.py`, `routes/notes.py` | Closed by commit `50ce7c8` — per-dialect DB-session read-only + statement-initial allow-list + batch/notes call-site guards. **All 8 bugs closed.** |
-| ▶ **R2** | Usage accounting & MCP auth | 🟠 | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Single per-request usage sink threaded through `LLMRouter` closes every budget under-count; bundle MCP auth/concurrency hardening (same surface). |
-| **R3** | Cross-tenant isolation & IDOR | 🟠 | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping." One ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. |
+| ~~**R2**~~ | Usage accounting & MCP auth | ✅ DONE | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Closed by commit `fda9ce5` — per-request `UsageSink` in `LLMRouter` + `DbUsageSink` post-call recording & budget hard-stop + MCP parity with chat (limiter + sink) + JWT precedence + DNS-rebinding startup warning. **All 7 bugs closed.** |
+| ▶ **R3** | Cross-tenant isolation & IDOR | 🟠 | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping." One ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. |
 
 #### Wave B — security / correctness (Medium)
 
@@ -388,5 +386,5 @@ its bug IDs; every open finding is assigned to exactly one release.
 | **R14** | Frontend polish, notes & tech-debt | 🟢 | F-FE-03, F-FE-04, F-NOTE-02, F-NOTE-03, CB-M4, CB-L1 | `frontend/src/*`, `routes/notes.py`, god-file decomposition | a11y/design-token sweep, JSON-LD assertion, note pool reuse/staleness, god-file decomposition (CB-M4), suppression-debt cleanup (CB-L1). |
 
 **Coverage check:** R1–R14 partition all open findings (Modules 01–19 + codebase-wide CB-*).
-**R1 done** (`50ce7c8`); the 4 remaining open High items land in R2 (F-MCP-01), R3 (F-RULE-01,
-F-SSH-08) and R4 (F-PROJ-01); after R2 + R3 + R4 there are **0 open High**.
+**R1 done** (`50ce7c8`), **R2 done** (`fda9ce5`); the 3 remaining open High items land in R3
+(F-RULE-01, F-SSH-08) and R4 (F-PROJ-01); after R3 + R4 there are **0 open High**.
