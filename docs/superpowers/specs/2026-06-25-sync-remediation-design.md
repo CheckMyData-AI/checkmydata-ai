@@ -9,6 +9,8 @@
 
 > **Status legend used below:** every contract here is *locked* — types, signatures, file layout, flag names/defaults, migration shapes. The implementation plan (`docs/superpowers/plans/2026-06-25-sync-remediation.md`) turns each into TDD tasks with exact code. A zero-context implementer must not invent names; use the ones fixed here.
 
+> **⚠️ BINDING CORRECTIONS (post-validation, 2026-06-25):** an adversarial validation cycle confirmed all 22 findings' business logic is correct but produced corrections C1–C7 that **OVERRIDE the prose below where they conflict** — see the **Validation Log & Applied Corrections** section at the end of the plan. Most load-bearing: **C1** (owner-less project → budget *unenforced*, not blocked — §5.10 below is patched), **C2** (`omit_samples` is a threaded param, not an instance attr — §5.5d), **C4** (M3 emit needs the parent `workflow_id`; the `_hb` heartbeat must use a targeted UPDATE to avoid `version` lost-update — §5.7), **C5** (validate the ORM partial-index form before locking — §5.8), **C6** (index required-filters under the bare suffix too, for schema-qualified names — §5.9/SQL agent).
+
 ---
 
 ## 1. Goals & non-goals
@@ -395,7 +397,10 @@ async def preflight_owner_budget(
     session: AsyncSession, project_id: str
 ) -> tuple[bool, str | None, str | None]:
     """(_enabled-aware) Return (ok, reason, owner_user_id).
-    - owner missing → (False, "project owner not found", None)
+    - owner missing (Project.owner_id NULL — legacy/owner-deleted) → (True, None, None)  # C1:
+      budget UNENFORCED (log WARNING; caller uses default LLMRouter/NullUsageSink).
+      Blocking here would freeze every sync for owner-less projects (graceful-degradation
+      violation), so we degrade, never block.
     - check_token_budget(owner) returns a message → (False, message, owner_id)
     - else → (True, None, owner_id)
     When settings.sync_budget_enforcement_enabled is False → always (True, None, owner_id)."""
