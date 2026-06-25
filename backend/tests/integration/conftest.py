@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.models import (  # noqa: F401
     agent_learning,
@@ -61,7 +62,20 @@ def event_loop():
 async def engine():
     from app.models.base import enable_sqlite_fk
 
-    eng = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    # A bare ``sqlite+aiosqlite:///:memory:`` engine gives every pooled
+    # connection its OWN empty in-memory database. ``Base.metadata.create_all``
+    # below runs on one connection, so as soon as the pool opens a second
+    # connection (concurrent sessions, e.g. the request-scoped session plus a
+    # service opening its own) that connection sees an empty DB and every
+    # subsequent test errors at setup with ``no such table: users``. StaticPool
+    # keeps a single shared connection for the whole session-scoped engine, so
+    # all sessions hit the same in-memory DB with the schema present.
+    eng = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
     enable_sqlite_fk(eng)  # F-AUTH-01: cascade tests must exercise real FK enforcement
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
