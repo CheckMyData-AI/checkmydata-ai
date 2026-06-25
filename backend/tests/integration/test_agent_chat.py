@@ -222,6 +222,53 @@ class TestAskEndpointAgent:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
+    async def test_ask_checkpoint_returns_viz_config_pipeline_run_id(
+        self, mock_agent, auth_client, project_id, connection_id
+    ):
+        """A stage_checkpoint response must surface ``viz_config.pipeline_run_id``.
+
+        The frontend reads ``result.viz_config.pipeline_run_id`` to enable the
+        checkpoint "Continue / Modify / Retry" buttons (``sendPipelineAction``
+        early-returns without it). If the route drops ``viz_config`` the buttons
+        render but silently no-op.
+        """
+        from app.connectors.base import QueryResult
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(
+                answer="Found 16 rows. Does this look correct?",
+                query="SELECT data_type, payment_type, COUNT(*) FROM t GROUP BY 1, 2",
+                results=QueryResult(
+                    columns=["data_type", "payment_type", "rows_cnt"],
+                    rows=[["Virtual numbers", "apple", 63761]],
+                    row_count=16,
+                    execution_time_ms=12.0,
+                ),
+                viz_type="table",
+                viz_config={"pipeline_run_id": "run-abc-123", "stage_id": "stage-1"},
+                response_type="stage_checkpoint",
+                workflow_id="wf-checkpoint",
+            )
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask",
+            json={
+                "project_id": project_id,
+                "connection_id": connection_id,
+                "message": "Inspect the cohort table",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["response_type"] == "stage_checkpoint"
+        assert data.get("viz_config") is not None
+        assert data["viz_config"]["pipeline_run_id"] == "run-abc-123"
+        assert data["viz_config"]["stage_id"] == "stage-1"
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
     async def test_ask_creates_session(self, mock_agent, auth_client, project_id):
         from app.core.agent import AgentResponse
 

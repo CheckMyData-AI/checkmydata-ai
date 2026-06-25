@@ -113,6 +113,10 @@ export interface ChatResponse {
   query: string | null;
   query_explanation: string | null;
   visualization: Record<string, unknown> | null;
+  // Raw agent viz config; for stage_checkpoint / stage_failed responses it
+  // carries `pipeline_run_id` (+ `stage_id`) needed to resume the paused
+  // pipeline from the checkpoint card buttons.
+  viz_config?: Record<string, unknown> | null;
   error: string | null;
   workflow_id: string | null;
   staleness_warning: string | null;
