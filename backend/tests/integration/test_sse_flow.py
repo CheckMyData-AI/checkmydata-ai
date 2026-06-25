@@ -135,6 +135,46 @@ class TestSSEFlow:
         assert result_event["data"]["session_id"]
 
     @patch("app.core.agent.ConversationalAgent.run")
+    async def test_sse_checkpoint_result_carries_pipeline_run_id(self, mock_run, auth_client):
+        """The SSE `result` event for a stage_checkpoint must include
+        `viz_config.pipeline_run_id`.
+
+        This is the path the chat UI actually uses. Without it, the frontend
+        never learns the pipeline_run_id, so the checkpoint card's
+        "Continue / Modify / Retry" buttons render but silently no-op
+        (sendPipelineAction early-returns when pipelineRunId is undefined).
+        """
+        from app.agents.orchestrator import AgentResponse
+        from app.connectors.base import QueryResult
+
+        pid = await self._create_project(auth_client)
+        mock_run.return_value = AgentResponse(
+            answer="Found 16 rows. Does this look correct?",
+            workflow_id="wf-cp-1",
+            response_type="stage_checkpoint",
+            viz_type="table",
+            viz_config={"pipeline_run_id": "run-sse-9", "stage_id": "stage-1"},
+            results=QueryResult(
+                columns=["data_type", "payment_type", "rows_cnt"],
+                rows=[["Virtual numbers", "apple", 63761]],
+                row_count=16,
+                execution_time_ms=12.0,
+            ),
+        )
+
+        resp = await auth_client.post(
+            "/api/chat/ask/stream",
+            json={"project_id": pid, "message": "Inspect the cohort table"},
+        )
+        assert resp.status_code == 200
+
+        events = _parse_sse(resp.text)
+        result_event = next(e for e in events if e["event"] == "result")
+        assert result_event["data"]["response_type"] == "stage_checkpoint"
+        assert result_event["data"]["viz_config"] is not None
+        assert result_event["data"]["viz_config"]["pipeline_run_id"] == "run-sse-9"
+
+    @patch("app.core.agent.ConversationalAgent.run")
     async def test_sse_releases_session_lock_on_normal_completion(self, mock_run, auth_client):
         """Regression: after a normal stream completes, the per-session
         processing lock must be released so the session can be reused.

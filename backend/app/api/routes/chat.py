@@ -127,6 +127,11 @@ class ChatResponse(BaseModel):
     query: str | None = None
     query_explanation: str | None = None
     visualization: dict | None = None
+    # Raw agent viz config (chart spec + pipeline metadata). Carries
+    # ``pipeline_run_id`` / ``stage_id`` for stage_checkpoint / stage_failed
+    # responses so the frontend can resume the paused pipeline (the checkpoint
+    # "Continue / Modify / Retry" buttons no-op without it).
+    viz_config: dict | None = None
     raw_result: dict | None = None
     error: str | None = None
     workflow_id: str | None = None
@@ -469,6 +474,7 @@ async def ask(
             query=result.query or None,
             query_explanation=result.query_explanation or None,
             visualization=viz_data,
+            viz_config=result.viz_config or None,
             raw_result=raw_result,
             error=result.error,
             workflow_id=result.workflow_id,
@@ -1205,6 +1211,7 @@ async def ask_stream(
                 "query": result.query,
                 "query_explanation": result.query_explanation,
                 "visualization": viz_data,
+                "viz_config": result.viz_config or None,
                 "raw_result": raw_result,
                 "error": result.error,
                 "workflow_id": result.workflow_id,
@@ -1685,6 +1692,7 @@ async def chat_websocket(
                         "query": result.query,
                         "query_explanation": result.query_explanation,
                         "visualization": viz_data,
+                        "viz_config": result.viz_config or None,
                         "raw_result": ws_raw_result,
                         "error": result.error,
                         "workflow_id": result.workflow_id,

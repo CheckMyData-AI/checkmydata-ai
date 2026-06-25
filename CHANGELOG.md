@@ -60,6 +60,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Pipeline checkpoint "Continue / Modify / Retry" buttons were dead.** When a
+  multi-stage pipeline paused at a checkpoint (`stage_checkpoint` / `stage_failed`),
+  the agent's `viz_config` — which carries `pipeline_run_id` (+ `stage_id`) — was
+  built by the backend but **never serialized** into any client-facing response
+  (REST `/api/chat/ask`, SSE `/api/chat/ask/stream` `result` event, or the
+  WebSocket `response` payload all dropped it). The checkpoint card still rendered
+  (its visibility is driven by the separate streaming `checkpoint` event), so the
+  buttons appeared, but the frontend never learned `pipeline_run_id`; its resume
+  handler (`sendPipelineAction`) guards `if (!pipelineRunId) return`, so every
+  click silently no-op'd and the pipeline could not be resumed. Added the
+  `viz_config` field to `ChatResponse` and to all three response paths (and the
+  matching frontend `ChatResponse` type). New regression tests cover both the
+  REST and SSE checkpoint paths.
+
 - Pinned `mcp` to exactly `==1.27.2` (was `>=1.2.0`) for CI reproducibility,
   matching the ruff/mypy pinning convention.
 
