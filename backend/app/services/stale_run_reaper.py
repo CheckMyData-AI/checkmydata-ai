@@ -88,6 +88,10 @@ class StaleRunReaper:
             "repo": max(0, int(repo_res.rowcount or 0)),
             "runs": runs_count,
         }
+        unknown = any(
+            (r.rowcount is not None and r.rowcount < 0)
+            for r in (db_res, sync_res, repo_res, runs_failed, runs_cancelled)
+        )
         if any(out.values()):
             logger.info(
                 "Reaper: reset stale runs — db_index=%d sync=%d repo=%d runs=%d (timeout=%ds)",
@@ -95,6 +99,11 @@ class StaleRunReaper:
                 out["sync"],
                 out["repo"],
                 out["runs"],
+                timeout_seconds,
+            )
+        elif unknown:
+            logger.info(
+                "Reaper: swept stale runs (rowcount unknown on this driver, timeout=%ds)",
                 timeout_seconds,
             )
         return out

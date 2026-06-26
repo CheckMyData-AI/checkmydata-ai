@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select, update
 
@@ -263,6 +263,17 @@ class CodeDbSyncService:
     # Runtime enrichment (from investigation feedback loop)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _safe_load_dict(raw) -> dict:
+        """Safely load a JSON string as a dict; return {} on error."""
+        if not raw:
+            return {}
+        try:
+            v = json.loads(raw)
+            return v if isinstance(v, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
     async def add_runtime_enrichment(
         self,
         session: AsyncSession,
@@ -280,28 +291,31 @@ class CodeDbSyncService:
         if not entry:
             return None
 
-        mergeable_json_fields = {"required_filters_json", "column_value_mappings_json"}
         appendable_text_fields = {"query_recommendations", "conversion_warnings"}
 
-        if field in mergeable_json_fields:
-            existing_json: dict[str, Any] = {}
-            current_val = getattr(entry, field, None)
-            if current_val:
-                try:
-                    existing_json = json.loads(current_val)
-                except (json.JSONDecodeError, TypeError):
-                    existing_json = {}
-            try:
-                new_data = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                new_data = {}
-            if isinstance(existing_json, dict) and isinstance(new_data, dict):
-                existing_json.update(new_data)
+        if field == "required_filters_json":
+            existing_json = self._safe_load_dict(getattr(entry, field, None))
+            new_data = self._safe_load_dict(value)
+            meta_keys = {"source", "filter", "_meta"}
+            for col, cond in new_data.items():
+                if col in meta_keys or not isinstance(cond, str):
+                    continue  # only {column: condition_string} pairs are valid filters
+                existing_json[col] = cond
+            setattr(entry, field, json.dumps(existing_json))
+        elif field == "column_value_mappings_json":
+            existing_json = self._safe_load_dict(getattr(entry, field, None))
+            new_data = self._safe_load_dict(value)
+            for col, mapping in new_data.items():
+                if isinstance(mapping, dict) and isinstance(existing_json.get(col), dict):
+                    existing_json[col].update(mapping)  # deep-merge per column
+                else:
+                    existing_json[col] = mapping
             setattr(entry, field, json.dumps(existing_json))
         elif field in appendable_text_fields:
-            existing: str = getattr(entry, field, "") or ""
-            if value not in existing:
-                setattr(entry, field, f"{existing}\n{value}".strip())
+            existing_lines = [ln.strip() for ln in (getattr(entry, field, "") or "").split("\n")]
+            if value.strip() not in existing_lines:
+                combined = f"{getattr(entry, field, '') or ''}\n{value}".strip()
+                setattr(entry, field, combined[-8000:])  # cap growth (keep newest)
         else:
             return None
 
@@ -329,7 +343,8 @@ class CodeDbSyncService:
 
         parts: list[str] = []
 
-        if summary and summary.synced_at:
+        status = getattr(summary, "sync_status", None) if summary else None
+        if summary and summary.synced_at and status in ("completed", "stale"):
             parts.append(
                 f"## Code-DB Sync (analyzed {summary.synced_at.strftime('%Y-%m-%d %H:%M')})\n"
             )

@@ -14,8 +14,9 @@ class DbIndex(Base):
     __table_args__ = (
         UniqueConstraint(
             "connection_id",
+            "table_schema",
             "table_name",
-            name="uq_db_index_conn_table",
+            name="uq_db_index_conn_schema_table",
         ),
     )
 

@@ -168,6 +168,18 @@ class Settings(BaseSettings):
     # Database index settings
     db_index_ttl_hours: int = 24
     db_index_batch_size: int = 5
+
+    # --- R5 sync remediation -------------------------------------------------
+    # H6: scrub PII / secrets from DB samples + distinct values before LLM egress.
+    sync_pii_scrubbing_enabled: bool = True
+    # H4: per-table analyses below this confidence never enforce hard SQL filters.
+    sync_min_confidence_to_enforce_filters: int = 2
+    # H4: if the fraction of non-fallback analyses is below this, keep prior rows
+    # instead of overwriting with a degraded run. 0.0 disables the guard.
+    sync_min_success_ratio_to_persist: float = 0.5
+    # H5: gate sync LLM spend on the project owner's token budget.
+    sync_budget_enforcement_enabled: bool = True
+
     auto_index_db_on_test: bool = False
     # R2-3: reuse prior LLM table analysis for tables whose schema signature
     # is unchanged since the last successful index, instead of re-LLM-ing every

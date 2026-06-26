@@ -258,6 +258,8 @@ class TestBuildCodeContext:
         assert "create_order" in result
         assert "list_orders" in result
         assert "process_order" in result
-        # Confidence + depth surfaced.
-        assert "depth=1" in result
-        assert "depth=2" in result
+        # M7 format: op_kind + heuristic label; no fabricated depth= field.
+        assert "write" in result
+        assert "heuristic" in result
+        assert "conf=0.90" in result
+        assert "depth=" not in result

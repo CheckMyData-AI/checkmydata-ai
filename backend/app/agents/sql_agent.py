@@ -1504,6 +1504,7 @@ class SQLAgent(BaseAgent):
         try:
             import json as json_mod
 
+            from app.config import settings
             from app.models.base import async_session_factory
             from app.services.code_db_sync_service import CodeDbSyncService
 
@@ -1511,10 +1512,14 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 entries = await svc.get_sync(session, connection_id)
 
+            min_conf: int = settings.sync_min_confidence_to_enforce_filters
             filters_lines: list[str] = []
             mappings_lines: list[str] = []
 
             for e in entries:
+                # H4: skip low-confidence entries — omit from prompt guidance too
+                if (getattr(e, "confidence_score", 0) or 0) < min_conf:
+                    continue
                 rf = getattr(e, "required_filters_json", "{}") or "{}"
                 try:
                     filters = json_mod.loads(rf)
@@ -1547,16 +1552,21 @@ class SQLAgent(BaseAgent):
         try:
             import json as json_mod
 
+            from app.config import settings
             from app.core.required_filter_guard import merge_required_filters
             from app.models.base import async_session_factory
             from app.services.code_db_sync_service import CodeDbSyncService
             from app.services.db_index_service import DbIndexService
 
+            min_conf: int = settings.sync_min_confidence_to_enforce_filters
             sync_filters: dict[str, dict[str, str]] = {}
             sync_svc = CodeDbSyncService()
             async with async_session_factory() as session:
                 entries = await sync_svc.get_sync(session, cfg.connection_id)
             for sync_entry in entries:
+                # H4: skip low-confidence / fallback rows — do not enforce their filters
+                if (getattr(sync_entry, "confidence_score", 0) or 0) < min_conf:
+                    continue
                 raw = getattr(sync_entry, "required_filters_json", "{}") or "{}"
                 try:
                     parsed = json_mod.loads(raw)
@@ -1564,6 +1574,11 @@ class SQLAgent(BaseAgent):
                     parsed = {}
                 if parsed and isinstance(parsed, dict):
                     sync_filters[sync_entry.table_name] = parsed
+                    # C6: also index under bare suffix when table_name is schema-qualified
+                    # (e.g. "analytics.orders" → also register under "orders")
+                    bare = sync_entry.table_name.split(".")[-1]
+                    if bare != sync_entry.table_name:
+                        sync_filters.setdefault(bare, {}).update(parsed)
 
             index_hints: dict[str, str] = {}
             idx_svc = DbIndexService()

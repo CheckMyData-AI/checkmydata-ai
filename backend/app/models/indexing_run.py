@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -74,6 +75,21 @@ class IndexingRun(Base):
         Index("ix_indexing_runs_workflow", "workflow_id", unique=True),
         Index("ix_indexing_runs_history", "project_id", "kind", "created_at"),
         Index("ix_indexing_runs_active", "project_id", "kind", "status"),
+        # Partial unique index: at most one active run per (project, kind, connection).
+        # Matches the production migration `a1f2b3c4d5e6` (uq_indexing_runs_active_one).
+        # Using coalesce so NULL connection_id rows are also mutually exclusive.
+        # Verified: SQLAlchemy create_all emits this correctly for both SQLite and
+        # PostgreSQL; the sqlite_where clause keeps it a partial index covering only
+        # active statuses so historical completed/failed rows are unconstrained.
+        Index(
+            "uq_indexing_runs_active_one",
+            "project_id",
+            "kind",
+            text("coalesce(connection_id, '')"),
+            unique=True,
+            sqlite_where=text("status IN ('queued','running','cancelling')"),
+            postgresql_where=text("status IN ('queued','running','cancelling')"),
+        ),
     )
 
 

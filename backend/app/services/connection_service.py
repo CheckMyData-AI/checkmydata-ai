@@ -29,6 +29,7 @@ _UPDATABLE_FIELDS = {
     "db_name",
     "db_user",
     "is_read_only",
+    "send_sample_data_to_llm",
     "ssh_exec_mode",
     "ssh_command_template",
     "ssh_pre_commands",
@@ -475,5 +476,6 @@ class ConnectionService:
             ssh_command_template=conn.ssh_command_template,
             ssh_pre_commands=pre_commands,
             is_read_only=conn.is_read_only,
+            send_sample_data_to_llm=getattr(conn, "send_sample_data_to_llm", True),
             extra=extra,
         )

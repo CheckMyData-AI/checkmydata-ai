@@ -123,12 +123,27 @@ class TestFallbackAnalysis:
 
 class TestBuildTablePrompt:
     def test_basic_prompt(self):
-        table = _make_table()
-        sample = _make_sample_data()
+        # Use non-PII sample data so pii_scrubber (called internally with scrub=True)
+        # does not replace values, keeping assertions stable.
+        from app.connectors.base import ColumnInfo
+
+        table = _make_table(
+            columns=[
+                ColumnInfo(name="id", data_type="integer", is_primary_key=True, is_nullable=False),
+                ColumnInfo(name="username", data_type="varchar(50)", is_nullable=False),
+                ColumnInfo(name="status", data_type="varchar(20)", is_nullable=True),
+            ]
+        )
+        sample = QueryResult(
+            columns=["id", "username", "status"],
+            rows=[[1, "alice", "active"], [2, "bob", "inactive"]],
+            row_count=2,
+        )
         prompt = DbIndexValidator._build_table_prompt(table, sample, "", "")
         assert "## Table: users" in prompt
         assert "id: integer" in prompt
-        assert "alice@example.com" in prompt
+        assert "alice" in prompt
+        assert "username" in prompt
 
     def test_with_code_context(self):
         table = _make_table()

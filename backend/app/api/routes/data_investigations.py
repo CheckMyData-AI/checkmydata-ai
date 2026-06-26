@@ -334,8 +334,8 @@ async def _enrich_sync_from_investigation(
                 db,
                 connection_id=inv.connection_id,
                 table_name=table,
-                field="required_filters_json",
-                value=json.dumps({"source": "investigation", "filter": inv.root_cause}),
+                field="query_recommendations",
+                value=f"[from investigation] {inv.root_cause}",
             )
         elif inv.root_cause_category == "column_format":
             await sync_svc.add_runtime_enrichment(

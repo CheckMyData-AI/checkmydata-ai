@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -603,11 +603,16 @@ async def _periodic_learning_decay() -> None:
 async def _freshness_reconcile() -> None:
     """Phase 2 FreshnessReconciler: auto re-index stale knowledge.
 
-    For each project + first connection, evaluate :class:`KnowledgeFreshness`
+    For each project + ALL connections, evaluate :class:`KnowledgeFreshness`
     and dispatch the matching background job (DB re-index / resync) when stale.
     Repo (git) staleness is handled by the dedicated git-poll loop; when that
     loop is disabled this also runs an inline repo fetch+reindex so a single flag
     still closes the loop. Gated by ``settings.freshness_reconciler_enabled``.
+
+    Anti retry-storm: a connection whose ``sync_failed`` flag is set is attempted
+    at most once per reconcile pass (tracked in a local set keyed by
+    ``(project_id, connection_id)``).  Ordinary stale (non-failed) connections
+    are not subject to this restriction.
     """
     if not settings.freshness_reconciler_enabled:
         return
@@ -628,26 +633,37 @@ async def _freshness_reconcile() -> None:
         fresh_svc = KnowledgeFreshnessService()
         triggered = 0
 
+        # One-shot guard: (project_id, connection_id) keys that have already been
+        # submitted for a failed-sync retry in this reconcile pass.
+        failed_sync_retried: set[tuple[str, str]] = set()
+
         async with async_session_factory() as session:
             projects = await proj_svc.list_all(session)
             for project in projects:
                 connections = await conn_svc.list_by_project(session, project.id)
-                conn_id = connections[0].id if connections else None
                 repo_dir = Path(settings.repo_clone_base_dir) / project.id
-                fresh = await fresh_svc.evaluate(
-                    session,
-                    project_id=project.id,
-                    connection_id=conn_id,
-                    repo_clone_dir=repo_dir if repo_dir.exists() else None,
-                )
-                if not fresh.overall_stale:
-                    continue
-                if conn_id and fresh.db_index_stale:
-                    if await maybe_autostart_db_index(conn_id, project.id):
-                        triggered += 1
-                if conn_id and fresh.sync_stale:
-                    if await maybe_autostart_sync(conn_id, project.id):
-                        triggered += 1
+
+                for conn in connections:
+                    fresh = await fresh_svc.evaluate(
+                        session,
+                        project_id=project.id,
+                        connection_id=conn.id,
+                        repo_clone_dir=repo_dir if repo_dir.exists() else None,
+                    )
+                    if not fresh.overall_stale:
+                        continue
+                    if fresh.db_index_stale:
+                        if await maybe_autostart_db_index(conn.id, project.id):
+                            triggered += 1
+                    if fresh.sync_stale:
+                        if fresh.sync_failed:
+                            # One-shot guard: skip if already retried this pass.
+                            guard_key = (project.id, conn.id)
+                            if guard_key in failed_sync_retried:
+                                continue
+                            failed_sync_retried.add(guard_key)
+                        if await maybe_autostart_sync(conn.id, project.id):
+                            triggered += 1
 
         # Avoid double-triggering repo re-index when the dedicated poll loop runs.
         if not settings.git_poll_enabled:
@@ -690,25 +706,35 @@ async def _git_poll_loop() -> None:
 
 
 async def _dispatch_daily_knowledge_sync_wave() -> None:
-    """Enqueue one daily knowledge sync job per eligible project.
+    """Enqueue one daily knowledge sync job per eligible project whose effective hour matches now.
 
-    A Redis advisory lock (keyed by ``run_date``) ensures exactly one web dyno
-    dispatches the wave per calendar day; other dynos skip silently.
+    A Redis advisory lock keyed by ``run_date:current_hour`` ensures exactly one web dyno
+    dispatches the wave per calendar-day/hour combination; other dynos skip silently.
+    The per-project task_id is day-scoped (``daily_sync:{project_id}:{run_date}``) so a
+    project cannot be double-dispatched within the same calendar day even if the lock is
+    somehow acquired twice in different hours.
     """
     from zoneinfo import ZoneInfo
 
     from app.core import task_queue
     from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+    from app.services.sync_schedule_service import SyncScheduleService
 
     tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-    run_date = datetime.now(tz).strftime("%Y-%m-%d")
+    now = datetime.now(tz)
+    run_date = now.strftime("%Y-%m-%d")
+    current_hour = now.hour
 
-    async with redis_lock(f"cron:daily_sync:{run_date}", ttl_seconds=3600) as acquired:
+    # Hour-scoped single-flight lock: each hour's wave is independent.
+    async with redis_lock(
+        f"cron:daily_sync:{run_date}:{current_hour}", ttl_seconds=3600
+    ) as acquired:
         if not acquired:
             logger.info("Cron: daily knowledge sync wave skipped (lock held by another dyno)")
             return
 
         svc = DailyKnowledgeSyncService()
+        schedule_svc = SyncScheduleService()
         dispatched = 0
         skipped = 0
 
@@ -717,9 +743,18 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                 all_projects = await svc._project_svc.list_all(session)
                 eligible = await svc.list_eligible_projects(session)
 
-            skipped = len(all_projects) - len(eligible)
+                hour_filtered: list = []
+                for project in eligible:
+                    eff = await schedule_svc.effective(session, project.id)
+                    if eff["hour"] == current_hour:
+                        hour_filtered.append(project)
+                    else:
+                        skipped += 1
 
-            for project in eligible:
+            skipped += len(all_projects) - len(eligible)
+
+            for project in hour_filtered:
+                # Day-scoped task_id: prevents double-dispatch within a calendar day.
                 task_id = f"daily_sync:{project.id}:{run_date}"
                 pid = project.id
 
@@ -740,37 +775,40 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                 dispatched += 1
 
             logger.info(
-                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d",
+                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d hour=%d",
                 dispatched,
                 skipped,
+                current_hour,
             )
         except Exception:
             logger.exception("Cron: daily knowledge sync wave dispatch failed")
 
 
 async def _daily_knowledge_sync_cron_loop() -> None:
-    """Run daily knowledge sync at the configured hour in Europe/Berlin (default 00:00 CET/CEST)."""
+    """Fire the sync wave once per hour so per-project schedule hours are honored.
+
+    The loop wakes at the top of each hour (wall-clock aligned) and calls
+    :func:`_dispatch_daily_knowledge_sync_wave`, which filters eligible projects
+    whose effective schedule hour equals the current local hour.
+
+    ``compute_next_scheduled_run`` is still available for the ``/sync-schedule``
+    display endpoint in ``projects.py`` — do not remove it from the codebase.
+    """
     if not settings.daily_knowledge_sync_enabled:
         return
 
     from zoneinfo import ZoneInfo
 
-    from app.services.daily_knowledge_sync_service import compute_next_scheduled_run
-
     while True:
         try:
-            tz_name = settings.daily_knowledge_sync_timezone
-            tz = ZoneInfo(tz_name)
-            next_run = compute_next_scheduled_run(
-                datetime.now(tz),
-                hour=settings.daily_knowledge_sync_hour,
-                timezone_name=tz_name,
-            )
-            wait_seconds = (next_run - datetime.now(tz)).total_seconds()
+            tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
+            now = datetime.now(tz)
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            wait_seconds = max(1.0, (next_hour - now).total_seconds())
             logger.info(
-                "Cron: next daily knowledge sync in %.0f seconds (at %s)",
+                "Cron: next daily knowledge sync wave in %.0f seconds (at %s)",
                 wait_seconds,
-                next_run.isoformat(),
+                next_hour.isoformat(),
             )
             await asyncio.sleep(wait_seconds)
             await _dispatch_daily_knowledge_sync_wave()

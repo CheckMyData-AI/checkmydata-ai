@@ -148,7 +148,7 @@ async def run_code_db_sync(  # noqa: ARG001
             )
         else:
             tables = result.get("total_tables") if isinstance(result, dict) else None
-            matched = result.get("synced_tables") if isinstance(result, dict) else None
+            matched = result.get("synced") if isinstance(result, dict) else None
             logger.info(
                 "run_code_db_sync completed: connection=%s tables=%s matched=%s",
                 connection_id[:8],

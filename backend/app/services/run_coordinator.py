@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -165,7 +166,16 @@ class RunCoordinator:
             meta_json=json.dumps({"force_full": force_full}),
         )
         db.add(run)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            # TOCTOU race: another process committed a run between our _find_active
+            # pre-check and this commit.  Roll back (required — the session is
+            # poisoned after an IntegrityError and must not be used without it),
+            # then re-query for the winner so we can surface its run_id.
+            await db.rollback()
+            existing = await self._find_active(db, project_id, kind, connection_id)
+            raise RunAlreadyActiveError(existing.id if existing else "unknown") from exc
         await db.refresh(run)
         self._manifests[run.id] = manifest
         RunCoordinator._wf_to_run[run.workflow_id] = run.id

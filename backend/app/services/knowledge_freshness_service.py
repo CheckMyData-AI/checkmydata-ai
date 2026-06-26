@@ -66,6 +66,7 @@ class KnowledgeFreshness:
     db_index_stale: bool = False
     sync_status: str | None = None
     sync_stale: bool = False
+    sync_failed: bool = False
     git_behind_commits: int | None = None
     git_unindexed: bool = False
     # M6: code-graph signal. ``code_graph_symbol_count`` is the canonical
@@ -73,7 +74,7 @@ class KnowledgeFreshness:
     # ``git_behind_commits`` since both come from the same indexer run.
     code_graph_symbol_count: int = 0
     code_graph_stale: bool = False
-    warnings: list[str] = None  # type: ignore[assignment]
+    warnings: list[str] = field(default_factory=list)
     # Structured, actionable mirror of ``warnings`` (Phase 1, additive).
     details: list[FreshnessWarningDetail] = field(default_factory=list)
 
@@ -97,6 +98,7 @@ class KnowledgeFreshness:
             "db_index_stale": self.db_index_stale,
             "sync_status": self.sync_status,
             "sync_stale": self.sync_stale,
+            "sync_failed": self.sync_failed,
             "git_behind_commits": self.git_behind_commits,
             "git_unindexed": self.git_unindexed,
             "code_graph_symbol_count": self.code_graph_symbol_count,
@@ -174,6 +176,7 @@ class KnowledgeFreshnessService:
 
                 sync_svc = CodeDbSyncService()
                 snapshot.sync_status = await sync_svc.get_sync_status(session, connection_id)
+                snapshot.sync_failed = snapshot.sync_status == "failed"
                 if snapshot.sync_status in ("stale", "failed"):
                     snapshot.sync_stale = True
                     _warn(

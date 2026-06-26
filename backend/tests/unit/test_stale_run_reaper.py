@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 import app.models.code_db_sync  # noqa: F401
 import app.models.db_index  # noqa: F401
 import app.models.indexing_checkpoint  # noqa: F401
+import app.models.indexing_run  # noqa: F401
 from app.models.base import Base
 from app.models.code_db_sync import CodeDbSyncSummary
 from app.models.db_index import DbIndexSummary
@@ -79,6 +80,46 @@ async def test_idempotent_second_run_is_noop(db_session):
     await db_session.commit()
     out2 = await r.reap_once(db_session, timeout_seconds=300)
     assert out2["db_index"] == 0
+
+
+async def test_reaper_logs_sweep_when_rowcount_unknown(caplog):
+    """When a driver returns -1 rowcount (unknown), an INFO sweep line is logged.
+
+    This test exercises the real reaper.reap_once() with a fake session
+    that forces all execute() calls to return -1 rowcount.
+    """
+    import logging
+    from unittest.mock import AsyncMock, MagicMock
+
+    caplog.set_level(logging.INFO)
+
+    reaper = StaleRunReaper()
+
+    # Create a fake result object with rowcount = -1
+    class FakeResult:
+        rowcount = -1
+
+    # Create a fake session that returns the fake result on every execute(),
+    # and supports flush() as an async no-op.
+    fake_session = MagicMock()
+    fake_session.execute = AsyncMock(return_value=FakeResult())
+    fake_session.flush = AsyncMock()
+
+    # Call the REAL reaper.reap_once with the fake session.
+    # All five execute() calls will return FakeResult (rowcount=-1),
+    # so out will be all zeros, but unknown=True will trigger the sweep log.
+    out = await reaper.reap_once(fake_session, timeout_seconds=300)
+
+    # Verify all counts are 0 (max(0, -1) = 0).
+    assert out == {"db_index": 0, "sync": 0, "repo": 0, "runs": 0}
+
+    # Assert the "swept stale runs (rowcount unknown...)" log was emitted.
+    logs_found = [r.message for r in caplog.records if r.name == "app.services.stale_run_reaper"]
+    assert any(
+        "swept stale runs (rowcount unknown" in record.message
+        for record in caplog.records
+        if record.name == "app.services.stale_run_reaper"
+    ), f"Expected 'swept stale runs (rowcount unknown...' in logs. Got: {logs_found}"
 
 
 async def _id(session, model, conn):
