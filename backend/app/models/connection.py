@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -57,7 +57,12 @@ class Connection(Base):
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     send_sample_data_to_llm: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default="1", nullable=False
+        # server_default=true() (not "1"): Postgres rejects an integer default on
+        # a boolean column. true() compiles to `true` on PG and `1` on SQLite.
+        Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

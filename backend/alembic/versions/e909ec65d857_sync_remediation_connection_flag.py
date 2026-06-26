@@ -23,7 +23,11 @@ def upgrade() -> None:
             "send_sample_data_to_llm",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("1"),
+            # Cross-dialect boolean default: sa.true() compiles to `true` on
+            # PostgreSQL and `1` on SQLite. A literal sa.text("1") is rejected by
+            # Postgres ("column is of type boolean but default expression is of
+            # type integer") and crashed the v185 web boot.
+            server_default=sa.true(),
         ),
     )
 
