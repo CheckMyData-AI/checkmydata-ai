@@ -12,7 +12,6 @@ from app.models.base import Base
 from app.models.code_db_sync import CodeDbSyncSummary
 from app.models.db_index import DbIndexSummary
 from app.models.indexing_checkpoint import IndexingCheckpoint
-from app.models.indexing_run import IndexingRun
 from app.services.stale_run_reaper import StaleRunReaper
 
 
@@ -83,119 +82,39 @@ async def test_idempotent_second_run_is_noop(db_session):
     assert out2["db_index"] == 0
 
 
-async def test_reaper_logs_sweep_when_rowcount_unknown(caplog, monkeypatch, db_session):
-    """When a driver returns -1 rowcount (unknown), an INFO sweep line is logged."""
-    import logging
+async def test_reaper_logs_sweep_when_rowcount_unknown(caplog):
+    """When a driver returns -1 rowcount (unknown), an INFO sweep line is logged.
 
-    from app.services.stale_run_reaper import StaleRunReaper
+    This test exercises the real reaper.reap_once() with a fake session
+    that forces all execute() calls to return -1 rowcount.
+    """
+    import logging
+    from unittest.mock import AsyncMock, MagicMock
 
     caplog.set_level(logging.INFO)
 
     reaper = StaleRunReaper()
 
-    # Wrap reap_once to simulate -1 rowcounts on all five execute calls
-    async def wrapped_reap_once(session, *, timeout_seconds: int):
-        from sqlalchemy import update
+    # Create a fake result object with rowcount = -1
+    class FakeResult:
+        rowcount = -1
 
-        cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+    # Create a fake session that returns the fake result on every execute(),
+    # and supports flush() as an async no-op.
+    fake_session = MagicMock()
+    fake_session.execute = AsyncMock(return_value=FakeResult())
+    fake_session.flush = AsyncMock()
 
-        # Execute all five updates normally
-        db_res = await session.execute(
-            update(DbIndexSummary)
-            .where(
-                DbIndexSummary.indexing_status == "running",
-                reaper._stale(DbIndexSummary, cutoff),
-            )
-            .values(indexing_status="failed")
-        )
-        sync_res = await session.execute(
-            update(CodeDbSyncSummary)
-            .where(
-                CodeDbSyncSummary.sync_status == "running",
-                reaper._stale(CodeDbSyncSummary, cutoff),
-            )
-            .values(sync_status="failed")
-        )
-        repo_res = await session.execute(
-            update(IndexingCheckpoint)
-            .where(
-                IndexingCheckpoint.status == "running", reaper._stale(IndexingCheckpoint, cutoff)
-            )
-            .values(status="interrupted")
-        )
-        runs_failed = await session.execute(
-            update(IndexingRun)
-            .where(IndexingRun.status == "running", reaper._stale_run(IndexingRun, cutoff))
-            .values(
-                status="failed",
-                error="stale run reaped",
-                failure_kind="fatal",
-                finished_at=datetime.now(UTC),
-            )
-        )
-        runs_cancelled = await session.execute(
-            update(IndexingRun)
-            .where(IndexingRun.status == "cancelling", reaper._stale_run(IndexingRun, cutoff))
-            .values(status="cancelled", finished_at=datetime.now(UTC))
-        )
-        await session.flush()
+    # Call the REAL reaper.reap_once with the fake session.
+    # All five execute() calls will return FakeResult (rowcount=-1),
+    # so out will be all zeros, but unknown=True will trigger the sweep log.
+    out = await reaper.reap_once(fake_session, timeout_seconds=300)
 
-        # Override all rowcounts to -1 to simulate driver returning "unknown"
-        db_res.rowcount = -1
-        sync_res.rowcount = -1
-        repo_res.rowcount = -1
-        runs_failed.rowcount = -1
-        runs_cancelled.rowcount = -1
+    # Verify all counts are 0 (max(0, -1) = 0).
+    assert out == {"db_index": 0, "sync": 0, "repo": 0, "runs": 0}
 
-        # Now compute the output dict (all zeros due to max(0, -1))
-        runs_count = max(0, int(runs_failed.rowcount or 0)) + max(
-            0, int(runs_cancelled.rowcount or 0)
-        )
-        out = {
-            "db_index": max(0, int(db_res.rowcount or 0)),
-            "sync": max(0, int(sync_res.rowcount or 0)),
-            "repo": max(0, int(repo_res.rowcount or 0)),
-            "runs": runs_count,
-        }
-
-        # Detect unknown rowcount and log accordingly
-        unknown = any(
-            (r.rowcount is not None and r.rowcount < 0)
-            for r in (db_res, sync_res, repo_res, runs_failed, runs_cancelled)
-        )
-        if any(out.values()):
-            logging.getLogger("app.services.stale_run_reaper").info(
-                "Reaper: reset stale runs — db_index=%d sync=%d repo=%d runs=%d (timeout=%ds)",
-                out["db_index"],
-                out["sync"],
-                out["repo"],
-                out["runs"],
-                timeout_seconds,
-            )
-        elif unknown:
-            logging.getLogger("app.services.stale_run_reaper").info(
-                "Reaper: swept stale runs (rowcount unknown on this driver, timeout=%ds)",
-                timeout_seconds,
-            )
-        return out
-
-    # Create a stale record to ensure the reaper has something to update
-    old = datetime.now(UTC) - timedelta(seconds=600)
-    db_session.add(DbIndexSummary(connection_id="c1", indexing_status="running", heartbeat_at=old))
-    await db_session.commit()
-
-    # Monkeypatch reaper.reap_once to use our wrapped version that simulates -1 rowcounts
-    monkeypatch.setattr(reaper, "reap_once", wrapped_reap_once)
-
-    # Call reap_once; with all rowcounts = -1, any(out.values()) is False,
-    # but unknown=True should trigger the "swept stale runs (rowcount unknown...)" log.
-    await reaper.reap_once(db_session, timeout_seconds=300)
-    await db_session.commit()
-
-    # Assert that the "swept stale runs (rowcount unknown...)" log line was emitted.
-    logs_found = [
-        r.message for r in caplog.records if r.name == "app.services.stale_run_reaper"
-    ]
+    # Assert the "swept stale runs (rowcount unknown...)" log was emitted.
+    logs_found = [r.message for r in caplog.records if r.name == "app.services.stale_run_reaper"]
     assert any(
         "swept stale runs (rowcount unknown" in record.message
         for record in caplog.records
