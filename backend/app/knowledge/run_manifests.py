@@ -47,9 +47,9 @@ _BASE: dict[str, list[Step]] = {
     ],
     "daily_sync": [
         Step("plan_targets", "Plan Targets"),
+        Step("repo_index", "Repository Index", weight=2),
         Step("db_index", "Database Index", weight=3),
         Step("code_db_sync", "Code-DB Sync", weight=3),
-        Step("freshness_reconcile", "Freshness Reconcile"),
         Step("summarize", "Summarize"),
     ],
 }
