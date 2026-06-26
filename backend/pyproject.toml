@@ -95,6 +95,16 @@ no_implicit_optional = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# pytest-asyncio 1.x ignores the old session-scoped ``event_loop`` fixture and
+# defaults fixtures + tests to function-scoped loops. The integration suite
+# shares a session-scoped engine whose in-memory SQLite (aiosqlite) connection
+# is bound to the loop it was created on; with function-scoped test loops that
+# connection is used from a different/closed loop → "Event loop is closed" /
+# "no such table: users" cascades (Linux CI; macOS happened to tolerate it).
+# Pin both fixtures and tests to one session loop so the shared engine stays
+# valid for every test — restoring the pre-1.x behaviour.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 markers = [
     "unit: unit tests (deselect with '-m \"not unit\"')",
