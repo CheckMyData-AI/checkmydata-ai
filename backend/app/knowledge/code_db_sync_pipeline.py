@@ -16,7 +16,11 @@ from app.config import settings
 from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
-from app.knowledge.code_db_sync_analyzer import CodeDbSyncAnalyzer, TableSyncAnalysis
+from app.knowledge.code_db_sync_analyzer import (
+    CodeDbSyncAnalyzer,
+    SyncSummaryResult,
+    TableSyncAnalysis,
+)
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.entity_extractor import EntityInfo, ProjectKnowledge, TableUsage
 from app.llm.router import LLMRouter
@@ -61,6 +65,36 @@ class CodeDbSyncPipeline:
             "code_db_sync",
             {"connection_id": connection_id, "project_id": project_id},
         )
+
+        # H5: owner budget pre-flight + per-run usage sink.
+        from app.services.sync_budget import build_sink, preflight_owner_budget
+
+        if settings.sync_budget_enforcement_enabled:
+            async with async_session_factory() as s:
+                ok, reason, owner_id = await preflight_owner_budget(s, project_id)
+            if not ok:
+                async with async_session_factory() as s:
+                    await self._sync_svc.set_sync_status(s, connection_id, "failed")
+                    await s.commit()
+                await self._tracker.end(wf_id, "code_db_sync", "failed", reason or "budget")
+                return {
+                    "status": "failed",
+                    "error": reason,
+                    "budget_blocked": True,
+                    "workflow_id": wf_id,
+                }
+            if owner_id:
+                self._llm = LLMRouter(usage_sink=build_sink(owner_id, project_id))
+                self._analyzer = CodeDbSyncAnalyzer(self._llm)
+
+        # H6: per-connection opt-out + global scrub flag.
+        async with async_session_factory() as s:
+            from app.models.connection import Connection
+
+            conn = await s.get(Connection, connection_id)
+            send = getattr(conn, "send_sample_data_to_llm", True) if conn else True
+        scrub = settings.sync_pii_scrubbing_enabled
+        omit_samples = not send
 
         async def _hb() -> None:
             async with async_session_factory() as s:
@@ -146,7 +180,13 @@ class CodeDbSyncPipeline:
                     "match_tables",
                     f"Matching {len(db_entries)} DB tables with code entities",
                 ):
-                    matched_tables = self._match_tables(knowledge, db_entries, rules_context)
+                    matched_tables = self._match_tables(
+                        knowledge,
+                        db_entries,
+                        rules_context,
+                        scrub=scrub,
+                        omit_samples=omit_samples,
+                    )
 
                 code_info_count = sum(1 for m in matched_tables if m.has_code_info)
                 db_only_match = len(matched_tables) - code_info_count
@@ -238,6 +278,34 @@ class CodeDbSyncPipeline:
                             f"({len(batch)} tables): {batch_names}",
                         )
 
+                # H4: all-fallback guard — abort if LLM was degraded.
+                total_analyses = len(analyses)
+                non_fallback = sum(1 for a in analyses if not a.is_fallback)
+                if (
+                    total_analyses
+                    and (non_fallback / total_analyses) < settings.sync_min_success_ratio_to_persist
+                ):
+                    logger.warning(
+                        "CODE_DB_SYNC kept previous rows: only %d/%d tables analyzed",
+                        non_fallback,
+                        total_analyses,
+                    )
+                    async with async_session_factory() as session:
+                        await self._sync_svc.set_sync_status(session, connection_id, "failed")
+                        await session.commit()
+                    await self._tracker.end(
+                        wf_id,
+                        "code_db_sync",
+                        "failed",
+                        f"LLM degraded: {non_fallback}/{total_analyses} analyzed; "
+                        "kept previous sync",
+                    )
+                    return {
+                        "status": "failed",
+                        "error": "llm_degraded_kept_previous",
+                        "workflow_id": wf_id,
+                    }
+
                 # Step 5: Store results
                 async with self._tracker.step(
                     wf_id,
@@ -260,14 +328,20 @@ class CodeDbSyncPipeline:
                         mt_lookup = {m.table_name: m for m in matched_tables}
                         for analysis in analyses:
                             mt = mt_lookup.get(analysis.table_name)  # type: ignore[assignment]
+                            if mt is None:
+                                logger.warning(
+                                    "store_sync: no matched table for %s — skipped",
+                                    analysis.table_name,
+                                )
+                                continue
                             sync_data = {
                                 "table_name": analysis.table_name,
-                                "entity_name": mt.entity_name if mt else None,
-                                "entity_file_path": mt.entity_file_path if mt else None,
-                                "code_columns_json": mt.code_columns_json if mt else "[]",
-                                "used_in_files_json": mt.used_in_files_json if mt else "[]",
-                                "read_count": mt.read_count if mt else 0,
-                                "write_count": mt.write_count if mt else 0,
+                                "entity_name": mt.entity_name,
+                                "entity_file_path": mt.entity_file_path,
+                                "code_columns_json": mt.code_columns_json,
+                                "used_in_files_json": mt.used_in_files_json,
+                                "read_count": mt.read_count,
+                                "write_count": mt.write_count,
                                 "data_format_notes": analysis.data_format_notes,
                                 "column_sync_notes_json": analysis.column_sync_notes_json,
                                 "business_logic_notes": analysis.business_logic_notes,
@@ -316,13 +390,17 @@ class CodeDbSyncPipeline:
                         "started",
                         "Generating LLM summary with FK relationships",
                     )
-                    summary_result = await self._analyzer.generate_summary(
-                        analyses=analyses,
-                        project_context=project_ctx,
-                        fk_relationships=fk_ctx,
-                        preferred_provider=preferred_provider,
-                        model=model,
-                    )
+                    sink = getattr(self._llm, "_sink", None)
+                    if sink is not None and sink.budget_exceeded():
+                        summary_result = SyncSummaryResult()  # skip LLM summary
+                    else:
+                        summary_result = await self._analyzer.generate_summary(
+                            analyses=analyses,
+                            project_context=project_ctx,
+                            fk_relationships=fk_ctx,
+                            preferred_provider=preferred_provider,
+                            model=model,
+                        )
 
                     async with async_session_factory() as session:
                         await self._sync_svc.upsert_summary(
@@ -401,69 +479,76 @@ class CodeDbSyncPipeline:
         knowledge: ProjectKnowledge,
         db_entries: list[DbIndex],
         rules_context: str = "",
+        *,
+        scrub: bool = True,
+        omit_samples: bool = False,
     ) -> list[_MatchedTable]:
         """Cross-reference code entities/table_usage with DB index entries."""
+        from collections import Counter
+
         results: list[_MatchedTable] = []
-        db_table_names = {e.table_name.lower(): e for e in db_entries}
-        code_table_names: set[str] = set()
+        db_by_key: dict[tuple[str, str], DbIndex] = {}
+        bare_counts: Counter = Counter()
+        for e in db_entries:
+            sch = (getattr(e, "table_schema", None) or "public").lower()
+            nm = e.table_name.lower()
+            db_by_key[(sch, nm)] = e
+            bare_counts[nm] += 1
+
+        def _display_name(e: DbIndex) -> str:
+            if bare_counts[e.table_name.lower()] > 1:
+                return f"{getattr(e, 'table_schema', 'public') or 'public'}.{e.table_name}"
+            return e.table_name
 
         entity_by_table: dict[str, EntityInfo] = {}
+        code_table_names: set[str] = set()
         for _, entity in knowledge.entities.items():
             if entity.table_name:
                 entity_by_table[entity.table_name.lower()] = entity
                 code_table_names.add(entity.table_name.lower())
-
         for tbl_name in knowledge.table_usage:
             code_table_names.add(tbl_name.lower())
 
-        all_tables = set(db_table_names.keys()) | code_table_names
-
-        for tbl_lower in sorted(all_tables):
-            db_entry = db_table_names.get(tbl_lower)
-            entity = entity_by_table.get(tbl_lower)  # type: ignore[assignment]
-            usage = knowledge.table_usage.get(tbl_lower) or knowledge.table_usage.get(
-                next((k for k in knowledge.table_usage if k.lower() == tbl_lower), "")
+        # DB-side first (schema-qualified), then code-only tables with no DB row.
+        seen_bare: set[str] = set()
+        for (sch, nm), db_entry in sorted(db_by_key.items()):
+            seen_bare.add(nm)
+            entity = entity_by_table.get(nm)  # type: ignore[assignment]
+            usage = knowledge.table_usage.get(nm) or knowledge.table_usage.get(
+                next((k for k in knowledge.table_usage if k.lower() == nm), "")
             )
-
-            table_name = db_entry.table_name if db_entry else tbl_lower
-
-            db_context = self._build_db_context(db_entry) if db_entry else ""
-            code_context = self._build_code_context(
-                entity, usage, knowledge, tbl_lower, rules_context
-            )
-
-            has_code = bool(entity or (usage and usage.is_active))
-            _has_db = db_entry is not None
-
-            mt = _MatchedTable(
-                table_name=table_name,
-                db_context=db_context,
-                code_context=code_context,
-                has_code_info=has_code,
-                entity_name=entity.name if entity else None,
-                entity_file_path=entity.file_path if entity else None,
-                read_count=len(usage.readers) if usage else 0,
-                write_count=len(usage.writers) if usage else 0,
-            )
-
-            if entity and entity.columns:
-                mt.code_columns_json = json.dumps(
-                    [
-                        {"name": c.name, "type": c.col_type, "fk_target": c.fk_target}
-                        for c in entity.columns
-                    ]
+            ambiguous = bare_counts[nm] > 1
+            display = _display_name(db_entry)
+            code_context = self._build_code_context(entity, usage, knowledge, nm, rules_context)
+            if ambiguous:
+                code_context = (
+                    f"(NOTE: table name '{nm}' exists in multiple schemas; matched code by "
+                    f"bare name — verify schema '{sch}')\n" + code_context
                 )
+            results.append(
+                self._make_matched(
+                    display,
+                    self._build_db_context(db_entry, scrub=scrub, omit_samples=omit_samples),
+                    code_context,
+                    entity,
+                    usage,
+                    knowledge,
+                )
+            )
 
-            if usage:
-                all_files = list(set(usage.readers + usage.writers + usage.orm_refs))
-                mt.used_in_files_json = json.dumps(all_files[:20])
-
-            results.append(mt)
-
+        for nm in sorted(code_table_names - seen_bare):
+            entity = entity_by_table.get(nm)  # type: ignore[assignment]
+            usage = knowledge.table_usage.get(nm) or knowledge.table_usage.get(
+                next((k for k in knowledge.table_usage if k.lower() == nm), "")
+            )
+            code_context = self._build_code_context(entity, usage, knowledge, nm, rules_context)
+            results.append(self._make_matched(nm, "", code_context, entity, usage, knowledge))
         return results
 
     @staticmethod
-    def _build_db_context(entry: DbIndex) -> str:
+    def _build_db_context(entry: DbIndex, *, scrub: bool = True, omit_samples: bool = False) -> str:
+        from app.knowledge import pii_scrubber
+
         parts: list[str] = []
         if entry.business_description:
             parts.append(f"Description: {entry.business_description}")
@@ -484,20 +569,59 @@ class CodeDbSyncPipeline:
                         parts.append(f"  {col}: {note}")
             except (json.JSONDecodeError, TypeError):
                 pass
-        dv_json = getattr(entry, "column_distinct_values_json", None) or "{}"
-        if dv_json and dv_json != "{}":
-            try:
-                distinct = json.loads(dv_json)
-                if distinct:
-                    parts.append("Actual distinct values in DB:")
-                    for col, vals in distinct.items():
-                        vals_str = " | ".join(str(v) for v in vals[:15])
-                        parts.append(f"  {col}: [{vals_str}]")
-            except (json.JSONDecodeError, TypeError):
-                pass
-        if entry.sample_data_json and entry.sample_data_json != "[]":
-            parts.append(f"Sample data: {entry.sample_data_json[:800]}")
+        if not omit_samples:
+            dv_json = getattr(entry, "column_distinct_values_json", None) or "{}"
+            if dv_json and dv_json != "{}":
+                try:
+                    distinct = json.loads(dv_json)
+                    if distinct:
+                        parts.append("Actual distinct values in DB:")
+                        for col, vals in distinct.items():
+                            shown = pii_scrubber.scrub_distinct_values(
+                                col, vals[:15], enabled=scrub
+                            )
+                            vals_str = " | ".join(str(v) for v in shown)
+                            more = f" (+{len(vals) - 15} more)" if len(vals) > 15 else ""
+                            parts.append(f"  {col}: [{vals_str}]{more}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if entry.sample_data_json and entry.sample_data_json != "[]":
+                sample = pii_scrubber.scrub_sample_json(entry.sample_data_json, enabled=scrub)
+                suffix = "…[truncated]" if len(sample) > 800 else ""
+                parts.append(f"Sample data: {sample[:800]}{suffix}")
         return "\n".join(parts)
+
+    @staticmethod
+    def _make_matched(
+        table_name: str,
+        db_context: str,
+        code_context: str,
+        entity: EntityInfo | None,
+        usage: TableUsage | None,
+        knowledge: ProjectKnowledge,
+    ) -> _MatchedTable:
+        has_code = bool(entity or (usage and usage.is_active))
+        mt = _MatchedTable(
+            table_name=table_name,
+            db_context=db_context,
+            code_context=code_context,
+            has_code_info=has_code,
+            entity_name=entity.name if entity else None,
+            entity_file_path=entity.file_path if entity else None,
+            read_count=len(usage.readers) if usage else 0,
+            write_count=len(usage.writers) if usage else 0,
+        )
+        if entity and entity.columns:
+            mt.code_columns_json = json.dumps(
+                [
+                    {"name": c.name, "type": c.col_type, "fk_target": c.fk_target}
+                    for c in entity.columns
+                ]
+            )
+        if usage:
+            all_files = list(set(usage.readers + usage.writers + usage.orm_refs))
+            mt.used_in_files_json = json.dumps(all_files[:20])
+        return mt
 
     @staticmethod
     def _build_code_context(
@@ -552,10 +676,10 @@ class CodeDbSyncPipeline:
                 for r in refs[:5]:
                     op = r.get("op_kind", "unknown")
                     conf = float(r.get("confidence", 0.0))
-                    depth = int(r.get("depth", 1))
+                    int(r.get("depth", 1))
                     name = r.get("caller_name", "?")
                     file_ = r.get("caller_file", "?")
-                    parts.append(f"  - {name} ({op}, depth={depth}, conf={conf:.2f}) in {file_}")
+                    parts.append(f"  - {name} ({op}, conf={conf:.2f}, heuristic) in {file_}")
 
         relevant_enums = [
             e

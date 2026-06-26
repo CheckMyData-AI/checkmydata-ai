@@ -110,16 +110,10 @@ _WRITE_VERBS = (
     "store_",
     "persist_",
     "write_",
-    "add_",
-    "set_",
     "post_",
     "put_",
     "patch_",
     "modify_",
-    "process_",
-    "handle_",
-    "sync_",
-    "register_",
     "submit_",
     "approve_",
     "reject_",
@@ -145,6 +139,16 @@ _READ_VERBS = (
     "describe_",
     "summarize_",
     "export_",
+)
+# Verbs that could imply either read or write depending on context —
+# classified as "unknown" rather than guessing.
+_AMBIGUOUS_VERBS = (
+    "process_",
+    "handle_",
+    "sync_",
+    "set_",
+    "add_",
+    "register_",
 )
 
 # Tokens in HTTP route decorators that hint at the op kind. ``GET`` → read,
@@ -216,6 +220,9 @@ def classify_op_kind(symbol: Symbol) -> str:
     for verb in _READ_VERBS:
         if name.startswith(verb):
             return "read"
+    for verb in _AMBIGUOUS_VERBS:
+        if name.startswith(verb):
+            return "unknown"
 
     # HTTP method hint via decorator (e.g. ``@router.post('/users')``).
     for dec in symbol.decorators or ():
