@@ -19,6 +19,7 @@ from app.services.knowledge_catalog_service import KnowledgeCatalogService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rule_service import RuleService
+from app.services.sync_budget import preflight_owner_budget
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +555,12 @@ async def sync_now(
     import uuid
 
     await _membership_svc.require_role(db, project_id, user["user_id"], "editor")
+
+    # C3: budget pre-flight — block over-budget owners before we even acquire the lock.
+    ok, reason, _ = await preflight_owner_budget(db, project_id)
+    if not ok:
+        raise HTTPException(status_code=429, detail=reason)
+
     from app.core import task_queue
     from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
 
