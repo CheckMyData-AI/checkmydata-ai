@@ -23,6 +23,21 @@ in branch `fix/security-audit-2026-06-24` → PR
   validator/repair carry the sink; MCP tools build `DbUsageSink`-bound router + acquire
   `agent_limiter` for parity with chat; explicit JWT preferred over env candidate; startup warning
   for empty `MCP_ALLOWED_HOSTS`.
+- **Release R5 — code↔DB sync reliability & correctness** (branch `fix/sync-remediation-2026-06-25`,
+  18 TDD tasks, commits `d672486`…`fc09a20`): closes **all 22 findings of the separate 2026-06-25
+  five-specialist sync-subsystem audit** (9 High, 9 Medium, 4 Low — tracked under that audit's own
+  H/M/L scheme, not the `F-<MODULE>-NN` tally below). **High:** H1 daily-sync parent heartbeat
+  (reaper no longer kills healthy runs), H2 batch analyses reconciled by echoed `table_name`, H3
+  per-table confidence coercion, H4 all-fallback overwrite guard + confidence-gated filters, H5
+  owner-attributed budget gate (429/graceful-cron), H6 PII scrub + per-connection opt-out, H7
+  `is_indexed` status whitelist, H8 `IntegrityError`→409 + model index parity, H9 adopt-not-run.
+  **Medium:** M1 reconciler all-connections, M2 schema-qualified table identity, M3 parent-run
+  progress steps, M4 per-project schedule hour honored, M5 overview regen + worker log key, M6
+  enrichment validation/deep-merge + producer reroute, M7 graph `op_kind` heuristic labelling, M8
+  freshness defaults + `sync_failed`, M9 `get_index_age` NULL guard. **Low:** L1 reaper unknown-
+  rowcount log, L2 prompt-header date gating, L3 child-run orphaning (covered by H1+H9), L4
+  truncation markers + relevance matching. Combined suite 4560 passing, 75% coverage; ruff/mypy
+  clean; alembic up/down/base clean. Spec + plan under `docs/superpowers/{specs,plans}/2026-06-25-*`.
 
 This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` baseline + manual
 review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =

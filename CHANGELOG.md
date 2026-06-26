@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — R5: code↔DB sync reliability & correctness (2026-06-25 sync audit)
+
+Closes all 22 findings of the five-specialist code↔DB synchronization audit (9 High, 9 Medium,
+4 Low). Branch `fix/sync-remediation-2026-06-25`; 18 TDD tasks; combined suite 4560 passing, 75%
+coverage; ruff/mypy clean. Spec `docs/superpowers/specs/2026-06-25-sync-remediation-design.md`,
+plan `docs/superpowers/plans/2026-06-25-sync-remediation.md`.
+
+- **Reliability (High):** the daily-sync parent `IndexingRun` now emits a continuous heartbeat
+  (targeted `UPDATE`, no `version` lost-update) so the stale-run reaper no longer kills a healthy
+  multi-minute sync (**H1**); the daily cron sub-steps **adopt-or-skip** instead of launching an
+  untracked concurrent pipeline on an active-run conflict (**H9**); `RunCoordinator.start` translates
+  the single-active `IntegrityError` into a clean `RunAlreadyActiveError`/409 with session rollback,
+  and the partial-unique active index is mirrored onto the model for `create_all` test parity (**H8**);
+  `is_indexed` now only counts `completed`/`completed_partial` (a failed-only index is no longer
+  reported as indexed) (**H7**).
+- **Data correctness (High):** batch table analyses are reconciled by the LLM-echoed `table_name`
+  instead of tool-call position, ending silent cross-table misattribution (**H2**); a malformed
+  `confidence_score` degrades only its own table instead of aborting the batch (**H3**); a degraded
+  LLM run (mostly fallback) no longer overwrites previously-good sync rows, and low-confidence rows
+  no longer enforce/surface required-filter guidance (**H4**).
+- **Cost & privacy (High):** sync LLM calls are now metered + budget-gated against the project
+  owner (manual triggers 429 on exhaustion; cron degrades gracefully; ownerless projects run
+  unenforced) (**H5**); DB sample data + distinct values are scrubbed (column denylist + value
+  redaction) before egress to the LLM at both the sync and db-index analyzers, with a per-connection
+  `send_sample_data_to_llm` opt-out (default on) (**H6**).
+- **Medium:** freshness reconciler now covers all connections, not just the first (**M1**);
+  schema-qualified table identity prevents same-named cross-schema tables from collapsing (**M2**);
+  the daily-sync parent run advances through manifest steps instead of 0%→100% (**M3**); the cron
+  wave honors the per-project schedule hour (**M4**); daily sync regenerates the project overview
+  and the worker logs the correct matched count (**M5**); investigation enrichment is routed to a
+  non-enforced field and `required_filters` payloads are validated + value mappings deep-merged
+  (**M6**); graph-derived `op_kind` heuristics are labelled non-authoritative (over-broad write verbs
+  reclassified) (**M7**); freshness `warnings` uses a proper default + a `sync_failed` flag (**M8**);
+  `get_index_age` guards a NULL `indexed_at` (**M9**).
+- **Low:** the reaper logs a sweep even when the driver returns an unknown rowcount (**L1**); the
+  prompt header no longer fabricates an "analyzed" date for a never-completed sync (**L2**); daily
+  child-run orphaning is covered by H1+H9 (**L3**); context truncation is marked and relevance
+  matching tightened (**L4**).
+
 ### Added
 
 - **MCP protocol-polish (F5/F6/F9).** Shipped in three batched releases on top
