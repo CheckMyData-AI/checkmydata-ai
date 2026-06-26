@@ -436,6 +436,64 @@ class TestAddRuntimeEnrichment:
         assert "paid" in data
 
     @pytest.mark.asyncio
+    async def test_enrichment_rejects_metadata_keys_in_required_filters(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        await svc.upsert_table_sync(
+            db,
+            conn.id,
+            {
+                "table_name": "orders",
+                "required_filters_json": "{}",
+            },
+        )
+        await db.commit()
+
+        await svc.add_runtime_enrichment(
+            db,
+            conn.id,
+            "orders",
+            "required_filters_json",
+            json.dumps({"source": "investigation", "filter": "x"}),
+        )
+        await db.commit()
+
+        row = await svc.get_table_sync(db, conn.id, "orders")
+        assert json.loads(row.required_filters_json) == {}  # metadata keys dropped
+
+    @pytest.mark.asyncio
+    async def test_enrichment_deep_merges_value_mappings(self, db):
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        await svc.upsert_table_sync(
+            db,
+            conn.id,
+            {
+                "table_name": "orders",
+                "column_value_mappings_json": json.dumps(
+                    {"status": {"0": "pending", "1": "processed"}}
+                ),
+            },
+        )
+        await db.commit()
+
+        await svc.add_runtime_enrichment(
+            db,
+            conn.id,
+            "orders",
+            "column_value_mappings_json",
+            json.dumps({"status": {"2": "failed"}}),
+        )
+        await db.commit()
+
+        row = await svc.get_table_sync(db, conn.id, "orders")
+        assert json.loads(row.column_value_mappings_json)["status"] == {
+            "0": "pending",
+            "1": "processed",
+            "2": "failed",
+        }
+
+    @pytest.mark.asyncio
     async def test_appends_text_field(self, db):
         proj = await _make_project(db)
         conn = await _make_connection(db, proj.id)
@@ -562,6 +620,7 @@ def _stub_summary(**kwargs):
         "global_notes": "",
         "data_conventions": "",
         "query_guidelines": "",
+        "sync_status": None,
         "synced_at": None,
     }
     defaults.update(kwargs)
@@ -675,6 +734,7 @@ class TestSyncToPromptContextEdgeCases:
         from datetime import UTC, datetime
 
         s = _stub_summary(
+            sync_status="completed",
             synced_at=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
             global_notes="Project uses UTC timestamps",
             data_conventions="All amounts in cents",
