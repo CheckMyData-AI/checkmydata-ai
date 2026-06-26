@@ -91,7 +91,7 @@ class TestClassifyOpKind:
             ("update_profile", "write"),
             ("delete_order", "write"),
             ("save_invoice", "write"),
-            ("set_status", "write"),
+            ("set_status", "unknown"),  # moved to _AMBIGUOUS_VERBS in M7
             ("get_user", "read"),
             ("find_by_id", "read"),
             ("list_orders", "read"),

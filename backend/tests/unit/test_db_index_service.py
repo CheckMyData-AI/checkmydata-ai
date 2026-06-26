@@ -274,8 +274,9 @@ class TestIsIndexed:
 
     @pytest.mark.asyncio
     async def test_completed_index(self, svc):
+        # H7: only "completed" and "completed_partial" count as indexed.
         session = AsyncMock()
-        summary = _make_summary(indexing_status="idle")
+        summary = _make_summary(indexing_status="completed")
         result = MagicMock()
         result.scalar_one_or_none.return_value = summary
         session.execute = AsyncMock(return_value=result)
@@ -357,14 +358,26 @@ class TestGetTableIndex:
 class TestDeleteStaleTables:
     @pytest.mark.asyncio
     async def test_deletes_stale(self, svc):
-        """T17: bulk DELETE reports rowcount from the execute() result."""
+        """T17: delete_stale_tables removes rows not in current_keys set.
+
+        The implementation fetches all ids first (1st execute), then DELETEs
+        the stale ones (2nd execute). current_keys uses schema-qualified keys
+        like "public.users".
+        """
         session = AsyncMock()
-        result_mock = MagicMock()
-        result_mock.rowcount = 1
-        session.execute.return_value = result_mock
-        count = await svc.delete_stale_tables(session, "conn-1", {"keep"})
+        # First execute: returns existing rows (id, schema, name)
+        fetch_mock = MagicMock()
+        fetch_mock.all.return_value = [
+            ("id-stale", "public", "stale_table"),
+            ("id-keep", "public", "keep"),
+        ]
+        # Second execute: the DELETE (return value not inspected by impl)
+        delete_mock = MagicMock()
+        session.execute.side_effect = [fetch_mock, delete_mock]
+
+        count = await svc.delete_stale_tables(session, "conn-1", {"public.keep"})
         assert count == 1
-        session.execute.assert_awaited_once()
+        assert session.execute.await_count == 2
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -381,9 +394,18 @@ class TestDeleteStaleTables:
     async def test_empty_current_set_deletes_all(self, svc):
         """Empty whitelist means 'delete everything for this connection'."""
         session = AsyncMock()
-        result_mock = MagicMock()
-        result_mock.rowcount = 5
-        session.execute.return_value = result_mock
+        # First execute: 5 existing rows, all stale when current_keys is empty
+        fetch_mock = MagicMock()
+        fetch_mock.all.return_value = [
+            ("id-1", "public", "table_a"),
+            ("id-2", "public", "table_b"),
+            ("id-3", "public", "table_c"),
+            ("id-4", "dbo", "table_d"),
+            ("id-5", None, "table_e"),
+        ]
+        delete_mock = MagicMock()
+        session.execute.side_effect = [fetch_mock, delete_mock]
+
         count = await svc.delete_stale_tables(session, "conn-1", set())
         assert count == 5
 

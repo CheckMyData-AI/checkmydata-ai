@@ -66,36 +66,6 @@ class CodeDbSyncPipeline:
             {"connection_id": connection_id, "project_id": project_id},
         )
 
-        # H5: owner budget pre-flight + per-run usage sink.
-        from app.services.sync_budget import build_sink, preflight_owner_budget
-
-        if settings.sync_budget_enforcement_enabled:
-            async with async_session_factory() as s:
-                ok, reason, owner_id = await preflight_owner_budget(s, project_id)
-            if not ok:
-                async with async_session_factory() as s:
-                    await self._sync_svc.set_sync_status(s, connection_id, "failed")
-                    await s.commit()
-                await self._tracker.end(wf_id, "code_db_sync", "failed", reason or "budget")
-                return {
-                    "status": "failed",
-                    "error": reason,
-                    "budget_blocked": True,
-                    "workflow_id": wf_id,
-                }
-            if owner_id:
-                self._llm = LLMRouter(usage_sink=build_sink(owner_id, project_id))
-                self._analyzer = CodeDbSyncAnalyzer(self._llm)
-
-        # H6: per-connection opt-out + global scrub flag.
-        async with async_session_factory() as s:
-            from app.models.connection import Connection
-
-            conn = await s.get(Connection, connection_id)
-            send = getattr(conn, "send_sample_data_to_llm", True) if conn else True
-        scrub = settings.sync_pii_scrubbing_enabled
-        omit_samples = not send
-
         async def _hb() -> None:
             async with async_session_factory() as s:
                 await self._sync_svc.touch_heartbeat(s, connection_id)
@@ -103,6 +73,40 @@ class CodeDbSyncPipeline:
 
         async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
             try:
+                # H5: owner budget pre-flight + per-run usage sink.
+                # Must run INSIDE the heartbeat CM so crashes here don't break the
+                # heartbeat contract.
+                from app.services.sync_budget import build_sink, preflight_owner_budget
+
+                if settings.sync_budget_enforcement_enabled:
+                    async with async_session_factory() as s:
+                        ok, reason, owner_id = await preflight_owner_budget(s, project_id)
+                    if not ok:
+                        async with async_session_factory() as s:
+                            await self._sync_svc.set_sync_status(s, connection_id, "failed")
+                            await s.commit()
+                        await self._tracker.end(wf_id, "code_db_sync", "failed", reason or "budget")
+                        return {
+                            "status": "failed",
+                            "error": reason,
+                            "budget_blocked": True,
+                            "workflow_id": wf_id,
+                        }
+                    if owner_id:
+                        self._llm = LLMRouter(usage_sink=build_sink(owner_id, project_id))
+                        self._analyzer = CodeDbSyncAnalyzer(self._llm)
+
+                # H6: per-connection opt-out + global scrub flag.
+                # Must run INSIDE the heartbeat CM so conn-load errors don't crash before
+                # the heartbeat opens.
+                async with async_session_factory() as s:
+                    from app.models.connection import Connection
+
+                    conn = await s.get(Connection, connection_id)
+                    send = getattr(conn, "send_sample_data_to_llm", True) if conn else True
+                scrub = settings.sync_pii_scrubbing_enabled
+                omit_samples = not send
+
                 # Mark as running
                 async with async_session_factory() as session:
                     await self._sync_svc.set_sync_status(session, connection_id, "running")

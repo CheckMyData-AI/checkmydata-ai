@@ -133,6 +133,7 @@ class TestAnalyzeTableBatch:
                     id="call_1",
                     name="table_sync_analysis",
                     arguments={
+                        "table_name": "t1",
                         "data_format_notes": "Table 1",
                         "column_sync_notes": "{}",
                         "business_logic_notes": "",
@@ -146,6 +147,7 @@ class TestAnalyzeTableBatch:
                     id="call_2",
                     name="table_sync_analysis",
                     arguments={
+                        "table_name": "t2",
                         "data_format_notes": "Table 2",
                         "column_sync_notes": "{}",
                         "business_logic_notes": "",
@@ -167,11 +169,14 @@ class TestAnalyzeTableBatch:
 
         assert len(results) == 2
         assert results[0].table_name == "t1"
+        assert results[0].sync_status == "matched"
         assert results[1].table_name == "t2"
         assert results[1].sync_status == "db_only"
 
     @pytest.mark.asyncio
     async def test_batch_fills_missing_with_fallback(self, analyzer, mock_llm):
+        # Only t1 is echoed back with its table_name; t2 has no matching tool call
+        # and must receive _fallback_analysis (is_fallback=True, sync_status="unknown").
         mock_llm.complete.return_value = LLMResponse(
             content="",
             tool_calls=[
@@ -179,6 +184,7 @@ class TestAnalyzeTableBatch:
                     id="call_1",
                     name="table_sync_analysis",
                     arguments={
+                        "table_name": "t1",
                         "data_format_notes": "",
                         "column_sync_notes": "{}",
                         "business_logic_notes": "",
@@ -199,9 +205,15 @@ class TestAnalyzeTableBatch:
         )
 
         assert len(results) == 2
+        # t1: matched from LLM response
+        assert results[0].table_name == "t1"
         assert results[0].sync_status == "matched"
+        assert results[0].is_fallback is False
+        # t2: no matching echoed call → fallback
+        assert results[1].table_name == "t2"
         assert results[1].sync_status == "unknown"
         assert results[1].confidence_score == 1
+        assert results[1].is_fallback is True
 
     @pytest.mark.asyncio
     async def test_empty_batch(self, analyzer, mock_llm):

@@ -12,7 +12,6 @@ Create Date: 2026-06-26 16:06:16.161424
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f37386df158c"
@@ -22,23 +21,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Partial unique index: at most one active run per (project, kind, connection).
-    # coalesce() ensures NULL connection_id rows are also mutually exclusive per project+kind.
-    # if_not_exists=True makes this idempotent for envs that already applied a1f2b3c4d5e6.
-    op.create_index(
-        "uq_indexing_runs_active_one",
-        "indexing_runs",
-        ["project_id", "kind", sa.text("coalesce(connection_id, '')")],
-        unique=True,
-        postgresql_where=sa.text("status IN ('queued','running','cancelling')"),
-        sqlite_where=sa.text("status IN ('queued','running','cancelling')"),
-        if_not_exists=True,
-    )
+    # NO-OP: the index `uq_indexing_runs_active_one` is authoritatively created
+    # by migration `a1f2b3c4d5e6_add_indexing_runs_and_error_log.py`.
+    # The `__table_args__` entry in `app/models/indexing_run.py` provides
+    # `create_all` parity for tests and fresh dev setups.
+    # Performing create_index here would cause a double-drop on `downgrade base`.
+    pass
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "uq_indexing_runs_active_one",
-        table_name="indexing_runs",
-        if_exists=True,
-    )
+    # NO-OP: index owned by a1f2b3c4d5e6; dropping it here would cause
+    # a double-drop when a1f2b3c4d5e6 also runs its downgrade.
+    pass

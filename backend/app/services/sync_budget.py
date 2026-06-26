@@ -17,9 +17,20 @@ _usage_svc = UsageService()
 
 
 async def resolve_owner_user_id(session: AsyncSession, project_id: str) -> str | None:
-    """Resolve a project's owner user ID."""
-    row = await session.execute(select(Project.owner_id).where(Project.id == project_id))
-    return row.scalar_one_or_none()
+    """Resolve a project's owner user ID.
+
+    Returns None on any DB error so callers degrade gracefully instead of crashing.
+    """
+    try:
+        row = await session.execute(select(Project.owner_id).where(Project.id == project_id))
+        return row.scalar_one_or_none()
+    except Exception:
+        logger.debug(
+            "sync budget: could not resolve owner for project %s — unenforced",
+            project_id[:8],
+            exc_info=True,
+        )
+        return None
 
 
 def build_sink(owner_user_id: str, project_id: str) -> DbUsageSink:
