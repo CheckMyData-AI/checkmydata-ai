@@ -56,6 +56,9 @@ class Connection(Base):
 
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    send_sample_data_to_llm: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

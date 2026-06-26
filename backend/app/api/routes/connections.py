@@ -24,6 +24,7 @@ from app.services.code_db_sync_service import CodeDbSyncService
 from app.services.connection_service import ConnectionService
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
+from app.services.sync_budget import preflight_owner_budget
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,8 @@ class ConnectionCreate(BaseModel):
     mcp_server_url: str | None = Field(None, max_length=1024)
     mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
+    # H6: opt-out of sending DB sample data to the LLM (default True = send)
+    send_sample_data_to_llm: bool = True
 
     @field_validator("mcp_env", mode="before")
     @classmethod
@@ -381,6 +384,8 @@ class ConnectionUpdate(BaseModel):
     mcp_server_url: str | None = Field(None, max_length=2000)
     mcp_transport_type: str | None = Field(None, max_length=50)
     mcp_env: dict[str, str] | None = None
+    # H6: opt-out of sending DB sample data to the LLM
+    send_sample_data_to_llm: bool | None = None
 
     @field_validator("ssh_pre_commands")
     @classmethod
@@ -409,6 +414,7 @@ class ConnectionResponse(BaseModel):
     db_user: str | None
     is_read_only: bool
     is_active: bool
+    send_sample_data_to_llm: bool
     ssh_exec_mode: bool
     ssh_command_template: str | None
     ssh_pre_commands: str | None
@@ -1018,6 +1024,11 @@ async def trigger_sync(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+
+    # H5: budget pre-flight — block over-budget owners before we even acquire the lock.
+    ok, reason, _ = await preflight_owner_budget(db, conn.project_id)
+    if not ok:
+        raise HTTPException(status_code=429, detail=reason)
 
     sync_start_lock = _sync_start_locks.setdefault(connection_id, asyncio.Lock())
     async with sync_start_lock:

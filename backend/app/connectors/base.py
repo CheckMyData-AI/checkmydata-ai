@@ -25,6 +25,7 @@ class ConnectionConfig:
     ssh_pre_commands: list[str] | None = None
 
     is_read_only: bool = True
+    send_sample_data_to_llm: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
 
     connection_id: str | None = None
