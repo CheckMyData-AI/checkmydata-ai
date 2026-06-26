@@ -563,15 +563,19 @@ class DbIndexPipeline:
                     _llm_sem = asyncio.Semaphore(3)
                     _large_done = [0]
 
+                    _send_samples = getattr(connection_config, "send_sample_data_to_llm", True)
+                    scrub = settings.sync_pii_scrubbing_enabled and _send_samples
+
                     async def _analyze_large_table(table: TableInfo) -> TableAnalysis:
                         async with _llm_sem:
                             sample_result, _ = samples.get(table.name, (QueryResult(), None))
                             table_code_ctx = self._filter_code_context(code_context, table.name)
                             result = await self._validator.analyze_table(
                                 table=table,
-                                sample_data=sample_result,
+                                sample_data=sample_result if _send_samples else None,
                                 code_context=table_code_ctx,
                                 rules_context=rules_context,
+                                scrub=scrub,
                                 preferred_provider=preferred_provider,
                                 model=model,
                             )
@@ -617,10 +621,15 @@ class DbIndexPipeline:
                         batch_specs.append((batch, batch_items, batch_code_ctx))
 
                     async def _run_batch(items, ctx_text):
+                        # When send_sample_data_to_llm is False, strip samples so
+                        # no tenant data reaches the LLM provider.
+                        if not _send_samples:
+                            items = [(tbl, None) for tbl, _ in items]
                         return await self._validator.analyze_table_batch(
                             tables=items,
                             code_context=ctx_text,
                             rules_context=rules_context,
+                            scrub=scrub,
                             preferred_provider=preferred_provider,
                             model=model,
                         )
@@ -649,9 +658,9 @@ class DbIndexPipeline:
                     "Persisting index to database",
                 ):
                     async with async_session_factory() as session:
-                        current_table_names = {t.name for t in schema.tables}
+                        current_keys = {f"{(t.schema or 'public')}.{t.name}" for t in schema.tables}
                         deleted = await self._svc.delete_stale_tables(
-                            session, connection_id, current_table_names
+                            session, connection_id, current_keys
                         )
                         if deleted:
                             logger.info("Removed %d stale table index entries", deleted)

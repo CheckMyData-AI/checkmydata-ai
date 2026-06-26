@@ -29,9 +29,11 @@ class DbIndexService:
         table_data: dict,
     ) -> DbIndex:
         table_name = table_data["table_name"]
+        table_schema = table_data.get("table_schema", "public")
         result = await session.execute(
             select(DbIndex).where(
                 DbIndex.connection_id == connection_id,
+                DbIndex.table_schema == table_schema,
                 DbIndex.table_name == table_name,
             )
         )
@@ -80,23 +82,31 @@ class DbIndexService:
         self,
         session: AsyncSession,
         connection_id: str,
-        current_table_names: set[str],
+        current_keys: set[str],
     ) -> int:
-        """Remove DbIndex rows not in *current_table_names* (T17).
+        """Remove DbIndex rows whose schema-qualified key is not in *current_keys*.
 
-        Uses a single parameterised DELETE + ``notin_`` filter instead of the
-        previous fetch-then-loop pattern so we don't issue N+1 queries.
+        Keys are ``f"{schema}.{table_name}"`` strings (e.g. ``"public.users"``).
+        Uses a fetch-ids-then-delete pattern (2 queries) for portability across
+        SQLite and PostgreSQL (SQLite's ``DELETE … WHERE id IN (…)`` is fully
+        supported; a NOT-IN on composite columns is not).
         Returns the number of rows deleted.
         """
-        stmt = delete(DbIndex).where(DbIndex.connection_id == connection_id)
-        if current_table_names:
-            stmt = stmt.where(DbIndex.table_name.notin_(current_table_names))
-
-        result = await session.execute(stmt)
-        deleted = int(result.rowcount or 0)  # type: ignore[attr-defined]
-        if deleted:
-            await session.flush()
-        return deleted
+        rows = (
+            await session.execute(
+                select(DbIndex.id, DbIndex.table_schema, DbIndex.table_name).where(
+                    DbIndex.connection_id == connection_id
+                )
+            )
+        ).all()
+        stale_ids = [
+            rid for rid, sch, nm in rows if f"{(sch or 'public')}.{nm}" not in current_keys
+        ]
+        if not stale_ids:
+            return 0
+        await session.execute(delete(DbIndex).where(DbIndex.id.in_(stale_ids)))
+        await session.flush()
+        return len(stale_ids)
 
     async def delete_all(
         self,
@@ -170,7 +180,7 @@ class DbIndexService:
         if not summary:
             return False
         status = getattr(summary, "indexing_status", "idle") or "idle"
-        if status == "running":
+        if status not in ("completed", "completed_partial"):
             return False
         return summary.indexed_at is not None
 
@@ -183,6 +193,8 @@ class DbIndexService:
         if not summary:
             return None
         indexed_at = summary.indexed_at
+        if indexed_at is None:
+            return None
         if indexed_at.tzinfo is None:
             indexed_at = indexed_at.replace(tzinfo=UTC)
         return datetime.now(UTC) - indexed_at

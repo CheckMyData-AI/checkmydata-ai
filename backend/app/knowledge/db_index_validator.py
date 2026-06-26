@@ -156,10 +156,13 @@ class DbIndexValidator:
         code_context: str,
         rules_context: str,
         *,
+        scrub: bool = True,
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> TableAnalysis:
-        prompt = self._build_table_prompt(table, sample_data, code_context, rules_context)
+        prompt = self._build_table_prompt(
+            table, sample_data, code_context, rules_context, scrub=scrub
+        )
 
         messages = [
             Message(role="system", content=self._system_prompt()),
@@ -212,6 +215,7 @@ class DbIndexValidator:
         code_context: str,
         rules_context: str,
         *,
+        scrub: bool = True,
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> list[TableAnalysis]:
@@ -229,6 +233,7 @@ class DbIndexValidator:
                     sample,
                     code_context,
                     rules_context,
+                    scrub=scrub,
                 )
             )
             prompt_parts.append("---\n")
@@ -395,6 +400,8 @@ class DbIndexValidator:
         sample_data: QueryResult | None,
         code_context: str,
         rules_context: str,
+        *,
+        scrub: bool = True,
     ) -> str:
         parts: list[str] = [f"## Table: {table.name}"]
 
@@ -425,10 +432,15 @@ class DbIndexValidator:
                 parts.append(f"  - {u}{idx.name}({', '.join(idx.columns)})")
 
         if sample_data and sample_data.rows:
-            parts.append(f"\nSample data ({len(sample_data.rows)} newest rows):")
+            from app.knowledge import pii_scrubber
+
+            rows = pii_scrubber.scrub_row_cells(
+                sample_data.columns, sample_data.rows, enabled=scrub
+            )
+            parts.append(f"\nSample data ({len(rows)} newest rows):")
             parts.append("| " + " | ".join(sample_data.columns) + " |")
             parts.append("| " + " | ".join(["---"] * len(sample_data.columns)) + " |")
-            for row in sample_data.rows:
+            for row in rows:
                 vals = [str(v)[:60] for v in row]
                 parts.append("| " + " | ".join(vals) + " |")
         elif sample_data and not sample_data.rows:
