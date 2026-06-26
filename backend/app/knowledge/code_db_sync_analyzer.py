@@ -24,10 +24,36 @@ def _clamp_sync_status(raw: str) -> str:
     return raw if raw in _VALID_SYNC_STATUS else "unknown"
 
 
+def _coerce_confidence(raw) -> int:
+    """Coerce an LLM-returned confidence value to a valid 1-5 integer.
+
+    Accepts int or numeric strings that represent whole numbers (e.g. "4").
+    Float strings (e.g. "4.5") are treated as malformed and return the safe
+    default of 3 so a single bad tool-call does not abort the entire batch.
+    """
+    if isinstance(raw, bool):
+        return 3
+    if isinstance(raw, int):
+        return max(1, min(5, raw))
+    try:
+        int(str(raw))  # raises ValueError for "4.5"
+        return max(1, min(5, int(str(raw))))
+    except (TypeError, ValueError):
+        return 3
+
+
 SYNC_ANALYSIS_TOOL = Tool(
     name="table_sync_analysis",
     description="Return a structured analysis of how code uses this database table",
     parameters=[
+        ToolParameter(
+            name="table_name",
+            type="string",
+            description=(
+                "The EXACT table name being analyzed, copied verbatim from the "
+                "'## Table: <name>' header. Required so results map to the right table."
+            ),
+        ),
         ToolParameter(
             name="data_format_notes",
             type="string",
@@ -162,6 +188,7 @@ class TableSyncAnalysis:
     column_value_mappings_json: str = "{}"
     sync_status: str = "unknown"
     confidence_score: int = 3
+    is_fallback: bool = False
 
 
 @dataclass
@@ -220,7 +247,7 @@ class CodeDbSyncAnalyzer:
                     required_filters_json=args.get("required_filters", "{}"),
                     column_value_mappings_json=args.get("column_value_mappings", "{}"),
                     sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
-                    confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
+                    confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
                 )
                 logger.info(
                     "LLM sync: %s → %s (confidence=%d)",
@@ -263,7 +290,8 @@ class CodeDbSyncAnalyzer:
             Message(role="user", content="\n".join(prompt_parts)),
         ]
 
-        results: list[TableSyncAnalysis] = []
+        results_by_name: dict[str, TableSyncAnalysis] = {}
+        by_name = {t[0].lower(): t[0] for t in tables}
         try:
             resp = await self._llm.complete(
                 messages=messages,
@@ -273,46 +301,52 @@ class CodeDbSyncAnalyzer:
                 temperature=0.0,
                 max_tokens=4096,
             )
-
-            tool_idx = 0
             for tc in resp.tool_calls:
-                if tc.name == "table_sync_analysis" and tool_idx < len(tables):
-                    args = tc.arguments
-                    tbl_name = tables[tool_idx][0]
-                    col_notes = args.get("column_sync_notes", "{}")
-                    if isinstance(col_notes, dict):
-                        col_notes = json.dumps(col_notes)
-                    results.append(
-                        TableSyncAnalysis(
-                            table_name=tbl_name,
-                            data_format_notes=args.get("data_format_notes", ""),
-                            column_sync_notes_json=col_notes,
-                            business_logic_notes=args.get("business_logic_notes", ""),
-                            conversion_warnings=args.get("conversion_warnings", ""),
-                            query_recommendations=args.get("query_recommendations", ""),
-                            required_filters_json=args.get("required_filters", "{}"),
-                            column_value_mappings_json=args.get("column_value_mappings", "{}"),
-                            sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
-                            confidence_score=max(1, min(5, int(args.get("confidence_score", 3)))),
-                        )
+                if tc.name != "table_sync_analysis":
+                    continue
+                args = tc.arguments
+                raw_name = str(args.get("table_name", "")).lower()
+                canonical = by_name.get(raw_name)
+                if canonical is None:
+                    logger.warning(
+                        "batch sync: tool call for unknown table %r — dropped",
+                        args.get("table_name"),
                     )
-                    tool_idx += 1
-
+                    continue
+                if canonical in results_by_name:
+                    logger.warning(
+                        "batch sync: duplicate analysis for %s — keeping first", canonical
+                    )
+                    continue
+                col_notes = args.get("column_sync_notes", "{}")
+                if isinstance(col_notes, dict):
+                    col_notes = json.dumps(col_notes)
+                results_by_name[canonical] = TableSyncAnalysis(
+                    table_name=canonical,
+                    data_format_notes=args.get("data_format_notes", ""),
+                    column_sync_notes_json=col_notes,
+                    business_logic_notes=args.get("business_logic_notes", ""),
+                    conversion_warnings=args.get("conversion_warnings", ""),
+                    query_recommendations=args.get("query_recommendations", ""),
+                    required_filters_json=args.get("required_filters", "{}"),
+                    column_value_mappings_json=args.get("column_value_mappings", "{}"),
+                    sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
+                    confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
+                )
         except Exception:
             logger.warning("Batch sync analysis failed", exc_info=True)
 
-        fallback_count = len(tables) - len(results)
-        for i in range(len(results), len(tables)):
-            results.append(self._fallback_analysis(tables[i][0]))
-
+        out: list[TableSyncAnalysis] = []
+        fallback_count = 0
+        for name, _db, _code in tables:
+            if name in results_by_name:
+                out.append(results_by_name[name])
+            else:
+                out.append(self._fallback_analysis(name))
+                fallback_count += 1
         if fallback_count:
-            logger.info(
-                "LLM sync batch: %d/%d used fallback",
-                fallback_count,
-                len(tables),
-            )
-
-        return results
+            logger.info("LLM sync batch: %d/%d used fallback", fallback_count, len(tables))
+        return out
 
     async def generate_summary(
         self,
@@ -464,4 +498,5 @@ class CodeDbSyncAnalyzer:
             sync_status="unknown",
             confidence_score=1,
             data_format_notes="LLM analysis unavailable — using fallback.",
+            is_fallback=True,
         )
