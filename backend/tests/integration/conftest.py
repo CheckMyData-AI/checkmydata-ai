@@ -4,11 +4,9 @@ Uses a real async SQLite database per test session, overriding the FastAPI
 dependency so every endpoint hits an actual DB instead of mocks.
 """
 
-import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -49,13 +47,6 @@ from app.models import (  # noqa: F401
     user,
 )
 from app.models.base import Base
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture(scope="session")
