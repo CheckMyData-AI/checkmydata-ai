@@ -39,3 +39,17 @@ def test_scrub_row_cells_redacts_sensitive_columns():
     assert out[0][0] == 1
     assert "hunter2" not in str(out[0][1])
     assert "a@b.com" not in str(out[0][2])
+
+
+def test_sensitive_column_no_false_positive_on_company_name():
+    assert p.is_sensitive_column("company_name") is False  # 'pan' must not match
+    assert p.is_sensitive_column("author_id") is False  # 'auth' must not match
+    assert p.is_sensitive_column("hashtag") is False  # 'hash' must not match
+
+
+def test_sensitive_column_whole_component_matches():
+    assert p.is_sensitive_column("pan") is True
+    assert p.is_sensitive_column("card_pan") is True
+    assert p.is_sensitive_column("user_ssn") is True
+    assert p.is_sensitive_column("password_hash") is True
+    assert p.is_sensitive_column("email") is True

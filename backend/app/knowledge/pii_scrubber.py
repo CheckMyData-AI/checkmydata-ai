@@ -39,7 +39,7 @@ SENSITIVE_COLUMN_TOKENS: tuple[str, ...] = (
 )
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{1,}\.[A-Za-z0-9_-]{1,}\.[A-Za-z0-9_-]{1,}")
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _PHONE = re.compile(r"\b\+?\d[\d\s().-]{7,}\d\b")
 # long hex / base64-ish secrets (>= 24 chars, no spaces)
@@ -47,8 +47,19 @@ _SECRETISH = re.compile(r"\b[A-Za-z0-9+/=_-]{24,}\b")
 
 
 def is_sensitive_column(column_name: str) -> bool:
-    name = (column_name or "").lower()
-    return any(tok in name for tok in SENSITIVE_COLUMN_TOKENS)
+    n = (column_name or "").lower()
+    parts = set(re.split(r"[^a-z0-9]+", n))
+    for tok in SENSITIVE_COLUMN_TOKENS:
+        if len(tok) >= 6 or "_" in tok:
+            # unambiguous (long or underscored) token: substring match is safe
+            if tok in n:
+                return True
+        else:
+            # short ambiguous token (pan, auth, hash, salt, ssn, cvv, ...):
+            # require a whole-component match so "pan" != "company_name"
+            if tok in parts:
+                return True
+    return False
 
 
 def redact_value(value: str) -> str:
