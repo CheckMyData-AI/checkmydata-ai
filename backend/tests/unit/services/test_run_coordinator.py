@@ -165,3 +165,54 @@ async def test_retry_starts_new_run_with_provenance(session: AsyncSession):
     assert new.id != run.id
     assert new.status == "running"
     assert _json.loads(new.meta_json)["retried_from"] == run.id
+
+
+# --- H8: IntegrityError → RunAlreadyActiveError translation (TOCTOU race) ----
+
+
+async def _async_none() -> None:
+    """Async stub that returns None — simulates _find_active pre-check missing the race winner."""
+    return None
+
+
+async def test_start_translates_integrity_error_to_already_active(session: AsyncSession):
+    """TOCTOU race: pre-check passes (returns None) but DB unique constraint fires on commit.
+
+    The coordinator must:
+    1. Catch IntegrityError and NOT let it propagate as a raw 500.
+    2. Roll back the poisoned session.
+    3. Raise RunAlreadyActiveError (wrapping the original IntegrityError).
+    4. Leave the session usable for subsequent queries.
+    """
+    coord = RunCoordinator()
+
+    # First run holds the slot — committed normally.
+    run1 = await coord.start(session, kind="code_db_sync", project_id="p10", connection_id="c1")
+    assert run1.status == "running"
+
+    # Monkeypatch _find_active to return None on the PRE-CHECK so the race
+    # path reaches db.commit() and the DB unique index is what fires.
+    # A second call (the recovery lookup inside the except block) must be real,
+    # so we count calls and only skip the first one.
+    real_find_active = coord._find_active
+    call_count = 0
+
+    async def _find_active_stub(db, project_id, kind, connection_id):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None  # simulate pre-check miss
+        return await real_find_active(db, project_id, kind, connection_id)
+
+    coord._find_active = _find_active_stub  # type: ignore[method-assign]
+
+    with pytest.raises(RunAlreadyActiveError):
+        await coord.start(session, kind="code_db_sync", project_id="p10", connection_id="c1")
+
+    # Restore
+    coord._find_active = real_find_active  # type: ignore[method-assign]
+
+    # Session must be usable after rollback — a simple query should not raise.
+    recovered = await coord._find_active(session, "p10", "code_db_sync", "c1")
+    assert recovered is not None
+    assert recovered.id == run1.id
