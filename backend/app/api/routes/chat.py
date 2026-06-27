@@ -846,7 +846,15 @@ async def ask_stream(
 
     async def _generate():
         result_holder: list = []
-        queue = await tracker.subscribe()
+        # Tenant-scope the subscription: the workflow tracker is a process-wide
+        # singleton, so an unfiltered subscribe() would relay EVERY user's
+        # in-flight workflow events (question previews, SQL, table names) to this
+        # stream and let it latch onto another user's workflow. Pass the caller's
+        # identity so the tracker's tenancy filter only delivers their events.
+        queue = await tracker.subscribe(
+            user_id=user["user_id"],
+            accessible_project_ids={body.project_id},
+        )
         released = False
         lock_released = False
 
@@ -1504,7 +1512,10 @@ async def chat_websocket(
                     ws_user_message_id = ws_user_msg.id
                     history = await _chat_svc.get_history_as_messages(db, session_id)
 
-                queue = await tracker.subscribe()
+                queue = await tracker.subscribe(
+                    user_id=user_id,
+                    accessible_project_ids={project_id},
+                )
                 relay_task = asyncio.create_task(_relay_events(queue))
             except Exception:
                 # Setup failed AFTER acquiring the limiter + per-session lock but
