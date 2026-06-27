@@ -1858,10 +1858,10 @@ class SQLAgent(BaseAgent):
             lines.append(f"\n... and {results.row_count - max_rows} more rows")
         if results.truncated:
             banner = (
-                f"⚠️ RESULT TRUNCATED: only the first {len(results.rows)} rows are shown; "
-                "the full result set is larger. Aggregates (SUM/COUNT/AVG) computed over "
-                "these rows are INCOMPLETE — push aggregation into SQL "
-                "(GROUP BY / aggregate functions) instead of summing rows yourself."
+                f"⚠️ RESULT TRUNCATED: the result set was capped at {results.row_count} rows "
+                "(the database has more). Aggregates (SUM/COUNT/AVG) over these rows are "
+                "INCOMPLETE — push aggregation into SQL (GROUP BY / aggregate functions) "
+                "rather than computing totals from the rows here."
             )
             return banner + "\n\n" + "\n".join(lines)
         return "\n".join(lines)

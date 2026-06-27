@@ -9,9 +9,14 @@
 
 from __future__ import annotations
 
+import types
+from unittest.mock import AsyncMock, MagicMock
+
+from app.agents.base import AgentContext
 from app.agents.stage_context import ExecutionPlan, PlanStage, StageContext, StageResult
 from app.agents.stage_executor import StageExecutor, _classify_stage_error
-from app.connectors.base import QueryResult
+from app.agents.validation import AgentResultValidator
+from app.connectors.base import ConnectionConfig, QueryResult
 
 
 class TestClassifyStageError:
@@ -22,11 +27,15 @@ class TestClassifyStageError:
         for exc in (KeyError("col"), TypeError("bad"), ValueError("nope"), AttributeError("x")):
             assert _classify_stage_error(exc) == "configuration", exc
 
-    def test_timeout_and_connection_errors_stay_transient(self):
-        # Genuine infra blips remain retryable.
+    def test_infra_errors_stay_transient(self):
+        # Genuine infra blips remain retryable (all OSError subclasses).
         assert _classify_stage_error(TimeoutError("slow")) == "transient"
         assert _classify_stage_error(ConnectionError("reset")) == "transient"
         assert _classify_stage_error(ConnectionResetError("reset")) == "transient"
+        assert _classify_stage_error(OSError("network unreachable")) == "transient"
+        import socket
+
+        assert _classify_stage_error(socket.gaierror("dns")) == "transient"
 
 
 def _qr(rows: list[list]) -> QueryResult:
@@ -85,3 +94,65 @@ class TestProcessDataSourceSelection:
             {"s0": StageResult(stage_id="s0", status="success", query_result=prior_qr)},
         )
         assert StageExecutor._select_process_data_source(p, ctx) is prior_qr
+
+
+def _mcp_executor(mcp_source) -> StageExecutor:
+    return StageExecutor(
+        sql_agent=MagicMock(),
+        knowledge_agent=MagicMock(),
+        llm_router=MagicMock(),
+        tracker=MagicMock(),
+        mcp_source_agent=mcp_source,
+    )
+
+
+def _ctx() -> AgentContext:
+    return AgentContext(
+        project_id="p",
+        connection_config=ConnectionConfig(db_type="postgres"),
+        user_question="q",
+        chat_history=[],
+        llm_router=MagicMock(),
+        tracker=MagicMock(),
+        workflow_id="wf",
+    )
+
+
+class TestMcpStageNoResult:
+    """MUST-FIX: an MCP agent that exhausts its iteration budget returns
+    status="no_result"; the stage must treat that as a (data_missing) failure,
+    NOT map it to success and surface the placeholder string as a real answer.
+    """
+
+    async def test_no_result_becomes_stage_error(self):
+        mcp = MagicMock()
+        mcp.run = AsyncMock(
+            return_value=types.SimpleNamespace(
+                answer="Reached maximum iterations for MCP tool calls.",
+                status="no_result",
+                token_usage={},
+                error=None,
+            )
+        )
+        stage = PlanStage(stage_id="m", description="mcp", tool="query_mcp_source")
+        res = await _mcp_executor(mcp)._run_mcp_stage("q", stage, _ctx())
+        assert res.status == "error"
+        assert res.error_category == "data_missing"
+
+    async def test_success_still_succeeds(self):
+        mcp = MagicMock()
+        mcp.run = AsyncMock(
+            return_value=types.SimpleNamespace(
+                answer="real answer", status="success", token_usage={}, error=None
+            )
+        )
+        stage = PlanStage(stage_id="m", description="mcp", tool="query_mcp_source")
+        res = await _mcp_executor(mcp)._run_mcp_stage("q", stage, _ctx())
+        assert res.status == "success"
+        assert res.summary == "real answer"
+
+    def test_validate_mcp_result_fails_on_no_result(self):
+        out = AgentResultValidator().validate_mcp_result(
+            types.SimpleNamespace(status="no_result", answer="placeholder", error=None)
+        )
+        assert out.passed is False

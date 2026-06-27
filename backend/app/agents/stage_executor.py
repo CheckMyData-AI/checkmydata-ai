@@ -65,7 +65,9 @@ def _classify_stage_error(exc: BaseException) -> str:
     # Known-transient infrastructure errors are safe to retry. ``TimeoutError``
     # is the canonical alias for ``asyncio.TimeoutError`` on 3.11+, and
     # ``ConnectionError`` covers reset/refused/aborted.
-    if isinstance(exc, (TimeoutError, ConnectionError)):
+    # OSError covers TimeoutError, ConnectionError (reset/refused/aborted) and
+    # socket/DNS errors (gaierror) — all genuinely transient infra blips.
+    if isinstance(exc, OSError):
         return "transient"
     # Everything else is almost certainly a deterministic bug (KeyError,
     # TypeError, ValueError, connector misuse). Retrying just burns budget and
@@ -736,12 +738,24 @@ class StageExecutor:
                 question=question,
             )
             answer = getattr(result, "answer", "") or ""
+            mcp_status = getattr(result, "status", "")
+            if mcp_status == "success":
+                return StageResult(
+                    stage_id=stage.stage_id,
+                    status="success",
+                    summary=answer,
+                    token_usage=getattr(result, "token_usage", {}),
+                )
+            # Anything else (error / no_result / iteration-exhausted placeholder)
+            # is a stage failure — do NOT surface the placeholder as a real
+            # answer. "no_result" is data_missing (recoverable via replan);
+            # an explicit "error" carries the agent's own classification.
             return StageResult(
                 stage_id=stage.stage_id,
-                status="success" if getattr(result, "status", "") != "error" else "error",
-                summary=answer,
+                status="error",
+                error=getattr(result, "error", None) or answer or "MCP source returned no result",
+                error_category="configuration" if mcp_status == "error" else "data_missing",
                 token_usage=getattr(result, "token_usage", {}),
-                error=getattr(result, "error", None),
             )
         except Exception as exc:
             logger.exception("MCP stage '%s' failed", stage.stage_id)

@@ -45,7 +45,7 @@ class TestHardChecksValueRange:
         [
             # Hard: percent value clearly out of range
             ("revenue_pct", 9999.0, True),
-            ("share_ratio", -50.0, True),
+            ("occupancy_pct", -5.0, True),
             # Soft: percent within bounds
             ("growth_rate", 25.0, False),
             # Hard: date in obviously wrong year
@@ -164,7 +164,7 @@ class TestBroadenedClassificationAndCounts:
     negative counts must fail, and the loose-vs-bounded distinction must not
     create false positives on legitimate >100 rates."""
 
-    def _run(self, col_name: str, value, *, hard: bool = True) -> DataGateOutcome:
+    def _run(self, col_name: str, value) -> DataGateOutcome:
         gate = DataGate()
         qr = QueryResult(columns=[col_name], rows=[[value]], row_count=1)
         stage = _sql_stage()
@@ -175,7 +175,7 @@ class TestBroadenedClassificationAndCounts:
 
     @pytest.mark.parametrize(
         "col_name",
-        ["conversion", "completion_percentage", "ctr", "occupancy", "retention"],
+        ["conversion", "completion_percentage", "ctr", "occupancy"],
     )
     def test_bounded_percent_over_100_fails(self, col_name):
         # 150 is impossible for a 0..100 bounded percentage. These names lack
@@ -205,6 +205,21 @@ class TestBroadenedClassificationAndCounts:
         # (e.g. 150% YoY growth) — they must use the loose bound, not fail.
         out = self._run("growth_rate", 150.0)
         assert out.passed is True
+
+    def test_percent_delta_columns_not_hard_failed(self):
+        # A signed percentage-delta (percent_change / pct_growth / percent_increase)
+        # can legitimately exceed 100% or go negative — must NOT hard fail.
+        for col in ("percent_change", "pct_growth", "percent_increase"):
+            assert self._run(col, 250.0).passed is True, col
+            assert self._run(col, -80.0).passed is True, col
+
+    def test_net_retention_rate_over_100_not_failed(self):
+        # SaaS net revenue retention (NRR) routinely exceeds 100% (110-130%).
+        assert self._run("net_retention_rate", 130.0).passed is True
+
+    def test_bare_churn_negative_not_failed(self):
+        # Net churn can be negative (more expansion than churn).
+        assert self._run("net_churn", -5.0).passed is True
 
     def test_count_substring_in_unrelated_columns_not_flagged(self):
         # 'account' / 'discount' contain the substring 'count' but are NOT

@@ -51,6 +51,9 @@ _HIGH_DUPLICATE_RATIO = settings.data_gate_high_duplicate_ratio
 # 150 is impossible and gets the strict bound. "Rate" columns (rate/ratio/
 # growth) can legitimately exceed 100% (e.g. 150% YoY growth) and get the
 # loose bound. "Count" columns must be non-negative.
+# Only tokens that are *unambiguously* a 0..100 share. Deliberately excludes
+# retention/churn/utilization (NRR can exceed 100%, net churn can be negative,
+# CPU utilization can exceed 100%) to avoid false-positive hard fails.
 _PERCENT_BOUNDED_KEYWORDS: frozenset[str] = frozenset(
     {
         "percent",
@@ -59,14 +62,16 @@ _PERCENT_BOUNDED_KEYWORDS: frozenset[str] = frozenset(
         "conversion",
         "completion",
         "occupancy",
-        "utilization",
-        "utilisation",
-        "retention",
-        "churn",
         "ctr",
     }
 )
 _RATE_KEYWORDS: frozenset[str] = frozenset({"rate", "ratio", "growth"})
+# When a delta/change token co-occurs with a percent token, the column is a
+# signed percentage-delta (e.g. "percent_change", "pct_growth") which CAN
+# exceed 100% or go negative — demote it from bounded-percent to rate.
+_DELTA_KEYWORDS: frozenset[str] = frozenset(
+    {"change", "delta", "growth", "diff", "increase", "decrease", "variance", "gain", "loss", "net"}
+)
 _COUNT_KEYWORDS: frozenset[str] = frozenset({"count", "cnt", "qty", "quantity", "num", "number"})
 _DATE_KEYWORDS: frozenset[str] = frozenset({"date", "datetime", "created", "updated", "timestamp"})
 
@@ -283,11 +288,13 @@ class DataGate:
         classified: dict[str, str] = {}
         for col in qr.columns:
             tokens = _column_tokens(col)
-            # Bounded percent wins over rate (e.g. "conversion_rate" is a
-            # 0..100 conversion percentage, not an unbounded rate).
-            if "%" in col or tokens & _PERCENT_BOUNDED_KEYWORDS:
+            is_pct = "%" in col or bool(tokens & _PERCENT_BOUNDED_KEYWORDS)
+            is_delta = bool(tokens & _DELTA_KEYWORDS)
+            # Bounded percent only when NOT a signed delta (e.g. "conversion" is
+            # bounded, but "percent_change"/"pct_growth" is a signed rate).
+            if is_pct and not is_delta:
                 classified[col] = "percent"
-            elif tokens & _RATE_KEYWORDS:
+            elif (tokens & _RATE_KEYWORDS) or (is_pct and is_delta):
                 classified[col] = "rate"
             elif tokens & _DATE_KEYWORDS:
                 classified[col] = "date"
@@ -323,21 +330,17 @@ class DataGate:
                 if val is None:
                     continue
                 numeric = isinstance(val, (int, float)) and not isinstance(val, bool)
-                if kind in ("percent", "rate") and numeric:
-                    # Bounded percent (conversion/completion/ctr/…) is a 0..100
-                    # share, so a strict upper bound applies; "rate" columns
-                    # (rate/ratio/growth) can legitimately exceed 100%.
-                    upper = pct_bounded_max if kind == "percent" else pct_max
-                    label = "percentage" if kind == "percent" else "rate"
-                    if val < pct_min or val > upper:
-                        # C4 (v1.13.0): out-of-range percent/rate is
-                        # unambiguously wrong data — fail() so the stage
-                        # retries instead of returning bogus values.
+                if kind == "percent" and numeric:
+                    # Bounded percent (conversion/completion/ctr/occupancy/…) is
+                    # a 0..100 share, so values outside [pct_min, bounded_max]
+                    # are impossible (e.g. 150% conversion) — hard fail so the
+                    # stage retries instead of returning bogus values.
+                    if val < pct_min or val > pct_bounded_max:
                         if settings.data_gate_hard_checks_enabled:
                             outcome.fail(
                                 f"Column '{col_name}' has value {val} "
-                                f"which is out of range for a {label} "
-                                f"({pct_min}..{upper}).",
+                                "which is out of range for a percentage "
+                                f"({pct_min}..{pct_bounded_max}).",
                                 suggestion=(
                                     f"Cast '{col_name}' to a ratio (0..1) or "
                                     "filter the source so impossible values "
@@ -347,8 +350,19 @@ class DataGate:
                         else:
                             outcome.warn(
                                 f"Column '{col_name}' has value {val} "
-                                f"which looks out of range for a {label}.",
+                                "which looks out of range for a percentage.",
                             )
+                        break
+                elif kind == "rate" and numeric:
+                    # Rate/ratio/growth and percentage-deltas are signed and can
+                    # legitimately exceed 100% (e.g. 150% YoY growth, NRR 130%,
+                    # -50% decline). Only an absurd magnitude is suspicious, and
+                    # only as a soft WARN — never a hard fail.
+                    if val < -pct_max or val > pct_max:
+                        outcome.warn(
+                            f"Column '{col_name}' has value {val} "
+                            f"with an unusually large magnitude for a rate (±{pct_max}).",
+                        )
                         break
                 elif kind == "count" and numeric:
                     if val < 0:
