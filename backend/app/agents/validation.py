@@ -107,9 +107,14 @@ class AgentResultValidator:
     def validate_mcp_result(self, result: Any) -> ValidationOutcome:
         outcome = ValidationOutcome()
 
-        if getattr(result, "status", "") == "error":
+        if getattr(result, "status", "") in ("error", "no_result"):
+            # "no_result" = the MCP agent exhausted its iteration budget without
+            # composing an answer. Treat it as a failure, not a usable result —
+            # otherwise the iteration-exhausted placeholder is surfaced as data.
             outcome.passed = False
-            outcome.errors.append(result.error or "MCP source agent returned an error")
+            outcome.errors.append(
+                getattr(result, "error", None) or "MCP source agent returned no result"
+            )
             return outcome
 
         answer = getattr(result, "answer", "")

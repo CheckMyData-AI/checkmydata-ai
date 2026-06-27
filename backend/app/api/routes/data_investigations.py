@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.agent_limiter import agent_limiter
 from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
 from app.models.chat_session import ChatSession as ChatSessionModel
@@ -164,6 +165,11 @@ async def start_investigation(
             user_complaint_detail=body.complaint_detail or "",
             user_expected_value=body.expected_value or "",
             problematic_column=body.problematic_column or "",
+            # The caller drives this run, so usage / concurrency / the verdict
+            # notification are all attributed to them.
+            user_id=user["user_id"],
+            trigger_message_id=body.message_id,
+            session_id=body.session_id,
         )
     )
     task.add_done_callback(_on_task_done)
@@ -363,18 +369,71 @@ async def _run_investigation_background(
     user_complaint_detail: str,
     user_expected_value: str,
     problematic_column: str,
+    user_id: str | None = None,
+    trigger_message_id: str | None = None,
+    session_id: str | None = None,
 ) -> None:
-    """Launch InvestigationAgent in the background and update status as it runs."""
+    """Launch InvestigationAgent in the background and update status as it runs.
+
+    The InvestigationAgent runs up to a dozen LLM iterations, so its spend must
+    be accounted for like every other agent path: the router carries a
+    :class:`~app.llm.usage_sink.DbUsageSink` bound to ``user_id`` (the project
+    owner for system-driven auto-investigations, or the caller for the explicit
+    endpoint) and a shared ``agent_limiter`` concurrency slot is held for the
+    duration. When ``user_id`` is unknown the run degrades to a no-op sink and
+    no concurrency cap rather than crashing — but it still runs.
+
+    On a successful finding a durable, user-scoped notification is emitted that
+    links the verdict back to ``trigger_message_id`` so the diagnosis is
+    surfaced to the user instead of dead-ending in the investigations table.
+    """
     from app.agents.base import AgentContext
     from app.agents.investigation_agent import InvestigationAgent
     from app.core.workflow_tracker import tracker as singleton_tracker
     from app.llm.router import LLMRouter
+    from app.llm.usage_sink import DbUsageSink, UsageSink
     from app.models.base import async_session_factory
     from app.models.connection import Connection
     from app.services.connection_service import ConnectionService
     from app.services.investigation_service import InvestigationService
 
     inv_svc = InvestigationService()
+
+    # Account for the agent's LLM spend. A bare LLMRouter() has a NullUsageSink,
+    # which is exactly the off-the-books path we must avoid; bind a DbUsageSink
+    # whenever we know who to attribute the spend to.
+    sink: UsageSink | None = (
+        DbUsageSink(user_id=user_id, project_id=project_id) if user_id else None
+    )
+
+    # Hold a per-user concurrency slot so many suspicious results cannot spawn
+    # an unbounded swarm of background agents (parity with the chat / MCP path).
+    limiter_held = False
+    if user_id:
+        try:
+            limit_err = await agent_limiter.acquire(user_id)
+            if limit_err:
+                logger.info(
+                    "Investigation %s deferred: agent limit hit (%s)",
+                    investigation_id,
+                    limit_err,
+                )
+                async with async_session_factory() as session:
+                    await inv_svc.fail_investigation(
+                        session,
+                        investigation_id,
+                        reason=limit_err,
+                    )
+                    await session.commit()
+                return
+            limiter_held = True
+        except Exception:
+            # A limiter outage must not block the investigation; degrade.
+            logger.warning(
+                "Investigation %s: agent_limiter.acquire failed; proceeding unlimited",
+                investigation_id,
+                exc_info=True,
+            )
 
     try:
         async with async_session_factory() as session:
@@ -405,9 +464,10 @@ async def _run_investigation_background(
             connection_config=cfg,
             user_question="",
             chat_history=[],
-            llm_router=LLMRouter(),
+            llm_router=LLMRouter(usage_sink=sink),
             tracker=singleton_tracker,
             workflow_id=wf_id,
+            user_id=user_id,
         )
 
         agent = InvestigationAgent()
@@ -436,6 +496,14 @@ async def _run_investigation_background(
                     root_cause_category=inv_result.root_cause_category,
                 )
                 await session.commit()
+            await _notify_investigation_finding(
+                project_id=project_id,
+                connection_id=connection_id,
+                investigation_id=investigation_id,
+                trigger_message_id=trigger_message_id,
+                user_id=user_id,
+                root_cause=inv_result.root_cause,
+            )
             logger.info("Investigation %s: fix found", investigation_id)
         else:
             async with async_session_factory() as session:
@@ -459,6 +527,88 @@ async def _run_investigation_background(
                 await session.commit()
         except Exception:
             logger.exception("Failed to mark investigation %s as failed", investigation_id)
+    finally:
+        if limiter_held and user_id:
+            try:
+                await agent_limiter.release(user_id)
+            except Exception:
+                logger.warning(
+                    "Investigation %s: agent_limiter.release failed",
+                    investigation_id,
+                    exc_info=True,
+                )
+
+
+async def _notify_investigation_finding(
+    *,
+    project_id: str,
+    connection_id: str,
+    investigation_id: str,
+    trigger_message_id: str | None,
+    user_id: str | None,
+    root_cause: str | None,
+) -> None:
+    """Surface a completed investigation as a durable, user-scoped Notification.
+
+    The user already saw a result the *system* flagged as wrong; writing the
+    diagnosis only to the ``DataInvestigation`` row means it dead-ends unless
+    someone opens that table. A :class:`~app.models.notification.Notification`
+    is the idiomatic durable signal in this codebase (already used by the
+    schedule-alert flow and exposed at ``/api/notifications``). The body links
+    back to the originating ``trigger_message_id`` (and the investigation id) so
+    the finding is discoverable from the message the user actually saw.
+
+    Best-effort: a notification failure must never turn a successful
+    investigation into a failed one.
+    """
+    from app.models.base import async_session_factory
+    from app.models.notification import Notification
+    from app.services.sync_budget import resolve_owner_user_id
+
+    try:
+        async with async_session_factory() as session:
+            # System-driven runs don't carry a caller; attribute the verdict to
+            # the project owner (same attribution as the usage sink).
+            recipient = user_id
+            if not recipient:
+                recipient = await resolve_owner_user_id(session, project_id)
+            if not recipient:
+                logger.debug(
+                    "Investigation %s: no recipient for verdict notification",
+                    investigation_id,
+                )
+                return
+
+            cause = (root_cause or "A corrected query was found.").strip()
+            if len(cause) > 600:
+                cause = cause[:597] + "..."
+            link_ref = (
+                f"message {trigger_message_id}"
+                if trigger_message_id
+                else f"connection {connection_id}"
+            )
+            body = (
+                f"We re-checked the answer flagged as possibly wrong ({link_ref}). "
+                f"Diagnosis: {cause} "
+                f"[investigation: {investigation_id}, trigger_message_id: {trigger_message_id}]"
+            )
+
+            session.add(
+                Notification(
+                    user_id=recipient,
+                    project_id=project_id,
+                    title="Data investigation finished — diagnosis available",
+                    body=body,
+                    type="investigation",
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.warning(
+            "Investigation %s: failed to emit verdict notification (non-critical)",
+            investigation_id,
+            exc_info=True,
+        )
 
 
 def _map_root_cause_to_learning_category(root_cause_category: str) -> str:

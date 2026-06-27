@@ -87,6 +87,39 @@ class TestSSEFlow:
         assert result_event["data"]["response_type"] == "text"
 
     @patch("app.core.agent.ConversationalAgent.run")
+    async def test_sse_subscribe_is_tenant_scoped(self, mock_run, auth_client):
+        """The SSE stream must subscribe to the workflow tracker WITH the
+        caller's user_id (and project) so the process-global tracker does not
+        relay other users' in-flight workflow events — a cross-tenant leak
+        (audit HIGH). The tracker's tenancy filter exists; the route must use it.
+        """
+        from app.agents.orchestrator import AgentResponse
+        from app.api.routes import chat as chat_mod
+
+        pid = await self._create_project(auth_client)
+        mock_run.return_value = AgentResponse(answer="x", workflow_id="wf-x", response_type="text")
+
+        captured: dict = {}
+        real_subscribe = chat_mod.tracker.subscribe
+
+        async def spy_subscribe(*args, **kwargs):
+            captured.update(kwargs)
+            return await real_subscribe(*args, **kwargs)
+
+        with patch.object(chat_mod.tracker, "subscribe", new=spy_subscribe):
+            resp = await auth_client.post(
+                "/api/chat/ask/stream",
+                json={"project_id": pid, "message": "Hi"},
+            )
+            assert resp.status_code == 200
+            _ = resp.text  # drain the stream so _generate() runs subscribe()
+
+        assert captured.get("user_id"), (
+            f"SSE subscribe must be tenant-scoped (user_id); got kwargs={captured}"
+        )
+        assert pid in (captured.get("accessible_project_ids") or set())
+
+    @patch("app.core.agent.ConversationalAgent.run")
     async def test_sse_error_event(self, mock_run, auth_client):
         """Test that exceptions produce proper error SSE events."""
         pid = await self._create_project(auth_client)

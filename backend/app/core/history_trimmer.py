@@ -177,6 +177,63 @@ def _summarise_pair(assistant_msg: Message, tool_msgs: list[Message]) -> str:
     return f"[{snippet}] {'; '.join(tool_summaries)}"
 
 
+def _enforce_tool_call_pairing(messages: list[Message]) -> list[Message]:
+    """Drop orphaned ``tool_calls``/``tool`` ids so the list stays LLM-valid.
+
+    OpenAI/OpenRouter reject a request when an assistant ``tool_calls[].id``
+    has no matching ``tool`` message, or a ``tool`` message's ``tool_call_id``
+    has no matching preceding assistant ``tool_call``. Trimming (split point or
+    summary collapse) can sever such a pair; this final pass repairs the
+    invariant regardless of *how* the split was chosen:
+
+    * a ``tool`` message whose ``tool_call_id`` is not produced by any present
+      assistant ``tool_call`` is dropped (its summary already lives upstream);
+    * an assistant ``tool_call`` whose ``tool`` reply is absent is stripped from
+      that assistant's ``tool_calls``; an assistant left with neither
+      ``tool_calls`` nor textual ``content`` is dropped entirely.
+
+    The pass is idempotent: it computes the surviving id set in one forward
+    scan, so removing an orphan can never create a new one.
+    """
+    present_tool_reply_ids = {
+        m.tool_call_id for m in messages if m.role == "tool" and m.tool_call_id is not None
+    }
+    present_assistant_call_ids: set[str] = set()
+    for m in messages:
+        if m.role == "assistant" and m.tool_calls:
+            present_assistant_call_ids.update(tc.id for tc in m.tool_calls)
+
+    out: list[Message] = []
+    for m in messages:
+        if m.role == "tool":
+            if m.tool_call_id is not None and m.tool_call_id not in present_assistant_call_ids:
+                continue
+            out.append(m)
+            continue
+
+        if m.role == "assistant" and m.tool_calls:
+            kept_calls = [tc for tc in m.tool_calls if tc.id in present_tool_reply_ids]
+            if len(kept_calls) == len(m.tool_calls):
+                out.append(m)
+                continue
+            if not kept_calls and not (m.content or "").strip():
+                # No surviving tool_calls and no textual content: nothing to keep.
+                continue
+            out.append(
+                Message(
+                    role=m.role,
+                    content=m.content,
+                    tool_call_id=m.tool_call_id,
+                    name=m.name,
+                    tool_calls=kept_calls or None,
+                )
+            )
+            continue
+
+        out.append(m)
+    return out
+
+
 def trim_loop_messages(
     messages: list[Message],
     max_tokens: int,
@@ -221,7 +278,7 @@ def trim_loop_messages(
     candidate = [system_msg, *condensed_middle, *tail]
     total = estimate_messages_tokens(candidate)
     if total <= threshold:
-        return candidate, True
+        return _enforce_tool_call_pairing(candidate), True
 
     summaries: list[str] = []
     keep_middle: list[Message] = []
@@ -247,7 +304,7 @@ def trim_loop_messages(
     else:
         candidate = [system_msg, *keep_middle, *tail]
 
-    return candidate, True
+    return _enforce_tool_call_pairing(candidate), True
 
 
 def should_wrap_up(messages: list[Message], max_tokens: int) -> bool:

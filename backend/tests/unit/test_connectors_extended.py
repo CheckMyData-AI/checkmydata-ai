@@ -571,6 +571,75 @@ class TestMongoDBConnector:
         result = await connector.execute_query(query)
         assert result.truncated is True
         assert len(result.rows) < 3
+        # Consistency: row_count is the returned (capped) count, not pre-cap.
+        assert result.row_count == len(result.rows)
+
+    async def test_execute_query_find_caps_and_reports_truncated(self, connector):
+        """A find that yields MAX_RESULT_ROWS+1 docs must cap to MAX_RESULT_ROWS,
+        report row_count == returned count (not the pre-cap total) and
+        truncated=True — matching the SQL connectors' contract."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        docs = [{"_id": i} for i in range(MAX_RESULT_ROWS + 1)]
+        mock_cursor = AsyncMock()
+        mock_cursor.to_list = AsyncMock(return_value=docs)
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_coll = MagicMock()
+        mock_coll.find.return_value = mock_cursor
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+        connector._db = mock_db
+
+        query = json.dumps({"collection": "big", "operation": "find", "filter": {}})
+        result = await connector.execute_query(query)
+
+        assert result.truncated is True
+        assert result.row_count == MAX_RESULT_ROWS
+        assert len(result.rows) == MAX_RESULT_ROWS
+        assert result.row_count == len(result.rows)
+
+    async def test_execute_query_aggregate_caps_and_reports_truncated(self, connector):
+        """An aggregate that yields MAX_RESULT_ROWS+1 docs is capped and flagged
+        truncated, with row_count == returned count (consistent with find/SQL)."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        docs = [{"_id": i} for i in range(MAX_RESULT_ROWS + 1)]
+        mock_cursor = AsyncMock()
+        mock_cursor.to_list = AsyncMock(return_value=docs)
+        mock_coll = MagicMock()
+        mock_coll.aggregate.return_value = mock_cursor
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+        connector._db = mock_db
+
+        query = json.dumps(
+            {"collection": "big", "operation": "aggregate", "pipeline": [{"$match": {}}]}
+        )
+        result = await connector.execute_query(query)
+
+        assert result.truncated is True
+        assert result.row_count == MAX_RESULT_ROWS
+        assert len(result.rows) == MAX_RESULT_ROWS
+
+    async def test_execute_query_find_fetches_cap_plus_one_sentinel(self, connector):
+        """With no user limit, the find must pull at most MAX_RESULT_ROWS+1 docs
+        (the sentinel) so our safety cap — not a hard-coded 1000 — bounds the
+        client-side materialisation and detects truncation."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        mock_cursor = AsyncMock()
+        mock_cursor.to_list = AsyncMock(return_value=[{"_id": 1}])
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_coll = MagicMock()
+        mock_coll.find.return_value = mock_cursor
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+        connector._db = mock_db
+
+        query = json.dumps({"collection": "c", "operation": "find", "filter": {}})
+        await connector.execute_query(query)
+
+        mock_cursor.to_list.assert_awaited_once_with(length=MAX_RESULT_ROWS + 1)
 
     async def test_execute_query_count(self, connector):
         mock_coll = AsyncMock()
@@ -754,6 +823,22 @@ class TestClickHouseConnector:
             parameters={"val": 10},
         )
 
+    async def test_execute_query_caps_and_reports_truncated(self, connector):
+        """A stream yielding more than MAX_RESULT_ROWS rows is capped at the limit,
+        reports row_count == returned count, and sets truncated=True (consistent
+        with the other connectors)."""
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        block = [(i,) for i in range(MAX_RESULT_ROWS + 1)]
+        mock_client = MagicMock()
+        mock_client.query_row_block_stream.return_value = self._stream([block], ["id"])
+        connector._client = mock_client
+
+        result = await connector.execute_query("SELECT * FROM big")
+        assert result.truncated is True
+        assert result.row_count == MAX_RESULT_ROWS
+        assert len(result.rows) == MAX_RESULT_ROWS
+
     async def test_introspect_schema_not_connected(self, connector):
         schema = await connector.introspect_schema()
         assert schema.db_type == "clickhouse"
@@ -822,3 +907,103 @@ class TestCapRowsByBytes:
         assert _estimate_value_bytes(b"abcd") == 4
         assert _estimate_value_bytes("abc") == 3
         assert _estimate_value_bytes(123) == 3
+
+
+# ---------------------------------------------------------------------------
+# Cross-connector row_count / truncated contract (uniform semantics)
+# ---------------------------------------------------------------------------
+
+
+class TestRowCountTruncationContract:
+    """Audit-High: ``row_count`` must mean the same thing across every dialect —
+    the number of rows actually returned in ``QueryResult.rows`` (the capped
+    count) — and ``truncated`` must be True whenever more rows existed than were
+    returned. This pins the uniform contract so a single connector can't drift
+    back to reporting a pre-cap total (the original Mongo bug)."""
+
+    async def _postgres_capped(self):
+        from app.connectors.base import MAX_RESULT_ROWS
+        from app.connectors.postgres import PostgresConnector
+
+        def _row(i):
+            r = MagicMock()
+            r.keys.return_value = ["id"]
+            r.values.return_value = [i]
+            return r
+
+        rows = [_row(i) for i in range(MAX_RESULT_ROWS + 1)]
+        conn = PostgresConnector()
+        mock_conn = AsyncMock()
+        mock_conn.transaction = MagicMock(return_value=_ACM(None))
+        cur = MagicMock()
+        cur.fetch = AsyncMock(return_value=rows)
+        mock_conn.cursor = AsyncMock(return_value=cur)
+        pool = MagicMock()
+        pool.acquire = MagicMock(return_value=_AcquireCtx(mock_conn))
+        pool.release = AsyncMock()
+        conn._pool = pool
+        return await conn.execute_query("SELECT * FROM big")
+
+    async def _mysql_capped(self):
+        from app.connectors.base import MAX_RESULT_ROWS
+        from app.connectors.mysql import MySQLConnector
+
+        rows = [{"id": i} for i in range(MAX_RESULT_ROWS + 1)]
+        conn = MySQLConnector()
+        mock_cur = AsyncMock()
+        mock_cur.execute = AsyncMock()
+        mock_cur.fetchmany = AsyncMock(return_value=rows)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = _MySQLCursorACM(mock_cur)
+        pool = MagicMock()
+        pool.acquire.return_value = _ACM(mock_conn)
+        conn._pool = pool
+        return await conn.execute_query("SELECT * FROM big")
+
+    async def _clickhouse_capped(self):
+        from app.connectors.base import MAX_RESULT_ROWS
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        block = [(i,) for i in range(MAX_RESULT_ROWS + 1)]
+        stream = MagicMock()
+        stream.source.column_names = ["id"]
+        stream.__enter__ = MagicMock(return_value=stream)
+        stream.__exit__ = MagicMock(return_value=False)
+        stream.__iter__ = MagicMock(side_effect=lambda: iter([block]))
+        conn = ClickHouseConnector()
+        mock_client = MagicMock()
+        mock_client.query_row_block_stream.return_value = stream
+        conn._client = mock_client
+        return await conn.execute_query("SELECT * FROM big")
+
+    async def _mongodb_capped(self):
+        from app.connectors.base import MAX_RESULT_ROWS
+        from app.connectors.mongodb import MongoDBConnector
+
+        docs = [{"_id": i} for i in range(MAX_RESULT_ROWS + 1)]
+        mock_cursor = AsyncMock()
+        mock_cursor.to_list = AsyncMock(return_value=docs)
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_coll = MagicMock()
+        mock_coll.find.return_value = mock_cursor
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+        conn = MongoDBConnector()
+        conn._db = mock_db
+        return await conn.execute_query(
+            json.dumps({"collection": "big", "operation": "find", "filter": {}})
+        )
+
+    @pytest.mark.parametrize(
+        "factory",
+        ["_postgres_capped", "_mysql_capped", "_clickhouse_capped", "_mongodb_capped"],
+    )
+    async def test_capped_result_is_uniform_across_connectors(self, factory):
+        from app.connectors.base import MAX_RESULT_ROWS
+
+        result = await getattr(self, factory)()
+        assert result.error is None
+        # truncated is authoritative whenever the result was capped.
+        assert result.truncated is True
+        # row_count == number of rows actually returned (the capped count).
+        assert result.row_count == len(result.rows) == MAX_RESULT_ROWS

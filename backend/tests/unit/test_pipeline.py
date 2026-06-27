@@ -113,8 +113,13 @@ def mock_context(mock_llm, mock_tracker) -> AgentContext:
 class TestPlanValidation:
     def test_valid_plan(self):
         stages = [
-            {"stage_id": "a", "tool": "query_database"},
-            {"stage_id": "b", "tool": "synthesize", "depends_on": ["a"]},
+            {"stage_id": "a", "description": "Fetch", "tool": "query_database"},
+            {
+                "stage_id": "b",
+                "description": "Summarize",
+                "tool": "synthesize",
+                "depends_on": ["a"],
+            },
         ]
         assert _validate_plan_structure(stages) == []
 

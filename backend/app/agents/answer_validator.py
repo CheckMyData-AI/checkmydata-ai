@@ -69,9 +69,11 @@ class AnswerValidator:
     ) -> AnswerValidationResult:
         """Return a structured verdict.
 
-        LLM failures fail *closed* by default (see
-        ``settings.answer_validator_fail_closed``); parse noise on a
-        successful LLM reply stays lenient.
+        Both an LLM *call* failure and an unparseable / verdict-less *reply*
+        honour ``settings.answer_validator_fail_closed`` (fail closed by
+        default): an answer we could not verify is reported as not addressing
+        the question so the caller frames it as a continuable partial. Set the
+        flag to ``False`` to restore the historic lenient behaviour.
         """
         if not answer or not answer.strip():
             return AnswerValidationResult(
@@ -128,17 +130,40 @@ class AnswerValidator:
             )
 
         text = (response.content or "").strip()
-        return _parse_validator_output(text)
+        from app.config import settings
+
+        return _parse_validator_output(text, fail_closed=settings.answer_validator_fail_closed)
 
 
-def _parse_validator_output(text: str) -> AnswerValidationResult:
-    """Parse the validator JSON output, tolerating preamble/code-fence noise."""
+def _parse_failure_result(reason: str, *, fail_closed: bool) -> AnswerValidationResult:
+    """Verdict for an unparseable validator reply.
+
+    R5-6 (parse half): parse failure must honour the SAME fail-closed policy as
+    a failed LLM *call* (see :meth:`AnswerValidator.validate`). When
+    ``fail_closed`` is true a garbage / empty / non-JSON / field-missing reply
+    is reported as "does not address the question" (a continuable partial)
+    instead of being silently waved through as a verified answer. When false the
+    historic lenient default (``addresses_question=True``) is preserved. Either
+    way confidence is ``0.0`` — a parse failure carries no real signal.
+    """
+    return AnswerValidationResult(
+        addresses_question=not fail_closed,
+        confidence=0.0,
+        reason=reason,
+        is_partial=fail_closed,
+    )
+
+
+def _parse_validator_output(text: str, *, fail_closed: bool = False) -> AnswerValidationResult:
+    """Parse the validator JSON output, tolerating preamble/code-fence noise.
+
+    ``fail_closed`` mirrors ``settings.answer_validator_fail_closed``: when true,
+    any unparseable / verdict-less reply routes through
+    :func:`_parse_failure_result` (treated as not-addressed) rather than the
+    lenient pass that would otherwise fail open.
+    """
     if not text:
-        return AnswerValidationResult(
-            addresses_question=True,
-            confidence=0.0,
-            reason="empty validator output",
-        )
+        return _parse_failure_result("empty validator output", fail_closed=fail_closed)
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`")
@@ -147,20 +172,16 @@ def _parse_validator_output(text: str) -> AnswerValidationResult:
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1:
-        return AnswerValidationResult(
-            addresses_question=True,
-            confidence=0.0,
-            reason="non-JSON validator output",
-        )
+        return _parse_failure_result("non-JSON validator output", fail_closed=fail_closed)
     try:
         payload = json.loads(cleaned[start : end + 1])
     except json.JSONDecodeError:
         logger.debug("AnswerValidator JSON parse failed: %s", cleaned[:200])
-        return AnswerValidationResult(
-            addresses_question=True,
-            confidence=0.0,
-            reason="invalid validator JSON",
-        )
+        return _parse_failure_result("invalid validator JSON", fail_closed=fail_closed)
+    if not isinstance(payload, dict) or "addresses_question" not in payload:
+        # A successful-looking JSON object that omits the verdict field is just
+        # as unverifiable as malformed JSON — treat it the same.
+        return _parse_failure_result("validator verdict missing", fail_closed=fail_closed)
     return AnswerValidationResult(
         addresses_question=bool(payload.get("addresses_question", True)),
         confidence=float(payload.get("confidence", 0.5) or 0.0),

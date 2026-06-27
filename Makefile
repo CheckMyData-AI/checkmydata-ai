@@ -1,6 +1,6 @@
 .PHONY: setup setup-backend setup-frontend setup-env migrate \
        dev dev-backend dev-frontend stop logs \
-       test test-integration test-all test-frontend lint check \
+       test test-integration test-all test-frontend smoke lint check \
        docker-up docker-down docker-clean docker-logs \
        clean
 
@@ -96,6 +96,9 @@ test-integration:
 
 test-all:
 	cd $(BACKEND_DIR) && $(VENV)/python -m pytest tests/ -v
+
+smoke:
+	cd $(BACKEND_DIR) && .venv/bin/pytest tests/smoke -m smoke -q
 
 test-frontend:
 	cd $(FRONTEND_DIR) && npm test

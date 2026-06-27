@@ -6,7 +6,8 @@ AgentResultValidator (structural) by inspecting the actual data content:
 - Null / empty rate anomalies
 - Type consistency within columns
 - Duplicate-row detection
-- Value-range sanity (dates, percentages, numeric sign)
+- Value-range sanity (dates, bounded percentages, unbounded rates,
+  non-negative counts)
 - Cross-stage row-count consistency
 - Truncation detection
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -36,9 +38,52 @@ _HIGH_DUPLICATE_RATIO = settings.data_gate_high_duplicate_ratio
 
 
 # Keyword-based semantic hints used when LLM classification is disabled.
-# Kept intentionally narrow — they're only a fallback, not the source of truth.
-_PERCENT_KEYWORDS: tuple[str, ...] = ("percent", "pct", "ratio", "rate")
-_DATE_KEYWORDS: tuple[str, ...] = ("date", "created", "updated", "timestamp")
+# These are a heuristic fallback, not the source of truth — when an LLM
+# classifier is wired (``column_semantic_classifier``) it takes precedence.
+#
+# Matching is **token-based** (the column name is split into whole words),
+# NOT substring-based: substring matching produced false positives that fed
+# hard checks — e.g. "account"/"discount" contain "count" (a *negative
+# account balance is legitimate*), "electric" contains "ctr", "operate"
+# contains "rate". Whole-token matching avoids those.
+#
+# "Bounded percent" columns are conceptually a 0..100 share, so a value of
+# 150 is impossible and gets the strict bound. "Rate" columns (rate/ratio/
+# growth) can legitimately exceed 100% (e.g. 150% YoY growth) and get the
+# loose bound. "Count" columns must be non-negative.
+# Only tokens that are *unambiguously* a 0..100 share. Deliberately excludes
+# retention/churn/utilization (NRR can exceed 100%, net churn can be negative,
+# CPU utilization can exceed 100%) to avoid false-positive hard fails.
+_PERCENT_BOUNDED_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "percent",
+        "percentage",
+        "pct",
+        "conversion",
+        "completion",
+        "occupancy",
+        "ctr",
+    }
+)
+_RATE_KEYWORDS: frozenset[str] = frozenset({"rate", "ratio", "growth"})
+# When a delta/change token co-occurs with a percent token, the column is a
+# signed percentage-delta (e.g. "percent_change", "pct_growth") which CAN
+# exceed 100% or go negative — demote it from bounded-percent to rate.
+_DELTA_KEYWORDS: frozenset[str] = frozenset(
+    {"change", "delta", "growth", "diff", "increase", "decrease", "variance", "gain", "loss", "net"}
+)
+_COUNT_KEYWORDS: frozenset[str] = frozenset({"count", "cnt", "qty", "quantity", "num", "number"})
+_DATE_KEYWORDS: frozenset[str] = frozenset({"date", "datetime", "created", "updated", "timestamp"})
+
+# Split a column name into lowercase word tokens, handling snake_case and
+# camelCase (e.g. "purchaseCount" / "purchase_count" -> {"purchase", "count"}).
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _column_tokens(name: str) -> set[str]:
+    snake = _CAMEL_BOUNDARY_RE.sub("_", name)
+    return {t for t in _NON_WORD_RE.split(snake.lower()) if t}
 
 
 @dataclass
@@ -109,9 +154,13 @@ class DataGate:
             llm_semantics if llm_semantics is not None else settings.data_gate_llm_semantics
         )
         # Optional callable: ``(columns, sample_rows) -> dict[col_name, kind]``
-        # where ``kind`` ∈ {"percent", "date", "amount", "id", "other"}. When
-        # present, it takes precedence over the keyword heuristic.
+        # where ``kind`` ∈ {"percent", "rate", "count", "date", "amount",
+        # "id", "other"}. When present, it takes precedence over the keyword
+        # heuristic.
         self._semantic_classifier = column_semantic_classifier
+        # One-shot guard so the "LLM semantics requested but no classifier
+        # wired" degradation is surfaced exactly once per gate instance.
+        self._warned_semantics_degraded = False
 
     def check(
         self,
@@ -210,11 +259,12 @@ class DataGate:
             )
 
     def _classify_columns(self, qr: QueryResult) -> dict[str, str]:
-        """Classify each column by semantic kind (percent / date / …).
+        """Classify each column by semantic kind (percent / rate / count / …).
 
-        Prefers the injected ``_semantic_classifier`` (LLM-backed in prod);
-        falls back to a narrow keyword heuristic so the gate still works
-        offline. Returns a dict ``{column_name: kind}``.
+        Prefers the injected ``_semantic_classifier`` (wired when an LLM
+        classifier is available); otherwise falls back to a keyword heuristic
+        so the gate still works offline. Returns ``{column_name: kind}`` with
+        kind ∈ {"percent", "rate", "count", "date", "other"}.
         """
         if self._semantic_classifier is not None:
             try:
@@ -224,14 +274,32 @@ class DataGate:
                     return {str(k): str(v) for k, v in result.items()}
             except Exception:
                 logger.debug("LLM column semantic classifier failed", exc_info=True)
+        elif self._llm_semantics and not self._warned_semantics_degraded:
+            # The flag asked for LLM semantic classification but no classifier
+            # was wired — surface the degradation instead of silently using
+            # keywords (the flag previously "gated nothing").
+            self._warned_semantics_degraded = True
+            logger.warning(
+                "DataGate: data_gate_llm_semantics is enabled but no column "
+                "semantic classifier was provided — falling back to the "
+                "keyword heuristic for value-range checks."
+            )
 
         classified: dict[str, str] = {}
         for col in qr.columns:
-            low = col.lower()
-            if any(kw in low for kw in _PERCENT_KEYWORDS):
+            tokens = _column_tokens(col)
+            is_pct = "%" in col or bool(tokens & _PERCENT_BOUNDED_KEYWORDS)
+            is_delta = bool(tokens & _DELTA_KEYWORDS)
+            # Bounded percent only when NOT a signed delta (e.g. "conversion" is
+            # bounded, but "percent_change"/"pct_growth" is a signed rate).
+            if is_pct and not is_delta:
                 classified[col] = "percent"
-            elif any(kw in low for kw in _DATE_KEYWORDS):
+            elif (tokens & _RATE_KEYWORDS) or (is_pct and is_delta):
+                classified[col] = "rate"
+            elif tokens & _DATE_KEYWORDS:
                 classified[col] = "date"
+            elif tokens & _COUNT_KEYWORDS:
+                classified[col] = "count"
             else:
                 classified[col] = "other"
         return classified
@@ -248,9 +316,11 @@ class DataGate:
         year_min = settings.data_gate_year_min
         year_max = settings.data_gate_year_max
 
+        pct_bounded_max = settings.data_gate_percent_bounded_max
+
         for col_idx, col_name in enumerate(qr.columns):
             kind = kinds.get(col_name, "other")
-            if kind not in ("percent", "date"):
+            if kind not in ("percent", "rate", "count", "date"):
                 continue
             for row in sample[:sample_limit]:
                 try:
@@ -259,16 +329,18 @@ class DataGate:
                     continue
                 if val is None:
                     continue
-                if kind == "percent" and isinstance(val, (int, float)):
-                    if val < pct_min or val > pct_max:
-                        # C4 (v1.13.0): out-of-range percent is unambiguously
-                        # wrong data — fail() so the stage retries with a
-                        # different approach instead of returning bogus values.
+                numeric = isinstance(val, (int, float)) and not isinstance(val, bool)
+                if kind == "percent" and numeric:
+                    # Bounded percent (conversion/completion/ctr/occupancy/…) is
+                    # a 0..100 share, so values outside [pct_min, bounded_max]
+                    # are impossible (e.g. 150% conversion) — hard fail so the
+                    # stage retries instead of returning bogus values.
+                    if val < pct_min or val > pct_bounded_max:
                         if settings.data_gate_hard_checks_enabled:
                             outcome.fail(
                                 f"Column '{col_name}' has value {val} "
                                 "which is out of range for a percentage "
-                                f"({pct_min}..{pct_max}).",
+                                f"({pct_min}..{pct_bounded_max}).",
                                 suggestion=(
                                     f"Cast '{col_name}' to a ratio (0..1) or "
                                     "filter the source so impossible values "
@@ -279,6 +351,38 @@ class DataGate:
                             outcome.warn(
                                 f"Column '{col_name}' has value {val} "
                                 "which looks out of range for a percentage.",
+                            )
+                        break
+                elif kind == "rate" and numeric:
+                    # Rate/ratio/growth and percentage-deltas are signed and can
+                    # legitimately exceed 100% (e.g. 150% YoY growth, NRR 130%,
+                    # -50% decline). Only an absurd magnitude is suspicious, and
+                    # only as a soft WARN — never a hard fail.
+                    if val < -pct_max or val > pct_max:
+                        outcome.warn(
+                            f"Column '{col_name}' has value {val} "
+                            f"with an unusually large magnitude for a rate (±{pct_max}).",
+                        )
+                        break
+                elif kind == "count" and numeric:
+                    if val < 0:
+                        # A negative count/quantity is impossible — hard fail
+                        # so the stage retries (usually a bad JOIN or a signed
+                        # aggregate). Vision §7: no impossible numbers.
+                        if settings.data_gate_hard_checks_enabled:
+                            outcome.fail(
+                                f"Column '{col_name}' has negative value {val} "
+                                "which is impossible for a count/quantity.",
+                                suggestion=(
+                                    "Check for a bad JOIN or a signed aggregate; "
+                                    f"wrap '{col_name}' in ABS()/GREATEST() only "
+                                    "if a negative is genuinely expected."
+                                ),
+                            )
+                        else:
+                            outcome.warn(
+                                f"Column '{col_name}' has negative value {val} "
+                                "which is unexpected for a count/quantity.",
                             )
                         break
                 elif kind == "date" and isinstance(val, str):

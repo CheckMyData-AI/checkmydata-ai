@@ -62,7 +62,23 @@ def _classify_stage_error(exc: BaseException) -> str:
         return "configuration"
     if isinstance(exc, LLMError):
         return "transient" if getattr(exc, "is_retryable", False) else "configuration"
-    return "transient"
+    # Known-transient infrastructure errors are safe to retry. ``TimeoutError``
+    # is the canonical alias for ``asyncio.TimeoutError`` on 3.11+, and
+    # ``ConnectionError`` covers reset/refused/aborted.
+    # OSError covers TimeoutError, ConnectionError (reset/refused/aborted) and
+    # socket/DNS errors (gaierror) — all genuinely transient infra blips.
+    if isinstance(exc, OSError):
+        return "transient"
+    # Everything else is almost certainly a deterministic bug (KeyError,
+    # TypeError, ValueError, connector misuse). Retrying just burns budget and
+    # latency and masks the root cause — classify non-retryable and log so the
+    # fallthrough is observable.
+    logger.warning(
+        "Stage error classified non-retryable (configuration): %s: %s",
+        type(exc).__name__,
+        exc,
+    )
+    return "configuration"
 
 
 class StageExecutor:
@@ -722,12 +738,24 @@ class StageExecutor:
                 question=question,
             )
             answer = getattr(result, "answer", "") or ""
+            mcp_status = getattr(result, "status", "")
+            if mcp_status == "success":
+                return StageResult(
+                    stage_id=stage.stage_id,
+                    status="success",
+                    summary=answer,
+                    token_usage=getattr(result, "token_usage", {}),
+                )
+            # Anything else (error / no_result / iteration-exhausted placeholder)
+            # is a stage failure — do NOT surface the placeholder as a real
+            # answer. "no_result" is data_missing (recoverable via replan);
+            # an explicit "error" carries the agent's own classification.
             return StageResult(
                 stage_id=stage.stage_id,
-                status="success" if getattr(result, "status", "") != "error" else "error",
-                summary=answer,
+                status="error",
+                error=getattr(result, "error", None) or answer or "MCP source returned no result",
+                error_category="configuration" if mcp_status == "error" else "data_missing",
                 token_usage=getattr(result, "token_usage", {}),
-                error=getattr(result, "error", None),
             )
         except Exception as exc:
             logger.exception("MCP stage '%s' failed", stage.stage_id)
@@ -738,36 +766,64 @@ class StageExecutor:
                 error_category=_classify_stage_error(exc),
             )
 
+    @staticmethod
+    def _select_process_data_source(
+        stage: PlanStage, stage_ctx: StageContext
+    ) -> QueryResult | None:
+        """Pick the source dataset for a ``process_data`` stage.
+
+        Honors the declared ``depends_on`` contract: a process_data stage with
+        explicit dependencies pulls ONLY from those (most recent first). If the
+        declared deps produced no rows we return ``None`` (→ ``data_missing``)
+        rather than silently scavenging an unrelated prior stage's dataset,
+        which previously let a transform run on the wrong data and present it
+        as the dependency's result. Only when there are NO declared deps do we
+        best-effort fall back to the most recent prior stage with rows.
+        """
+        for dep_id in reversed(stage.depends_on):
+            dep_result = stage_ctx.get_result(dep_id)
+            if dep_result and dep_result.query_result and dep_result.query_result.rows:
+                return dep_result.query_result
+
+        if stage.depends_on:
+            # Declared deps exist but none produced rows — do not scavenge.
+            return None
+
+        # No declared deps: best-effort fall back to the most recent PRIOR
+        # stage (earlier in plan order) that produced rows.
+        prior_stages: list[PlanStage] = []
+        for st in stage_ctx.plan.stages:
+            if st.stage_id == stage.stage_id:
+                break
+            prior_stages.append(st)
+        for prev in reversed(prior_stages):
+            sr = stage_ctx.get_result(prev.stage_id)
+            if sr and sr.query_result and sr.query_result.rows:
+                logger.warning(
+                    "process_data stage '%s' has no declared depends_on; "
+                    "falling back to prior stage '%s'",
+                    stage.stage_id,
+                    prev.stage_id,
+                )
+                return sr.query_result
+        return None
+
     async def _run_process_data_stage(
         self,
         stage: PlanStage,
         stage_ctx: StageContext,
         context: AgentContext | None = None,
     ) -> StageResult:
-        """Apply a data-processing operation to the most recent stage with a QueryResult."""
+        """Apply a data-processing operation to its declared source stage."""
         wf_id = context.workflow_id if context else ""
 
-        source_qr: QueryResult | None = None
-        for dep_id in reversed(stage.depends_on):
-            dep_result = stage_ctx.get_result(dep_id)
-            if dep_result and dep_result.query_result and dep_result.query_result.rows:
-                source_qr = dep_result.query_result
-                break
-
-        if source_qr is None:
-            for prev in reversed(stage_ctx.plan.stages):
-                if prev.stage_id == stage.stage_id:
-                    break
-                sr = stage_ctx.get_result(prev.stage_id)
-                if sr and sr.query_result and sr.query_result.rows:
-                    source_qr = sr.query_result
-                    break
+        source_qr = self._select_process_data_source(stage, stage_ctx)
 
         if source_qr is None:
             return StageResult(
                 stage_id=stage.stage_id,
                 status="error",
-                error="No query result available from previous stages to process.",
+                error="No query result available from the declared source stage(s) to process.",
                 error_category="data_missing",
             )
 

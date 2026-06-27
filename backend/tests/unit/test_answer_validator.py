@@ -38,6 +38,51 @@ class TestParseValidatorOutput:
         assert result.addresses_question is True
         assert result.confidence == 0.0
 
+    # --- Parse failure honours fail-closed policy (audit: parse-fail-open half) ---
+
+    def test_empty_output_fails_closed_when_configured(self):
+        """Empty validator output under fail-closed → treated as not-addressed."""
+        result = _parse_validator_output("", fail_closed=True)
+        assert result.addresses_question is False
+        assert result.is_partial is True
+        assert result.confidence == 0.0
+
+    def test_non_json_output_fails_closed_when_configured(self):
+        """Non-JSON validator output under fail-closed → not-addressed."""
+        result = _parse_validator_output("not json at all", fail_closed=True)
+        assert result.addresses_question is False
+        assert result.is_partial is True
+        assert result.confidence == 0.0
+
+    def test_invalid_json_fails_closed_when_configured(self):
+        """Malformed JSON under fail-closed → not-addressed."""
+        result = _parse_validator_output('{"addresses_question": tru', fail_closed=True)
+        assert result.addresses_question is False
+        assert result.is_partial is True
+        assert result.confidence == 0.0
+
+    def test_missing_required_field_fails_closed_when_configured(self):
+        """Valid JSON missing addresses_question under fail-closed → not-addressed."""
+        result = _parse_validator_output('{"confidence": 0.9, "reason": "x"}', fail_closed=True)
+        assert result.addresses_question is False
+        assert result.is_partial is True
+
+    def test_parse_failure_stays_lenient_when_fail_open(self):
+        """Guard: fail_closed=False keeps the lenient default on parse failure."""
+        for bad in ("", "not json at all", '{"addresses_question": tru'):
+            result = _parse_validator_output(bad, fail_closed=False)
+            assert result.addresses_question is True, bad
+            assert result.confidence == 0.0, bad
+
+    def test_valid_json_still_parses_with_fail_closed(self):
+        """A clear verdict is honoured even when fail_closed is requested."""
+        result = _parse_validator_output(
+            '{"addresses_question": true, "confidence": 0.9, "reason": "ok"}',
+            fail_closed=True,
+        )
+        assert result.addresses_question is True
+        assert result.confidence == 0.9
+
 
 class TestAnswerValidator:
     @pytest.mark.asyncio
@@ -92,6 +137,28 @@ class TestAnswerValidator:
     async def test_llm_failure_fails_open_when_configured(self):
         llm = MagicMock()
         llm.complete = AsyncMock(side_effect=LLMError("boom"))
+        validator = AnswerValidator(llm)
+        with patch("app.config.settings.answer_validator_fail_closed", False):
+            verdict = await validator.validate(question="q", answer="some answer")
+        assert verdict.addresses_question is True
+        assert verdict.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_malformed_output_fails_closed_via_validate(self):
+        """A successful LLM call returning garbage must honour fail-closed too,
+        mirroring the call-failure path (audit: parse-fail-open half)."""
+        llm = _llm_with_response("garbage not json")
+        validator = AnswerValidator(llm)
+        with patch("app.config.settings.answer_validator_fail_closed", True):
+            verdict = await validator.validate(question="q", answer="some answer")
+        assert verdict.addresses_question is False
+        assert verdict.is_partial is True
+        assert verdict.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_malformed_output_stays_lenient_when_fail_open(self):
+        """Guard: malformed LLM output under fail-open keeps the lenient default."""
+        llm = _llm_with_response("garbage not json")
         validator = AnswerValidator(llm)
         with patch("app.config.settings.answer_validator_fail_closed", False):
             verdict = await validator.validate(question="q", answer="some answer")

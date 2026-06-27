@@ -174,17 +174,30 @@ class MongoDBConnector(BaseConnector):
             collection = self._db[coll_name]
             operation = spec.get("operation", "find")
 
+            from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
+
+            # Pull at most ``MAX_RESULT_ROWS + 1`` documents so the +1 sentinel
+            # detects our-cap truncation the same way the SQL connectors do.
+            # A user-supplied ``limit`` is the requested page (not truncation),
+            # so the effective client-side ceiling is bounded by it but never
+            # below the safety cap+1 needed to spot more rows than we return.
+            user_limit = spec.get("limit")
+            if isinstance(user_limit, int) and user_limit >= 0:
+                fetch_length = min(user_limit, MAX_RESULT_ROWS) + 1
+            else:
+                fetch_length = MAX_RESULT_ROWS + 1
+
             if operation == "find":
                 cursor = collection.find(
                     spec.get("filter", {}),
                     spec.get("projection"),
                 )
-                if "limit" in spec:
-                    cursor = cursor.limit(spec["limit"])
-                docs = await cursor.to_list(length=spec.get("limit", 1000))
+                if isinstance(user_limit, int) and user_limit >= 0:
+                    cursor = cursor.limit(user_limit)
+                docs = await cursor.to_list(length=fetch_length)
             elif operation == "aggregate":
                 cursor = collection.aggregate(spec.get("pipeline", []))
-                docs = await cursor.to_list(length=spec.get("limit", 1000))
+                docs = await cursor.to_list(length=fetch_length)
             elif operation == "count":
                 count = await collection.count_documents(spec.get("filter", {}))
                 elapsed = (time.monotonic() - start) * 1000
@@ -201,8 +214,7 @@ class MongoDBConnector(BaseConnector):
             if not docs:
                 return QueryResult(row_count=0, execution_time_ms=elapsed)
 
-            from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
-
+            # The +1 sentinel: more documents existed than our safety cap allows.
             truncated = len(docs) > MAX_RESULT_ROWS
             capped = docs[:MAX_RESULT_ROWS] if truncated else docs
             columns = list(capped[0].keys()) if capped else []
@@ -213,10 +225,13 @@ class MongoDBConnector(BaseConnector):
             # documents can blow past the byte budget even under the row cap.
             rows, byte_truncated = cap_rows_by_bytes(rows)
             truncated = truncated or byte_truncated
+            # Uniform contract (audit-High): ``row_count`` is the number of rows
+            # actually returned in ``rows`` (the capped count), matching the SQL
+            # connectors — NOT the pre-cap total. ``truncated`` signals more.
             return QueryResult(
                 columns=columns,
                 rows=rows,
-                row_count=len(docs),
+                row_count=len(rows),
                 execution_time_ms=elapsed,
                 truncated=truncated,
             )

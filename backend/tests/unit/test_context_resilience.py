@@ -19,7 +19,7 @@ from app.core.history_trimmer import (
     should_wrap_up,
     trim_loop_messages,
 )
-from app.llm.base import LLMResponse, Message
+from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     LLMAllProvidersFailedError,
     LLMAuthError,
@@ -83,6 +83,137 @@ class TestTrimLoopMessages:
         assert trimmed
         assert result[0].content == "S" * 200
         assert result[-1].content == "U" * 100
+
+
+# -----------------------------------------------------------------------
+# trim_loop_messages: tool_call / tool pairing invariant (audit-High)
+# -----------------------------------------------------------------------
+
+
+def _assert_no_orphan_tool_ids(messages: list[Message]) -> None:
+    """OpenAI/OpenRouter reject a request where an assistant ``tool_calls[].id``
+    has no matching ``tool`` message, or a ``tool`` message's ``tool_call_id``
+    has no matching preceding assistant tool_call. Assert neither orphan exists.
+    """
+    assistant_ids: set[str] = set()
+    tool_ids: set[str] = set()
+    for m in messages:
+        if m.role == "assistant" and m.tool_calls:
+            for tc in m.tool_calls:
+                assistant_ids.add(tc.id)
+        if m.role == "tool" and m.tool_call_id is not None:
+            tool_ids.add(m.tool_call_id)
+
+    orphan_tool_msgs = tool_ids - assistant_ids
+    orphan_assistant_calls = assistant_ids - tool_ids
+    assert not orphan_tool_msgs, (
+        f"tool messages with no matching assistant tool_call: {sorted(orphan_tool_msgs)} "
+        f"(roles={[m.role for m in messages]})"
+    )
+    assert not orphan_assistant_calls, (
+        f"assistant tool_calls with no matching tool reply: {sorted(orphan_assistant_calls)} "
+        f"(roles={[m.role for m in messages]})"
+    )
+
+
+class TestTrimLoopMessagesPairing:
+    """Trimming must never separate an assistant ``tool_calls`` message from
+    its ``tool`` reply, nor leave an orphaned id of either kind.
+    """
+
+    def _round(self, idx: int, *, asst_chars: int, tool_chars: int) -> list[Message]:
+        cid = f"call_{idx}"
+        return [
+            Message(
+                role="assistant",
+                content="A" * asst_chars,
+                tool_calls=[ToolCall(id=cid, name="query", arguments={})],
+            ),
+            Message(
+                role="tool",
+                content="T" * tool_chars,
+                tool_call_id=cid,
+                name="query",
+            ),
+        ]
+
+    def test_many_rounds_over_budget_no_orphans(self):
+        """Several assistant(tool_calls)+tool rounds exceeding the threshold:
+        post-trim there must be no orphaned tool_call ids of either kind.
+
+        Includes an intermediate user message (realistic multi-turn session)
+        so the trim split point falls inside a tool-calling round.
+        """
+        msgs: list[Message] = [Message(role="system", content="S" * 200)]
+        for r in range(3):
+            msgs.extend(self._round(r, asst_chars=600, tool_chars=600))
+        msgs.append(Message(role="user", content="follow-up turn"))
+        for r in range(3, 6):
+            msgs.extend(self._round(r, asst_chars=600, tool_chars=600))
+        msgs.append(Message(role="user", content="final question"))
+
+        result, trimmed = trim_loop_messages(msgs, max_tokens=600)
+
+        assert trimmed
+        _assert_no_orphan_tool_ids(result)
+
+    def test_last_user_between_assistant_and_tool_no_orphan(self):
+        """When the last user message falls between an assistant's tool_calls
+        and its tool reply, the split must not orphan the tool reply.
+        """
+        msgs = [
+            Message(role="system", content="S" * 40),
+            Message(
+                role="assistant",
+                content="A" * 4000,
+                tool_calls=[ToolCall(id="c0", name="query", arguments={})],
+            ),
+            Message(role="user", content="mid-then-last user"),
+            Message(role="tool", content="T" * 40, tool_call_id="c0", name="query"),
+        ]
+
+        result, trimmed = trim_loop_messages(msgs, max_tokens=300)
+
+        assert trimmed
+        _assert_no_orphan_tool_ids(result)
+
+    def test_condense_only_path_preserves_pairs(self):
+        """When tool-result condensing alone brings the list under budget, all
+        assistant/tool pairs must remain intact (no orphan ids).
+        """
+        msgs: list[Message] = [Message(role="system", content="S" * 40)]
+        for r in range(4):
+            msgs.extend(self._round(r, asst_chars=40, tool_chars=4000))
+        msgs.append(Message(role="user", content="final"))
+
+        result, trimmed = trim_loop_messages(msgs, max_tokens=2000)
+
+        assert trimmed
+        _assert_no_orphan_tool_ids(result)
+
+    def test_multi_call_assistant_all_tools_kept_or_summarized_together(self):
+        """An assistant emitting several tool_calls in one turn: post-trim,
+        either all its tool replies are present or none of its ids survive.
+        """
+        msgs = [
+            Message(role="system", content="S" * 40),
+            Message(
+                role="assistant",
+                content="A" * 100,
+                tool_calls=[
+                    ToolCall(id="m0", name="query", arguments={}),
+                    ToolCall(id="m1", name="query", arguments={}),
+                ],
+            ),
+            Message(role="tool", content="T" * 4000, tool_call_id="m0", name="query"),
+            Message(role="tool", content="T" * 4000, tool_call_id="m1", name="query"),
+            Message(role="user", content="final"),
+        ]
+
+        result, trimmed = trim_loop_messages(msgs, max_tokens=300)
+
+        assert trimmed
+        _assert_no_orphan_tool_ids(result)
 
 
 # -----------------------------------------------------------------------

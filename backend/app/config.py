@@ -246,6 +246,10 @@ class Settings(BaseSettings):
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 10
     max_mcp_iterations: int = 5
+    # Per-call wall-clock timeout (seconds) for an external MCP tool invocation.
+    # External MCP servers are untrusted and may hang; without this a single
+    # call can stall the whole orchestrator turn indefinitely.
+    mcp_call_timeout_s: float = 30.0
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
     rag_relevance_threshold: float = 0.8
@@ -576,7 +580,14 @@ class Settings(BaseSettings):
     data_gate_hard_checks_enabled: bool = True
     data_gate_value_range_sample: int = 50
     data_gate_percent_min: float = -1.0
+    # Loose upper bound for "rate"-kind columns (rate/ratio/growth) which can
+    # legitimately exceed 100% (e.g. 150% YoY growth).
     data_gate_percent_max: float = 200.0
+    # Strict upper bound for "bounded percent" columns whose name implies a
+    # 0..100 share (conversion, completion, ctr, occupancy, retention, churn,
+    # *_pct, *percentage*). 100.5 leaves a small tolerance for rounding while
+    # still flagging impossible values like 150%. (F-DG hard-check domain.)
+    data_gate_percent_bounded_max: float = 100.5
     data_gate_year_min: int = 1900
     data_gate_year_max: int = 2100
     data_gate_common_limits: list[int] = [100, 500, 1000, 5000, 10000, 50000]

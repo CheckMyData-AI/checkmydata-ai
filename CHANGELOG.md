@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Orchestrator audit remediation (2026-06-27, branch `fix/orchestrator-audit-remediation-2026-06`)
+
+Remediation of the multi-specialist orchestrator audit (intake → routing → planning →
+execution → data acquisition → validation → bad-data/replan loops). TDD throughout
+(failing test first); backend suite 4635 passing at 75.39% coverage; ruff/mypy clean;
+new `make smoke` startup self-check (6 deterministic tests on the revenue/cohort scenario).
+
+- **CRITICAL — DataGate semantic gate revived.** The advertised LLM-semantic column
+  classifier was dead in prod and the keyword heuristic only covered percent/date, so
+  impossible values in differently-named columns (e.g. `conversion` 150%) and negative
+  counts reached the user. Now token-based classification (snake/camelCase aware, no
+  substring false positives like `account`→count / `electric`→ctr), strict bounded-percent
+  vs loose signed rates (NRR>100%, deltas, declines allowed), hard-fail on negative counts,
+  and the `data_gate_llm_semantics` flag is observable when wired without a classifier.
+- **Security — cross-tenant SSE/WS leak closed.** `/ask/stream` and the WS endpoint now
+  subscribe to the process-global workflow tracker scoped by `user_id`+project, so a stream
+  can no longer relay/latch another user's in-flight workflow events.
+- **Correctness/robustness:** budget hard-stop now emits a proper terminal `pipeline_end`;
+  the tool loop no longer KeyErrors (and discards the turn) on a duplicate tool-call id;
+  history trimming is tool-pair-aware (no orphaned `tool_call`/`tool` → no provider 400);
+  the generic error handler returns a typed code instead of raw `str(exc)` (no DSN/host
+  leak); `process_data` honors its declared `depends_on` (no scavenging an unrelated
+  dataset); deterministic exceptions are no longer retried as transient; replans with
+  dangling deps are rejected before wasting the budget; `query_database` truncation is
+  surfaced so the LLM doesn't aggregate over a silently-capped set; `row_count` semantics
+  are uniform across all four connectors (returned-count + `truncated`).
+- **Resource/abuse:** `POST /api/chat/ask` now acquires the `agent_limiter` slot (+timeout),
+  closing the only chat entry point that bypassed concurrency/hourly caps; external MCP
+  tool calls have a wall-clock timeout; auto-investigation is budget-gated + limiter-bound
+  and its verdict is surfaced to the user via a Notification instead of dead-ending.
+- **Validation honesty:** AnswerValidator parse failures now respect `answer_validator_fail_closed`
+  (were fail-open); planner rejects stages missing `stage_id`/`description` (was an uncaught
+  `KeyError` mid-planning) and reports duplicate stage ids clearly.
+
+Remaining lower-severity findings are tracked in `docs/ORCHESTRATOR_AUDIT_2026-06.md`.
+
 ### Fixed — R5: code↔DB sync reliability & correctness (2026-06-25 sync audit)
 
 Closes all 22 findings of the five-specialist code↔DB synchronization audit (9 High, 9 Medium,

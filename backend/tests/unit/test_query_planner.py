@@ -62,8 +62,18 @@ class TestValidatePlanStructure:
 
     def test_search_codebase_counts_as_retrieval(self):
         stages = [
-            {"stage_id": "s1", "tool": "search_codebase", "depends_on": []},
-            {"stage_id": "s2", "tool": "synthesize", "depends_on": ["s1"]},
+            {
+                "stage_id": "s1",
+                "description": "Search",
+                "tool": "search_codebase",
+                "depends_on": [],
+            },
+            {
+                "stage_id": "s2",
+                "description": "Summarize",
+                "tool": "synthesize",
+                "depends_on": ["s1"],
+            },
         ]
         assert _validate_plan_structure(stages) == []
 
@@ -77,17 +87,72 @@ class TestValidatePlanStructure:
     def test_analyze_git_counts_as_retrieval(self):
         """A git-only retrieval plan validates (release→cohort recipe head)."""
         stages = [
-            {"stage_id": "s1", "tool": "analyze_git", "depends_on": []},
-            {"stage_id": "s2", "tool": "synthesize", "depends_on": ["s1"]},
+            {"stage_id": "s1", "description": "Git log", "tool": "analyze_git", "depends_on": []},
+            {
+                "stage_id": "s2",
+                "description": "Summarize",
+                "tool": "synthesize",
+                "depends_on": ["s1"],
+            },
         ]
         assert _validate_plan_structure(stages) == []
 
+    def test_missing_stage_id_is_rejected(self):
+        # A stage missing stage_id used to pass validation, then crash
+        # PlanStage.from_dict with KeyError mid-planning (audit HIGH).
+        stages = [
+            {"description": "Fetch", "tool": "query_database", "depends_on": []},
+        ]
+        errors = _validate_plan_structure(stages)
+        assert any("stage_id" in e for e in errors)
+
+    def test_missing_description_is_rejected(self):
+        stages = [
+            {"stage_id": "s1", "tool": "query_database", "depends_on": []},
+        ]
+        errors = _validate_plan_structure(stages)
+        assert any("description" in e for e in errors)
+
+    def test_blank_stage_id_is_rejected(self):
+        stages = [
+            {"stage_id": "  ", "description": "x", "tool": "query_database", "depends_on": []},
+        ]
+        errors = _validate_plan_structure(stages)
+        assert any("stage_id" in e for e in errors)
+
+    def test_duplicate_stage_id_is_rejected_clearly(self):
+        # Was only caught incidentally as a misleading "circular dependencies".
+        stages = [
+            {"stage_id": "s1", "description": "a", "tool": "query_database", "depends_on": []},
+            {"stage_id": "s1", "description": "b", "tool": "synthesize", "depends_on": []},
+        ]
+        errors = _validate_plan_structure(stages)
+        assert any("duplicate" in e.lower() for e in errors)
+
+    def test_valid_plan_with_all_fields_still_passes(self):
+        assert _validate_plan_structure(VALID_STAGES) == []
+
     def test_release_cohort_recipe_plan_validates(self):
         stages = [
-            {"stage_id": "s1", "tool": "analyze_git", "depends_on": []},
-            {"stage_id": "s2", "tool": "query_database", "depends_on": ["s1"]},
-            {"stage_id": "s3", "tool": "process_data", "depends_on": ["s2"]},
-            {"stage_id": "s4", "tool": "synthesize", "depends_on": ["s3"]},
+            {"stage_id": "s1", "description": "Releases", "tool": "analyze_git", "depends_on": []},
+            {
+                "stage_id": "s2",
+                "description": "Revenue",
+                "tool": "query_database",
+                "depends_on": ["s1"],
+            },
+            {
+                "stage_id": "s3",
+                "description": "Cohort",
+                "tool": "process_data",
+                "depends_on": ["s2"],
+            },
+            {
+                "stage_id": "s4",
+                "description": "Summarize",
+                "tool": "synthesize",
+                "depends_on": ["s3"],
+            },
         ]
         assert _validate_plan_structure(stages) == []
 

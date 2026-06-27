@@ -6,6 +6,7 @@ Parametrized to cover the matrix of column kinds × value-range outcomes."""
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -44,7 +45,7 @@ class TestHardChecksValueRange:
         [
             # Hard: percent value clearly out of range
             ("revenue_pct", 9999.0, True),
-            ("share_ratio", -50.0, True),
+            ("occupancy_pct", -5.0, True),
             # Soft: percent within bounds
             ("growth_rate", 25.0, False),
             # Hard: date in obviously wrong year
@@ -155,6 +156,99 @@ class TestStageRetryIntegration:
         b.fail("bad")
         a.merge(b)
         assert a.passed is False
+
+
+class TestBroadenedClassificationAndCounts:
+    """P0 (CRITICAL) + F-DG hard-check domain: percent-like columns must be
+    range-checked even when their name lacks the legacy keywords, impossible
+    negative counts must fail, and the loose-vs-bounded distinction must not
+    create false positives on legitimate >100 rates."""
+
+    def _run(self, col_name: str, value) -> DataGateOutcome:
+        gate = DataGate()
+        qr = QueryResult(columns=[col_name], rows=[[value]], row_count=1)
+        stage = _sql_stage()
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        ctx = _make_stage_ctx(plan)
+        result = StageResult(stage_id=stage.stage_id, status="success", query_result=qr)
+        return gate.check(stage, result, ctx)
+
+    @pytest.mark.parametrize(
+        "col_name",
+        ["conversion", "completion_percentage", "ctr", "occupancy"],
+    )
+    def test_bounded_percent_over_100_fails(self, col_name):
+        # 150 is impossible for a 0..100 bounded percentage. These names lack
+        # the legacy percent/pct/ratio/rate keywords, so the gate used to skip
+        # them entirely (classified "other") — the CRITICAL gap.
+        out = self._run(col_name, 150.0)
+        assert out.passed is False, f"{col_name}=150 should be a hard failure"
+        assert out.errors
+
+    def test_negative_count_fails(self):
+        # CLAUDE.md advertises DataGate "blocks negative counts" — it didn't.
+        out = self._run("purchase_count", -5)
+        assert out.passed is False
+        assert out.errors
+
+    def test_negative_num_orders_fails(self):
+        out = self._run("num_orders", -1)
+        assert out.passed is False
+
+    def test_positive_count_passes(self):
+        # Regression guard: legitimate large counts must NOT be flagged.
+        out = self._run("num_orders", 1234)
+        assert out.passed is True
+
+    def test_loose_rate_over_100_passes(self):
+        # Regression guard: growth/rate columns can legitimately exceed 100%
+        # (e.g. 150% YoY growth) — they must use the loose bound, not fail.
+        out = self._run("growth_rate", 150.0)
+        assert out.passed is True
+
+    def test_percent_delta_columns_not_hard_failed(self):
+        # A signed percentage-delta (percent_change / pct_growth / percent_increase)
+        # can legitimately exceed 100% or go negative — must NOT hard fail.
+        for col in ("percent_change", "pct_growth", "percent_increase"):
+            assert self._run(col, 250.0).passed is True, col
+            assert self._run(col, -80.0).passed is True, col
+
+    def test_net_retention_rate_over_100_not_failed(self):
+        # SaaS net revenue retention (NRR) routinely exceeds 100% (110-130%).
+        assert self._run("net_retention_rate", 130.0).passed is True
+
+    def test_bare_churn_negative_not_failed(self):
+        # Net churn can be negative (more expansion than churn).
+        assert self._run("net_churn", -5.0).passed is True
+
+    def test_count_substring_in_unrelated_columns_not_flagged(self):
+        # 'account' / 'discount' contain the substring 'count' but are NOT
+        # counts; balances/amounts can be negative legitimately. Token-based
+        # classification must not hard-fail them.
+        assert self._run("account_balance", -100.0).passed is True
+        assert self._run("discount_amount", -5.0).passed is True
+
+    def test_percent_rate_substrings_in_unrelated_columns_not_flagged(self):
+        # 'electric' contains 'ctr', 'operate' contains 'rate'. Substring
+        # matching wrongly classified these as percent/rate and failed a large
+        # value; token matching must treat them as 'other'.
+        assert self._run("electric_usage", 9999.0).passed is True
+        assert self._run("operate_score", 9999.0).passed is True
+
+    def test_llm_semantics_requested_without_classifier_warns(self, caplog):
+        # The data_gate_llm_semantics flag previously "gated nothing": it was
+        # read into an unused attribute. When requested but no classifier is
+        # wired, the gate must surface the degradation instead of silently
+        # falling back to keywords.
+        gate = DataGate(llm_semantics=True)
+        qr = QueryResult(columns=["x"], rows=[[1]], row_count=1)
+        stage = _sql_stage()
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        ctx = _make_stage_ctx(plan)
+        result = StageResult(stage_id=stage.stage_id, status="success", query_result=qr)
+        with caplog.at_level(logging.WARNING):
+            gate.check(stage, result, ctx)
+        assert any("semantic" in r.message.lower() for r in caplog.records)
 
 
 class TestEpochIntDates:

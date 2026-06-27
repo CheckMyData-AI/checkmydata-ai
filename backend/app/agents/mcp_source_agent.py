@@ -7,6 +7,7 @@ SQLAgent handles database queries.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -207,8 +208,23 @@ class MCPSourceAgent(BaseAgent):
             )
 
             for tc in llm_resp.tool_calls:
+                timeout_s = settings.mcp_call_timeout_s
                 try:
-                    result_text = await self._adapter.call_tool(tc.name, tc.arguments)
+                    result_text = await asyncio.wait_for(
+                        self._adapter.call_tool(tc.name, tc.arguments),
+                        timeout=timeout_s,
+                    )
+                except TimeoutError:
+                    # A hung/slow external MCP server must not stall the whole
+                    # orchestrator turn. Degrade gracefully: surface a timeout
+                    # message as the tool result so the loop can continue,
+                    # exactly like the per-call exception path below.
+                    logger.warning(
+                        "MCP adapter call_tool(%s) timed out after %ss",
+                        tc.name,
+                        timeout_s,
+                    )
+                    result_text = f"MCP tool '{tc.name}' timed out after {timeout_s}s"
                 except Exception as exc:
                     logger.warning("MCP adapter call_tool(%s) failed: %s", tc.name, exc)
                     result_text = f"Error calling tool {tc.name}: {exc}"
@@ -242,8 +258,11 @@ class MCPSourceAgent(BaseAgent):
                     )
                 )
 
+        # Exhausting the iteration budget without the LLM producing a final
+        # answer is a silent failure, not a success — the caller (orchestrator)
+        # must be able to tell the difference. Surface it as "no_result".
         return MCPSourceResult(
-            status="success",
+            status="no_result",
             answer="Reached maximum iterations for MCP tool calls.",
             token_usage=total_usage,
             tool_calls_made=tool_calls_made,

@@ -1330,3 +1330,34 @@ class TestSQLAgentLineageFormatting:
             knowledge=self._knowledge([]),
         )
         assert "Lineage" not in text
+
+
+class TestSQLAgentFormatQueryResultsTruncation:
+    """Truncated result sets must surface an unmissable banner so the LLM does not
+    compute aggregates over a silently-capped row set (vision §7 correctness)."""
+
+    def test_truncated_result_emits_banner(self):
+        qr = QueryResult(
+            columns=["id", "amount"],
+            rows=[[1, 10], [2, 20], [3, 30]],
+            row_count=3,
+            execution_time_ms=5.0,
+            truncated=True,
+        )
+        text = SQLAgent._format_query_results(qr)
+        assert "TRUNCATED" in text
+        # The row data is still rendered after the warning.
+        assert "Total rows:" in text
+        assert "| id | amount |" in text
+
+    def test_non_truncated_result_has_no_banner(self):
+        qr = QueryResult(
+            columns=["id", "amount"],
+            rows=[[1, 10], [2, 20], [3, 30]],
+            row_count=3,
+            execution_time_ms=5.0,
+            truncated=False,
+        )
+        text = SQLAgent._format_query_results(qr)
+        assert "TRUNCATED" not in text
+        assert "Total rows:" in text

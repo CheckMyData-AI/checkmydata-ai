@@ -330,6 +330,29 @@ async def maybe_auto_investigate(
         from app.api.routes.data_investigations import _run_investigation_background
         from app.models.base import async_session_factory
         from app.services.investigation_service import InvestigationService
+        from app.services.sync_budget import resolve_owner_user_id
+        from app.services.usage_service import UsageService
+
+        # The auto-investigation is system-driven (no human in the loop), so its
+        # LLM spend / concurrency / verdict notification are attributed to the
+        # project owner — the same owner-attribution the code↔DB sync pipeline
+        # uses for its background LLM work.
+        async with async_session_factory() as budget_session:
+            owner_user_id = await resolve_owner_user_id(budget_session, project_id)
+            # Budget gate (vision §7 #5 — graceful degradation): if the owner is
+            # already over budget, do NOT spawn an unbilled, unbounded agent run.
+            # Owner unknown ⇒ degrade to unenforced rather than block.
+            if owner_user_id:
+                budget_error = await UsageService().check_token_budget(
+                    budget_session, owner_user_id
+                )
+                if budget_error:
+                    logger.info(
+                        "R5-7: skipping auto-investigation — owner over budget (project=%s): %s",
+                        project_id,
+                        budget_error,
+                    )
+                    return
 
         inv_svc = InvestigationService()
         async with async_session_factory() as inv_session:
@@ -366,6 +389,9 @@ async def maybe_auto_investigate(
                 user_complaint_detail=reason,
                 user_expected_value="",
                 problematic_column="",
+                user_id=owner_user_id,
+                trigger_message_id=message_id,
+                session_id=session_id,
             )
         )
         task.add_done_callback(_on_task_done)
