@@ -240,7 +240,7 @@ class OrchestratorAgent(BaseAgent):
         """
         return getattr(self._llm, "_sink", None)
 
-    def _budget_terminal_response(
+    async def _budget_terminal_response(
         self,
         *,
         wf_id: str,
@@ -252,9 +252,15 @@ class OrchestratorAgent(BaseAgent):
 
         Cheap getattr + dict lookup — safe to call at every iteration boundary.
         Returns ``None`` when there is no sink or no breach. Otherwise emits a
-        warning, ends the workflow as a failure, and returns a terminal
-        ``AgentResponse`` with ``response_type="error"`` and the sticky reason
-        in ``error``.
+        warning, ends the workflow as a failure (status ``failed``, detail = the
+        budget reason), and returns a terminal ``AgentResponse`` with
+        ``response_type="error"`` and the sticky reason in ``error``.
+
+        Emitting the terminal ``pipeline_end`` here (rather than relying on a
+        downstream fallback net mislabeled "pipeline_end never emitted") gives
+        the client an honest, correctly-attributed end event. The ``has_ended``
+        guard makes this idempotent so we never double-end a workflow that some
+        other path already closed.
         """
         sink = self._llm_sink()
         if sink is None:
@@ -277,6 +283,11 @@ class OrchestratorAgent(BaseAgent):
             wf_id,
             reason,
         )
+        if not self._tracker.has_ended(wf_id):
+            try:
+                await self._tracker.end(wf_id, "orchestrator", "failed", reason)
+            except Exception:
+                logger.warning("Failed to emit pipeline_end for budget hard-stop", exc_info=True)
         return AgentResponse(
             answer=reason,
             error=reason,
@@ -610,15 +621,21 @@ class OrchestratorAgent(BaseAgent):
             )
 
         except Exception as exc:
+            # Full detail (message + stack) stays server-side via
+            # logger.exception. NEVER forward raw str(exc) to the client: it can
+            # carry DB DSNs, hostnames, credentials, etc. Only the exception type
+            # name is surfaced (matches the LLMError handler above); the user
+            # gets a friendly, scrubbed message via ``_friendly_error``.
             logger.exception("Orchestrator error processing question")
+            exc_type = type(exc).__name__
             try:
-                await self._tracker.end(wf_id, "orchestrator", "failed", str(exc))
+                await self._tracker.end(wf_id, "orchestrator", "failed", exc_type)
             except Exception:
                 logger.warning("Failed to emit pipeline_end for error", exc_info=True)
             user_msg = self._friendly_error(exc)
             return AgentResponse(
                 answer=user_msg,
-                error=str(exc),
+                error=exc_type,
                 workflow_id=wf_id,
                 response_type="error",
             )
@@ -994,7 +1011,7 @@ class OrchestratorAgent(BaseAgent):
         # the very first LLM call; then re-checked at the top of every iteration
         # so a breach observed by ``DbUsageSink`` between iterations terminates
         # the loop at the next safe boundary.
-        early_stop = self._budget_terminal_response(
+        early_stop = await self._budget_terminal_response(
             wf_id=wf_id,
             total_usage=total_usage,
             used_provider=used_provider,
@@ -1005,7 +1022,7 @@ class OrchestratorAgent(BaseAgent):
 
         iteration = 0
         for iteration in range(max_iter):
-            mid_stop = self._budget_terminal_response(
+            mid_stop = await self._budget_terminal_response(
                 wf_id=wf_id,
                 total_usage=total_usage,
                 used_provider=used_provider,
@@ -1330,7 +1347,24 @@ class OrchestratorAgent(BaseAgent):
                 if tc.id in skipped_map:
                     tool_pairs.append((skipped_map[tc.id], None))
                 else:
-                    tool_pairs.append(executed_pairs[tc.id])
+                    # Defensive: ``executed_pairs`` is keyed by the deduplicated
+                    # ``active_calls`` ids, but we iterate the original
+                    # ``llm_resp.tool_calls`` here. A duplicate/missing id (an
+                    # internal dedup↔dispatch mismatch) used to raise ``KeyError``
+                    # that bubbled to ``run()``'s catch-all and discarded every
+                    # gathered result for the turn. Fall back to a neutral tool
+                    # message so the turn still completes with its other results.
+                    pair = executed_pairs.get(tc.id)
+                    if pair is None:
+                        logger.warning(
+                            "Tool-call id %r missing from executed_pairs "
+                            "(dedup/dispatch mismatch, tool=%s, wf=%s) — using fallback",
+                            tc.id,
+                            tc.name,
+                            wf_id,
+                        )
+                        pair = ("Tool result unavailable (internal dispatch mismatch).", None)
+                    tool_pairs.append(pair)
 
             for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
                 tool_call_log.append(
@@ -2117,6 +2151,38 @@ class OrchestratorAgent(BaseAgent):
                 "in_progress",
                 f"New plan: {len(new_plan.stages)} stages",
             )
+
+            # R5-6 (structural-soundness guard): the new context is seeded only
+            # with stages that completed *successfully* (carried over below).
+            # If the replanned plan has a stage whose ``depends_on`` references an
+            # id that is neither in the new plan nor a carried-over success
+            # stage, the executor will deadlock that stage and report the
+            # pipeline "stuck" — burning a replan on a structurally-doomed plan.
+            # Detect that up front and stop replanning, surfacing the prior
+            # (stage_failed) result as honest partial results instead.
+            seedable_ids = {s.stage_id for s in new_plan.stages} | {
+                sid for sid, sr in completed.items() if sr.status == "success"
+            }
+            dangling = {
+                dep
+                for stage in new_plan.stages
+                for dep in stage.depends_on
+                if dep not in seedable_ids
+            }
+            if dangling:
+                logger.warning(
+                    "Replanned plan has dangling dependencies %s "
+                    "(seedable=%s) — not executing structurally-doomed plan",
+                    sorted(dangling),
+                    sorted(seedable_ids),
+                )
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Replanned plan references missing prior stages — returning partial results.",
+                )
+                break
 
             new_stage_ctx = StageContext(
                 plan=new_plan,

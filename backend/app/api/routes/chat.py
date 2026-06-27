@@ -236,7 +236,18 @@ async def ask(
             "Please wait for it to complete.",
         ) from exc
 
+    # Acquire a per-user concurrency/hourly slot before any agent work, exactly
+    # like /ask/stream and the WS path — otherwise /ask bypasses
+    # ``max_concurrent_agent_calls`` / ``max_agent_calls_per_hour`` and a user
+    # can run unbounded concurrent agent pipelines. Released in the finally
+    # below. A denied acquire reserves nothing, so it must not be released.
+    _limiter_acquired = False
     try:
+        limit_err = await agent_limiter.acquire(user["user_id"])
+        if limit_err:
+            raise HTTPException(status_code=429, detail=limit_err)
+        _limiter_acquired = True
+
         user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
         history = await _chat_svc.get_history_as_messages(db, session_id)
         logger.info(
@@ -267,21 +278,55 @@ async def ask(
         if body.continuation_context:
             extra["continuation_context"] = body.continuation_context
 
+        from app.config import settings as app_settings
+
         try:
-            result = await _agent.run(
-                question=body.message,
-                project_id=body.project_id,
-                connection_config=config,
-                chat_history=history[:-1],
-                preferred_provider=agent_provider,
-                model=agent_model,
-                sql_provider=sql_provider,
-                sql_model=sql_model,
-                project_name=project.name if project else None,
-                user_id=user["user_id"],
-                extra=extra,
-                max_steps=max_steps,
+            # Bound the inline agent run with the same wall-clock budget the
+            # stream path applies, so a stuck pipeline cannot hold the request
+            # (and its concurrency slot) open indefinitely.
+            result = await asyncio.wait_for(
+                _agent.run(
+                    question=body.message,
+                    project_id=body.project_id,
+                    connection_config=config,
+                    chat_history=history[:-1],
+                    preferred_provider=agent_provider,
+                    model=agent_model,
+                    sql_provider=sql_provider,
+                    sql_model=sql_model,
+                    project_name=project.name if project else None,
+                    user_id=user["user_id"],
+                    extra=extra,
+                    max_steps=max_steps,
+                ),
+                timeout=app_settings.stream_timeout_seconds,
             )
+        except TimeoutError as timeout_exc:
+            logger.warning(
+                "Agent run timed out after %ss (session=%s)",
+                app_settings.stream_timeout_seconds,
+                session_id[:8],
+            )
+            try:
+                trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                if trace_svc is not None:
+                    await trace_svc.finalize_trace(
+                        f"unknown-{session_id}",
+                        project_id=body.project_id,
+                        user_id=user["user_id"],
+                        session_id=session_id,
+                        message_id=user_msg.id,
+                        question=body.message,
+                        response_type="error",
+                        status="failed",
+                        error_message="Agent run timed out",
+                    )
+            except Exception:
+                logger.warning("Failed to finalize trace after agent timeout", exc_info=True)
+            raise HTTPException(
+                status_code=504,
+                detail="The request took too long to process. Please try again.",
+            ) from timeout_exc
         except Exception as agent_exc:
             logger.exception("Agent run raised an exception")
             _exc_msg = str(agent_exc)[:500]
@@ -491,6 +536,11 @@ async def ask(
         )
         return response
     finally:
+        if _limiter_acquired:
+            try:
+                await agent_limiter.release(user["user_id"])
+            except Exception:
+                logger.debug("Agent limiter release failed", exc_info=True)
         try:
             await _session_lock_cm.__aexit__(None, None, None)
         except Exception:

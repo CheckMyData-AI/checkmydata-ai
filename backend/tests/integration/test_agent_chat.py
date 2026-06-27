@@ -182,6 +182,112 @@ class TestAskEndpointAgent:
 
     @pytest.mark.asyncio
     @patch("app.api.routes.chat._agent")
+    async def test_ask_acquires_and_releases_agent_limiter(
+        self, mock_agent, auth_client, project_id
+    ):
+        """The non-streaming /ask path must acquire an agent_limiter slot before
+        running the agent and release it afterwards — exactly like /ask/stream
+        and the WS path. Otherwise /ask bypasses ``max_concurrent_agent_calls``
+        and ``max_agent_calls_per_hour`` (audit-High concurrency bypass)."""
+        from app.api.routes import chat as chat_mod
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(return_value=AgentResponse(answer="ok", response_type="text"))
+
+        with (
+            patch.object(
+                chat_mod.agent_limiter, "acquire", new=AsyncMock(return_value=None)
+            ) as acq,
+            patch.object(
+                chat_mod.agent_limiter, "release", new=AsyncMock(return_value=None)
+            ) as rel,
+        ):
+            resp = await auth_client.post(
+                "/api/chat/ask",
+                json={"project_id": project_id, "message": "Hi"},
+            )
+
+        assert resp.status_code == 200
+        # Acquired once for this run, with the authenticated user's id.
+        acq.assert_awaited_once()
+        acquired_user_id = acq.await_args.args[0]
+        assert acquired_user_id
+        # The agent only ran because the slot was granted.
+        mock_agent.run.assert_awaited_once()
+        # The slot is returned afterwards, for the same user.
+        rel.assert_awaited_once_with(acquired_user_id)
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_ask_over_concurrency_cap_returns_429(self, mock_agent, auth_client, project_id):
+        """When the user is over their concurrency/hourly cap, /ask must surface
+        the limiter's message as HTTP 429 and never invoke the agent (mirrors the
+        stream path's ``raise HTTPException(429, detail=limit_err)``)."""
+        from app.api.routes import chat as chat_mod
+        from app.core.agent import AgentResponse
+
+        mock_agent.run = AsyncMock(return_value=AgentResponse(answer="ok", response_type="text"))
+        deny_msg = "Too many concurrent requests (limit: 3). Please wait."
+
+        with (
+            patch.object(
+                chat_mod.agent_limiter, "acquire", new=AsyncMock(return_value=deny_msg)
+            ) as acq,
+            patch.object(
+                chat_mod.agent_limiter, "release", new=AsyncMock(return_value=None)
+            ) as rel,
+        ):
+            resp = await auth_client.post(
+                "/api/chat/ask",
+                json={"project_id": project_id, "message": "Hi"},
+            )
+
+        assert resp.status_code == 429
+        assert resp.json()["detail"] == deny_msg
+        acq.assert_awaited_once()
+        # A denied acquire reserves nothing, so there is nothing to release...
+        rel.assert_not_called()
+        # ...and the agent must not run.
+        mock_agent.run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
+    async def test_ask_agent_timeout_returns_504_and_releases_limiter(
+        self, mock_agent, auth_client, project_id
+    ):
+        """A stuck agent run must be bounded by ``stream_timeout_seconds`` so it
+        cannot hold the request (and its concurrency slot) open forever. On
+        timeout /ask returns 504 and still releases the limiter slot."""
+        import asyncio as _asyncio
+
+        from app.api.routes import chat as chat_mod
+
+        async def _hang(*args, **kwargs):
+            await _asyncio.sleep(3600)
+
+        mock_agent.run = AsyncMock(side_effect=_hang)
+
+        with (
+            patch.object(chat_mod.agent_limiter, "acquire", new=AsyncMock(return_value=None)),
+            patch.object(
+                chat_mod.agent_limiter, "release", new=AsyncMock(return_value=None)
+            ) as rel,
+        ):
+            # Drive the timeout immediately rather than waiting the real budget.
+            from app.config import settings as real_settings
+
+            with patch.object(real_settings, "stream_timeout_seconds", 0.05):
+                resp = await auth_client.post(
+                    "/api/chat/ask",
+                    json={"project_id": project_id, "message": "Hi"},
+                )
+
+        assert resp.status_code == 504
+        # The slot acquired for this run is returned even on timeout.
+        rel.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("app.api.routes.chat._agent")
     async def test_ask_sql_result_response(
         self, mock_agent, auth_client, project_id, connection_id
     ):
