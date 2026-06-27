@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -40,34 +41,44 @@ _HIGH_DUPLICATE_RATIO = settings.data_gate_high_duplicate_ratio
 # These are a heuristic fallback, not the source of truth — when an LLM
 # classifier is wired (``column_semantic_classifier``) it takes precedence.
 #
+# Matching is **token-based** (the column name is split into whole words),
+# NOT substring-based: substring matching produced false positives that fed
+# hard checks — e.g. "account"/"discount" contain "count" (a *negative
+# account balance is legitimate*), "electric" contains "ctr", "operate"
+# contains "rate". Whole-token matching avoids those.
+#
 # "Bounded percent" columns are conceptually a 0..100 share, so a value of
 # 150 is impossible and gets the strict bound. "Rate" columns (rate/ratio/
 # growth) can legitimately exceed 100% (e.g. 150% YoY growth) and get the
 # loose bound. "Count" columns must be non-negative.
-_PERCENT_BOUNDED_KEYWORDS: tuple[str, ...] = (
-    "percent",
-    "pct",
-    "conversion",
-    "completion",
-    "occupancy",
-    "utilization",
-    "utilisation",
-    "retention",
-    "churn",
-    "ctr",
+_PERCENT_BOUNDED_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "percent",
+        "percentage",
+        "pct",
+        "conversion",
+        "completion",
+        "occupancy",
+        "utilization",
+        "utilisation",
+        "retention",
+        "churn",
+        "ctr",
+    }
 )
-_RATE_KEYWORDS: tuple[str, ...] = ("rate", "ratio", "growth")
-_COUNT_KEYWORDS: tuple[str, ...] = (
-    "count",
-    "cnt",
-    "qty",
-    "quantity",
-    "num_",
-    "_num",
-    "number_of",
-    "num_orders",
-)
-_DATE_KEYWORDS: tuple[str, ...] = ("date", "created", "updated", "timestamp")
+_RATE_KEYWORDS: frozenset[str] = frozenset({"rate", "ratio", "growth"})
+_COUNT_KEYWORDS: frozenset[str] = frozenset({"count", "cnt", "qty", "quantity", "num", "number"})
+_DATE_KEYWORDS: frozenset[str] = frozenset({"date", "datetime", "created", "updated", "timestamp"})
+
+# Split a column name into lowercase word tokens, handling snake_case and
+# camelCase (e.g. "purchaseCount" / "purchase_count" -> {"purchase", "count"}).
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _column_tokens(name: str) -> set[str]:
+    snake = _CAMEL_BOUNDARY_RE.sub("_", name)
+    return {t for t in _NON_WORD_RE.split(snake.lower()) if t}
 
 
 @dataclass
@@ -271,16 +282,16 @@ class DataGate:
 
         classified: dict[str, str] = {}
         for col in qr.columns:
-            low = col.lower()
+            tokens = _column_tokens(col)
             # Bounded percent wins over rate (e.g. "conversion_rate" is a
             # 0..100 conversion percentage, not an unbounded rate).
-            if "%" in low or any(kw in low for kw in _PERCENT_BOUNDED_KEYWORDS):
+            if "%" in col or tokens & _PERCENT_BOUNDED_KEYWORDS:
                 classified[col] = "percent"
-            elif any(kw in low for kw in _RATE_KEYWORDS):
+            elif tokens & _RATE_KEYWORDS:
                 classified[col] = "rate"
-            elif any(kw in low for kw in _DATE_KEYWORDS):
+            elif tokens & _DATE_KEYWORDS:
                 classified[col] = "date"
-            elif any(kw in low for kw in _COUNT_KEYWORDS):
+            elif tokens & _COUNT_KEYWORDS:
                 classified[col] = "count"
             else:
                 classified[col] = "other"

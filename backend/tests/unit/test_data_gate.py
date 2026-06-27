@@ -206,6 +206,20 @@ class TestBroadenedClassificationAndCounts:
         out = self._run("growth_rate", 150.0)
         assert out.passed is True
 
+    def test_count_substring_in_unrelated_columns_not_flagged(self):
+        # 'account' / 'discount' contain the substring 'count' but are NOT
+        # counts; balances/amounts can be negative legitimately. Token-based
+        # classification must not hard-fail them.
+        assert self._run("account_balance", -100.0).passed is True
+        assert self._run("discount_amount", -5.0).passed is True
+
+    def test_percent_rate_substrings_in_unrelated_columns_not_flagged(self):
+        # 'electric' contains 'ctr', 'operate' contains 'rate'. Substring
+        # matching wrongly classified these as percent/rate and failed a large
+        # value; token matching must treat them as 'other'.
+        assert self._run("electric_usage", 9999.0).passed is True
+        assert self._run("operate_score", 9999.0).passed is True
+
     def test_llm_semantics_requested_without_classifier_warns(self, caplog):
         # The data_gate_llm_semantics flag previously "gated nothing": it was
         # read into an unused attribute. When requested but no classifier is
