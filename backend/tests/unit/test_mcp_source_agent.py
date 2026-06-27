@@ -6,6 +6,7 @@ adapter management, token accumulation, and error handling.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
@@ -294,7 +295,7 @@ class TestMCPSourceAgent:
 
         result = await agent.run(context)
 
-        assert result.status == "success"
+        assert result.status == "no_result"
         assert "maximum iterations" in result.answer.lower()
         assert mock_llm.complete.await_count == MAX_MCP_ITERATIONS
         assert len(result.tool_calls_made) == MAX_MCP_ITERATIONS
@@ -351,3 +352,107 @@ class TestMCPSourceAgent:
         assert result.token_usage["prompt_tokens"] == 100 + 200 + 150
         assert result.token_usage["completion_tokens"] == 20 + 40 + 30
         assert result.token_usage["total_tokens"] == 120 + 240 + 180
+
+    # 11. tool call timeout → degradation message, loop continues ---------
+
+    @pytest.mark.asyncio
+    async def test_tool_call_timeout_degrades(
+        self,
+        agent: MCPSourceAgent,
+        mock_llm,
+        mock_adapter,
+        context: AgentContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A hung MCP server must not stall the loop indefinitely.
+
+        The external ``call_tool`` await is wrapped in ``asyncio.wait_for``
+        with ``settings.mcp_call_timeout_s``. On timeout the agent appends a
+        degradation message as the tool result and continues the loop, exactly
+        like the existing per-call exception path — it must NOT raise.
+        """
+        monkeypatch.setattr(settings, "mcp_call_timeout_s", 0.05)
+
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-slow", name="get_data", arguments={"query": "slow"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="The tool was unavailable, here is a partial answer.",
+                tool_calls=[],
+                usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+
+        async def slow_call_tool(name, arguments):
+            await asyncio.sleep(5)  # far longer than the 0.05s timeout
+            return '{"never": "returned"}'
+
+        mock_adapter.call_tool = AsyncMock(side_effect=slow_call_tool)
+
+        # Must NOT raise / hang — wait_for fires well before the 5s sleep.
+        result = await agent.run(context)
+
+        assert result.status == "success"
+        assert "partial answer" in result.answer.lower()
+        # The timed-out call is still recorded with a degradation preview.
+        assert len(result.tool_calls_made) == 1
+        assert result.tool_calls_made[0]["tool"] == "get_data"
+        assert "timed out" in result.tool_calls_made[0]["result_preview"].lower()
+        # The degradation text is surfaced to the LLM as the tool result.
+        assert any("timed out" in str(r.get("data", "")).lower() for r in result.raw_results)
+
+    # 12. TimeoutError from adapter → degradation, not a crash -----------
+
+    @pytest.mark.asyncio
+    async def test_tool_call_timeout_error_propagated(
+        self,
+        agent: MCPSourceAgent,
+        mock_llm,
+        mock_adapter,
+        context: AgentContext,
+    ):
+        """If the wrapped await raises ``TimeoutError`` the loop degrades.
+
+        Simulates ``asyncio.wait_for`` raising on a hung server: the agent
+        records a 'timed out' tool result and keeps going instead of crashing
+        the whole orchestrator turn.
+        """
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-to", name="get_data", arguments={"query": "x"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Continuing despite the timeout.",
+                tool_calls=[],
+                usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+        mock_adapter.call_tool = AsyncMock(side_effect=TimeoutError())
+
+        result = await agent.run(context)
+
+        assert result.status == "success"
+        assert "continuing despite the timeout" in result.answer.lower()
+        assert len(result.tool_calls_made) == 1
+        assert "timed out" in result.tool_calls_made[0]["result_preview"].lower()

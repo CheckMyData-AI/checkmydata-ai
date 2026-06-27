@@ -40,8 +40,29 @@ def _validate_plan_structure(stages: list[dict[str, Any]]) -> list[str]:
 
     ids = {s.get("stage_id") for s in stages}
 
+    # Explicit duplicate-stage_id check. Without this, duplicates collapse in
+    # the `ids` set and are only caught incidentally by Kahn's visited-count
+    # mismatch below, surfacing as a misleading "circular dependencies" error.
+    seen_ids: set[str] = set()
+    for s in stages:
+        sid_val = s.get("stage_id")
+        if isinstance(sid_val, str) and sid_val.strip():
+            if sid_val in seen_ids:
+                errors.append(f"Duplicate stage_id '{sid_val}'")
+            seen_ids.add(sid_val)
+
     for s in stages:
         sid = s.get("stage_id", "<missing>")
+        # Required fields. These were previously read with defaults, so a stage
+        # missing stage_id/description passed validation and then crashed
+        # PlanStage.from_dict (direct subscription) with an uncaught KeyError
+        # that aborted the whole planning call instead of retrying/falling back.
+        stage_id_val = s.get("stage_id")
+        if not isinstance(stage_id_val, str) or not stage_id_val.strip():
+            errors.append("Stage is missing a non-empty 'stage_id'")
+        description_val = s.get("description")
+        if not isinstance(description_val, str) or not description_val.strip():
+            errors.append(f"Stage '{sid}' is missing a non-empty 'description'")
         tool = s.get("tool", "")
         if tool not in _VALID_TOOLS:
             errors.append(f"Stage '{sid}' has invalid tool '{tool}'")

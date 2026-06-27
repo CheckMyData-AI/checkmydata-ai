@@ -246,6 +246,10 @@ class Settings(BaseSettings):
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 10
     max_mcp_iterations: int = 5
+    # Per-call wall-clock timeout (seconds) for an external MCP tool invocation.
+    # External MCP servers are untrusted and may hang; without this a single
+    # call can stall the whole orchestrator turn indefinitely.
+    mcp_call_timeout_s: float = 30.0
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
     rag_relevance_threshold: float = 0.8
