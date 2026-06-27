@@ -576,7 +576,14 @@ class Settings(BaseSettings):
     data_gate_hard_checks_enabled: bool = True
     data_gate_value_range_sample: int = 50
     data_gate_percent_min: float = -1.0
+    # Loose upper bound for "rate"-kind columns (rate/ratio/growth) which can
+    # legitimately exceed 100% (e.g. 150% YoY growth).
     data_gate_percent_max: float = 200.0
+    # Strict upper bound for "bounded percent" columns whose name implies a
+    # 0..100 share (conversion, completion, ctr, occupancy, retention, churn,
+    # *_pct, *percentage*). 100.5 leaves a small tolerance for rounding while
+    # still flagging impossible values like 150%. (F-DG hard-check domain.)
+    data_gate_percent_bounded_max: float = 100.5
     data_gate_year_min: int = 1900
     data_gate_year_max: int = 2100
     data_gate_common_limits: list[int] = [100, 500, 1000, 5000, 10000, 50000]

@@ -6,6 +6,7 @@ Parametrized to cover the matrix of column kinds × value-range outcomes."""
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -155,6 +156,70 @@ class TestStageRetryIntegration:
         b.fail("bad")
         a.merge(b)
         assert a.passed is False
+
+
+class TestBroadenedClassificationAndCounts:
+    """P0 (CRITICAL) + F-DG hard-check domain: percent-like columns must be
+    range-checked even when their name lacks the legacy keywords, impossible
+    negative counts must fail, and the loose-vs-bounded distinction must not
+    create false positives on legitimate >100 rates."""
+
+    def _run(self, col_name: str, value, *, hard: bool = True) -> DataGateOutcome:
+        gate = DataGate()
+        qr = QueryResult(columns=[col_name], rows=[[value]], row_count=1)
+        stage = _sql_stage()
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        ctx = _make_stage_ctx(plan)
+        result = StageResult(stage_id=stage.stage_id, status="success", query_result=qr)
+        return gate.check(stage, result, ctx)
+
+    @pytest.mark.parametrize(
+        "col_name",
+        ["conversion", "completion_percentage", "ctr", "occupancy", "retention"],
+    )
+    def test_bounded_percent_over_100_fails(self, col_name):
+        # 150 is impossible for a 0..100 bounded percentage. These names lack
+        # the legacy percent/pct/ratio/rate keywords, so the gate used to skip
+        # them entirely (classified "other") — the CRITICAL gap.
+        out = self._run(col_name, 150.0)
+        assert out.passed is False, f"{col_name}=150 should be a hard failure"
+        assert out.errors
+
+    def test_negative_count_fails(self):
+        # CLAUDE.md advertises DataGate "blocks negative counts" — it didn't.
+        out = self._run("purchase_count", -5)
+        assert out.passed is False
+        assert out.errors
+
+    def test_negative_num_orders_fails(self):
+        out = self._run("num_orders", -1)
+        assert out.passed is False
+
+    def test_positive_count_passes(self):
+        # Regression guard: legitimate large counts must NOT be flagged.
+        out = self._run("num_orders", 1234)
+        assert out.passed is True
+
+    def test_loose_rate_over_100_passes(self):
+        # Regression guard: growth/rate columns can legitimately exceed 100%
+        # (e.g. 150% YoY growth) — they must use the loose bound, not fail.
+        out = self._run("growth_rate", 150.0)
+        assert out.passed is True
+
+    def test_llm_semantics_requested_without_classifier_warns(self, caplog):
+        # The data_gate_llm_semantics flag previously "gated nothing": it was
+        # read into an unused attribute. When requested but no classifier is
+        # wired, the gate must surface the degradation instead of silently
+        # falling back to keywords.
+        gate = DataGate(llm_semantics=True)
+        qr = QueryResult(columns=["x"], rows=[[1]], row_count=1)
+        stage = _sql_stage()
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        ctx = _make_stage_ctx(plan)
+        result = StageResult(stage_id=stage.stage_id, status="success", query_result=qr)
+        with caplog.at_level(logging.WARNING):
+            gate.check(stage, result, ctx)
+        assert any("semantic" in r.message.lower() for r in caplog.records)
 
 
 class TestEpochIntDates:

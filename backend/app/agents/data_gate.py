@@ -6,7 +6,8 @@ AgentResultValidator (structural) by inspecting the actual data content:
 - Null / empty rate anomalies
 - Type consistency within columns
 - Duplicate-row detection
-- Value-range sanity (dates, percentages, numeric sign)
+- Value-range sanity (dates, bounded percentages, unbounded rates,
+  non-negative counts)
 - Cross-stage row-count consistency
 - Truncation detection
 
@@ -36,8 +37,36 @@ _HIGH_DUPLICATE_RATIO = settings.data_gate_high_duplicate_ratio
 
 
 # Keyword-based semantic hints used when LLM classification is disabled.
-# Kept intentionally narrow — they're only a fallback, not the source of truth.
-_PERCENT_KEYWORDS: tuple[str, ...] = ("percent", "pct", "ratio", "rate")
+# These are a heuristic fallback, not the source of truth — when an LLM
+# classifier is wired (``column_semantic_classifier``) it takes precedence.
+#
+# "Bounded percent" columns are conceptually a 0..100 share, so a value of
+# 150 is impossible and gets the strict bound. "Rate" columns (rate/ratio/
+# growth) can legitimately exceed 100% (e.g. 150% YoY growth) and get the
+# loose bound. "Count" columns must be non-negative.
+_PERCENT_BOUNDED_KEYWORDS: tuple[str, ...] = (
+    "percent",
+    "pct",
+    "conversion",
+    "completion",
+    "occupancy",
+    "utilization",
+    "utilisation",
+    "retention",
+    "churn",
+    "ctr",
+)
+_RATE_KEYWORDS: tuple[str, ...] = ("rate", "ratio", "growth")
+_COUNT_KEYWORDS: tuple[str, ...] = (
+    "count",
+    "cnt",
+    "qty",
+    "quantity",
+    "num_",
+    "_num",
+    "number_of",
+    "num_orders",
+)
 _DATE_KEYWORDS: tuple[str, ...] = ("date", "created", "updated", "timestamp")
 
 
@@ -109,9 +138,13 @@ class DataGate:
             llm_semantics if llm_semantics is not None else settings.data_gate_llm_semantics
         )
         # Optional callable: ``(columns, sample_rows) -> dict[col_name, kind]``
-        # where ``kind`` ∈ {"percent", "date", "amount", "id", "other"}. When
-        # present, it takes precedence over the keyword heuristic.
+        # where ``kind`` ∈ {"percent", "rate", "count", "date", "amount",
+        # "id", "other"}. When present, it takes precedence over the keyword
+        # heuristic.
         self._semantic_classifier = column_semantic_classifier
+        # One-shot guard so the "LLM semantics requested but no classifier
+        # wired" degradation is surfaced exactly once per gate instance.
+        self._warned_semantics_degraded = False
 
     def check(
         self,
@@ -210,11 +243,12 @@ class DataGate:
             )
 
     def _classify_columns(self, qr: QueryResult) -> dict[str, str]:
-        """Classify each column by semantic kind (percent / date / …).
+        """Classify each column by semantic kind (percent / rate / count / …).
 
-        Prefers the injected ``_semantic_classifier`` (LLM-backed in prod);
-        falls back to a narrow keyword heuristic so the gate still works
-        offline. Returns a dict ``{column_name: kind}``.
+        Prefers the injected ``_semantic_classifier`` (wired when an LLM
+        classifier is available); otherwise falls back to a keyword heuristic
+        so the gate still works offline. Returns ``{column_name: kind}`` with
+        kind ∈ {"percent", "rate", "count", "date", "other"}.
         """
         if self._semantic_classifier is not None:
             try:
@@ -224,14 +258,30 @@ class DataGate:
                     return {str(k): str(v) for k, v in result.items()}
             except Exception:
                 logger.debug("LLM column semantic classifier failed", exc_info=True)
+        elif self._llm_semantics and not self._warned_semantics_degraded:
+            # The flag asked for LLM semantic classification but no classifier
+            # was wired — surface the degradation instead of silently using
+            # keywords (the flag previously "gated nothing").
+            self._warned_semantics_degraded = True
+            logger.warning(
+                "DataGate: data_gate_llm_semantics is enabled but no column "
+                "semantic classifier was provided — falling back to the "
+                "keyword heuristic for value-range checks."
+            )
 
         classified: dict[str, str] = {}
         for col in qr.columns:
             low = col.lower()
-            if any(kw in low for kw in _PERCENT_KEYWORDS):
+            # Bounded percent wins over rate (e.g. "conversion_rate" is a
+            # 0..100 conversion percentage, not an unbounded rate).
+            if "%" in low or any(kw in low for kw in _PERCENT_BOUNDED_KEYWORDS):
                 classified[col] = "percent"
+            elif any(kw in low for kw in _RATE_KEYWORDS):
+                classified[col] = "rate"
             elif any(kw in low for kw in _DATE_KEYWORDS):
                 classified[col] = "date"
+            elif any(kw in low for kw in _COUNT_KEYWORDS):
+                classified[col] = "count"
             else:
                 classified[col] = "other"
         return classified
@@ -248,9 +298,11 @@ class DataGate:
         year_min = settings.data_gate_year_min
         year_max = settings.data_gate_year_max
 
+        pct_bounded_max = settings.data_gate_percent_bounded_max
+
         for col_idx, col_name in enumerate(qr.columns):
             kind = kinds.get(col_name, "other")
-            if kind not in ("percent", "date"):
+            if kind not in ("percent", "rate", "count", "date"):
                 continue
             for row in sample[:sample_limit]:
                 try:
@@ -259,16 +311,22 @@ class DataGate:
                     continue
                 if val is None:
                     continue
-                if kind == "percent" and isinstance(val, (int, float)):
-                    if val < pct_min or val > pct_max:
-                        # C4 (v1.13.0): out-of-range percent is unambiguously
-                        # wrong data — fail() so the stage retries with a
-                        # different approach instead of returning bogus values.
+                numeric = isinstance(val, (int, float)) and not isinstance(val, bool)
+                if kind in ("percent", "rate") and numeric:
+                    # Bounded percent (conversion/completion/ctr/…) is a 0..100
+                    # share, so a strict upper bound applies; "rate" columns
+                    # (rate/ratio/growth) can legitimately exceed 100%.
+                    upper = pct_bounded_max if kind == "percent" else pct_max
+                    label = "percentage" if kind == "percent" else "rate"
+                    if val < pct_min or val > upper:
+                        # C4 (v1.13.0): out-of-range percent/rate is
+                        # unambiguously wrong data — fail() so the stage
+                        # retries instead of returning bogus values.
                         if settings.data_gate_hard_checks_enabled:
                             outcome.fail(
                                 f"Column '{col_name}' has value {val} "
-                                "which is out of range for a percentage "
-                                f"({pct_min}..{pct_max}).",
+                                f"which is out of range for a {label} "
+                                f"({pct_min}..{upper}).",
                                 suggestion=(
                                     f"Cast '{col_name}' to a ratio (0..1) or "
                                     "filter the source so impossible values "
@@ -278,7 +336,28 @@ class DataGate:
                         else:
                             outcome.warn(
                                 f"Column '{col_name}' has value {val} "
-                                "which looks out of range for a percentage.",
+                                f"which looks out of range for a {label}.",
+                            )
+                        break
+                elif kind == "count" and numeric:
+                    if val < 0:
+                        # A negative count/quantity is impossible — hard fail
+                        # so the stage retries (usually a bad JOIN or a signed
+                        # aggregate). Vision §7: no impossible numbers.
+                        if settings.data_gate_hard_checks_enabled:
+                            outcome.fail(
+                                f"Column '{col_name}' has negative value {val} "
+                                "which is impossible for a count/quantity.",
+                                suggestion=(
+                                    "Check for a bad JOIN or a signed aggregate; "
+                                    f"wrap '{col_name}' in ABS()/GREATEST() only "
+                                    "if a negative is genuinely expected."
+                                ),
+                            )
+                        else:
+                            outcome.warn(
+                                f"Column '{col_name}' has negative value {val} "
+                                "which is unexpected for a count/quantity.",
                             )
                         break
                 elif kind == "date" and isinstance(val, str):
