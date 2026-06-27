@@ -109,6 +109,7 @@ testpaths = ["tests"]
 markers = [
     "unit: unit tests (deselect with '-m \"not unit\"')",
     "integration: integration tests (deselect with '-m \"not integration\"')",
+    "smoke: fast deterministic startup smoke tests (run with 'pytest -m smoke')",
 ]
 
 [tool.coverage.run]
