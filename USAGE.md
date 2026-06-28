@@ -37,7 +37,7 @@ First-time users see a 5-step onboarding wizard:
 Additional options:
 - **"Try demo instead"** button on step 1 calls `POST /api/demo/setup` to create a sample project
 - **"Skip setup entirely"** link marks onboarding complete without any setup
-- JWT token is stored in `localStorage` and automatically refreshed before expiry
+- The session JWT is delivered as an httpOnly cookie (never `localStorage`) and automatically refreshed before expiry; the token is kept in memory only to schedule the proactive refresh
 
 **Google OAuth Setup** (required for "Sign in with Google"):
 
@@ -278,6 +278,7 @@ The orchestrator can enrich query results between steps:
 | `make test-integration` | Run backend integration tests |
 | `make test-all` | Run all backend tests |
 | `make test-frontend` | Run frontend vitest |
+| `make smoke` | Run fast startup smoke tests (`pytest -m smoke`) |
 | `make lint` | Run ruff linter |
 | `make check` | Run lint + all backend tests |
 | `make migrate` | Apply Alembic migrations |

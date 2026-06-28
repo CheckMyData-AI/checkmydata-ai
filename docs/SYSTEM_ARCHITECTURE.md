@@ -219,6 +219,7 @@ Before loading any heavy context (table maps, learnings, staleness checks), the 
 | `direct` | Greetings, thanks, meta-questions, follow-ups about already-displayed results | None | None |
 | `query` | Questions requiring database queries for numbers, stats, records, analytics | Table map, learnings, overview | `query_database`, `process_data`, `manage_rules`, `ask_user` |
 | `knowledge` | Questions about project code, architecture, or documentation | KB staleness | `search_codebase`, `ask_user` |
+| `git` | Questions about commit history, code changes/diffs, who changed what, release timelines, or commit review signals (offered only when `has_repo`) | Repo presence | `analyze_git`, `get_release_timeline`, `write_code_note`, `ask_user` |
 | `mcp` | Questions requiring external MCP-connected service data | MCP sources | `query_mcp_source`, `ask_user` |
 | `explore` | Spans multiple capabilities or the router is unsure | Everything | All available |
 
@@ -321,19 +322,16 @@ If the response includes SQL results, the `VizAgent` selects the best chart type
 
 For questions requiring multiple data retrieval steps, the orchestrator switches to a multi-stage pipeline.
 
-**Complexity detection** uses two levels:
-
-1. **Heuristic check** (`detect_complexity()`): scans for keywords like "summary table", "pivot", "cross-reference", "compare", "for each", "step 1", etc.
-2. **Adaptive LLM check** (`detect_complexity_adaptive()`): a lightweight LLM call that returns "simple" or "complex" — used only if the heuristic is inconclusive.
+**Complexity detection** is decided by the unified router (§2.4), not a separate heuristic pass. The single `route_request()` call returns a `complexity` tag (`simple` / `moderate` / `complex`); `OrchestratorAgent._run` branches on `RouteResult.use_complex_pipeline` (`backend/app/agents/router.py`). The legacy two-level `detect_complexity()` / `detect_complexity_adaptive()` heuristic has been removed (see the `AdaptivePlanner` module docstring: "Complexity detection is now handled by the unified router").
 
 **Pipeline execution**:
 
 ```mermaid
 flowchart LR
     Q["Complex Question"]
-    QP["QueryPlanner\n(LLM call)"]
-    EP["ExecutionPlan\n(N stages)"]
-    SE["StageExecutor"]
+    QP["AdaptivePlanner\n(LLM call)"]
+    EP["ExecutionPlan\n(N stages, DAG)"]
+    SE["StageExecutor\n(topological, parallel)"]
     SV["StageValidator"]
     CP{Checkpoint?}
     USR["User Review"]
@@ -352,14 +350,16 @@ flowchart LR
 
 | Component | File | Role |
 |-----------|------|------|
-| `QueryPlanner` | `backend/app/agents/query_planner.py` | Decomposes question into `ExecutionPlan` via a single LLM call |
-| `ExecutionPlan` | `backend/app/agents/stage_context.py` | Ordered list of `PlanStage` objects with descriptions, SQL hints, validation criteria |
-| `StageExecutor` | `backend/app/agents/stage_executor.py` | Runs stages sequentially: SQL agent call → validation → checkpoint → next |
+| `AdaptivePlanner` | `backend/app/agents/adaptive_planner.py` | Decomposes the question into an `ExecutionPlan` via a single LLM call (and re-plans after a stage fails). It is the sole planner; the legacy `QueryPlanner` class has been removed — `query_planner.py` now only holds plan-validation helpers and the `create_execution_plan` tool schema. |
+| `ExecutionPlan` | `backend/app/agents/stage_context.py` | List of `PlanStage` objects (a DAG via per-stage `depends_on`) with descriptions, SQL hints, validation criteria |
+| `StageExecutor` | `backend/app/agents/stage_executor.py` | Topological scheduler: dispatches each ready batch (deps satisfied) concurrently — up to `pipeline_max_parallel_stages` (default 3) at once — running each stage SQL agent call → validation → DataGate → checkpoint. The first failure in a batch short-circuits the pipeline; an unsatisfiable dependency graph returns `stage_failed` (replan-eligible) rather than silently presenting partial data. |
 | `StageValidator` | `backend/app/agents/stage_validator.py` | Checks data shape, row-count bounds, cross-stage consistency |
 | `StageContext` | `backend/app/agents/stage_context.py` | In-memory pipeline state: plan, results per stage, user feedback |
 | `PipelineRun` | `backend/app/models/pipeline_run.py` | DB-persisted pipeline state for resume/retry |
 
 **Checkpoint mechanism**: Stages can be flagged as checkpoints. When a checkpoint stage completes, the orchestrator pauses and presents intermediate results to the user with options to **continue**, **modify**, or **retry**. The user's response is processed via `_resume_pipeline()` which reconstitutes `StageContext` from the DB and continues execution.
+
+**Replan loop**: When a stage fails after its retries and is replan-eligible, `OrchestratorAgent._run_pipeline_replans` asks `AdaptivePlanner.replan()` for a new plan that avoids the failed stage, carrying over only the stages that completed successfully — bounded by `max_pipeline_replans` (default 2). A replanned plan that references a `depends_on` id which is neither in the new plan nor a carried-over success stage (a *dangling dependency*) is rejected before execution, and the prior `stage_failed` result is surfaced as honest partial results instead of burning a replan on a structurally-doomed plan.
 
 **Fallback**: If the planner fails to produce a valid plan, the orchestrator falls back to the simple tool-calling loop with a `_skip_complexity` flag to prevent infinite recursion.
 
@@ -439,11 +439,11 @@ The error hierarchy (`backend/app/agents/errors.py`):
 
 ```
 AgentError (base)
-├── AgentTimeoutError      → retry with adjusted context
-├── AgentRetryableError    → orchestrator may retry
-├── AgentFatalError        → unrecoverable (missing connection, auth failure)
-└── AgentValidationError   → sub-agent result failed checks
+├── AgentRetryableError    → transient failure; the orchestrator may retry with adjusted context
+└── AgentFatalError        → unrecoverable (missing connection, auth failure, etc.)
 ```
+
+(Sub-agent *result* validation is reported via `ValidationOutcome` / `StageValidationOutcome` dataclasses — not exceptions — and LLM-layer failures use the separate `LLMError` hierarchy in §4.3.)
 
 The orchestrator catches different error types and produces appropriate user-facing messages:
 - Connection errors → "Please check your connection settings"
@@ -1108,14 +1108,14 @@ Key chat-related endpoints in `backend/app/api/routes/chat.py`:
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/api/chat/sessions` | Create a new chat session |
-| `GET` | `/api/chat/sessions` | List sessions for a project |
+| `GET` | `/api/chat/sessions/{project_id}` | List sessions for a project |
 | `GET` | `/api/chat/sessions/{id}/messages` | Get messages for a session |
 | `POST` | `/api/chat/ask` | Ask a question (synchronous) |
 | `POST` | `/api/chat/ask/stream` | Ask a question (SSE streaming) |
 | `POST` | `/api/chat/feedback` | Submit thumbs up/down |
-| `POST` | `/api/chat/estimate` | Estimate cost before asking |
+| `GET` | `/api/chat/estimate` | Estimate cost before asking |
 | `GET` | `/api/chat/search` | Search across chat history |
-| `WS` | `/api/chat/ws/{project}/{connection}` | WebSocket for real-time chat |
+| `WS` | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket for real-time chat |
 
 ---
 
@@ -1274,8 +1274,8 @@ flowchart TB
 ```mermaid
 flowchart TB
     U["User: 'Build a summary table comparing\nrevenue by region for each quarter'"]
-    CD["Complexity Detection:\nheuristic + adaptive LLM"]
-    QP["QueryPlanner:\n3-stage plan"]
+    CD["Complexity:\nunified router (route + complexity)"]
+    QP["AdaptivePlanner:\n3-stage plan"]
     S1["Stage 1: Get revenue by region"]
     V1["Validate: row count, columns"]
     CK1{Checkpoint?}

@@ -347,13 +347,13 @@
 
 | #  | Task | Status | Priority | Source comment | Est. Complexity |
 |----|------|--------|----------|----------------|-----------------|
-| 10.1 | Replace `orchestrator_pipeline_table_threshold` table-count routing heuristic with a planner-LLM step (router already returns `estimated_queries` + `needs_multiple_data_sources` — wire those into routing instead) | `pending` | P2 | [backend/app/config.py](backend/app/config.py) lines ~196-200 — "future work will route this through the planner LLM instead of table count alone" | Medium |
+| 10.1 | Replace `orchestrator_pipeline_table_threshold` table-count routing heuristic with a planner-LLM step (router already returns `estimated_queries` + `needs_multiple_data_sources` — wire those into routing instead) | `pending` | P2 | [backend/app/config.py](backend/app/config.py) lines ~363-365 — "future work will route this through the planner LLM instead of table count alone" | Medium |
 | 10.2 | Optional Chroma extension for `SchemaRetriever` (currently BM25-only by design; documented as a future extension point) | `pending` | P3 | [backend/app/knowledge/schema_retriever.py](backend/app/knowledge/schema_retriever.py) lines 11-18 — "do not wire Chroma into this path for now … If we later want semantic recall" | Medium |
 | 10.3 | Incremental per-file code-graph updates (today the M2 step rebuilds the full graph on every index run; per-file deltas + edge surgery would cut indexing cost on large repos) | `pending` | P3 | Implied by the "full rebuild" shape of `CodeGraphBuilder.build` | High |
 | 10.4 | Multi-language receiver-type resolution for cross-class CALL edges (current tree-sitter walker resolves callee names but not the receiver's class in dynamic languages) | `pending` | P3 | M1 plan scope cut: "single-language receiver typing only" | High |
 | 10.5 | Multi-repo / monorepo cross-repo code graph (today the graph is scoped to a single project; teams with split frontend/backend repos can't see lineage across the seam) | `pending` | P3 | M2 plan scope cut: "single-repo only" | High |
-| 10.6 | Promote the `query_empty_result_retry` knob from `False`-by-default to an opt-in workflow (currently a feature flag with no UI) | `pending` | P3 | [backend/app/config.py:109](backend/app/config.py) | Low |
-| 10.7 | Decide on `data_gate_llm_semantics` (LLM vs keyword heuristic) — currently a `False`-by-default flag with no rollout plan | `pending` | P3 | [backend/app/config.py:315](backend/app/config.py) | Low |
+| 10.6 | Expose the `query_empty_result_retry` knob in the UI (currently a backend-only feature flag, default `True` since the audit-remediation workstream — no operator surface) | `pending` | P3 | [backend/app/config.py:151](backend/app/config.py) | Low |
+| 10.7 | Decide on `data_gate_llm_semantics` (LLM vs keyword heuristic) — currently a `False`-by-default flag with no rollout plan | `pending` | P3 | [backend/app/config.py:598](backend/app/config.py) | Low |
 
 ---
 

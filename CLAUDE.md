@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB (via `backend/app/connectors/`).
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: ~4,246 total (backend unit + integration + frontend Vitest); **72% backend coverage** enforced in CI.
-- **Recent work**: see `[Unreleased]` in `CHANGELOG.md` (June 2026 audit remediation: billing, cookie auth, MCP/SSH hardening, Redis limits, Sentry).
+- **Tests**: ~5,107 total (4,635 backend unit + integration + 472 frontend Vitest); backend coverage ~75% (the CI gate `fail_under` is **72%**).
+- **Recent work**: see `[Unreleased]` in `CHANGELOG.md` (June 2026 orchestrator-audit remediation: DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
 
 ## Prerequisites
 

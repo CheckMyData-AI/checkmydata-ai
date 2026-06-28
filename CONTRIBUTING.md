@@ -42,6 +42,7 @@ make dev            # Start backend (:8000) and frontend (:3100)
 make test           # Backend unit tests
 make test-frontend  # Frontend tests
 make test-all       # All backend tests (unit + integration)
+make smoke          # Fast startup smoke tests (pytest -m smoke)
 make lint           # Backend linting (ruff)
 make check          # Lint + all tests
 ```

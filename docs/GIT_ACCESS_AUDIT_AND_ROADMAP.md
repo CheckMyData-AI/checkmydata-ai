@@ -35,13 +35,20 @@ summarized below; each maps to a roadmap phase.
 - **Strong today:** hybrid retrieval (BM25 ⊕ ChromaDB merged via Reciprocal
   Rank Fusion), `RAGFeedback` capture, soft timeouts with single-leg
   degradation, and question-aware schema retrieval.
-- **Gaps:** no cross-encoder **reranker** after fusion; no automated
-  **RAGAS-style evaluation** in CI; no **temporal metadata** on chunks (so the
-  KB cannot itself answer "what changed recently").
+- **Since shipped (Knowledge Architecture roadmap, separate workstream):** a
+  cross-encoder **reranker** after fusion now exists
+  (`backend/app/knowledge/reranker.py` — `CrossEncoderReranker` / `NoopReranker`,
+  wired into `hybrid_retriever.py` and `schema_retriever.py`), OFF by default
+  behind `reranker_enabled`; and a **retrieval-eval harness** with a CI gate
+  exists (`backend/app/eval/`, metrics mirror the retrieval-side of RAGAS —
+  context precision/recall, hit@k, MRR, nDCG — gated by `test_retrieval_eval.py`
+  + `test_reranker.py`).
+- **Gap still open:** no **temporal metadata** on chunks (so the KB cannot
+  itself answer "what changed recently").
 - **Decision:** Live Git Access closes the *temporal* gap operationally — the
   agent reads the live history directly rather than relying on stale embeddings,
   and a **clone-freshness warning** tells the LLM when the semantic KB lags the
-  working tree. Reranker + RAGAS deferred to **Phase 2**.
+  working tree.
 
 ### 2.2 Data Engineering (`senior-data-engineer`)
 
@@ -79,7 +86,7 @@ summarized below; each maps to a roadmap phase.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **Phase 1** | `GitInspector` + `GitAgent`, single-loop **and** full pipeline wiring (`analyze_git` stage), `cohort_window` data op, `code_finding` insights, security hardening, tests + docs | ✅ Delivered (Epic SSH-251) |
-| **Phase 2** | Cross-encoder reranker after RRF; RAGAS evaluation harness in CI; temporal RAG metadata; Git op timings in `MetricsCollector`; multi-repo-per-project selection | Planned |
+| **Phase 2** | Temporal RAG metadata; Git op timings in `MetricsCollector`; multi-repo-per-project selection. (Cross-encoder reranker after RRF and the retrieval-eval harness + CI gate shipped separately under the Knowledge Architecture roadmap — see §2.1.) | Planned |
 | **Phase 3** | GitHub/GitLab API connector for **real PR/review analytics** (reviewers, approvals, review latency, comment threads) + webhooks for push-driven re-index | Planned |
 | **Phase 4** | Answer-quality monitoring (LLM-as-judge sampling) + router regression suite to catch routing/quality drift | Planned |
 

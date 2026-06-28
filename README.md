@@ -226,8 +226,8 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **4,246 total tests** (3,366 backend unit + 478 backend integration + 402 frontend)
-- **72%+ backend coverage** (CI-enforced minimum; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
+- **5,107 total tests** (4,093 backend unit + 536 backend integration + 6 backend smoke + 472 frontend)
+- **~75% backend coverage** (CI-enforced minimum is 72%; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
 - Zero flaky tests, zero skipped tests
 
 ```bash

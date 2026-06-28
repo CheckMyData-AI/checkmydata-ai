@@ -139,8 +139,8 @@ Copy `backend/.env.example` to `backend/.env`. All available variables:
 | `REDIS_URL` | No | Enables shared cache + ARQ task queue. Empty = in-process fallback. |
 | `JWT_EXPIRE_MINUTES` | No | Token expiry (default: 1440 = 24h) |
 | `CHROMA_SERVER_URL` | No | Remote ChromaDB server URL. If empty, uses embedded PersistentClient. |
-| `MAX_HISTORY_TOKENS` | No | Token budget for chat history before summarization (default: 4000) |
-| `MAX_CONTEXT_TOKENS` | No | Total context window budget (default: 16000) |
+| `MAX_HISTORY_TOKENS` | No | Token budget for chat history before summarization (default: 2500) |
+| `MAX_CONTEXT_TOKENS` | No | Total context window budget (default: 32000) |
 | `LOG_FORMAT` | No | `text` (default) or `json` (for production log aggregation) |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
 

@@ -1,12 +1,20 @@
 # API Reference
 
 The backend exposes a REST API at `http://localhost:8000/api`. All endpoints
-except authentication and health require a JWT token in the `Authorization`
-header:
+except `/api/auth/*` and `/api/health` require authentication via one of two
+mechanisms (`backend/app/api/deps.py::get_current_user`):
 
-```
-Authorization: Bearer <jwt-token>
-```
+- **Browsers** authenticate with an `httpOnly` **session cookie** plus a **CSRF
+  double-submit** token (the `X-CSRF-Token` header must equal the CSRF cookie on
+  any mutating request, or the call is rejected with `403`). The JWT is not
+  exposed to JavaScript and is omitted from login response bodies when
+  `auth_cookie_enabled`.
+- **Non-browser API clients** continue to pass a JWT in the `Authorization`
+  header (CSRF does not apply to bearer auth):
+
+  ```
+  Authorization: Bearer <jwt-token>
+  ```
 
 ## Authentication
 
@@ -40,21 +48,21 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}/readiness` | Check project setup readiness |
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
-| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, trigger, status, duration_seconds, error_message, created_at, steps}]}`. `status` is one of `success` \| `partial` \| `failed` \| `skipped`; `created_at` is a non-null ISO-8601 string. `limit` clamped to 1–50, default 20. |
+| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, kind, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |
 
 ## Connections
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/connections` | Create database connection |
-| GET | `/api/connections?project_id=` | List connections |
+| GET | `/api/connections/project/{project_id}` | List connections for a project |
 | GET | `/api/connections/{id}` | Get connection |
 | PATCH | `/api/connections/{id}` | Update connection |
 | DELETE | `/api/connections/{id}` | Delete connection |
 | POST | `/api/connections/{id}/test` | Test connectivity |
 | POST | `/api/connections/{id}/refresh-schema` | Refresh schema cache |
 | POST | `/api/connections/{id}/index-db` | Index database schema |
-| POST | `/api/connections/{id}/trigger-sync` | Trigger code-DB sync |
+| POST | `/api/connections/{id}/sync` | Trigger code-DB sync (202) |
 
 ## Chat
 
@@ -62,12 +70,15 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 |--------|----------|-------------|
 | POST | `/api/chat/ask` | Send message (returns full response) |
 | POST | `/api/chat/ask/stream` | Send message (SSE streaming) |
-| GET | `/api/chat/sessions?project_id=` | List chat sessions |
+| GET | `/api/chat/sessions/{project_id}` | List chat sessions for a project |
 | GET | `/api/chat/sessions/{id}/messages` | Get session messages |
 | DELETE | `/api/chat/sessions/{id}` | Delete session |
 | GET | `/api/chat/estimate` | Estimate token cost |
 | GET | `/api/chat/suggestions` | Get query suggestions |
-| POST | `/api/chat/messages/{id}/rate` | Rate a message |
+| WS | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat (single-use ticket via `Sec-WebSocket-Protocol`; mint with `POST /api/chat/ws-ticket`) |
+| POST | `/api/chat/feedback` | Rate a message (body: `{message_id, rating}`) |
+
+**Chat concurrency & limits**: `/api/chat/ask` and `/api/chat/ask/stream` first check the user's token budget (`429` when exhausted), then acquire an `agent_limiter` concurrency slot (`429` when the per-user/global slot cap is hit) and hold a per-session lock (`409` if a request for the same session is already running). The agent run is bounded by a wall-clock timeout (`stream_timeout_seconds`, default 360s): the non-streaming `/ask` returns **`504`** on timeout; `/ask/stream` reports the timeout in-band as an SSE `error` event (`error_type: "timeout"`) since the HTTP status is already committed.
 
 ## Notes
 
@@ -94,8 +105,8 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 |--------|----------|-------------|
 | POST | `/api/repos/{project_id}/repositories` | Add repository |
 | GET | `/api/repos/{project_id}/repositories` | List repositories |
-| PATCH | `/api/repos/{project_id}/repositories/{id}` | Update repository |
-| DELETE | `/api/repos/{project_id}/repositories/{id}` | Delete repository |
+| PATCH | `/api/repos/repositories/{id}` | Update repository |
+| DELETE | `/api/repos/repositories/{id}` | Delete repository |
 | POST | `/api/repos/{project_id}/index` | Index repository |
 | GET | `/api/repos/{project_id}/docs` | List indexed documents |
 
@@ -218,11 +229,14 @@ All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, 
 |--------|----------|-------------|
 | GET | `/api/usage/stats` | Token usage comparison and daily breakdown (query: `days`, `project_id`) |
 
-## Metrics
+## Metrics (Admin-only)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/metrics` | App metrics: active workflows, per-path request stats, uptime |
+| GET | `/api/metrics/prometheus` | Prometheus text-format exposition of the same metrics |
+
+Both metrics endpoints require an **admin** user (`ADMIN_EMAILS`).
 
 ## Backup
 
