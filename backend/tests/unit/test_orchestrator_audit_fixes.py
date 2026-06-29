@@ -323,6 +323,23 @@ class TestGenericErrorDoesNotLeakSecrets:
 # ---------------------------------------------------------------------------
 
 
+class TestStreamTokenChurn:
+    """L2: a very long answer must not flood SSE with token events."""
+
+    @pytest.mark.asyncio
+    async def test_long_answer_caps_token_events(self, orch, mock_tracker, base_context):
+        from app.agents.orchestrator import _MAX_TOKEN_EVENTS
+
+        await orch._stream_tokens("wf-1", "x" * 100_000)
+
+        token_emits = [
+            c
+            for c in mock_tracker.emit.await_args_list
+            if len(c.args) > 1 and c.args[1] == "token"
+        ]
+        assert 0 < len(token_emits) <= _MAX_TOKEN_EVENTS
+
+
 class TestDirectMisrouteRecovery:
     """C1: a question mis-routed 'direct' that needs data re-routes to tools."""
 

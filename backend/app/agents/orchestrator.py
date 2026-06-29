@@ -81,6 +81,11 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
+# L2: upper bound on the number of "token" streaming events emitted for one
+# answer, to keep a very long answer from flooding SSE/Redis. _stream_tokens
+# widens its chunk proportionally once the answer would exceed this.
+_MAX_TOKEN_EVENTS = 200
+
 
 def _plan_fingerprint(plan: ExecutionPlan) -> str:
     """Stable hash of a plan's semantic content, for replan-oscillation detection.
@@ -2695,11 +2700,20 @@ class OrchestratorAgent(BaseAgent):
         text: str,
         chunk_size: int = 12,
     ) -> None:
-        """Emit final answer text as progressive token events for frontend typing effect."""
+        """Emit final answer text as progressive token events for frontend typing effect.
+
+        L2: cap the number of token events so a very long answer does not flood
+        SSE/Redis. Short answers keep the smooth small chunk; long answers use a
+        proportionally larger chunk so the event count stays bounded.
+        """
         if not text:
             return
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i : i + chunk_size]
+        effective_chunk = max(
+            chunk_size,
+            (len(text) + _MAX_TOKEN_EVENTS - 1) // _MAX_TOKEN_EVENTS,
+        )
+        for i in range(0, len(text), effective_chunk):
+            chunk = text[i : i + effective_chunk]
             await self._tracker.emit(wf_id, "token", "streaming", chunk)
 
     @staticmethod
