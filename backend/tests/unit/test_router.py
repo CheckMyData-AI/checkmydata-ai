@@ -159,6 +159,63 @@ async def test_route_request_passes_full_latest_turn():
     assert len(final_user.content) == 700
 
 
+def test_estimated_queries_threshold_triggers_pipeline():
+    """B1: a request estimated to need >=3 sub-queries uses the pipeline even
+    when the router labelled it only 'moderate'."""
+    from app.agents.router import RouteResult
+
+    rr = RouteResult(
+        route="query",
+        complexity="moderate",
+        approach="several queries",
+        estimated_queries=3,
+        needs_multiple_data_sources=False,
+    )
+    assert rr.use_complex_pipeline is True
+
+    rr_two = RouteResult(
+        route="query",
+        complexity="moderate",
+        approach="a couple queries",
+        estimated_queries=2,
+        needs_multiple_data_sources=False,
+    )
+    assert rr_two.use_complex_pipeline is False
+
+
+@pytest.mark.asyncio
+async def test_route_request_prefers_configured_router_model(monkeypatch):
+    """B1: when settings.router_model is set, the router LLM call uses it
+    instead of the caller's (premium) model."""
+    import app.agents.router as router_mod
+
+    monkeypatch.setattr(router_mod.settings, "router_model", "fast-router-model")
+    response = MagicMock()
+    response.content = '{"route": "query", "complexity": "simple"}'
+    llm = MagicMock()
+    llm.complete = AsyncMock(return_value=response)
+
+    await route_request("How many users?", llm, has_connection=True, model="premium-model")
+
+    assert llm.complete.call_args.kwargs["model"] == "fast-router-model"
+
+
+@pytest.mark.asyncio
+async def test_route_request_falls_back_to_caller_model(monkeypatch):
+    """B1: with no router_model configured, the caller's model is used."""
+    import app.agents.router as router_mod
+
+    monkeypatch.setattr(router_mod.settings, "router_model", "")
+    response = MagicMock()
+    response.content = '{"route": "query", "complexity": "simple"}'
+    llm = MagicMock()
+    llm.complete = AsyncMock(return_value=response)
+
+    await route_request("How many users?", llm, has_connection=True, model="premium-model")
+
+    assert llm.complete.call_args.kwargs["model"] == "premium-model"
+
+
 def test_build_router_prompt_includes_git_when_has_repo():
     prompt = _build_router_prompt(
         has_connection=True,
