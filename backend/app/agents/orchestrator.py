@@ -29,6 +29,7 @@ from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.pipeline_learning import PipelineLearningExtractor
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import (
+    NEEDS_DATA_SENTINEL,
     build_direct_response_prompt,
     build_orchestrator_system_prompt,
 )
@@ -561,13 +562,21 @@ class OrchestratorAgent(BaseAgent):
 
             # --- Direct response: no tools needed ---
             if route_result.is_direct:
-                return await self._run_direct_response(
+                direct_resp = await self._run_direct_response(
                     context,
                     wf_id,
                     has_connection,
                     has_kb,
                     has_mcp,
                     has_repo,
+                )
+                if direct_resp is not None:
+                    return direct_resp
+                # C1: the model signalled the "direct" route was wrong and the
+                # question needs data — fall through to the tool loop below.
+                logger.info(
+                    "Re-routing mis-classified 'direct' question through the tool loop (wf=%s)",
+                    wf_id,
                 )
 
             # --- Complex pipeline for multi-stage analysis ---
@@ -695,8 +704,13 @@ class OrchestratorAgent(BaseAgent):
         has_kb: bool,
         has_mcp: bool,
         has_repo: bool = False,
-    ) -> AgentResponse:
-        """Handle conversational/meta questions with a single LLM call, no tools."""
+    ) -> AgentResponse | None:
+        """Handle conversational/meta questions with a single LLM call, no tools.
+
+        Returns ``None`` when the model signals (via ``NEEDS_DATA_SENTINEL``)
+        that the question was mis-routed ``direct`` and actually needs data —
+        the caller then re-routes it through the tool loop (C1).
+        """
         await self._tracker.emit(wf_id, "thinking", "in_progress", "Responding directly…")
 
         system_prompt = build_direct_response_prompt(
@@ -738,6 +752,18 @@ class OrchestratorAgent(BaseAgent):
 
         self.accum_usage(total_usage, llm_resp.usage)
         final_text = llm_resp.content or ""
+
+        # C1: re-route escape. The model emits NEEDS_DATA_SENTINEL when a
+        # question routed "direct" actually needs fresh data. Only honor it when
+        # a data source exists (otherwise there is nothing to re-route to).
+        has_data_source = has_connection or has_kb or has_mcp or has_repo
+        if has_data_source and final_text.strip() == NEEDS_DATA_SENTINEL:
+            logger.info(
+                "Direct route escalated to the tool loop — model requested data (wf=%s)",
+                wf_id,
+            )
+            return None
+
         await self._stream_tokens(wf_id, final_text)
 
         await self._tracker.end(wf_id, "orchestrator", "completed", "type=text")

@@ -323,6 +323,52 @@ class TestGenericErrorDoesNotLeakSecrets:
 # ---------------------------------------------------------------------------
 
 
+class TestDirectMisrouteRecovery:
+    """C1: a question mis-routed 'direct' that needs data re-routes to tools."""
+
+    def _llm_resp(self, content: str):
+        from app.llm.base import LLMResponse
+
+        return LLMResponse(content=content, provider="p", model="m", usage={})
+
+    @pytest.mark.asyncio
+    async def test_sentinel_reroutes_returns_none(self, orch, mock_tracker, base_context):
+        from unittest.mock import AsyncMock
+
+        from app.agents.prompts.orchestrator_prompt import NEEDS_DATA_SENTINEL
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp(NEEDS_DATA_SENTINEL))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=True, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is None
+
+    @pytest.mark.asyncio
+    async def test_normal_answer_returns_response(self, orch, mock_tracker, base_context):
+        from unittest.mock import AsyncMock
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp("Hello there!"))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=True, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is not None
+        assert resp.answer == "Hello there!"
+
+    @pytest.mark.asyncio
+    async def test_sentinel_ignored_without_data_source(self, orch, mock_tracker, base_context):
+        # No data source → no re-route target; the sentinel is treated as a
+        # (degenerate) literal answer rather than looping.
+        from unittest.mock import AsyncMock
+
+        from app.agents.prompts.orchestrator_prompt import NEEDS_DATA_SENTINEL
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp(NEEDS_DATA_SENTINEL))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=False, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is not None
+
+
 class TestResumeIdempotency:
     """B7: duplicate concurrent resume of the same pipeline_run_id is rejected."""
 
