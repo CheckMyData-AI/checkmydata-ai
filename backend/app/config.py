@@ -578,7 +578,12 @@ class Settings(BaseSettings):
     # to fix the query before returning bogus values to the user. Set to
     # False to revert to the v1.12.x warn-only behavior.
     data_gate_hard_checks_enabled: bool = True
-    data_gate_value_range_sample: int = 50
+    # Max rows the value-range hard check scans for impossible values (negative
+    # counts, >100% bounded percentages, impossible dates). The per-cell numeric
+    # comparison is cheap and short-circuits per column on the first hit, and
+    # missing even one impossible value defeats the gate — so 0 (default) scans
+    # the FULL in-memory result. Set a positive value only to bound the scan.
+    data_gate_value_range_sample: int = 0
     data_gate_percent_min: float = -1.0
     # Loose upper bound for "rate"-kind columns (rate/ratio/growth) which can
     # legitimately exceed 100% (e.g. 150% YoY growth).
