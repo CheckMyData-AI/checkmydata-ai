@@ -420,8 +420,7 @@ class ValidationLoop:
                 _TRANSIENT_BACKOFF_MAX_SECONDS,
             )
             logger.info(
-                "Transient %s on attempt %d — re-running the same query after "
-                "%.2fs backoff",
+                "Transient %s on attempt %d — re-running the same query after %.2fs backoff",
                 error.error_type.value,
                 current_attempt,
                 delay,

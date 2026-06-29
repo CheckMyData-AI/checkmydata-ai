@@ -864,9 +864,7 @@ class TestPipelineWallClockBudget:
     by stopping the DAG scheduler before dispatching a new batch once spent."""
 
     @pytest.mark.asyncio
-    async def test_budget_short_circuits_before_next_batch(
-        self, executor, context, monkeypatch
-    ):
+    async def test_budget_short_circuits_before_next_batch(self, executor, context, monkeypatch):
         import app.agents.stage_executor as se
 
         plan = _make_plan(

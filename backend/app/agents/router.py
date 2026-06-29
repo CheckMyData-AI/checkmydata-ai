@@ -124,10 +124,10 @@ def _build_router_prompt(
         "- moderate: needs joins, grouping, or 2-3 steps\n"
         "- complex: multi-dimensional analysis, temporal comparisons, cross-referencing, "
         "or questions requiring multiple sequential queries whose results feed into each other\n\n"
-        "Routing guidance: choose \"direct\" ONLY for conversational/meta messages "
+        'Routing guidance: choose "direct" ONLY for conversational/meta messages '
         "(greetings, thanks, clarifications) or follow-ups about results already shown. "
         "If the answer depends on actual data from a connected source, do NOT choose "
-        "\"direct\" — pick the matching data route (or \"explore\" when unsure).\n\n"
+        '"direct" — pick the matching data route (or "explore" when unsure).\n\n'
         "Reply ONLY with the JSON object. No other text."
     )
 

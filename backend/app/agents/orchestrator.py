@@ -106,6 +106,7 @@ def _plan_fingerprint(plan: ExecutionPlan) -> str:
     ]
     return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
+
 _LLM_CALL_MAX_RETRIES = 2
 _LLM_CALL_BASE_BACKOFF = 3.0
 

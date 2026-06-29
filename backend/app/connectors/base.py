@@ -168,6 +168,7 @@ def resolve_query_timeout(timeout_seconds: float | None) -> float:
         return min(float(timeout_seconds), ceiling)
     return ceiling
 
+
 # Hard cap on the estimated serialized size of a single result payload. The row
 # cap (``MAX_RESULT_ROWS``) bounds row *count*, but a bounded number of very wide
 # rows (large TEXT/BLOB/JSON columns) can still blow the heap. This is the

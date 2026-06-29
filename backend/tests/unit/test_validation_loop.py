@@ -314,10 +314,8 @@ class TestValidationLoop:
         # A2: with empty_result_retry on, a clean 0-row result is retried, but
         # once attempts are exhausted the genuinely-empty result is the true
         # answer — return success (with a warning), not failure.
-        from unittest.mock import AsyncMock as _AM
-
         loop = _make_loop(config=_config(empty_result_retry=True, max_retries=3))
-        loop._repairer.repair = _AM(
+        loop._repairer.repair = AsyncMock(
             side_effect=[
                 {"query": "SELECT a FROM users", "explanation": "1"},
                 {"query": "SELECT b FROM users", "explanation": "2"},

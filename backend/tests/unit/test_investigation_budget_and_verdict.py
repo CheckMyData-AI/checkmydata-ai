@@ -255,9 +255,7 @@ class TestAutoInvestigateBudgetEnforcementFlag:
     """B8: auto_investigate_budget_enforcement_enabled gates the budget guard."""
 
     @pytest.mark.asyncio
-    async def test_skips_when_owner_unresolved_and_enforcement_on(
-        self, engine_and_sm, monkeypatch
-    ):
+    async def test_skips_when_owner_unresolved_and_enforcement_on(self, engine_and_sm, monkeypatch):
         """Enforcement on (default) + owner cannot be resolved → skip entirely
         (no unbilled, unattributed background spend)."""
         import asyncio

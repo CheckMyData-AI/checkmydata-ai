@@ -333,9 +333,7 @@ class TestStreamTokenChurn:
         await orch._stream_tokens("wf-1", "x" * 100_000)
 
         token_emits = [
-            c
-            for c in mock_tracker.emit.await_args_list
-            if len(c.args) > 1 and c.args[1] == "token"
+            c for c in mock_tracker.emit.await_args_list if len(c.args) > 1 and c.args[1] == "token"
         ]
         assert 0 < len(token_emits) <= _MAX_TOKEN_EVENTS
 
