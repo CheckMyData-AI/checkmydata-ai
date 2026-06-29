@@ -225,6 +225,12 @@ class Settings(BaseSettings):
     # Miscellaneous magic-number knobs lifted from scattered modules (T25).
     tool_preview_max_chars: int = 500
     tool_result_max_chars: int = 500
+    # Hard per-result ceiling applied when a FRESH tool result is appended to
+    # the loop context (B6). Much larger than tool_result_max_chars (which
+    # condenses OLD results during trim) so the model keeps enough of the
+    # just-produced data to reason over, while a single pathologically large
+    # result can't dominate/blow the context before the next trim.
+    tool_result_insert_max_chars: int = 16000
     max_lesson_length: int = 500
     health_check_interval_seconds: int = 300
 

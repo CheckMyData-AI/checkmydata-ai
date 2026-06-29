@@ -770,6 +770,7 @@ class TestWallClockTimeout:
             mock_settings.max_history_tokens = 2500
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.tool_result_insert_max_chars = 16000
             mock_settings.orchestrator_final_synthesis = True
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
@@ -861,6 +862,7 @@ class TestWallClockTimeout:
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.tool_result_insert_max_chars = 16000
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
             mock_settings.answer_validator_min_chars = 80
@@ -2051,6 +2053,7 @@ class TestSynthesisPhaseToolStrip:
             mock_settings.max_history_tokens = 2500
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.tool_result_insert_max_chars = 16000
             mock_settings.orchestrator_final_synthesis = True
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = True
@@ -2404,6 +2407,7 @@ class TestToolLoopMessageRoles:
             mock_settings.max_history_tokens = 25_000
             mock_settings.viz_timeout_seconds = 15
             mock_settings.agent_emergency_synthesis_pct = 0.90
+            mock_settings.tool_result_insert_max_chars = 16000
             mock_settings.orchestrator_final_synthesis = False
             mock_settings.orchestrator_pipeline_table_threshold = 3
             mock_settings.answer_validator_enabled = False

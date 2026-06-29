@@ -27,6 +27,24 @@ def _tool_result_max_chars() -> int:
 TOOL_RESULT_MAX_CHARS = 500
 
 
+def cap_tool_result_text(text: str, max_chars: int) -> str:
+    """Hard per-result ceiling applied when a FRESH tool result enters context.
+
+    Unlike :func:`condense_tool_results` (which aggressively shrinks OLD results
+    during trim), this keeps the just-produced result intact up to a generous
+    ``max_chars`` so the model can still reason over it, only truncating a
+    pathologically large payload that would otherwise dominate the context
+    before the next trim. ``max_chars <= 0`` disables the cap.
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    head = text[:max_chars]
+    return (
+        f"{head}\n... (truncated, {len(text)} chars total — refine the query "
+        "or use process_data to aggregate the result)"
+    )
+
+
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
 

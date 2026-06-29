@@ -57,6 +57,7 @@ from app.config import settings
 from app.connectors.base import QueryResult
 from app.core.context_budget import ContextBudgetManager
 from app.core.history_trimmer import (
+    cap_tool_result_text,
     estimate_messages_tokens,
     should_wrap_up,
     trim_history,
@@ -1457,7 +1458,12 @@ class OrchestratorAgent(BaseAgent):
                 messages.append(
                     Message(
                         role="tool",
-                        content=result_text,
+                        # B6: hard per-result ceiling at insertion so a single
+                        # oversized result can't dominate/blow the context
+                        # before the next trim (which only condenses OLD results).
+                        content=cap_tool_result_text(
+                            result_text, settings.tool_result_insert_max_chars
+                        ),
                         tool_call_id=tc.id,
                         name=tc.name,
                     )
