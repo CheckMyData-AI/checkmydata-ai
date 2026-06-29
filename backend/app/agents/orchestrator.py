@@ -10,6 +10,7 @@ Replaces the monolithic ``ConversationalAgent``.  The orchestrator:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from dataclasses import dataclass, field, replace
@@ -77,6 +78,26 @@ from app.llm.errors import (
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_fingerprint(plan: ExecutionPlan) -> str:
+    """Stable hash of a plan's semantic content, for replan-oscillation detection.
+
+    Captures the ordered ``(tool, normalized description, input_context)`` of
+    each stage — the parts that determine what the plan actually *does*.
+    Arbitrary identifiers (``plan_id``/``stage_id``) and dependency-id wiring
+    are excluded so a replan that merely renames stages but repeats the same
+    failing work is recognised as a near-identical plan and not re-executed.
+    """
+    parts = [
+        (
+            stage.tool,
+            " ".join((stage.description or "").split()).lower(),
+            (stage.input_context or "").strip(),
+        )
+        for stage in plan.stages
+    ]
+    return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
 _LLM_CALL_MAX_RETRIES = 2
 _LLM_CALL_BASE_BACKOFF = 3.0
@@ -2092,6 +2113,14 @@ class OrchestratorAgent(BaseAgent):
         replan_history: list[dict[str, Any]] = []
         replan_count = 0
         max_replans = settings.max_pipeline_replans
+        # B3: oscillation guard — remember the semantic fingerprint of every
+        # plan tried (seeded with the initial failing plan) so a replan that
+        # merely repeats an already-failed plan is rejected instead of burning
+        # the replan budget on the same doomed work.
+        seen_fingerprints: set[str] = set()
+        initial_plan = getattr(getattr(exec_result, "stage_ctx", None), "plan", None)
+        if initial_plan is not None:
+            seen_fingerprints.add(_plan_fingerprint(initial_plan))
         while (
             exec_result.status == "stage_failed"
             and exec_result.replan_eligible
@@ -2191,6 +2220,24 @@ class OrchestratorAgent(BaseAgent):
                     "Replanned plan references missing prior stages — returning partial results.",
                 )
                 break
+
+            # B3: stop if this replan is semantically identical to one already
+            # tried — re-running it would just reproduce the same failure and
+            # waste the remaining replan budget.
+            fingerprint = _plan_fingerprint(new_plan)
+            if fingerprint in seen_fingerprints:
+                logger.warning(
+                    "Replanned plan is near-identical to a previously-attempted "
+                    "plan (fingerprint repeat) — stopping to avoid oscillation"
+                )
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Replan produced a near-identical plan — returning partial results.",
+                )
+                break
+            seen_fingerprints.add(fingerprint)
 
             new_stage_ctx = StageContext(
                 plan=new_plan,
