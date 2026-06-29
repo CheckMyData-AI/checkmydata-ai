@@ -500,6 +500,10 @@ class Settings(BaseSettings):
     # Streaming settings
     stream_timeout_seconds: int = 360
     stream_safety_margin_seconds: int = 120
+    # Idle timeout (seconds) for a chat WebSocket waiting on the next client
+    # message; the connection is closed when exceeded so abandoned sockets don't
+    # hold server resources. 0 disables the idle timeout.
+    ws_idle_timeout_seconds: int = 300
 
     # Backup settings
     backup_enabled: bool = True
