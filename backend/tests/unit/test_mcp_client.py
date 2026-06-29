@@ -181,7 +181,8 @@ class TestQuery:
 class TestCallTool:
     async def test_no_session(self, adapter):
         result = await adapter.call_tool("x")
-        parsed = json.loads(result)
+        assert result.is_error is True
+        parsed = json.loads(result.text)
         assert "error" in parsed
 
     async def test_success(self, adapter):
@@ -190,24 +191,44 @@ class TestCallTool:
         adapter._session = AsyncMock()
         mock_result = MagicMock()
         mock_result.content = [TextContent(type="text", text="done")]
+        mock_result.isError = False
         adapter._session.call_tool = AsyncMock(return_value=mock_result)
 
         result = await adapter.call_tool("do_it", {"x": 1})
-        assert result == "done"
+        assert result.text == "done"
+        assert result.is_error is False
 
     async def test_empty_result(self, adapter):
         adapter._session = AsyncMock()
         mock_result = MagicMock()
         mock_result.content = []
+        mock_result.isError = False
         adapter._session.call_tool = AsyncMock(return_value=mock_result)
 
         result = await adapter.call_tool("empty_tool")
-        assert result == "(empty result)"
+        assert result.text == "(empty result)"
+        assert result.is_error is False
 
-    async def test_error(self, adapter):
+    async def test_tool_level_error_surfaced(self, adapter):
+        # C2: SDK result.isError=True must surface as is_error rather than being
+        # returned as indistinguishable "data".
+        from mcp.types import TextContent
+
+        adapter._session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.content = [TextContent(type="text", text="boom: invalid args")]
+        mock_result.isError = True
+        adapter._session.call_tool = AsyncMock(return_value=mock_result)
+
+        result = await adapter.call_tool("bad")
+        assert result.is_error is True
+        assert "boom" in result.text
+
+    async def test_exception(self, adapter):
         adapter._session = AsyncMock()
         adapter._session.call_tool = AsyncMock(side_effect=RuntimeError("oops"))
 
         result = await adapter.call_tool("broken")
-        parsed = json.loads(result)
+        assert result.is_error is True
+        parsed = json.loads(result.text)
         assert "oops" in parsed["error"]

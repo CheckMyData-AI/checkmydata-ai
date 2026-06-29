@@ -15,7 +15,7 @@ import pytest
 from app.agents.base import AgentContext
 from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.config import settings
-from app.connectors.mcp_client import MCPClientAdapter
+from app.connectors.mcp_client import MCPClientAdapter, MCPToolCallResult
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import LLMResponse, ToolCall
 
@@ -49,7 +49,7 @@ def _make_tool_schema(
 def mock_adapter():
     adapter = MagicMock(spec=MCPClientAdapter)
     adapter.get_tool_schemas = MagicMock(return_value=[_make_tool_schema()])
-    adapter.call_tool = AsyncMock(return_value='{"rows": [1, 2, 3]}')
+    adapter.call_tool = AsyncMock(return_value=MCPToolCallResult(text='{"rows": [1, 2, 3]}'))
     return adapter
 
 
@@ -183,7 +183,9 @@ class TestMCPSourceAgent:
             )
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
-        mock_adapter.call_tool.return_value = '{"metric": "revenue", "value": 1000}'
+        mock_adapter.call_tool.return_value = MCPToolCallResult(
+            text='{"metric": "revenue", "value": 1000}'
+        )
 
         result = await agent.run(context)
 
@@ -232,8 +234,8 @@ class TestMCPSourceAgent:
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
         mock_adapter.call_tool.side_effect = [
-            '[{"id": 1, "name": "Alice"}]',
-            '[{"id": 101, "total": 99.9}]',
+            MCPToolCallResult(text='[{"id": 1, "name": "Alice"}]'),
+            MCPToolCallResult(text='[{"id": 101, "total": 99.9}]'),
         ]
 
         result = await agent.run(context)
@@ -276,6 +278,42 @@ class TestMCPSourceAgent:
         assert result.status == "success"
         assert "Sorry, the tool encountered an error." in result.answer
 
+    # 7b. tool-level isError is flagged, not treated as data (C2) ---------
+
+    @pytest.mark.asyncio
+    async def test_tool_level_error_is_flagged(
+        self, agent: MCPSourceAgent, mock_llm, mock_adapter, context: AgentContext
+    ):
+        call_count = 0
+
+        async def complete_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tc-e", name="get_data", arguments={"query": "x"}),
+                    ],
+                    usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                )
+            return LLMResponse(
+                content="Handled the tool error.",
+                tool_calls=[],
+                usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+            )
+
+        mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
+        mock_adapter.call_tool.return_value = MCPToolCallResult(
+            text="invalid argument", is_error=True
+        )
+
+        result = await agent.run(context)
+
+        assert result.status == "success"
+        # The recorded tool result is marked as an error, not passed off as data.
+        assert "error" in result.tool_calls_made[0]["result_preview"].lower()
+
     # 8. max iterations --------------------------------------------------
 
     @pytest.mark.asyncio
@@ -291,7 +329,9 @@ class TestMCPSourceAgent:
                 usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             )
         )
-        mock_adapter.call_tool.return_value = '{"status": "more data needed"}'
+        mock_adapter.call_tool.return_value = MCPToolCallResult(
+            text='{"status": "more data needed"}'
+        )
 
         result = await agent.run(context)
 
@@ -345,7 +385,7 @@ class TestMCPSourceAgent:
             )
 
         mock_llm.complete = AsyncMock(side_effect=complete_side_effect)
-        mock_adapter.call_tool.return_value = '{"ok": true}'
+        mock_adapter.call_tool.return_value = MCPToolCallResult(text='{"ok": true}')
 
         result = await agent.run(context)
 
