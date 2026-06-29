@@ -55,6 +55,27 @@ def test_extract_json_returns_none_on_garbage():
     assert _extract_json("not json at all") is None
 
 
+def test_extract_json_ignores_trailing_text():
+    # L1: a model that appends prose after the JSON must still parse cleanly.
+    raw = '{"route": "query", "complexity": "simple"}\n\nLet me know if you need more.'
+    assert _extract_json(raw) == {"route": "query", "complexity": "simple"}
+
+
+def test_extract_json_handles_leading_text():
+    raw = 'Here is the routing: {"route": "query", "complexity": "moderate"}'
+    assert _extract_json(raw) == {"route": "query", "complexity": "moderate"}
+
+
+def test_extract_json_handles_nested_object_with_trailing():
+    # The flat-regex fallback used to return the NESTED object; raw_decode
+    # returns the correct top-level object.
+    raw = '{"route": "query", "meta": {"k": "v"}} trailing noise'
+    result = _extract_json(raw)
+    assert result is not None
+    assert result["route"] == "query"
+    assert result["meta"] == {"k": "v"}
+
+
 def test_parse_route_response_clamps_invalid_route_to_explore():
     result = _parse_route_response(
         '{"route": "weird", "complexity": "moderate"}',

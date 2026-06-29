@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 
 from app.config import settings
@@ -17,7 +16,10 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
-_ROUTER_MAX_TOKENS = 200
+# L1: 200 tokens could truncate the JSON when the model writes a longer
+# "approach" sentence, corrupting the parse and forcing the default route. 512
+# comfortably fits the small fixed schema plus a 1-2 sentence approach.
+_ROUTER_MAX_TOKENS = 512
 # A request estimated to need at least this many sub-queries is treated as
 # multi-step and routed to the full pipeline (matches ContextPlanner's heuristic).
 _PIPELINE_ESTIMATED_QUERIES_THRESHOLD = 3
@@ -59,8 +61,6 @@ _DEFAULT_ROUTE = RouteResult(
     estimated_queries=2,
     needs_multiple_data_sources=False,
 )
-
-_JSON_OBJ_RE = re.compile(r"\{[^{}]*\}")
 
 
 def _build_router_prompt(
@@ -133,34 +133,33 @@ def _build_router_prompt(
 
 
 def _extract_json(raw: str) -> dict | None:
+    """Extract the first JSON object from an LLM reply.
+
+    Robust to code fences, leading prose, trailing prose, and nested objects
+    (L1): we scan for each candidate ``{``/``[`` start and use
+    ``JSONDecoder.raw_decode`` — which parses one complete JSON value and stops,
+    correctly handling nested braces and ignoring any trailing text.
+    """
     raw = raw.strip()
     if "```" in raw:
         lines = raw.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         raw = "\n".join(lines).strip()
 
+    decoder = json.JSONDecoder()
     for start_char in ("{", "["):
         idx = raw.find(start_char)
-        if idx > 0:
-            raw = raw[idx:]
-            break
-
-    try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            data = data[0] if data else None
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        pass
-
-    m = _JSON_OBJ_RE.search(raw)
-    if m:
-        try:
-            data = json.loads(m.group())
+        while idx != -1:
+            try:
+                data, _end = decoder.raw_decode(raw[idx:])
+            except json.JSONDecodeError:
+                idx = raw.find(start_char, idx + 1)
+                continue
+            if isinstance(data, list):
+                data = data[0] if data else None
             if isinstance(data, dict):
                 return data
-        except json.JSONDecodeError:
-            pass
+            idx = raw.find(start_char, idx + 1)
 
     return None
 
