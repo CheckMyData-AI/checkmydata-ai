@@ -280,6 +280,102 @@ class TestValidationLoop:
         assert result.total_attempts == 1
 
     @pytest.mark.asyncio
+    async def test_repair_identical_query_is_rejected(self):
+        # A2: the repairer returns a query that differs from the one already
+        # attempted only in whitespace/case. Re-running it would waste an
+        # attempt and loop on the same failure — the identity guard rejects it
+        # and stops the loop after the first execution.
+        loop = _make_loop(
+            repairer_result={"query": "select  bad   FROM Users", "explanation": "x"},
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            error='column "bad" does not exist',
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT bad FROM users",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get data",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert result.total_attempts == 1
+        assert connector.execute_query.await_count == 1
+        assert result.final_error is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_result_returns_success_after_retries(self):
+        # A2: with empty_result_retry on, a clean 0-row result is retried, but
+        # once attempts are exhausted the genuinely-empty result is the true
+        # answer — return success (with a warning), not failure.
+        from unittest.mock import AsyncMock as _AM
+
+        loop = _make_loop(config=_config(empty_result_retry=True, max_retries=3))
+        loop._repairer.repair = _AM(
+            side_effect=[
+                {"query": "SELECT a FROM users", "explanation": "1"},
+                {"query": "SELECT b FROM users", "explanation": "2"},
+                {"query": "SELECT c FROM users", "explanation": "3"},
+            ]
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[], row_count=0, execution_time_ms=5
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users WHERE 1=0",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get nothing",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.results is not None
+        assert result.results.row_count == 0
+        assert any("0 rows" in w or "zero" in w.lower() for w in result.warnings)
+
+    @pytest.mark.asyncio
+    async def test_empty_result_identical_repair_returns_success(self):
+        # A2: empty result + a repaired query identical to the original →
+        # the identity guard stops immediately, and zero is returned as the
+        # answer (success) rather than a failure.
+        loop = _make_loop(
+            config=_config(empty_result_retry=True, max_retries=3),
+            repairer_result={"query": "SELECT id FROM users WHERE 1=0", "explanation": "same"},
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[], row_count=0, execution_time_ms=5
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users WHERE 1=0",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get nothing",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.results is not None
+        assert result.results.row_count == 0
+        assert result.total_attempts == 1
+
+    @pytest.mark.asyncio
     async def test_repair_failure_stops_loop(self):
         loop = _make_loop(
             repairer_result={"query": "", "explanation": "", "error": "LLM failed"},

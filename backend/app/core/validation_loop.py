@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
-from app.connectors.base import BaseConnector, ConnectionConfig, SchemaInfo
+from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, SchemaInfo
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
 from app.core.explain_validator import ExplainValidator
@@ -325,6 +326,19 @@ class ValidationLoop:
                     model=model,
                 )
                 if repair is None:
+                    # A valid query that simply returned 0 rows is the true
+                    # answer once retries are exhausted (or a repaired query
+                    # would only re-run an equivalent query) — surface it as
+                    # success, not a failure.
+                    if post_result.error.error_type == QueryErrorType.EMPTY_RESULT:
+                        return self._empty_success(
+                            current_query,
+                            current_explanation,
+                            results,
+                            attempts,
+                            attempt_num,
+                            all_warnings,
+                        )
                     return self._fail(
                         current_query,
                         current_explanation,
@@ -412,7 +426,27 @@ class ValidationLoop:
             )
             return None
 
-        return repair_result["query"], repair_result.get("explanation", "")
+        repaired = repair_result["query"]
+        # Identity guard: a repaired query that is equivalent (modulo
+        # whitespace / case / trailing ';') to one already tried would just
+        # re-run the same execution and loop on the same outcome. Treat it as
+        # "no further repair available" so the caller short-circuits.
+        already_tried = {self._normalize_sql(a.query) for a in attempts}
+        already_tried.add(self._normalize_sql(failed_query))
+        if self._normalize_sql(repaired) in already_tried:
+            logger.info(
+                "Query repair produced an already-attempted query; stopping to "
+                "avoid re-running an equivalent query."
+            )
+            return None
+
+        return repaired, repair_result.get("explanation", "")
+
+    @staticmethod
+    def _normalize_sql(query: str) -> str:
+        """Canonicalize SQL for identity comparison (whitespace/case/trailing ;)."""
+        collapsed = re.sub(r"\s+", " ", (query or "").strip())
+        return collapsed.rstrip(" ;").lower()
 
     @staticmethod
     def _fail(
@@ -430,4 +464,35 @@ class ValidationLoop:
             total_attempts=len(attempts),
             final_error=error,
             warnings=warnings,
+        )
+
+    @staticmethod
+    def _empty_success(
+        query: str,
+        explanation: str,
+        results: QueryResult,
+        attempts: list[QueryAttempt],
+        total_attempts: int,
+        warnings: list[str],
+    ) -> ValidationLoopResult:
+        """Return a clean 0-row result as success once retries are exhausted.
+
+        A query that executes without error and returns no rows is a valid
+        answer: zero is the truth. After the empty-result retries are spent (or
+        a repaired query would only re-run an equivalent query), surface the
+        empty result as a success with a warning rather than a hard failure.
+        """
+        merged = list(warnings)
+        merged.append(
+            "Query returned 0 rows after exhausting empty-result retries; "
+            "treating zero as the answer."
+        )
+        return ValidationLoopResult(
+            success=True,
+            query=query,
+            explanation=explanation,
+            results=results,
+            attempts=attempts,
+            total_attempts=total_attempts,
+            warnings=merged,
         )
