@@ -35,6 +35,7 @@ class AgentSettingsView:
     max_stage_retries: int
     max_pipeline_replans: int
     pipeline_max_parallel_stages: int
+    pipeline_max_wall_seconds: int
     llm_result_preview_rows: int
     answer_validator_enabled: bool
     learning_weight_confidence: float
@@ -343,6 +344,11 @@ class Settings(BaseSettings):
     # Maximum stages run concurrently in one DAG level. Set to 1 to disable
     # parallel stage execution.
     pipeline_max_parallel_stages: int = 3
+    # Per-pipeline wall-clock budget (seconds) for one StageExecutor.execute
+    # run. Bounds the compounded retry surface (per-stage × validation ×
+    # data-gate) by stopping the DAG scheduler before dispatching a new batch
+    # once the budget is spent. 0 → fall back to agent_wall_clock_timeout_seconds.
+    pipeline_max_wall_seconds: int = 0
 
     # SQL agent
     # Number of result rows surfaced to the LLM when summarizing a query
@@ -682,6 +688,7 @@ class Settings(BaseSettings):
             max_stage_retries=self.max_stage_retries,
             max_pipeline_replans=self.max_pipeline_replans,
             pipeline_max_parallel_stages=self.pipeline_max_parallel_stages,
+            pipeline_max_wall_seconds=self.pipeline_max_wall_seconds,
             llm_result_preview_rows=self.llm_result_preview_rows,
             answer_validator_enabled=self.answer_validator_enabled,
             learning_weight_confidence=self.learning_weight_confidence,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -147,9 +148,46 @@ class StageExecutor:
         stage_idx_map = {s.stage_id: i for i, s in enumerate(plan.stages)}
         max_parallel = max(1, settings.pipeline_max_parallel_stages)
 
+        # B4: per-pipeline wall-clock budget. Bounds the compounded retry
+        # surface (per-stage × validation × data-gate) by refusing to dispatch a
+        # new batch once the budget is spent. 0 → fall back to the per-request
+        # agent wall-clock limit.
+        budget_seconds = (
+            settings.pipeline_max_wall_seconds or settings.agent_wall_clock_timeout_seconds
+        )
+        deadline = time.monotonic() + budget_seconds if budget_seconds > 0 else None
+
         while True:
             completed_ids = set(stage_ctx.results.keys())
             if len(completed_ids) >= n_stages:
+                break
+
+            if deadline is not None and time.monotonic() > deadline:
+                remaining = [s for s in plan.stages if s.stage_id not in completed_ids]
+                logger.warning(
+                    "Pipeline wall-clock budget (%ss) exhausted with %d stage(s) "
+                    "remaining — stopping before next batch",
+                    budget_seconds,
+                    len(remaining),
+                )
+                if remaining:
+                    await self._tracker.emit(
+                        wf_id,
+                        "stage_failed",
+                        "failed",
+                        f"Pipeline time budget exhausted ({budget_seconds}s) — "
+                        f"{len(remaining)} stage(s) not run",
+                        stage_id=remaining[0].stage_id,
+                        remaining_stage_ids=[s.stage_id for s in remaining],
+                    )
+                    # Not replan-eligible: replanning would only consume more of
+                    # an already-spent budget. Surface honest partial results.
+                    return _StageExecutorResult(
+                        status="stage_failed",
+                        stage_ctx=stage_ctx,
+                        failed_stage=remaining[0],
+                        replan_eligible=False,
+                    )
                 break
 
             ready: list[PlanStage] = [
