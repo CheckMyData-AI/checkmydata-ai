@@ -31,45 +31,39 @@ the revenue-by-payment-method + weekly-cohort scenario; backend suite 4635 passi
 | 16 | High | chat | `POST /api/chat/ask` bypassed `agent_limiter` (concurrency/hourly caps); added slot + timeout. |
 | 17 | High | investigate | Auto-investigation bypassed token budget + limiter; verdict dead-ended in a DB row (now a Notification). |
 
-## Remaining (tracked follow-ups)
+## Follow-up remediation (2026-06-29)
 
-Lower-severity or larger-design items deliberately deferred from this release; none are
-security/data-loss blockers.
+All 21 deferred follow-ups from the section above were subsequently remediated (TDD,
+one commit per finding) on branch `fix/orchestrator-audit-followups-2026-06`.
 
-### High (deferred — design risk)
-- **`direct` mis-route has no recovery.** A question wrongly routed `direct` answers with no
-  tools/traceability. Fix needs a router-prompt hardening + a "needs data" re-route escape;
-  deferred to avoid a half-baked heuristic. (router.py / orchestrator `_run_direct_response`)
-- **MCP `isError` not surfaced.** `MCPClientAdapter.call_tool` returns `str` and ignores the
-  SDK `result.isError`, so a tool-level error is indistinguishable from data. Needs an
-  `mcp_client.py` contract change (structured result). The new timeout already prevents hangs.
+### High (were design-risk)
+- **C1 — `direct` mis-route recovery.** Model-driven re-route: router prompt hardened; the
+  direct LLM emits a `NEEDS_DATA_SENTINEL` (only when a data source exists) and
+  `_run_direct_response` returns `None` so the caller falls through to the tool loop.
+- **C2 — MCP `isError` surfaced.** `MCPClientAdapter.call_tool` now returns a structured
+  `MCPToolCallResult(text, is_error)`; `McpSourceAgent` flags errored results to the LLM.
 
 ### Medium
-- Compounded retry ceiling (per-stage × validation × data-gate × replan) — add a per-pipeline
-  wall-clock/dispatch budget in `StageExecutor.execute`.
-- Unified-loop wall-clock only checked at iteration top — thread `remaining_wall_seconds` into
-  all sub-agent handlers (only SQL gets it today).
-- `process_data` reads `bucket[-1]` with no ordering guarantee in a sequential batch.
-- Large tool results enter context uncondensed (cap only on later trim).
-- Empty-result repair loop can re-run an equivalent query (no identity guard) and reports a
-  valid-empty as a failure.
-- Transient DB connection errors classified non-retryable in `ValidationLoop`.
-- Dynamic per-query timeout not threaded into `connector.execute_query` (static 30s used).
-- DataGate value-range hard check scans only the first 50 in-memory rows.
-- Router runs on the user's premium model (`router_model` config is dead); `estimated_queries`
-  unused contract drift.
-- Pipeline resume has no idempotency guard against duplicate concurrent runs; resume reads
-  sample-only rows as if full.
-- Replan can repeat a near-identical failing plan (no plan fingerprint/oscillation guard).
-- Auto-investigate trigger false-positive surface (`row_count==0` on the synthesis path);
-  add a budget-enforcement flag (`auto_investigate_budget_enforcement_enabled`).
-- Source attribution collected only for `search_knowledge` (not entity/Git/MCP).
+- **B4** per-pipeline wall-clock budget in `StageExecutor.execute` (`pipeline_max_wall_seconds`).
+- **B5** `remaining_wall_seconds` respected for all expensive sub-agents (dispatch-level guard).
+- **A1** `process_data` batched with a fresh `query_database` is deferred (no stale `bucket[-1]`).
+- **B6** hard per-result ceiling at insertion (`tool_result_insert_max_chars`).
+- **A2** empty-result repair identity guard + valid-empty returned as success.
+- **A3** transient connection errors retried (same-query backoff) in `ValidationLoop`.
+- **B2** dynamic per-query timeout threaded into every connector's `execute_query`.
+- **A5** DataGate value-range hard check scans the full in-memory result by default.
+- **B1** router uses configured `router_model`; `estimated_queries` now drives `use_complex_pipeline`.
+- **B7** in-process resume idempotency guard + sample-only restores flagged `truncated`.
+- **B3** replan oscillation guard via plan fingerprint.
+- **B8** `auto_investigate_budget_enforcement_enabled` (skip on over-budget / unresolved owner).
+- **B9** entity-info lookups attributed as sources. *Carried forward:* top-level Git/MCP citation
+  needs a dedicated `AgentResponse.sources` field (separate from `knowledge_sources`, which drives
+  response-type) — a response-schema change, intentionally not overloaded here.
 
 ### Low
-- `_extract_json` brittle on trailing text / nested JSON; router `max_tokens=200` truncation.
-- `_stream_tokens` event churn; `_ended_workflows`/`_workflow_owners` unbounded in cross-process.
-- Cross-stage / business-rule checks fail open (warn-only) — document or strengthen.
-- `_ensure_validation_criteria` mislabels `process_data.min_rows`; `build_context_for_stage`
-  unbounded dependency serialization.
-- Reconciliation `_parse_number` accepts non-finite floats.
-- WS endpoint has no SlowAPI rate limit / idle timeout; WS path omits pipeline-action plumbing.
+- **L1** robust `_extract_json` (`raw_decode`, nested/trailing-safe); router `max_tokens` → 512.
+- **L2** `_workflow_owners` FIFO-bounded; `_stream_tokens` event count capped.
+- **L3** cross-stage / business-rule checks documented as intentionally fail-open (advisory).
+- **L4** `process_data` defaults `min_rows=0`; `build_context_for_stage` field-capped.
+- **A4** reconciliation `_parse_number` rejects non-finite floats.
+- **L5** WS idle timeout + pipeline-action plumbing (rate limiting already via `agent_limiter`).
