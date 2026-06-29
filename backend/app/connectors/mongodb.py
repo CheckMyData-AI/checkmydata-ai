@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -144,7 +145,13 @@ class MongoDBConnector(BaseConnector):
                 self._client = None
                 self._db = None
 
-    async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+    async def execute_query(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
         """
         For MongoDB, 'query' is expected to be a JSON string with:
         {"collection": "name", "operation": "find", "filter": {}, ...}
@@ -152,6 +159,9 @@ class MongoDBConnector(BaseConnector):
         if not self._db:
             return QueryResult(error="Not connected")
 
+        from app.connectors.base import resolve_query_timeout
+
+        effective_timeout = resolve_query_timeout(timeout_seconds)
         start = time.monotonic()
         try:
             spec = json.loads(query)
@@ -194,12 +204,19 @@ class MongoDBConnector(BaseConnector):
                 )
                 if isinstance(user_limit, int) and user_limit >= 0:
                     cursor = cursor.limit(user_limit)
-                docs = await cursor.to_list(length=fetch_length)
+                docs = await asyncio.wait_for(
+                    cursor.to_list(length=fetch_length), timeout=effective_timeout
+                )
             elif operation == "aggregate":
                 cursor = collection.aggregate(spec.get("pipeline", []))
-                docs = await cursor.to_list(length=fetch_length)
+                docs = await asyncio.wait_for(
+                    cursor.to_list(length=fetch_length), timeout=effective_timeout
+                )
             elif operation == "count":
-                count = await collection.count_documents(spec.get("filter", {}))
+                count = await asyncio.wait_for(
+                    collection.count_documents(spec.get("filter", {})),
+                    timeout=effective_timeout,
+                )
                 elapsed = (time.monotonic() - start) * 1000
                 return QueryResult(
                     columns=["count"],
@@ -234,6 +251,12 @@ class MongoDBConnector(BaseConnector):
                 row_count=len(rows),
                 execution_time_ms=elapsed,
                 truncated=truncated,
+            )
+        except TimeoutError:
+            elapsed = (time.monotonic() - start) * 1000
+            return QueryResult(
+                error=f"Query timed out after {effective_timeout:g}s",
+                execution_time_ms=elapsed,
             )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000

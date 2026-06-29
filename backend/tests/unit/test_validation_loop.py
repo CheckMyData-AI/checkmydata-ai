@@ -438,6 +438,29 @@ class TestValidationLoop:
         assert result.total_attempts == 3
 
     @pytest.mark.asyncio
+    async def test_passes_dynamic_timeout_to_connector(self):
+        # B2: the per-query timeout computed into ValidationConfig must reach
+        # the connector so it bounds the actual execution, not just warnings.
+        loop = _make_loop(config=_config(query_timeout_seconds=7))
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[[1]], row_count=1, execution_time_ms=5
+        )
+
+        await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="x",
+            connector=connector,
+            schema=_schema(),
+            question="q",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert connector.execute_query.await_args.kwargs.get("timeout_seconds") == 7
+
+    @pytest.mark.asyncio
     async def test_repair_failure_stops_loop(self):
         loop = _make_loop(
             repairer_result={"query": "", "explanation": "", "error": "LLM failed"},

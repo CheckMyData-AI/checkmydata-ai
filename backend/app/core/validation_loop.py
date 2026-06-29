@@ -261,7 +261,13 @@ class ValidationLoop:
                 span_type="db_query",
             ):
                 try:
-                    results = await connector.execute_query(current_query)
+                    # B2: pass the (possibly dynamic) per-query budget so the
+                    # connector bounds the real execution, not just the slow-query
+                    # warning. ValidationConfig.query_timeout_seconds is set by the
+                    # SQL agent from the pipeline's remaining wall-clock.
+                    results = await connector.execute_query(
+                        current_query, timeout_seconds=self._config.query_timeout_seconds
+                    )
                     _sd_eq["output_preview"] = (
                         f"{results.row_count} rows, {len(results.columns)} cols "
                         f"in {results.execution_time_ms:.0f}ms"

@@ -80,7 +80,13 @@ class PostgresConnector(BaseConnector):
             finally:
                 self._pool = None
 
-    async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+    async def execute_query(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
         if not self._pool:
             return QueryResult(error="Not connected")
 
@@ -126,7 +132,9 @@ class PostgresConnector(BaseConnector):
             finally:
                 await pool.release(conn)
 
-        timeout_s = settings.query_timeout_seconds
+        from app.connectors.base import resolve_query_timeout
+
+        timeout_s = resolve_query_timeout(timeout_seconds)
         try:
             # R1-5: bound the whole operation (pool acquire + query) with an
             # explicit wait_for, matching the mysql/clickhouse connectors.
@@ -159,7 +167,7 @@ class PostgresConnector(BaseConnector):
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(
-                error=f"Query timed out after {timeout_s}s",
+                error=f"Query timed out after {timeout_s:g}s",
                 execution_time_ms=elapsed,
             )
         except Exception as e:
