@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 
 _PREVIEW_MAX = 500
 
+# B5: minimum wall-clock budget (seconds) required to START an expensive
+# sub-agent. The unified loop only checked the wall-clock at the top of each
+# iteration; a batch could then dispatch a long sub-agent with almost no budget
+# left. Below this floor we skip the call and let the loop proceed to synthesis
+# with what was already gathered. SQL additionally threads its remaining budget
+# into the per-query timeout.
+_SUBAGENT_WALL_FLOOR_S = 1.0
+_WALL_GUARDED_TOOLS = frozenset(
+    {
+        "query_database",
+        "search_codebase",
+        "query_mcp_source",
+        "analyze_git",
+        "get_release_timeline",
+    }
+)
+
 MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 
 
@@ -104,6 +121,33 @@ class ToolDispatcher:
         if brief:
             desc += f": {brief}"
         await self._tracker.emit(wf_id, "thinking", "in_progress", desc)
+
+        # B5: respect the remaining wall-clock budget for every expensive
+        # sub-agent (previously only SQL was budget-aware). Don't START work
+        # that can't finish in the time left — degrade gracefully so the loop
+        # synthesizes from what it already has.
+        if (
+            remaining_wall_seconds is not None
+            and remaining_wall_seconds <= _SUBAGENT_WALL_FLOOR_S
+            and tc.name in _WALL_GUARDED_TOOLS
+        ):
+            logger.warning(
+                "Skipping %s — only %.1fs of wall-clock budget remains",
+                tc.name,
+                remaining_wall_seconds,
+            )
+            await self._tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"Skipping {label}: time budget nearly exhausted.",
+            )
+            return (
+                f"Skipped '{tc.name}': the request's time budget is nearly exhausted "
+                f"({remaining_wall_seconds:.1f}s left). Proceed to synthesis using the "
+                "information already gathered.",
+                None,
+            )
 
         if tc.name == "query_database":
             sql_text, sql_sub = await self._handle_query_database(

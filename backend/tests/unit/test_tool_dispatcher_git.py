@@ -67,6 +67,50 @@ def context():
     )
 
 
+class TestSubAgentWallBudgetGuard:
+    """B5: dispatch() must respect remaining_wall_seconds for ALL expensive
+    sub-agents (not just SQL) — skipping work that can't finish in the budget."""
+
+    @pytest.mark.asyncio
+    async def test_expensive_subagent_skipped_when_budget_exhausted(
+        self, mock_tracker, mock_git_agent, context
+    ):
+        d = _make_dispatcher(mock_tracker, mock_git_agent)
+        tc = ToolCall(id="t1", name="analyze_git", arguments={"question": "recent commits"})
+
+        text, sub = await d.dispatch(tc, context, "wf-1", {}, remaining_wall_seconds=0.2)
+
+        assert sub is None
+        assert "budget" in text.lower()
+        mock_git_agent.run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_expensive_subagent_runs_with_adequate_budget(
+        self, mock_tracker, mock_git_agent, context
+    ):
+        mock_git_agent.run.return_value = GitAgentResult(
+            answer="ok", status="success", token_usage={}
+        )
+        d = _make_dispatcher(mock_tracker, mock_git_agent)
+        tc = ToolCall(id="t1", name="analyze_git", arguments={"question": "x"})
+
+        await d.dispatch(tc, context, "wf-1", {}, remaining_wall_seconds=30)
+
+        mock_git_agent.run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_budget_set_runs_normally(self, mock_tracker, mock_git_agent, context):
+        mock_git_agent.run.return_value = GitAgentResult(
+            answer="ok", status="success", token_usage={}
+        )
+        d = _make_dispatcher(mock_tracker, mock_git_agent)
+        tc = ToolCall(id="t1", name="analyze_git", arguments={"question": "x"})
+
+        await d.dispatch(tc, context, "wf-1", {}, remaining_wall_seconds=None)
+
+        mock_git_agent.run.assert_awaited_once()
+
+
 class TestAnalyzeGitHandler:
     @pytest.mark.asyncio
     async def test_dispatches_to_git_agent(self, mock_tracker, mock_git_agent, context):
