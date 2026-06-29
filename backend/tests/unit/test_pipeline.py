@@ -184,6 +184,33 @@ class TestStageContext:
         assert "product_id" in text
         assert "[DEPENDENCY]" in text
 
+    def test_sample_only_restore_marks_truncated(self):
+        # B7: a result persisted with only sample rows (full row_count > stored
+        # rows) must be restored as truncated so downstream does not treat the
+        # sample as the complete dataset.
+        d = {
+            "stage_id": "s1",
+            "status": "success",
+            "columns": ["a"],
+            "row_count": 1000,
+            "sample_rows": [[1], [2], [3]],
+        }
+        restored = StageResult.from_summary_dict(d)
+        assert restored.query_result is not None
+        assert restored.query_result.truncated is True
+
+    def test_full_restore_not_truncated(self):
+        d = {
+            "stage_id": "s1",
+            "status": "success",
+            "columns": ["a"],
+            "row_count": 2,
+            "sample_rows": [[1], [2]],
+        }
+        restored = StageResult.from_summary_dict(d)
+        assert restored.query_result is not None
+        assert restored.query_result.truncated is False
+
     def test_persistence_roundtrip(self, sample_plan):
         ctx = StageContext(plan=sample_plan, pipeline_run_id="run-1")
         qr = QueryResult(columns=["a", "b"], rows=[[1, 2], [3, 4]], row_count=2)
@@ -423,6 +450,8 @@ class TestStageExecutor:
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 0
             mock_settings.pipeline_max_parallel_stages = 1
+            mock_settings.pipeline_max_wall_seconds = 0
+            mock_settings.agent_wall_clock_timeout_seconds = 0
             result = await executor.execute(plan, mock_context)
 
         assert result.status == "stage_failed"

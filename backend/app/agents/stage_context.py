@@ -200,6 +200,10 @@ class StageResult:
             if actual_rows < qr.row_count:
                 import logging as _logging
 
+                # B7: only sample rows were persisted — mark the restored result
+                # as truncated so downstream (synthesis, DataGate, process_data,
+                # reconciliation) does not treat the sample as the full dataset.
+                qr.truncated = True
                 _logging.getLogger(__name__).warning(
                     "Stage %s restored with %d/%d rows (sample only)",
                     d.get("stage_id", "?"),

@@ -219,6 +219,10 @@ class OrchestratorAgent(BaseAgent):
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
         self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
         self._wf_sql_lock = asyncio.Lock()
+        # B7: in-process set of pipeline_run_ids currently being resumed, to
+        # reject duplicate concurrent resumes of the same run (e.g. a
+        # double-clicked checkpoint button). Auto-released in _resume_pipeline.
+        self._resuming_run_ids: set[str] = set()
         self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
         # R5-3: per-workflow count of result-gate correction directives
         # already issued on the unified tool loop (bounds re-query attempts).
@@ -2263,6 +2267,36 @@ class OrchestratorAgent(BaseAgent):
         return exec_result, replan_history
 
     async def _resume_pipeline(self, resume_info: dict, context: AgentContext) -> AgentResponse:
+        """Resume a pipeline — with an in-process duplicate-concurrent-run guard.
+
+        B7: a double-clicked checkpoint button or a retried request can trigger
+        two concurrent resumes of the same ``pipeline_run_id``. Reject the
+        duplicate so the same stages are not executed twice in parallel. The
+        guard is in-process (auto-released on completion/crash) — it covers the
+        dominant same-process case without a DB ``resuming`` sentinel that the
+        reaper (which does not track ``PipelineRun``) could never self-heal.
+        """
+        run_id = resume_info.get("pipeline_run_id", "")
+        wf_id = context.workflow_id
+        if run_id and run_id in self._resuming_run_ids:
+            logger.warning("Duplicate concurrent resume rejected for run %s", run_id[:8])
+            await self._tracker.end(wf_id, "orchestrator", "failed", "Resume already in progress")
+            return AgentResponse(
+                answer=(
+                    "This analysis is already being resumed. Please wait for the current "
+                    "resume to finish before trying again."
+                ),
+                workflow_id=wf_id,
+                response_type="error",
+            )
+        if run_id:
+            self._resuming_run_ids.add(run_id)
+        try:
+            return await self._execute_resume(resume_info, context)
+        finally:
+            self._resuming_run_ids.discard(run_id)
+
+    async def _execute_resume(self, resume_info: dict, context: AgentContext) -> AgentResponse:
         """Resume a pipeline from a checkpoint or failed stage."""
         import json as _json
 

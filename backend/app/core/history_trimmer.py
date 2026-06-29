@@ -36,9 +36,15 @@ def cap_tool_result_text(text: str, max_chars: int) -> str:
     pathologically large payload that would otherwise dominate the context
     before the next trim. ``max_chars <= 0`` disables the cap.
     """
-    if max_chars <= 0 or len(text) <= max_chars:
+    try:
+        cap = int(max_chars)
+    except (TypeError, ValueError):
+        # A misconfigured (non-numeric) cap must never crash the loop — treat
+        # it as "no cap" and pass the text through unchanged.
         return text
-    head = text[:max_chars]
+    if cap <= 0 or len(text) <= cap:
+        return text
+    head = text[:cap]
     return (
         f"{head}\n... (truncated, {len(text)} chars total — refine the query "
         "or use process_data to aggregate the result)"

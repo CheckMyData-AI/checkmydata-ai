@@ -323,6 +323,21 @@ class TestGenericErrorDoesNotLeakSecrets:
 # ---------------------------------------------------------------------------
 
 
+class TestResumeIdempotency:
+    """B7: duplicate concurrent resume of the same pipeline_run_id is rejected."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_concurrent_resume_rejected(self, orch, mock_tracker, base_context):
+        orch._resuming_run_ids.add("run-xyz")
+        resp = await orch._resume_pipeline(
+            {"pipeline_run_id": "run-xyz", "action": "continue"}, base_context
+        )
+        assert resp.response_type == "error"
+        assert "already being resumed" in resp.answer.lower()
+        # The guard rejects without claiming the lock a second time.
+        assert orch._resuming_run_ids == {"run-xyz"}
+
+
 class TestPlanFingerprint:
     """B3: _plan_fingerprint identifies semantically-equal plans."""
 
