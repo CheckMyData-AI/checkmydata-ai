@@ -26,9 +26,12 @@ class QueryErrorType(StrEnum):
 NON_RETRYABLE_ERRORS = frozenset(
     {
         QueryErrorType.PERMISSION_DENIED,
-        QueryErrorType.CONNECTION_ERROR,
     }
 )
+# A connection error is usually transient (DB momentarily unavailable, network
+# blip) — it is NOT a query problem. ValidationLoop retries it by re-running the
+# same query after a backoff (no LLM repair), so it is deliberately retryable
+# rather than listed in NON_RETRYABLE_ERRORS.
 
 
 @dataclass

@@ -376,6 +376,68 @@ class TestValidationLoop:
         assert result.total_attempts == 1
 
     @pytest.mark.asyncio
+    async def test_connection_error_retries_same_query(self, monkeypatch):
+        # A3: a transient connection error is not a query problem — re-run the
+        # SAME query after a backoff (no LLM repair) and succeed once the
+        # connection recovers.
+        import app.core.validation_loop as vl
+
+        monkeypatch.setattr(vl.asyncio, "sleep", AsyncMock())
+
+        loop = _make_loop()
+        loop._repairer.repair = AsyncMock(
+            side_effect=AssertionError("LLM repair must not run for a connection error")
+        )
+        connector = AsyncMock()
+        connector.execute_query.side_effect = [
+            ConnectionError("connection reset by peer"),
+            QueryResult(columns=["id"], rows=[[1]], row_count=1, execution_time_ms=5),
+        ]
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="get ids",
+            connector=connector,
+            schema=_schema(),
+            question="get ids",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.total_attempts == 2
+        assert connector.execute_query.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connection_error_exhausts_and_fails(self, monkeypatch):
+        # A3: a connection error that never recovers exhausts max_retries and
+        # fails cleanly (does not loop forever).
+        import app.core.validation_loop as vl
+
+        monkeypatch.setattr(vl.asyncio, "sleep", AsyncMock())
+
+        loop = _make_loop(config=_config(max_retries=3))
+        connector = AsyncMock()
+        connector.execute_query.side_effect = ConnectionError("connection refused")
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="get ids",
+            connector=connector,
+            schema=_schema(),
+            question="get ids",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert result.final_error is not None
+        assert result.final_error.error_type == QueryErrorType.CONNECTION_ERROR
+        assert result.total_attempts == 3
+
+    @pytest.mark.asyncio
     async def test_repair_failure_stops_loop(self):
         loop = _make_loop(
             repairer_result={"query": "", "explanation": "", "error": "LLM failed"},

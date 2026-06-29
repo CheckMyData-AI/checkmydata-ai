@@ -70,7 +70,9 @@ class TestPostgresClassification:
             "postgresql",
         )
         assert err.error_type == QueryErrorType.CONNECTION_ERROR
-        assert not err.is_retryable
+        # A3: a connection error is transient — ValidationLoop re-runs the same
+        # query (with backoff) rather than treating it as terminal.
+        assert err.is_retryable
 
 
 class TestMySQLClassification:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -26,6 +27,13 @@ from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import WorkflowTracker
 
 logger = logging.getLogger(__name__)
+
+# Error types that warrant re-running the SAME query (a transient infrastructure
+# fault, not a query defect). These bypass the LLM repairer and the identity
+# guard and are retried after a bounded exponential backoff.
+_TRANSIENT_RETRY_ERRORS = frozenset({QueryErrorType.CONNECTION_ERROR})
+_TRANSIENT_BACKOFF_BASE_SECONDS = 0.5
+_TRANSIENT_BACKOFF_MAX_SECONDS = 4.0
 
 
 class ValidationLoop:
@@ -114,6 +122,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -157,6 +166,7 @@ class ValidationLoop:
                     chat_history=chat_history,
                     preferred_provider=preferred_provider,
                     model=model,
+                    current_explanation=current_explanation,
                 )
                 if repair is None:
                     return self._fail(
@@ -226,6 +236,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -278,6 +289,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -324,6 +336,7 @@ class ValidationLoop:
                     chat_history=chat_history,
                     preferred_provider=preferred_provider,
                     model=model,
+                    current_explanation=current_explanation,
                 )
                 if repair is None:
                     # A valid query that simply returned 0 rows is the true
@@ -385,10 +398,30 @@ class ValidationLoop:
         chat_history: list | None = None,
         preferred_provider: str | None = None,
         model: str | None = None,
+        current_explanation: str = "",
     ) -> tuple[str, str] | None:
         """Attempt to repair. Returns (new_query, new_explanation) or None."""
         if not self._retry.should_retry(error, current_attempt, self._config.max_retries):
             return None
+
+        # A3: a transient connection error is an infrastructure fault, not a
+        # query defect. Re-run the SAME query after a bounded backoff instead of
+        # asking the LLM to "repair" it (which would change nothing and, after
+        # A2, be blocked by the identity guard anyway).
+        if error.error_type in _TRANSIENT_RETRY_ERRORS:
+            delay = min(
+                _TRANSIENT_BACKOFF_BASE_SECONDS * (2 ** (current_attempt - 1)),
+                _TRANSIENT_BACKOFF_MAX_SECONDS,
+            )
+            logger.info(
+                "Transient %s on attempt %d — re-running the same query after "
+                "%.2fs backoff",
+                error.error_type.value,
+                current_attempt,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            return failed_query, current_explanation
 
         async with self._tracker.step(
             workflow_id,
