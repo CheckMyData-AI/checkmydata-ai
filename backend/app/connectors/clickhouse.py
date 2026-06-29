@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 
 import clickhouse_connect
 
-from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -82,16 +81,22 @@ class ClickHouseConnector(BaseConnector):
             finally:
                 self._client = None
 
-    _QUERY_TIMEOUT_S = settings.query_timeout_seconds
-
-    async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+    async def execute_query(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
         if not self._client:
             return QueryResult(error="Not connected")
 
         client = self._client
         start = time.monotonic()
 
-        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
+        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes, resolve_query_timeout
+
+        effective_timeout = resolve_query_timeout(timeout_seconds)
 
         def _run_streaming() -> tuple[list[str], list[list[Any]], bool]:
             """Stream row blocks and stop at the cap (R2-1 class fix).
@@ -119,7 +124,7 @@ class ClickHouseConnector(BaseConnector):
         try:
             columns, rows, truncated = await asyncio.wait_for(
                 asyncio.to_thread(_run_streaming),
-                timeout=self._QUERY_TIMEOUT_S,
+                timeout=effective_timeout,
             )
             elapsed = (time.monotonic() - start) * 1000
 
@@ -136,7 +141,7 @@ class ClickHouseConnector(BaseConnector):
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(
-                error=f"Query timed out after {self._QUERY_TIMEOUT_S}s",
+                error=f"Query timed out after {effective_timeout:g}s",
                 execution_time_ms=elapsed,
             )
         except Exception as e:

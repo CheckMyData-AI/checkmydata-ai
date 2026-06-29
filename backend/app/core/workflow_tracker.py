@@ -93,6 +93,7 @@ class WorkflowTracker:
     """In-memory event bus that broadcasts workflow step events to subscribers."""
 
     _ENDED_SET_MAX = 2000
+    _OWNERS_MAX = 2000
 
     def __init__(self) -> None:
         self._subscribers: list[_Subscriber] = []
@@ -121,6 +122,13 @@ class WorkflowTracker:
         pid = str(extra.get("project_id") or "")
         if uid or pid:
             self._workflow_owners[wf_id] = {"user_id": uid, "project_id": pid}
+            # L2: bound the owners map independently of end(). The end()-time
+            # eviction only drops owners of ENDED workflows; a workflow that
+            # never reaches end() (crash, abandoned) would otherwise leak its
+            # entry forever. FIFO-evict the oldest half when over the cap.
+            if len(self._workflow_owners) > self._OWNERS_MAX:
+                for old in list(self._workflow_owners)[: self._OWNERS_MAX // 2]:
+                    self._workflow_owners.pop(old, None)
         if pipeline in BACKGROUND_PIPELINES:
             self._active_workflows[wf_id] = {
                 "workflow_id": wf_id,

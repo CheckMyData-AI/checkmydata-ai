@@ -323,6 +323,128 @@ class TestGenericErrorDoesNotLeakSecrets:
 # ---------------------------------------------------------------------------
 
 
+class TestStreamTokenChurn:
+    """L2: a very long answer must not flood SSE with token events."""
+
+    @pytest.mark.asyncio
+    async def test_long_answer_caps_token_events(self, orch, mock_tracker, base_context):
+        from app.agents.orchestrator import _MAX_TOKEN_EVENTS
+
+        await orch._stream_tokens("wf-1", "x" * 100_000)
+
+        token_emits = [
+            c for c in mock_tracker.emit.await_args_list if len(c.args) > 1 and c.args[1] == "token"
+        ]
+        assert 0 < len(token_emits) <= _MAX_TOKEN_EVENTS
+
+
+class TestDirectMisrouteRecovery:
+    """C1: a question mis-routed 'direct' that needs data re-routes to tools."""
+
+    def _llm_resp(self, content: str):
+        from app.llm.base import LLMResponse
+
+        return LLMResponse(content=content, provider="p", model="m", usage={})
+
+    @pytest.mark.asyncio
+    async def test_sentinel_reroutes_returns_none(self, orch, mock_tracker, base_context):
+        from unittest.mock import AsyncMock
+
+        from app.agents.prompts.orchestrator_prompt import NEEDS_DATA_SENTINEL
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp(NEEDS_DATA_SENTINEL))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=True, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is None
+
+    @pytest.mark.asyncio
+    async def test_normal_answer_returns_response(self, orch, mock_tracker, base_context):
+        from unittest.mock import AsyncMock
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp("Hello there!"))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=True, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is not None
+        assert resp.answer == "Hello there!"
+
+    @pytest.mark.asyncio
+    async def test_sentinel_ignored_without_data_source(self, orch, mock_tracker, base_context):
+        # No data source → no re-route target; the sentinel is treated as a
+        # (degenerate) literal answer rather than looping.
+        from unittest.mock import AsyncMock
+
+        from app.agents.prompts.orchestrator_prompt import NEEDS_DATA_SENTINEL
+
+        orch._llm_call_with_retry = AsyncMock(return_value=self._llm_resp(NEEDS_DATA_SENTINEL))
+        resp = await orch._run_direct_response(
+            base_context, "wf-1", has_connection=False, has_kb=False, has_mcp=False, has_repo=False
+        )
+        assert resp is not None
+
+
+class TestResumeIdempotency:
+    """B7: duplicate concurrent resume of the same pipeline_run_id is rejected."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_concurrent_resume_rejected(self, orch, mock_tracker, base_context):
+        orch._resuming_run_ids.add("run-xyz")
+        resp = await orch._resume_pipeline(
+            {"pipeline_run_id": "run-xyz", "action": "continue"}, base_context
+        )
+        assert resp.response_type == "error"
+        assert "already being resumed" in resp.answer.lower()
+        # The guard rejects without claiming the lock a second time.
+        assert orch._resuming_run_ids == {"run-xyz"}
+
+
+class TestPlanFingerprint:
+    """B3: _plan_fingerprint identifies semantically-equal plans."""
+
+    def test_identical_content_same_fingerprint_despite_ids(self):
+        from app.agents.orchestrator import _plan_fingerprint
+
+        p1 = ExecutionPlan(
+            plan_id="orig",
+            question="q",
+            stages=[
+                PlanStage(stage_id="s1", description="Sum revenue", tool="query_database"),
+                PlanStage(stage_id="s2", description="aggregate", tool="process_data"),
+            ],
+        )
+        p2 = ExecutionPlan(
+            plan_id="replan-9",
+            question="q2",
+            stages=[
+                PlanStage(stage_id="x", description="sum  revenue", tool="query_database"),
+                PlanStage(stage_id="y", description="aggregate", tool="process_data"),
+            ],
+        )
+        assert _plan_fingerprint(p1) == _plan_fingerprint(p2)
+
+    def test_changed_tool_or_description_differs(self):
+        from app.agents.orchestrator import _plan_fingerprint
+
+        base = ExecutionPlan(
+            plan_id="orig",
+            question="q",
+            stages=[PlanStage(stage_id="s1", description="Sum revenue", tool="query_database")],
+        )
+        diff_desc = ExecutionPlan(
+            plan_id="orig",
+            question="q",
+            stages=[PlanStage(stage_id="s1", description="Count users", tool="query_database")],
+        )
+        diff_tool = ExecutionPlan(
+            plan_id="orig",
+            question="q",
+            stages=[PlanStage(stage_id="s1", description="Sum revenue", tool="search_codebase")],
+        )
+        assert _plan_fingerprint(base) != _plan_fingerprint(diff_desc)
+        assert _plan_fingerprint(base) != _plan_fingerprint(diff_tool)
+
+
 def _failed_exec_result(completed: dict[str, StageResult]):
     """Build a stage-failed ``_StageExecutorResult`` carrying ``completed``."""
     from app.agents.stage_executor import _StageExecutorResult
@@ -399,6 +521,50 @@ class TestReplanDanglingDependency:
         assert result is exec_result
         assert result.status == "stage_failed"
         # One replan attempt was recorded before breaking.
+        assert len(replan_history) == 1
+
+    @pytest.mark.asyncio
+    async def test_replan_repeating_failed_plan_is_not_executed(
+        self, orch, mock_tracker, base_context
+    ):
+        """B3: a replan semantically identical to a plan already tried (same
+        tool/description/input_context sequence; only ids differ) must be
+        rejected as oscillation — not executed — so a doomed plan is not
+        re-run until the replan budget is exhausted."""
+        completed = {"s1": StageResult(stage_id="s1", status="error", error="boom")}
+        exec_result = _failed_exec_result(completed)
+
+        # Same semantic content as the original failing plan (d1/d2,
+        # query_database), only the ids/plan_id differ.
+        repeat_plan = ExecutionPlan(
+            plan_id="replan-1",
+            question="q",
+            stages=[
+                PlanStage(stage_id="a", description="d1", tool="query_database"),
+                PlanStage(stage_id="b", description="d2", tool="query_database"),
+            ],
+        )
+        adaptive = MagicMock()
+        adaptive.replan = AsyncMock(return_value=repeat_plan)
+        executor = MagicMock()
+        executor.execute = AsyncMock()  # must NOT be called
+
+        result, replan_history = await orch._run_pipeline_replans(
+            executor=executor,
+            exec_result=exec_result,
+            pipeline_ctx=base_context,
+            context=base_context,
+            adaptive=adaptive,
+            table_map="",
+            db_type=None,
+            staleness_warning=None,
+            run_id="run-1",
+            wf_id="wf-1",
+        )
+
+        assert executor.execute.await_count == 0
+        assert result is exec_result
+        assert result.status == "stage_failed"
         assert len(replan_history) == 1
 
     @pytest.mark.asyncio

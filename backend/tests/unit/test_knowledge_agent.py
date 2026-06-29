@@ -368,6 +368,45 @@ class TestKnowledgeAgent:
         assert "org_id" in log_preview
         assert "Integer" in log_preview
 
+    # 7b ── get_entity_info scope=detail attributes a source (B9) ─────
+    @pytest.mark.asyncio
+    async def test_get_entity_info_detail_attributes_source(
+        self,
+        agent,
+        mock_llm,
+        context,
+        sample_knowledge,
+    ):
+        # B9: an entity-detail lookup must contribute a source (doc_type
+        # "entity") for traceability — previously only search_knowledge did.
+        call_count = 0
+
+        async def _complete(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _llm_tool(
+                    [
+                        ToolCall(
+                            id="tc-1",
+                            name="get_entity_info",
+                            arguments={"scope": "detail", "entity_name": "User"},
+                        ),
+                    ]
+                )
+            return _llm_text("User entity details.")
+
+        mock_llm.complete = AsyncMock(side_effect=_complete)
+
+        with patch.object(
+            agent, "_load_knowledge", new_callable=AsyncMock, return_value=sample_knowledge
+        ):
+            result = await agent.run(context, question="Details on User")
+
+        assert any(
+            s.doc_type == "entity" and s.source_path == "models/user.py" for s in result.sources
+        ), f"expected an entity source, got {result.sources}"
+
     # 8 ── get_entity_info scope=table_map ────────────────────────────
 
     @pytest.mark.asyncio

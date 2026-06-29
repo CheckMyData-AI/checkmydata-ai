@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from typing import Any
 
 from mcp.client.session import ClientSession
@@ -20,6 +21,20 @@ from mcp.types import TextContent
 from app.connectors.base import ConnectionConfig, DataSourceAdapter, QueryResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MCPToolCallResult:
+    """Structured result of an MCP tool call (C2).
+
+    ``call_tool`` previously returned a bare ``str``, so a tool-level error
+    (the SDK's ``CallToolResult.isError``) was indistinguishable from real data.
+    ``is_error`` surfaces that distinction so callers can flag the failure to
+    the LLM instead of treating the error text as an answer.
+    """
+
+    text: str
+    is_error: bool = False
 
 
 class MCPClientAdapter(DataSourceAdapter):
@@ -165,10 +180,19 @@ class MCPClientAdapter(DataSourceAdapter):
             logger.exception("MCP tool call '%s' failed", tool_name)
             return QueryResult(error=f"MCP tool call failed: {e}")
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str:
-        """Convenience method: call an MCP tool and return raw text result."""
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> MCPToolCallResult:
+        """Call an MCP tool and return its text result plus an error flag.
+
+        Surfaces the SDK ``CallToolResult.isError`` (C2) so a tool-level error
+        is not mistaken for data; not-connected and transport exceptions are
+        also reported as ``is_error``.
+        """
         if not self._session:
-            return json.dumps({"error": "MCP session not connected"})
+            return MCPToolCallResult(
+                text=json.dumps({"error": "MCP session not connected"}), is_error=True
+            )
 
         try:
             result = await self._session.call_tool(tool_name, arguments=arguments or {})
@@ -176,7 +200,8 @@ class MCPClientAdapter(DataSourceAdapter):
             for block in result.content:
                 if isinstance(block, TextContent):
                     texts.append(block.text)
-            return "\n".join(texts) if texts else "(empty result)"
+            text = "\n".join(texts) if texts else "(empty result)"
+            return MCPToolCallResult(text=text, is_error=bool(getattr(result, "isError", False)))
         except Exception as e:
             logger.exception("MCP tool call '%s' failed", tool_name)
-            return json.dumps({"error": str(e)})
+            return MCPToolCallResult(text=json.dumps({"error": str(e)}), is_error=True)

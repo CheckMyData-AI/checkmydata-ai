@@ -42,6 +42,39 @@ new `make smoke` startup self-check (6 deterministic tests on the revenue/cohort
 
 Remaining lower-severity findings are tracked in `docs/ORCHESTRATOR_AUDIT_2026-06.md`.
 
+### Fixed — Orchestrator audit follow-ups (2026-06-29, branch `fix/orchestrator-audit-followups-2026-06`)
+
+All 21 deferred follow-ups from the orchestrator audit remediated, TDD throughout (one
+commit per finding); full unit suite green, ruff/mypy clean. Register:
+`docs/ORCHESTRATOR_AUDIT_2026-06.md` (§ Follow-up remediation).
+
+- **Pipeline robustness:** per-pipeline wall-clock budget (`pipeline_max_wall_seconds`) caps
+  the compounded retry surface; the unified-loop wall budget is now respected by every
+  expensive sub-agent (not just SQL); a `process_data` call batched with a fresh
+  `query_database` is deferred so it can't transform the previous turn's stale result; a
+  replan that repeats a prior plan (by semantic fingerprint) is rejected instead of burning
+  the budget; resume has an in-process duplicate-run guard and sample-only restores are
+  flagged `truncated` so a sample is never treated as the full dataset.
+- **Query/validation:** transient DB connection errors retry (same query + backoff) rather
+  than fail immediately; a clean empty result is returned as success (not a failure) and the
+  repairer won't re-run an equivalent query; the dynamic per-query timeout reaches every
+  connector's `execute_query` (Mongo gains one); DataGate's value-range hard check scans the
+  full in-memory result by default.
+- **Routing/recovery:** a question mis-routed `direct` can escape to the tool loop via a
+  model-emitted sentinel (router prompt hardened); the router honors a configured
+  `router_model` and `estimated_queries` now influences pipeline selection.
+- **MCP:** `call_tool` returns a structured `MCPToolCallResult` so a tool-level `isError` is
+  surfaced to the LLM instead of read as data.
+- **Context/observability:** a hard per-result ceiling caps a fresh tool result at insertion;
+  `_workflow_owners` is FIFO-bounded and `_stream_tokens` event count is capped; robust router
+  JSON extraction (nested/trailing-safe) with a larger token cap.
+- **Quality/correctness:** entity-info lookups are attributed as sources; auto-investigation
+  gains `auto_investigate_budget_enforcement_enabled`; reconciliation rejects non-finite
+  numbers; `process_data` defaults `min_rows=0`; dependency serialization into prompts is
+  field-capped; cross-stage/business-rule checks documented as intentionally advisory.
+- **WebSocket:** idle timeout (`ws_idle_timeout_seconds`) closes abandoned sockets; pipeline
+  Continue/Modify/Retry actions are now plumbed over the WS transport.
+
 ### Fixed — R5: code↔DB sync reliability & correctness (2026-06-25 sync audit)
 
 Closes all 22 findings of the five-specialist code↔DB synchronization audit (9 High, 9 Medium,

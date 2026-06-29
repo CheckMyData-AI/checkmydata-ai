@@ -77,6 +77,23 @@ class TestHardChecksValueRange:
         else:
             assert out.passed is True
 
+    def test_value_range_scans_beyond_first_50_rows(self):
+        # A5: an impossible value deeper than the first 50 rows must still
+        # hard-fail — the value-range scan covers the full in-memory result.
+        gate = DataGate()
+        rows: list[list] = [[1] for _ in range(60)]
+        rows[55] = [-7]  # negative count well past the old 50-row sub-cap
+        qr = QueryResult(columns=["order_count"], rows=rows, row_count=60)
+        stage = _sql_stage()
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        ctx = _make_stage_ctx(plan)
+        result = StageResult(stage_id=stage.stage_id, status="success", query_result=qr)
+
+        out = gate.check(stage, result, ctx)
+
+        assert out.passed is False
+        assert out.errors, "negative count past row 50 should hard-fail"
+
 
 class TestSoftChecksRemainWarn:
     def test_high_null_ratio_only_warns(self):

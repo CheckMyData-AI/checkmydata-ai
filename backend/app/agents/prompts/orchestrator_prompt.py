@@ -194,6 +194,12 @@ def build_orchestrator_system_prompt(
 # ------------------------------------------------------------------
 
 
+# C1: the direct-response LLM emits this sentinel (and nothing else) when a
+# question routed "direct" actually needs fresh data — the orchestrator then
+# re-routes it through the tool loop instead of answering without data.
+NEEDS_DATA_SENTINEL = "__NEEDS_DATA__"
+
+
 def build_direct_response_prompt(
     *,
     project_name: str | None = None,
@@ -219,11 +225,28 @@ def build_direct_response_prompt(
 
     cap_str = ", ".join(caps)
 
+    has_data_source = has_connection or has_knowledge_base or has_mcp_sources or has_repo
+    escape_instruction = ""
+    if has_data_source:
+        # C1: re-route escape. Only answer directly for conversational/meta
+        # questions or follow-ups about already-shown results. If answering
+        # ACCURATELY needs fresh data, do not guess — emit the sentinel and the
+        # system fetches the data via tools.
+        escape_instruction = (
+            "ONLY answer directly when the message is conversational/meta (greetings, "
+            "thanks, clarifications) or a follow-up about results already shown. If "
+            "answering accurately would require fresh data from your sources "
+            f"({cap_str}), do NOT guess or fabricate — reply with EXACTLY "
+            f"{NEEDS_DATA_SENTINEL} and nothing else; the system will then fetch the "
+            "data with tools.\n"
+        )
+
     return (
         f"You are a friendly AI data assistant{project_label}.\n"
         f"Your capabilities include: {cap_str}.\n"
         "Respond to the user's message naturally and concisely. "
         "Do not call any tools.\n"
+        f"{escape_instruction}"
         "LANGUAGE: Reason internally in English, but write your reply in the "
         "SAME language as the user's most recent message."
     )

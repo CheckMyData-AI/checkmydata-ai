@@ -188,9 +188,18 @@ class TestIntegrationValidationLoop:
 
     @pytest.mark.asyncio
     async def test_max_attempts_exhausted(self):
-        """Test 3: 3 bad queries → max attempts → error with history."""
-        repairer = _make_repairer(
-            fixed_query="SELECT still_bad_col FROM users",
+        """Test 3: 3 distinct bad queries → max attempts → error with history.
+
+        Each repair returns a *different* query so the A2 identity guard (which
+        stops the loop when a repaired query repeats one already tried) does not
+        short-circuit — the loop genuinely exhausts ``max_retries``.
+        """
+        repairer = MagicMock(spec=QueryRepairer)
+        repairer.repair = AsyncMock(
+            side_effect=[
+                {"query": "SELECT still_bad_col FROM users", "explanation": "try 2"},
+                {"query": "SELECT also_bad_col FROM users", "explanation": "try 3"},
+            ]
         )
         config = ValidationConfig(
             max_retries=3,
@@ -201,7 +210,7 @@ class TestIntegrationValidationLoop:
         loop = _make_loop(config=config, repairer=repairer)
         connector = AsyncMock()
         connector.execute_query.return_value = QueryResult(
-            error='column "still_bad_col" does not exist',
+            error='column "missing" does not exist',
         )
 
         wf_id = await _make_tracker().begin("query")

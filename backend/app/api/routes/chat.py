@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -119,6 +119,31 @@ class WsChatMessage(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
     preferred_provider: str | None = Field(None, max_length=50)
     model: str | None = Field(None, max_length=100)
+    # L5: pipeline-control fields, parity with the HTTP/SSE ChatRequest — without
+    # these the checkpoint "Continue / Modify / Retry" actions cannot be driven
+    # over the WebSocket transport.
+    pipeline_action: Literal["continue", "modify", "retry", "continue_analysis"] | None = None
+    pipeline_run_id: str | None = Field(None, max_length=100)
+    modification: str | None = Field(None, max_length=20000)
+    continuation_context: str | None = Field(None, max_length=20000)
+
+
+def _ws_pipeline_extra(session_id: str, ws_msg: "WsChatMessage") -> dict[str, Any]:
+    """Build the agent ``extra`` for a WS message: session_id + pipeline control.
+
+    Mirrors the HTTP/SSE paths so checkpoint Continue / Modify / Retry actions
+    are driveable over the WebSocket transport (L5).
+    """
+    extra: dict[str, Any] = {"session_id": session_id}
+    if ws_msg.pipeline_action:
+        extra["pipeline_action"] = ws_msg.pipeline_action
+        if ws_msg.pipeline_run_id:
+            extra["pipeline_run_id"] = ws_msg.pipeline_run_id
+        if ws_msg.modification:
+            extra["modification"] = ws_msg.modification
+        if ws_msg.continuation_context:
+            extra["continuation_context"] = ws_msg.continuation_context
+    return extra
 
 
 class ChatResponse(BaseModel):
@@ -1515,8 +1540,30 @@ async def chat_websocket(
             }
         )
 
+        from app.config import settings as app_settings
+
         while True:
-            data = await websocket.receive_json()
+            # L5: bound idle waits so an abandoned socket doesn't hold resources
+            # indefinitely. 0 disables the timeout.
+            ws_idle = app_settings.ws_idle_timeout_seconds
+            try:
+                if ws_idle and ws_idle > 0:
+                    data = await asyncio.wait_for(websocket.receive_json(), timeout=ws_idle)
+                else:
+                    data = await websocket.receive_json()
+            except TimeoutError:
+                logger.info("WS chat idle timeout (%ss) — closing connection", ws_idle)
+                try:
+                    await websocket.send_json(
+                        {
+                            "type": "idle_timeout",
+                            "message": "Connection closed due to inactivity.",
+                        }
+                    )
+                except Exception:
+                    logger.debug("WS: failed to send idle_timeout notice", exc_info=True)
+                await websocket.close(code=1000)
+                break
             try:
                 ws_msg = WsChatMessage.model_validate(data)
             except Exception as val_err:
@@ -1610,7 +1657,9 @@ async def chat_websocket(
                     # R5-5: the HTTP/stream paths thread session_id through ``extra``
                     # so session-scoped features (pipeline state, continuation,
                     # session notes) work; the WS path silently omitted it.
-                    extra={"session_id": session_id},
+                    # L5: also thread the pipeline-control fields so checkpoint
+                    # Continue / Modify / Retry work over the WebSocket transport.
+                    extra=_ws_pipeline_extra(session_id, ws_msg),
                 )
 
                 viz_data = None

@@ -35,6 +35,7 @@ class AgentSettingsView:
     max_stage_retries: int
     max_pipeline_replans: int
     pipeline_max_parallel_stages: int
+    pipeline_max_wall_seconds: int
     llm_result_preview_rows: int
     answer_validator_enabled: bool
     learning_weight_confidence: float
@@ -207,6 +208,11 @@ class Settings(BaseSettings):
     # and the AgentLimiter, and the quality win on suspicious results outweighs
     # the marginal spend. Set False to make investigations manual-only.
     orchestrator_auto_investigate_enabled: bool = True
+    # When True (default), auto-investigation enforces the project owner's token
+    # budget before spawning: it skips if the owner is over budget AND skips when
+    # the owner cannot be resolved (no unbilled, unattributed background spend).
+    # Set False to allow auto-investigation regardless of budget/owner resolution.
+    auto_investigate_budget_enforcement_enabled: bool = True
 
     # Batch query execution (T19). ``batch_max_concurrency`` caps the
     # number of concurrent queries inside one batch; ``batch_result_row_cap``
@@ -224,6 +230,12 @@ class Settings(BaseSettings):
     # Miscellaneous magic-number knobs lifted from scattered modules (T25).
     tool_preview_max_chars: int = 500
     tool_result_max_chars: int = 500
+    # Hard per-result ceiling applied when a FRESH tool result is appended to
+    # the loop context (B6). Much larger than tool_result_max_chars (which
+    # condenses OLD results during trim) so the model keeps enough of the
+    # just-produced data to reason over, while a single pathologically large
+    # result can't dominate/blow the context before the next trim.
+    tool_result_insert_max_chars: int = 16000
     max_lesson_length: int = 500
     health_check_interval_seconds: int = 300
 
@@ -343,6 +355,11 @@ class Settings(BaseSettings):
     # Maximum stages run concurrently in one DAG level. Set to 1 to disable
     # parallel stage execution.
     pipeline_max_parallel_stages: int = 3
+    # Per-pipeline wall-clock budget (seconds) for one StageExecutor.execute
+    # run. Bounds the compounded retry surface (per-stage × validation ×
+    # data-gate) by stopping the DAG scheduler before dispatching a new batch
+    # once the budget is spent. 0 → fall back to agent_wall_clock_timeout_seconds.
+    pipeline_max_wall_seconds: int = 0
 
     # SQL agent
     # Number of result rows surfaced to the LLM when summarizing a query
@@ -483,6 +500,10 @@ class Settings(BaseSettings):
     # Streaming settings
     stream_timeout_seconds: int = 360
     stream_safety_margin_seconds: int = 120
+    # Idle timeout (seconds) for a chat WebSocket waiting on the next client
+    # message; the connection is closed when exceeded so abandoned sockets don't
+    # hold server resources. 0 disables the idle timeout.
+    ws_idle_timeout_seconds: int = 300
 
     # Backup settings
     backup_enabled: bool = True
@@ -578,7 +599,12 @@ class Settings(BaseSettings):
     # to fix the query before returning bogus values to the user. Set to
     # False to revert to the v1.12.x warn-only behavior.
     data_gate_hard_checks_enabled: bool = True
-    data_gate_value_range_sample: int = 50
+    # Max rows the value-range hard check scans for impossible values (negative
+    # counts, >100% bounded percentages, impossible dates). The per-cell numeric
+    # comparison is cheap and short-circuits per column on the first hit, and
+    # missing even one impossible value defeats the gate — so 0 (default) scans
+    # the FULL in-memory result. Set a positive value only to bound the scan.
+    data_gate_value_range_sample: int = 0
     data_gate_percent_min: float = -1.0
     # Loose upper bound for "rate"-kind columns (rate/ratio/growth) which can
     # legitimately exceed 100% (e.g. 150% YoY growth).
@@ -677,6 +703,7 @@ class Settings(BaseSettings):
             max_stage_retries=self.max_stage_retries,
             max_pipeline_replans=self.max_pipeline_replans,
             pipeline_max_parallel_stages=self.pipeline_max_parallel_stages,
+            pipeline_max_wall_seconds=self.pipeline_max_wall_seconds,
             llm_result_preview_rows=self.llm_result_preview_rows,
             answer_validator_enabled=self.answer_validator_enabled,
             learning_weight_confidence=self.learning_weight_confidence,

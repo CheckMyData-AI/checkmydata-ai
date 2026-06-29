@@ -251,6 +251,139 @@ class TestAutoInvestigateBudgetPreflight:
 # ---------------------------------------------------------------------------
 
 
+class TestAutoInvestigateBudgetEnforcementFlag:
+    """B8: auto_investigate_budget_enforcement_enabled gates the budget guard."""
+
+    @pytest.mark.asyncio
+    async def test_skips_when_owner_unresolved_and_enforcement_on(self, engine_and_sm, monkeypatch):
+        """Enforcement on (default) + owner cannot be resolved → skip entirely
+        (no unbilled, unattributed background spend)."""
+        import asyncio
+
+        _, sm = engine_and_sm
+        monkeypatch.setattr(settings, "orchestrator_auto_investigate_enabled", True, raising=False)
+        monkeypatch.setattr(
+            settings, "auto_investigate_budget_enforcement_enabled", True, raising=False
+        )
+        monkeypatch.setattr("app.models.base.async_session_factory", sm, raising=False)
+        _user, project_id, connection_id = await _seed_owner_project_connection(sm)
+
+        async def _no_owner(_session, _project_id):
+            return None
+
+        monkeypatch.setattr(
+            "app.services.sync_budget.resolve_owner_user_id", _no_owner, raising=False
+        )
+
+        calls: list[str] = []
+
+        class _RecordingSvc:
+            async def create_investigation(self, _session, **kwargs):
+                calls.append("create_investigation")
+                return SimpleNamespace(id="should-not-exist")
+
+        monkeypatch.setattr(
+            "app.services.investigation_service.InvestigationService",
+            lambda: _RecordingSvc(),
+            raising=False,
+        )
+
+        scheduled: list[str] = []
+        real_create_task = asyncio.create_task
+
+        async def _noop():
+            return None
+
+        def _capture(coro, *a, **k):
+            name = getattr(coro, "__qualname__", getattr(coro, "__name__", str(coro)))
+            if "_run_investigation_background" in str(name):
+                scheduled.append(str(name))
+                if hasattr(coro, "close"):
+                    coro.close()
+                return real_create_task(_noop())
+            return real_create_task(coro, *a, **k)
+
+        monkeypatch.setattr(asyncio, "create_task", _capture)
+
+        await fb_module.maybe_auto_investigate(
+            _suspicious_result(),
+            project_id=project_id,
+            connection_id=connection_id,
+            session_id="s1",
+            message_id="m1",
+        )
+
+        assert calls == [], "owner unresolved + enforcement on must not create an investigation"
+        assert scheduled == [], "owner unresolved + enforcement on must not schedule a task"
+
+    @pytest.mark.asyncio
+    async def test_proceeds_when_enforcement_disabled_even_over_budget(
+        self, engine_and_sm, monkeypatch
+    ):
+        """Enforcement off → the budget guard is bypassed; the investigation is
+        scheduled even when the owner is over budget."""
+        import asyncio
+
+        _, sm = engine_and_sm
+        monkeypatch.setattr(settings, "orchestrator_auto_investigate_enabled", True, raising=False)
+        monkeypatch.setattr(
+            settings, "auto_investigate_budget_enforcement_enabled", False, raising=False
+        )
+        monkeypatch.setattr("app.models.base.async_session_factory", sm, raising=False)
+        _owner, project_id, connection_id = await _seed_owner_project_connection(sm)
+
+        async def _over_budget(_self, _session, _user_id):
+            return "Daily token budget exceeded."
+
+        monkeypatch.setattr(
+            "app.services.usage_service.UsageService.check_token_budget",
+            _over_budget,
+            raising=False,
+        )
+
+        class _FakeSvc:
+            async def create_investigation(self, _session, **kwargs):
+                return SimpleNamespace(id="inv-1")
+
+        monkeypatch.setattr(
+            "app.services.investigation_service.InvestigationService",
+            lambda: _FakeSvc(),
+            raising=False,
+        )
+
+        launched: dict[str, object] = {}
+
+        async def _fake_bg(**kwargs):
+            launched.update(kwargs)
+
+        monkeypatch.setattr(
+            "app.api.routes.data_investigations._run_investigation_background",
+            _fake_bg,
+            raising=False,
+        )
+
+        tasks: list[asyncio.Task] = []
+        real_create_task = asyncio.create_task
+
+        def _capture(coro, *a, **k):
+            t = real_create_task(coro, *a, **k)
+            tasks.append(t)
+            return t
+
+        monkeypatch.setattr(asyncio, "create_task", _capture)
+
+        await fb_module.maybe_auto_investigate(
+            _suspicious_result(),
+            project_id=project_id,
+            connection_id=connection_id,
+            session_id="s1",
+            message_id="m1",
+        )
+
+        assert tasks, "investigation must be scheduled when budget enforcement is disabled"
+        await asyncio.gather(*tasks)
+
+
 class TestRunInvestigationBackgroundSinkAndLimiter:
     @pytest.mark.asyncio
     async def test_router_carries_sink_and_limiter_acquired(self, engine_and_sm, monkeypatch):

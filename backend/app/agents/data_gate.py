@@ -306,11 +306,15 @@ class DataGate:
 
     def _check_value_ranges(self, qr: QueryResult, outcome: DataGateOutcome) -> None:
         """Sanity-check obviously out-of-range values."""
-        sample = qr.rows[: self._max_sample]
-        if not sample:
+        if not qr.rows:
             return
         kinds = self._classify_columns(qr)
-        sample_limit = settings.data_gate_value_range_sample
+        # Hard value-range checks catch IMPOSSIBLE values; missing even one
+        # defeats the gate, and the per-cell comparison is cheap (and
+        # short-circuits per column on the first hit). Scan the full in-memory
+        # result by default; a positive cap bounds it for operators who need to.
+        scan_cap = settings.data_gate_value_range_sample
+        scan_rows = qr.rows if scan_cap <= 0 else qr.rows[:scan_cap]
         pct_min = settings.data_gate_percent_min
         pct_max = settings.data_gate_percent_max
         year_min = settings.data_gate_year_min
@@ -322,7 +326,7 @@ class DataGate:
             kind = kinds.get(col_name, "other")
             if kind not in ("percent", "rate", "count", "date"):
                 continue
-            for row in sample[:sample_limit]:
+            for row in scan_rows:
                 try:
                     val = row[col_idx]
                 except (IndexError, TypeError):

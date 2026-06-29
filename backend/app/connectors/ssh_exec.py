@@ -192,11 +192,23 @@ class SSHExecConnector(BaseConnector):
 
         return stdout, stderr, result.exit_status if result.exit_status is not None else -1
 
-    async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+    async def execute_query(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
         start = time.monotonic()
+        # B2: honor a dynamic per-query budget, capped at the SSH command
+        # ceiling (the remote CLI's own timeout governs the rest).
+        if timeout_seconds is not None and timeout_seconds > 0:
+            command_timeout = min(int(timeout_seconds), SSH_COMMAND_TIMEOUT)
+        else:
+            command_timeout = SSH_COMMAND_TIMEOUT
         try:
             command = self._build_command("query", query)
-            stdout, stderr, exit_code = await self._run_command(command)
+            stdout, stderr, exit_code = await self._run_command(command, timeout=command_timeout)
             elapsed = (time.monotonic() - start) * 1000
 
             if exit_code != 0:

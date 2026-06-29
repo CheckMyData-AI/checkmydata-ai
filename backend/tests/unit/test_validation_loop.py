@@ -280,6 +280,185 @@ class TestValidationLoop:
         assert result.total_attempts == 1
 
     @pytest.mark.asyncio
+    async def test_repair_identical_query_is_rejected(self):
+        # A2: the repairer returns a query that differs from the one already
+        # attempted only in whitespace/case. Re-running it would waste an
+        # attempt and loop on the same failure — the identity guard rejects it
+        # and stops the loop after the first execution.
+        loop = _make_loop(
+            repairer_result={"query": "select  bad   FROM Users", "explanation": "x"},
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            error='column "bad" does not exist',
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT bad FROM users",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get data",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert result.total_attempts == 1
+        assert connector.execute_query.await_count == 1
+        assert result.final_error is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_result_returns_success_after_retries(self):
+        # A2: with empty_result_retry on, a clean 0-row result is retried, but
+        # once attempts are exhausted the genuinely-empty result is the true
+        # answer — return success (with a warning), not failure.
+        loop = _make_loop(config=_config(empty_result_retry=True, max_retries=3))
+        loop._repairer.repair = AsyncMock(
+            side_effect=[
+                {"query": "SELECT a FROM users", "explanation": "1"},
+                {"query": "SELECT b FROM users", "explanation": "2"},
+                {"query": "SELECT c FROM users", "explanation": "3"},
+            ]
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[], row_count=0, execution_time_ms=5
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users WHERE 1=0",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get nothing",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.results is not None
+        assert result.results.row_count == 0
+        assert any("0 rows" in w or "zero" in w.lower() for w in result.warnings)
+
+    @pytest.mark.asyncio
+    async def test_empty_result_identical_repair_returns_success(self):
+        # A2: empty result + a repaired query identical to the original →
+        # the identity guard stops immediately, and zero is returned as the
+        # answer (success) rather than a failure.
+        loop = _make_loop(
+            config=_config(empty_result_retry=True, max_retries=3),
+            repairer_result={"query": "SELECT id FROM users WHERE 1=0", "explanation": "same"},
+        )
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[], row_count=0, execution_time_ms=5
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users WHERE 1=0",
+            initial_explanation="test",
+            connector=connector,
+            schema=_schema(),
+            question="Get nothing",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.results is not None
+        assert result.results.row_count == 0
+        assert result.total_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_connection_error_retries_same_query(self, monkeypatch):
+        # A3: a transient connection error is not a query problem — re-run the
+        # SAME query after a backoff (no LLM repair) and succeed once the
+        # connection recovers.
+        import app.core.validation_loop as vl
+
+        monkeypatch.setattr(vl.asyncio, "sleep", AsyncMock())
+
+        loop = _make_loop()
+        loop._repairer.repair = AsyncMock(
+            side_effect=AssertionError("LLM repair must not run for a connection error")
+        )
+        connector = AsyncMock()
+        connector.execute_query.side_effect = [
+            ConnectionError("connection reset by peer"),
+            QueryResult(columns=["id"], rows=[[1]], row_count=1, execution_time_ms=5),
+        ]
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="get ids",
+            connector=connector,
+            schema=_schema(),
+            question="get ids",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert result.success
+        assert result.total_attempts == 2
+        assert connector.execute_query.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connection_error_exhausts_and_fails(self, monkeypatch):
+        # A3: a connection error that never recovers exhausts max_retries and
+        # fails cleanly (does not loop forever).
+        import app.core.validation_loop as vl
+
+        monkeypatch.setattr(vl.asyncio, "sleep", AsyncMock())
+
+        loop = _make_loop(config=_config(max_retries=3))
+        connector = AsyncMock()
+        connector.execute_query.side_effect = ConnectionError("connection refused")
+
+        result = await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="get ids",
+            connector=connector,
+            schema=_schema(),
+            question="get ids",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert result.final_error is not None
+        assert result.final_error.error_type == QueryErrorType.CONNECTION_ERROR
+        assert result.total_attempts == 3
+
+    @pytest.mark.asyncio
+    async def test_passes_dynamic_timeout_to_connector(self):
+        # B2: the per-query timeout computed into ValidationConfig must reach
+        # the connector so it bounds the actual execution, not just warnings.
+        loop = _make_loop(config=_config(query_timeout_seconds=7))
+        connector = AsyncMock()
+        connector.execute_query.return_value = QueryResult(
+            columns=["id"], rows=[[1]], row_count=1, execution_time_ms=5
+        )
+
+        await loop.execute(
+            initial_query="SELECT id FROM users",
+            initial_explanation="x",
+            connector=connector,
+            schema=_schema(),
+            question="q",
+            project_id="p1",
+            workflow_id="wf1",
+            connection_config=_conn_config(),
+        )
+
+        assert connector.execute_query.await_args.kwargs.get("timeout_seconds") == 7
+
+    @pytest.mark.asyncio
     async def test_repair_failure_stops_loop(self):
         loop = _make_loop(
             repairer_result={"query": "", "explanation": "", "error": "LLM failed"},

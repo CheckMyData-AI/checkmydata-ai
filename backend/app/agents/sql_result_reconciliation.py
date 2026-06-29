@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -49,14 +50,19 @@ def _parse_number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     text = str(value).strip().replace(",", "")
     if not text:
         return None
     try:
-        return float(Decimal(text))
+        parsed = float(Decimal(text))
     except (InvalidOperation, ValueError):
         return None
+    # ``Decimal("nan")`` / ``Decimal("inf")`` parse without error; a non-finite
+    # value is not a usable measure — it poisons the grand-total sum and makes
+    # every reconciliation comparison false (NaN != NaN). Treat it as None.
+    return parsed if math.isfinite(parsed) else None
 
 
 def _pick_total_column(columns: list[str], rows: list[list[Any]]) -> str | None:

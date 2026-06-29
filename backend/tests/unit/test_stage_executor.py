@@ -249,6 +249,8 @@ class TestExecute:
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 0
             mock_settings.pipeline_max_parallel_stages = 1
+            mock_settings.pipeline_max_wall_seconds = 0
+            mock_settings.agent_wall_clock_timeout_seconds = 0
             result = await executor.execute(plan, context)
 
         assert result.status == "stage_failed"
@@ -296,6 +298,8 @@ class TestExecute:
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 1
             mock_settings.pipeline_max_parallel_stages = 1
+            mock_settings.pipeline_max_wall_seconds = 0
+            mock_settings.agent_wall_clock_timeout_seconds = 0
             result = await executor.execute(plan, context)
 
         assert result.status == "completed"
@@ -853,3 +857,41 @@ class TestEmitStageResult:
         assert "status" not in call.kwargs
         assert call.kwargs["stage_id"] == "s1"
         assert call.kwargs["row_count"] == 1
+
+
+class TestPipelineWallClockBudget:
+    """B4: a per-pipeline wall-clock budget bounds the compounded retry surface
+    by stopping the DAG scheduler before dispatching a new batch once spent."""
+
+    @pytest.mark.asyncio
+    async def test_budget_short_circuits_before_next_batch(self, executor, context, monkeypatch):
+        import app.agents.stage_executor as se
+
+        plan = _make_plan(
+            _sql_stage("s1"),
+            PlanStage(stage_id="s2", description="d2", tool="query_database", depends_on=["s1"]),
+        )
+
+        clock = {"t": 0.0}
+        monkeypatch.setattr(se.time, "monotonic", lambda: clock["t"])
+        monkeypatch.setattr(se.settings, "pipeline_max_wall_seconds", 5)
+
+        async def fake_process(stage, stage_ctx, ctx):
+            stage_ctx.set_result(
+                stage.stage_id,
+                StageResult(stage_id=stage.stage_id, status="success", summary="ok"),
+            )
+            # Each stage "consumes" wall-clock past the budget.
+            clock["t"] += 100.0
+            return None
+
+        monkeypatch.setattr(executor, "_process_one_stage", fake_process)
+
+        result = await executor.execute(plan, context)
+
+        # s1 ran; the budget was then exhausted, so s2 was never dispatched.
+        assert result.status == "stage_failed"
+        assert result.replan_eligible is False
+        assert result.failed_stage is not None and result.failed_stage.stage_id == "s2"
+        assert "s1" in result.stage_ctx.results
+        assert "s2" not in result.stage_ctx.results

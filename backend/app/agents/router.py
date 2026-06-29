@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 
 from app.config import settings
@@ -17,7 +16,13 @@ from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
-_ROUTER_MAX_TOKENS = 200
+# L1: 200 tokens could truncate the JSON when the model writes a longer
+# "approach" sentence, corrupting the parse and forcing the default route. 512
+# comfortably fits the small fixed schema plus a 1-2 sentence approach.
+_ROUTER_MAX_TOKENS = 512
+# A request estimated to need at least this many sub-queries is treated as
+# multi-step and routed to the full pipeline (matches ContextPlanner's heuristic).
+_PIPELINE_ESTIMATED_QUERIES_THRESHOLD = 3
 
 
 @dataclass
@@ -36,10 +41,17 @@ class RouteResult:
     @property
     def use_complex_pipeline(self) -> bool:
         # A request is routed to the multi-stage pipeline when the router calls
-        # it complex OR when it needs to combine multiple data sources — the
-        # latter signal was previously parsed but never acted on, so
-        # multi-source questions were silently handled by the single-loop path.
-        return self.complexity == "complex" or self.needs_multiple_data_sources
+        # it complex OR when it needs to combine multiple data sources OR when
+        # it is estimated to need several (>=3) sub-queries. The last two
+        # signals were previously parsed but never acted on (estimated_queries
+        # was pure contract drift), so multi-step questions were silently
+        # handled by the single-loop path. The >=3 threshold matches the
+        # ContextPlanner's own multi-query heuristic.
+        return (
+            self.complexity == "complex"
+            or self.needs_multiple_data_sources
+            or self.estimated_queries >= _PIPELINE_ESTIMATED_QUERIES_THRESHOLD
+        )
 
 
 _DEFAULT_ROUTE = RouteResult(
@@ -49,8 +61,6 @@ _DEFAULT_ROUTE = RouteResult(
     estimated_queries=2,
     needs_multiple_data_sources=False,
 )
-
-_JSON_OBJ_RE = re.compile(r"\{[^{}]*\}")
 
 
 def _build_router_prompt(
@@ -114,39 +124,42 @@ def _build_router_prompt(
         "- moderate: needs joins, grouping, or 2-3 steps\n"
         "- complex: multi-dimensional analysis, temporal comparisons, cross-referencing, "
         "or questions requiring multiple sequential queries whose results feed into each other\n\n"
+        'Routing guidance: choose "direct" ONLY for conversational/meta messages '
+        "(greetings, thanks, clarifications) or follow-ups about results already shown. "
+        "If the answer depends on actual data from a connected source, do NOT choose "
+        '"direct" — pick the matching data route (or "explore" when unsure).\n\n'
         "Reply ONLY with the JSON object. No other text."
     )
 
 
 def _extract_json(raw: str) -> dict | None:
+    """Extract the first JSON object from an LLM reply.
+
+    Robust to code fences, leading prose, trailing prose, and nested objects
+    (L1): we scan for each candidate ``{``/``[`` start and use
+    ``JSONDecoder.raw_decode`` — which parses one complete JSON value and stops,
+    correctly handling nested braces and ignoring any trailing text.
+    """
     raw = raw.strip()
     if "```" in raw:
         lines = raw.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         raw = "\n".join(lines).strip()
 
+    decoder = json.JSONDecoder()
     for start_char in ("{", "["):
         idx = raw.find(start_char)
-        if idx > 0:
-            raw = raw[idx:]
-            break
-
-    try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            data = data[0] if data else None
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        pass
-
-    m = _JSON_OBJ_RE.search(raw)
-    if m:
-        try:
-            data = json.loads(m.group())
+        while idx != -1:
+            try:
+                data, _end = decoder.raw_decode(raw[idx:])
+            except json.JSONDecodeError:
+                idx = raw.find(start_char, idx + 1)
+                continue
+            if isinstance(data, list):
+                data = data[0] if data else None
             if isinstance(data, dict):
                 return data
-        except json.JSONDecodeError:
-            pass
+            idx = raw.find(start_char, idx + 1)
 
     return None
 
@@ -238,13 +251,18 @@ async def route_request(
 
     messages.append(Message(role="user", content=question[: settings.router_last_turn_char_limit]))
 
+    # The routing classification is a cheap, well-bounded task — prefer a fast
+    # model configured via ``router_model`` so it does not burn the user's
+    # premium model on every turn. Falls back to the caller's model when unset.
+    effective_model = settings.router_model or model
+
     try:
         resp = await llm_router.complete(
             messages=messages,
             max_tokens=_ROUTER_MAX_TOKENS,
             temperature=0.0,
             preferred_provider=preferred_provider,
-            model=model,
+            model=effective_model,
         )
     except Exception:
         logger.debug("Router LLM call failed, using default route", exc_info=True)

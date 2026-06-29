@@ -190,9 +190,8 @@ class TestPostgresConnector:
         mock_conn.cursor = AsyncMock(return_value=cur)
         connector._pool = self._make_pool(mock_conn)
 
-        with patch("app.connectors.postgres.settings") as mock_settings:
-            mock_settings.query_timeout_seconds = 0.05
-            result = await connector.execute_query("SELECT * FROM slow")
+        # B2: a dynamic per-query budget (here 0.05s) bounds execution.
+        result = await connector.execute_query("SELECT * FROM slow", timeout_seconds=0.05)
 
         assert result.error is not None
         assert "timed out" in result.error
@@ -219,9 +218,8 @@ class TestPostgresConnector:
         pool = self._make_pool(mock_conn)
         connector._pool = pool
 
-        with patch("app.connectors.postgres.settings") as mock_settings:
-            mock_settings.query_timeout_seconds = 0.05
-            result = await connector.execute_query("SELECT * FROM slow")
+        # B2: a dynamic per-query budget (here 0.05s) bounds execution.
+        result = await connector.execute_query("SELECT * FROM slow", timeout_seconds=0.05)
 
         assert result.error is not None and "timed out" in result.error
         # Poisoned connection terminated exactly once, then released so the

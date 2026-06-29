@@ -238,6 +238,13 @@ class TestMaybeAutoInvestigate:
 
         _, sm = engine_and_sm
         monkeypatch.setattr(settings, "orchestrator_auto_investigate_enabled", True, raising=False)
+        # B8: this test exercises the routing happy path, not budget enforcement
+        # (covered in test_investigation_budget_and_verdict). With enforcement on,
+        # an unseeded/unresolved owner would now (correctly) skip; disable it here
+        # so routing proceeds regardless of owner resolution.
+        monkeypatch.setattr(
+            settings, "auto_investigate_budget_enforcement_enabled", False, raising=False
+        )
         monkeypatch.setattr("app.models.base.async_session_factory", sm, raising=False)
 
         created: dict[str, object] = {}

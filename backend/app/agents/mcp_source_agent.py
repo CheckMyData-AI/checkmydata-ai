@@ -210,10 +210,15 @@ class MCPSourceAgent(BaseAgent):
             for tc in llm_resp.tool_calls:
                 timeout_s = settings.mcp_call_timeout_s
                 try:
-                    result_text = await asyncio.wait_for(
+                    call_result = await asyncio.wait_for(
                         self._adapter.call_tool(tc.name, tc.arguments),
                         timeout=timeout_s,
                     )
+                    result_text = call_result.text
+                    if call_result.is_error:
+                        # C2: a tool-level error is not data — flag it so the LLM
+                        # treats it as a failure rather than a valid answer.
+                        result_text = f"⚠️ MCP tool '{tc.name}' returned an error: {result_text}"
                 except TimeoutError:
                     # A hung/slow external MCP server must not stall the whole
                     # orchestrator turn. Degrade gracefully: surface a timeout

@@ -20,7 +20,9 @@ class TestQueryErrorType:
 
     def test_non_retryable(self):
         assert QueryErrorType.PERMISSION_DENIED in NON_RETRYABLE_ERRORS
-        assert QueryErrorType.CONNECTION_ERROR in NON_RETRYABLE_ERRORS
+        # A3: connection errors are transient — retried by re-running the same
+        # query (with backoff), so they are NOT in the non-retryable set.
+        assert QueryErrorType.CONNECTION_ERROR not in NON_RETRYABLE_ERRORS
         assert QueryErrorType.COLUMN_NOT_FOUND not in NON_RETRYABLE_ERRORS
 
 

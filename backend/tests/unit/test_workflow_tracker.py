@@ -371,3 +371,19 @@ class TestWorkflowTracker:
         subs.append(t._subscribers[0])  # duplicate entry triggers the double-remove path
         t._subscribers = subs
         await t.emit("wf", "pipeline_end", "completed")
+
+
+class TestOwnersMapBound:
+    """L2: _workflow_owners is bounded even when workflows never reach end()."""
+
+    @pytest.mark.asyncio
+    async def test_owners_map_evicts_when_over_cap(self, monkeypatch):
+        t = WorkflowTracker()
+        monkeypatch.setattr(WorkflowTracker, "_OWNERS_MAX", 10, raising=False)
+
+        # Begin many owner-bearing workflows WITHOUT ever calling end().
+        for i in range(25):
+            await t.begin("agent", {"user_id": f"u{i}", "project_id": "p"})
+
+        # The map stays bounded (FIFO eviction), not unbounded growth (== 25).
+        assert len(t._workflow_owners) <= WorkflowTracker._OWNERS_MAX

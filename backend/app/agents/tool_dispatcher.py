@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 
 _PREVIEW_MAX = 500
 
+# B5: minimum wall-clock budget (seconds) required to START an expensive
+# sub-agent. The unified loop only checked the wall-clock at the top of each
+# iteration; a batch could then dispatch a long sub-agent with almost no budget
+# left. Below this floor we skip the call and let the loop proceed to synthesis
+# with what was already gathered. SQL additionally threads its remaining budget
+# into the per-query timeout.
+_SUBAGENT_WALL_FLOOR_S = 1.0
+_WALL_GUARDED_TOOLS = frozenset(
+    {
+        "query_database",
+        "search_codebase",
+        "query_mcp_source",
+        "analyze_git",
+        "get_release_timeline",
+    }
+)
+
 MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 
 
@@ -104,6 +121,33 @@ class ToolDispatcher:
         if brief:
             desc += f": {brief}"
         await self._tracker.emit(wf_id, "thinking", "in_progress", desc)
+
+        # B5: respect the remaining wall-clock budget for every expensive
+        # sub-agent (previously only SQL was budget-aware). Don't START work
+        # that can't finish in the time left — degrade gracefully so the loop
+        # synthesizes from what it already has.
+        if (
+            remaining_wall_seconds is not None
+            and remaining_wall_seconds <= _SUBAGENT_WALL_FLOOR_S
+            and tc.name in _WALL_GUARDED_TOOLS
+        ):
+            logger.warning(
+                "Skipping %s — only %.1fs of wall-clock budget remains",
+                tc.name,
+                remaining_wall_seconds,
+            )
+            await self._tracker.emit(
+                wf_id,
+                "thinking",
+                "in_progress",
+                f"Skipping {label}: time budget nearly exhausted.",
+            )
+            return (
+                f"Skipped '{tc.name}': the request's time budget is nearly exhausted "
+                f"({remaining_wall_seconds:.1f}s left). Proceed to synthesis using the "
+                "information already gathered.",
+                None,
+            )
 
         if tc.name == "query_database":
             sql_text, sql_sub = await self._handle_query_database(
@@ -297,6 +341,56 @@ class ToolDispatcher:
 
         kept = [tc for tc in tool_calls if tc.id not in skipped]
         return kept, skipped
+
+    @staticmethod
+    def defer_premature_process_data(
+        tool_calls: list[ToolCall],
+    ) -> tuple[list[ToolCall], dict[str, str]]:
+        """Defer ``process_data`` calls batched with a fresh ``query_database``.
+
+        ``process_data`` transforms *the most recent query result*, which lives
+        in the per-workflow SQL result bucket (``_wf_sql_results``). That bucket
+        is only committed in the orchestrator's post-dispatch loop — so a
+        ``process_data`` call issued in the SAME batch as a ``query_database``
+        call would read the *previous* turn's (stale) result, silently
+        transforming the wrong dataset. ``query_database`` is the only tool that
+        feeds this bucket (other producers return non-SQL result types), so the
+        hazard is specific to that pairing.
+
+        When such a premature ``process_data`` is detected we drop it from the
+        active calls and return a ``skipped_map`` directive telling the model the
+        query has now run and to re-issue ``process_data`` on its own next turn —
+        enforcing the documented "use ``process_data`` AFTER ``query_database``"
+        contract. ``process_data`` chained after a *prior-turn* query (no fresh
+        ``query_database`` in the same batch) is unaffected.
+
+        Returns ``(kept_calls, deferred_map)`` mapping deferred
+        ``tool_call.id`` → synthetic result string.
+        """
+        has_process_data = any(tc.name == "process_data" for tc in tool_calls)
+        has_fresh_query = any(tc.name == "query_database" for tc in tool_calls)
+        if not (has_process_data and has_fresh_query):
+            return tool_calls, {}
+
+        deferred: dict[str, str] = {}
+        kept: list[ToolCall] = []
+        for tc in tool_calls:
+            if tc.name == "process_data":
+                deferred[tc.id] = (
+                    "Deferred: process_data operates on the most recent "
+                    "query_database result, which only becomes available after "
+                    "the query executes. The query_database call in this batch "
+                    "has now run — issue the process_data call again on its own "
+                    "(one at a time) to transform the retrieved rows."
+                )
+                logger.info(
+                    "Deferred premature process_data call (batched with a fresh "
+                    "query_database): %s",
+                    tc.id,
+                )
+            else:
+                kept.append(tc)
+        return kept, deferred
 
     # ------------------------------------------------------------------
     # Formatting

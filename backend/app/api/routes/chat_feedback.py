@@ -337,12 +337,23 @@ async def maybe_auto_investigate(
         # LLM spend / concurrency / verdict notification are attributed to the
         # project owner — the same owner-attribution the code↔DB sync pipeline
         # uses for its background LLM work.
+        enforce_budget = _settings.auto_investigate_budget_enforcement_enabled
         async with async_session_factory() as budget_session:
             owner_user_id = await resolve_owner_user_id(budget_session, project_id)
-            # Budget gate (vision §7 #5 — graceful degradation): if the owner is
-            # already over budget, do NOT spawn an unbilled, unbounded agent run.
-            # Owner unknown ⇒ degrade to unenforced rather than block.
-            if owner_user_id:
+            # Budget gate (vision §7 #5). When enforcement is enabled (default) we
+            # do NOT spawn an unbilled, unbounded agent run: skip if the owner is
+            # over budget, and skip when the owner cannot be resolved (otherwise
+            # the run would be both unbilled and unattributable). The
+            # ``auto_investigate_budget_enforcement_enabled`` flag turns this off
+            # for deployments that accept the cost.
+            if enforce_budget:
+                if not owner_user_id:
+                    logger.info(
+                        "R5-7: skipping auto-investigation — project owner could not be "
+                        "resolved and budget enforcement is enabled (project=%s)",
+                        project_id,
+                    )
+                    return
                 budget_error = await UsageService().check_token_budget(
                     budget_session, owner_user_id
                 )

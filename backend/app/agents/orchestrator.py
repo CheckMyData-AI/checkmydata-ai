@@ -10,6 +10,7 @@ Replaces the monolithic ``ConversationalAgent``.  The orchestrator:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from dataclasses import dataclass, field, replace
@@ -28,6 +29,7 @@ from app.agents.mcp_source_agent import MCPSourceAgent, MCPSourceResult
 from app.agents.pipeline_learning import PipelineLearningExtractor
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.orchestrator_prompt import (
+    NEEDS_DATA_SENTINEL,
     build_direct_response_prompt,
     build_orchestrator_system_prompt,
 )
@@ -56,6 +58,7 @@ from app.config import settings
 from app.connectors.base import QueryResult
 from app.core.context_budget import ContextBudgetManager
 from app.core.history_trimmer import (
+    cap_tool_result_text,
     estimate_messages_tokens,
     should_wrap_up,
     trim_history,
@@ -77,6 +80,32 @@ from app.llm.errors import (
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
+
+# L2: upper bound on the number of "token" streaming events emitted for one
+# answer, to keep a very long answer from flooding SSE/Redis. _stream_tokens
+# widens its chunk proportionally once the answer would exceed this.
+_MAX_TOKEN_EVENTS = 200
+
+
+def _plan_fingerprint(plan: ExecutionPlan) -> str:
+    """Stable hash of a plan's semantic content, for replan-oscillation detection.
+
+    Captures the ordered ``(tool, normalized description, input_context)`` of
+    each stage — the parts that determine what the plan actually *does*.
+    Arbitrary identifiers (``plan_id``/``stage_id``) and dependency-id wiring
+    are excluded so a replan that merely renames stages but repeats the same
+    failing work is recognised as a near-identical plan and not re-executed.
+    """
+    parts = [
+        (
+            stage.tool,
+            " ".join((stage.description or "").split()).lower(),
+            (stage.input_context or "").strip(),
+        )
+        for stage in plan.stages
+    ]
+    return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
+
 
 _LLM_CALL_MAX_RETRIES = 2
 _LLM_CALL_BASE_BACKOFF = 3.0
@@ -197,6 +226,10 @@ class OrchestratorAgent(BaseAgent):
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
         self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
         self._wf_sql_lock = asyncio.Lock()
+        # B7: in-process set of pipeline_run_ids currently being resumed, to
+        # reject duplicate concurrent resumes of the same run (e.g. a
+        # double-clicked checkpoint button). Auto-released in _resume_pipeline.
+        self._resuming_run_ids: set[str] = set()
         self._wf_enriched: dict[str, tuple[SQLAgentResult, float]] = {}
         # R5-3: per-workflow count of result-gate correction directives
         # already issued on the unified tool loop (bounds re-query attempts).
@@ -535,13 +568,21 @@ class OrchestratorAgent(BaseAgent):
 
             # --- Direct response: no tools needed ---
             if route_result.is_direct:
-                return await self._run_direct_response(
+                direct_resp = await self._run_direct_response(
                     context,
                     wf_id,
                     has_connection,
                     has_kb,
                     has_mcp,
                     has_repo,
+                )
+                if direct_resp is not None:
+                    return direct_resp
+                # C1: the model signalled the "direct" route was wrong and the
+                # question needs data — fall through to the tool loop below.
+                logger.info(
+                    "Re-routing mis-classified 'direct' question through the tool loop (wf=%s)",
+                    wf_id,
                 )
 
             # --- Complex pipeline for multi-stage analysis ---
@@ -669,8 +710,13 @@ class OrchestratorAgent(BaseAgent):
         has_kb: bool,
         has_mcp: bool,
         has_repo: bool = False,
-    ) -> AgentResponse:
-        """Handle conversational/meta questions with a single LLM call, no tools."""
+    ) -> AgentResponse | None:
+        """Handle conversational/meta questions with a single LLM call, no tools.
+
+        Returns ``None`` when the model signals (via ``NEEDS_DATA_SENTINEL``)
+        that the question was mis-routed ``direct`` and actually needs data —
+        the caller then re-routes it through the tool loop (C1).
+        """
         await self._tracker.emit(wf_id, "thinking", "in_progress", "Responding directly…")
 
         system_prompt = build_direct_response_prompt(
@@ -712,6 +758,18 @@ class OrchestratorAgent(BaseAgent):
 
         self.accum_usage(total_usage, llm_resp.usage)
         final_text = llm_resp.content or ""
+
+        # C1: re-route escape. The model emits NEEDS_DATA_SENTINEL when a
+        # question routed "direct" actually needs fresh data. Only honor it when
+        # a data source exists (otherwise there is nothing to re-route to).
+        has_data_source = has_connection or has_kb or has_mcp or has_repo
+        if has_data_source and final_text.strip() == NEEDS_DATA_SENTINEL:
+            logger.info(
+                "Direct route escalated to the tool loop — model requested data (wf=%s)",
+                wf_id,
+            )
+            return None
+
         await self._stream_tokens(wf_id, final_text)
 
         await self._tracker.end(wf_id, "orchestrator", "completed", "type=text")
@@ -1244,6 +1302,14 @@ class OrchestratorAgent(BaseAgent):
             if turn_skipped:
                 skipped_map.update(turn_skipped)
 
+            # A1: a process_data call batched with a fresh query_database would
+            # read the PREVIOUS turn's result (the SQL bucket is only committed
+            # in the post-dispatch loop below). Defer it so it re-runs next turn
+            # against the freshly retrieved rows.
+            active_calls, deferred_pd = ToolDispatcher.defer_premature_process_data(active_calls)
+            if deferred_pd:
+                skipped_map.update(deferred_pd)
+
             has_process_data = any(tc.name == "process_data" for tc in active_calls)
 
             _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
@@ -1428,7 +1494,12 @@ class OrchestratorAgent(BaseAgent):
                 messages.append(
                     Message(
                         role="tool",
-                        content=result_text,
+                        # B6: hard per-result ceiling at insertion so a single
+                        # oversized result can't dominate/blow the context
+                        # before the next trim (which only condenses OLD results).
+                        content=cap_tool_result_text(
+                            result_text, settings.tool_result_insert_max_chars
+                        ),
                         tool_call_id=tc.id,
                         name=tc.name,
                     )
@@ -2084,6 +2155,14 @@ class OrchestratorAgent(BaseAgent):
         replan_history: list[dict[str, Any]] = []
         replan_count = 0
         max_replans = settings.max_pipeline_replans
+        # B3: oscillation guard — remember the semantic fingerprint of every
+        # plan tried (seeded with the initial failing plan) so a replan that
+        # merely repeats an already-failed plan is rejected instead of burning
+        # the replan budget on the same doomed work.
+        seen_fingerprints: set[str] = set()
+        initial_plan = getattr(getattr(exec_result, "stage_ctx", None), "plan", None)
+        if initial_plan is not None:
+            seen_fingerprints.add(_plan_fingerprint(initial_plan))
         while (
             exec_result.status == "stage_failed"
             and exec_result.replan_eligible
@@ -2184,6 +2263,24 @@ class OrchestratorAgent(BaseAgent):
                 )
                 break
 
+            # B3: stop if this replan is semantically identical to one already
+            # tried — re-running it would just reproduce the same failure and
+            # waste the remaining replan budget.
+            fingerprint = _plan_fingerprint(new_plan)
+            if fingerprint in seen_fingerprints:
+                logger.warning(
+                    "Replanned plan is near-identical to a previously-attempted "
+                    "plan (fingerprint repeat) — stopping to avoid oscillation"
+                )
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "Replan produced a near-identical plan — returning partial results.",
+                )
+                break
+            seen_fingerprints.add(fingerprint)
+
             new_stage_ctx = StageContext(
                 plan=new_plan,
                 pipeline_run_id=run_id,
@@ -2202,6 +2299,36 @@ class OrchestratorAgent(BaseAgent):
         return exec_result, replan_history
 
     async def _resume_pipeline(self, resume_info: dict, context: AgentContext) -> AgentResponse:
+        """Resume a pipeline — with an in-process duplicate-concurrent-run guard.
+
+        B7: a double-clicked checkpoint button or a retried request can trigger
+        two concurrent resumes of the same ``pipeline_run_id``. Reject the
+        duplicate so the same stages are not executed twice in parallel. The
+        guard is in-process (auto-released on completion/crash) — it covers the
+        dominant same-process case without a DB ``resuming`` sentinel that the
+        reaper (which does not track ``PipelineRun``) could never self-heal.
+        """
+        run_id = resume_info.get("pipeline_run_id", "")
+        wf_id = context.workflow_id
+        if run_id and run_id in self._resuming_run_ids:
+            logger.warning("Duplicate concurrent resume rejected for run %s", run_id[:8])
+            await self._tracker.end(wf_id, "orchestrator", "failed", "Resume already in progress")
+            return AgentResponse(
+                answer=(
+                    "This analysis is already being resumed. Please wait for the current "
+                    "resume to finish before trying again."
+                ),
+                workflow_id=wf_id,
+                response_type="error",
+            )
+        if run_id:
+            self._resuming_run_ids.add(run_id)
+        try:
+            return await self._execute_resume(resume_info, context)
+        finally:
+            self._resuming_run_ids.discard(run_id)
+
+    async def _execute_resume(self, resume_info: dict, context: AgentContext) -> AgentResponse:
         """Resume a pipeline from a checkpoint or failed stage."""
         import json as _json
 
@@ -2574,11 +2701,20 @@ class OrchestratorAgent(BaseAgent):
         text: str,
         chunk_size: int = 12,
     ) -> None:
-        """Emit final answer text as progressive token events for frontend typing effect."""
+        """Emit final answer text as progressive token events for frontend typing effect.
+
+        L2: cap the number of token events so a very long answer does not flood
+        SSE/Redis. Short answers keep the smooth small chunk; long answers use a
+        proportionally larger chunk so the event count stays bounded.
+        """
         if not text:
             return
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i : i + chunk_size]
+        effective_chunk = max(
+            chunk_size,
+            (len(text) + _MAX_TOKEN_EVENTS - 1) // _MAX_TOKEN_EVENTS,
+        )
+        for i in range(0, len(text), effective_chunk):
+            chunk = text[i : i + effective_chunk]
             await self._tracker.emit(wf_id, "token", "streaming", chunk)
 
     @staticmethod

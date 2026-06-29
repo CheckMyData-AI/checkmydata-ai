@@ -184,6 +184,33 @@ class TestStageContext:
         assert "product_id" in text
         assert "[DEPENDENCY]" in text
 
+    def test_sample_only_restore_marks_truncated(self):
+        # B7: a result persisted with only sample rows (full row_count > stored
+        # rows) must be restored as truncated so downstream does not treat the
+        # sample as the complete dataset.
+        d = {
+            "stage_id": "s1",
+            "status": "success",
+            "columns": ["a"],
+            "row_count": 1000,
+            "sample_rows": [[1], [2], [3]],
+        }
+        restored = StageResult.from_summary_dict(d)
+        assert restored.query_result is not None
+        assert restored.query_result.truncated is True
+
+    def test_full_restore_not_truncated(self):
+        d = {
+            "stage_id": "s1",
+            "status": "success",
+            "columns": ["a"],
+            "row_count": 2,
+            "sample_rows": [[1], [2]],
+        }
+        restored = StageResult.from_summary_dict(d)
+        assert restored.query_result is not None
+        assert restored.query_result.truncated is False
+
     def test_persistence_roundtrip(self, sample_plan):
         ctx = StageContext(plan=sample_plan, pipeline_run_id="run-1")
         qr = QueryResult(columns=["a", "b"], rows=[[1, 2], [3, 4]], row_count=2)
@@ -283,6 +310,65 @@ class TestStageValidator:
         sr2 = StageResult(stage_id="match_users", status="success", query_result=qr2)
         outcome = v.validate(sample_plan.stages[1], sr2, ctx)
         assert any("cross-stage" in w.lower() for w in outcome.warnings)
+        # L3: cross-stage checks are intentionally advisory (warn-only / fail-open)
+        # — a heuristic, planner-supplied consistency hint must NOT fail the stage
+        # (and trigger a replan). Hard correctness is owned by DataGate/SafetyGuard.
+        assert outcome.passed is True
+
+
+class TestValidationCriteriaAndContextBounds:
+    """L4: process_data min_rows default + bounded dependency serialization."""
+
+    def test_process_data_min_rows_defaults_to_zero(self):
+        from app.agents.adaptive_planner import AdaptivePlanner
+
+        plan = ExecutionPlan(
+            plan_id="p",
+            question="q",
+            stages=[
+                PlanStage(
+                    stage_id="q1",
+                    description="query",
+                    tool="query_database",
+                    validation=StageValidation(min_rows=1),
+                ),
+                PlanStage(
+                    stage_id="agg",
+                    description="aggregate",
+                    tool="process_data",
+                    depends_on=["q1"],
+                ),
+            ],
+        )
+        out = AdaptivePlanner._ensure_validation_criteria(plan)
+        agg = out.get_stage("agg")
+        # A transform (filter/aggregate) may legitimately yield 0 rows — it must
+        # not inherit min_rows=1 and fail-validate a correct empty result.
+        assert agg.validation.min_rows == 0
+
+    def test_build_context_caps_large_fields(self):
+        plan = ExecutionPlan(
+            plan_id="p",
+            question="q",
+            stages=[
+                PlanStage(stage_id="s1", description="d1", tool="query_database"),
+                PlanStage(stage_id="s2", description="d2", tool="process_data", depends_on=["s1"]),
+            ],
+        )
+        ctx = StageContext(plan=plan)
+        ctx.set_result(
+            "s1",
+            StageResult(
+                stage_id="s1",
+                status="success",
+                query="SELECT " + "x" * 5000,
+                query_result=QueryResult(columns=["c"], rows=[["y" * 10000]], row_count=1),
+                summary="z" * 10000,
+            ),
+        )
+        text = ctx.build_context_for_stage("s2")
+        # Raw fields total ~25k chars; the serialized context must stay bounded.
+        assert len(text) < 5000
 
 
 # ------------------------------------------------------------------
@@ -423,6 +509,8 @@ class TestStageExecutor:
         with patch("app.agents.stage_executor.settings") as mock_settings:
             mock_settings.max_stage_retries = 0
             mock_settings.pipeline_max_parallel_stages = 1
+            mock_settings.pipeline_max_wall_seconds = 0
+            mock_settings.agent_wall_clock_timeout_seconds = 0
             result = await executor.execute(plan, mock_context)
 
         assert result.status == "stage_failed"

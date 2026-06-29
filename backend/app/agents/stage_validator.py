@@ -208,6 +208,14 @@ class StageValidator:
         """Evaluate a cross-stage consistency check.
 
         Supported format: ``row_count <= stage_id.row_count * N``
+
+        L3 (intentional fail-open): a failed check calls ``outcome.warn`` — it
+        does NOT fail the stage or trigger a replan. These checks are heuristic
+        and planner-supplied (free-text), so a hard fail would risk
+        false-positive replan loops on a poorly-phrased or borderline check.
+        Authoritative correctness is enforced elsewhere: impossible values by
+        DataGate (hard checks) and read-only/DDL safety by SafetyGuard. Keep
+        these advisory unless a check format becomes precise enough to block on.
         """
         pattern = re.compile(
             r"row_count\s*(<=|>=|<|>|==)\s*(\w+)\.row_count\s*\*?\s*(\d+\.?\d*)?",
@@ -248,7 +256,12 @@ class StageValidator:
         result: StageResult,
         outcome: StageValidationOutcome,
     ) -> None:
-        """Best-effort heuristic for simple business rules."""
+        """Best-effort heuristic for simple business rules.
+
+        L3 (intentional fail-open): violations ``warn`` rather than fail — these
+        are heuristic, planner-supplied rules; see ``_evaluate_cross_check`` for
+        the rationale. DataGate owns the hard "impossible value" gate.
+        """
         qr = result.query_result
         if not qr or not qr.rows:
             return

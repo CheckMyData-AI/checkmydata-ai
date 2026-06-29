@@ -7,12 +7,34 @@ import pytest
 from app.core.history_trimmer import (
     CHARS_PER_TOKEN_ESTIMATE,
     _fallback_summary,
+    cap_tool_result_text,
     condense_tool_results,
     estimate_messages_tokens,
     estimate_tokens,
     trim_history,
 )
 from app.llm.base import Message
+
+
+class TestCapToolResultText:
+    """B6: hard per-result ceiling applied at insertion time."""
+
+    def test_under_cap_unchanged(self):
+        text = "x" * 100
+        assert cap_tool_result_text(text, 16000) == text
+
+    def test_over_cap_truncated_with_marker(self):
+        text = "x" * 20000
+        out = cap_tool_result_text(text, 16000)
+        assert len(out) < len(text) + 200
+        assert out.startswith("x" * 16000)
+        assert "truncated" in out
+        assert "20000 chars total" in out
+
+    def test_zero_or_negative_disables_cap(self):
+        text = "y" * 50000
+        assert cap_tool_result_text(text, 0) == text
+        assert cap_tool_result_text(text, -1) == text
 
 
 class TestEstimateTokens:

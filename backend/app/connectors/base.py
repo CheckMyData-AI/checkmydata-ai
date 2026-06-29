@@ -150,6 +150,25 @@ class SchemaInfo:
 
 MAX_RESULT_ROWS = 10_000
 
+
+def resolve_query_timeout(timeout_seconds: float | None) -> float:
+    """Resolve the effective per-query timeout in seconds.
+
+    A positive caller-supplied ``timeout_seconds`` (a dynamic per-query budget,
+    e.g. the pipeline's remaining wall-clock) is honored but never exceeds the
+    configured ``query_timeout_seconds`` ceiling — a per-query budget should
+    only ever be *shorter* than the global maximum. ``None`` / non-positive
+    values fall back to the static ceiling. Imported lazily to keep this
+    low-level module free of an import-time dependency on ``app.config``.
+    """
+    from app.config import settings
+
+    ceiling = float(settings.query_timeout_seconds)
+    if timeout_seconds is not None and timeout_seconds > 0:
+        return min(float(timeout_seconds), ceiling)
+    return ceiling
+
+
 # Hard cap on the estimated serialized size of a single result payload. The row
 # cap (``MAX_RESULT_ROWS``) bounds row *count*, but a bounded number of very wide
 # rows (large TEXT/BLOB/JSON columns) can still blow the heap. This is the
@@ -246,8 +265,19 @@ class DatabaseAdapter(DataSourceAdapter):
         return "database"
 
     @abstractmethod
-    async def execute_query(self, query: str, params: dict | None = None) -> QueryResult:
-        """Execute a query and return results."""
+    async def execute_query(
+        self,
+        query: str,
+        params: dict | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
+        """Execute a query and return results.
+
+        ``timeout_seconds`` is an optional dynamic per-query budget (e.g. the
+        pipeline's remaining wall-clock). When omitted, the configured static
+        ``query_timeout_seconds`` ceiling applies. See :func:`resolve_query_timeout`.
+        """
 
     @abstractmethod
     async def introspect_schema(self) -> SchemaInfo:

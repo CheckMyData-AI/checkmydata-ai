@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import time
 from typing import Any
 
-from app.connectors.base import BaseConnector, ConnectionConfig, SchemaInfo
+from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, SchemaInfo
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
 from app.core.explain_validator import ExplainValidator
@@ -25,6 +27,13 @@ from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import WorkflowTracker
 
 logger = logging.getLogger(__name__)
+
+# Error types that warrant re-running the SAME query (a transient infrastructure
+# fault, not a query defect). These bypass the LLM repairer and the identity
+# guard and are retried after a bounded exponential backoff.
+_TRANSIENT_RETRY_ERRORS = frozenset({QueryErrorType.CONNECTION_ERROR})
+_TRANSIENT_BACKOFF_BASE_SECONDS = 0.5
+_TRANSIENT_BACKOFF_MAX_SECONDS = 4.0
 
 
 class ValidationLoop:
@@ -113,6 +122,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -156,6 +166,7 @@ class ValidationLoop:
                     chat_history=chat_history,
                     preferred_provider=preferred_provider,
                     model=model,
+                    current_explanation=current_explanation,
                 )
                 if repair is None:
                     return self._fail(
@@ -225,6 +236,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -249,7 +261,13 @@ class ValidationLoop:
                 span_type="db_query",
             ):
                 try:
-                    results = await connector.execute_query(current_query)
+                    # B2: pass the (possibly dynamic) per-query budget so the
+                    # connector bounds the real execution, not just the slow-query
+                    # warning. ValidationConfig.query_timeout_seconds is set by the
+                    # SQL agent from the pipeline's remaining wall-clock.
+                    results = await connector.execute_query(
+                        current_query, timeout_seconds=self._config.query_timeout_seconds
+                    )
                     _sd_eq["output_preview"] = (
                         f"{results.row_count} rows, {len(results.columns)} cols "
                         f"in {results.execution_time_ms:.0f}ms"
@@ -277,6 +295,7 @@ class ValidationLoop:
                         chat_history=chat_history,
                         preferred_provider=preferred_provider,
                         model=model,
+                        current_explanation=current_explanation,
                     )
                     if repair is None:
                         return self._fail(
@@ -323,8 +342,22 @@ class ValidationLoop:
                     chat_history=chat_history,
                     preferred_provider=preferred_provider,
                     model=model,
+                    current_explanation=current_explanation,
                 )
                 if repair is None:
+                    # A valid query that simply returned 0 rows is the true
+                    # answer once retries are exhausted (or a repaired query
+                    # would only re-run an equivalent query) — surface it as
+                    # success, not a failure.
+                    if post_result.error.error_type == QueryErrorType.EMPTY_RESULT:
+                        return self._empty_success(
+                            current_query,
+                            current_explanation,
+                            results,
+                            attempts,
+                            attempt_num,
+                            all_warnings,
+                        )
                     return self._fail(
                         current_query,
                         current_explanation,
@@ -371,10 +404,29 @@ class ValidationLoop:
         chat_history: list | None = None,
         preferred_provider: str | None = None,
         model: str | None = None,
+        current_explanation: str = "",
     ) -> tuple[str, str] | None:
         """Attempt to repair. Returns (new_query, new_explanation) or None."""
         if not self._retry.should_retry(error, current_attempt, self._config.max_retries):
             return None
+
+        # A3: a transient connection error is an infrastructure fault, not a
+        # query defect. Re-run the SAME query after a bounded backoff instead of
+        # asking the LLM to "repair" it (which would change nothing and, after
+        # A2, be blocked by the identity guard anyway).
+        if error.error_type in _TRANSIENT_RETRY_ERRORS:
+            delay = min(
+                _TRANSIENT_BACKOFF_BASE_SECONDS * (2 ** (current_attempt - 1)),
+                _TRANSIENT_BACKOFF_MAX_SECONDS,
+            )
+            logger.info(
+                "Transient %s on attempt %d — re-running the same query after %.2fs backoff",
+                error.error_type.value,
+                current_attempt,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            return failed_query, current_explanation
 
         async with self._tracker.step(
             workflow_id,
@@ -412,7 +464,27 @@ class ValidationLoop:
             )
             return None
 
-        return repair_result["query"], repair_result.get("explanation", "")
+        repaired = repair_result["query"]
+        # Identity guard: a repaired query that is equivalent (modulo
+        # whitespace / case / trailing ';') to one already tried would just
+        # re-run the same execution and loop on the same outcome. Treat it as
+        # "no further repair available" so the caller short-circuits.
+        already_tried = {self._normalize_sql(a.query) for a in attempts}
+        already_tried.add(self._normalize_sql(failed_query))
+        if self._normalize_sql(repaired) in already_tried:
+            logger.info(
+                "Query repair produced an already-attempted query; stopping to "
+                "avoid re-running an equivalent query."
+            )
+            return None
+
+        return repaired, repair_result.get("explanation", "")
+
+    @staticmethod
+    def _normalize_sql(query: str) -> str:
+        """Canonicalize SQL for identity comparison (whitespace/case/trailing ;)."""
+        collapsed = re.sub(r"\s+", " ", (query or "").strip())
+        return collapsed.rstrip(" ;").lower()
 
     @staticmethod
     def _fail(
@@ -430,4 +502,35 @@ class ValidationLoop:
             total_attempts=len(attempts),
             final_error=error,
             warnings=warnings,
+        )
+
+    @staticmethod
+    def _empty_success(
+        query: str,
+        explanation: str,
+        results: QueryResult,
+        attempts: list[QueryAttempt],
+        total_attempts: int,
+        warnings: list[str],
+    ) -> ValidationLoopResult:
+        """Return a clean 0-row result as success once retries are exhausted.
+
+        A query that executes without error and returns no rows is a valid
+        answer: zero is the truth. After the empty-result retries are spent (or
+        a repaired query would only re-run an equivalent query), surface the
+        empty result as a success with a warning rather than a hard failure.
+        """
+        merged = list(warnings)
+        merged.append(
+            "Query returned 0 rows after exhausting empty-result retries; "
+            "treating zero as the answer."
+        )
+        return ValidationLoopResult(
+            success=True,
+            query=query,
+            explanation=explanation,
+            results=results,
+            attempts=attempts,
+            total_attempts=total_attempts,
+            warnings=merged,
         )

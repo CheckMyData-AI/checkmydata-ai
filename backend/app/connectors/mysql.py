@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 
 import aiomysql
 
-from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
@@ -106,15 +105,21 @@ class MySQLConnector(BaseConnector):
         converted = re.sub(r":(\w+)", _replacer, query)
         return converted, tuple(ordered)
 
-    _QUERY_TIMEOUT_S = settings.query_timeout_seconds
-
-    async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> QueryResult:
+    async def execute_query(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> QueryResult:
         if not self._pool:
             return QueryResult(error="Not connected")
         pool = self._pool
 
         start = time.monotonic()
-        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes
+        from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes, resolve_query_timeout
+
+        effective_timeout = resolve_query_timeout(timeout_seconds)
 
         try:
             exec_params: Any = params
@@ -136,7 +141,7 @@ class MySQLConnector(BaseConnector):
                         await cur.execute(exec_query, exec_params)
                         return await cur.fetchmany(MAX_RESULT_ROWS + 1)
 
-            rows = await asyncio.wait_for(_run(), timeout=self._QUERY_TIMEOUT_S)
+            rows = await asyncio.wait_for(_run(), timeout=effective_timeout)
             elapsed = (time.monotonic() - start) * 1000
 
             if not rows:
@@ -162,7 +167,7 @@ class MySQLConnector(BaseConnector):
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(
-                error=f"Query timed out after {self._QUERY_TIMEOUT_S}s",
+                error=f"Query timed out after {effective_timeout:g}s",
                 execution_time_ms=elapsed,
             )
         except Exception as e:
