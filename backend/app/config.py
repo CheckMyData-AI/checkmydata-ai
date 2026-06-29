@@ -208,6 +208,11 @@ class Settings(BaseSettings):
     # and the AgentLimiter, and the quality win on suspicious results outweighs
     # the marginal spend. Set False to make investigations manual-only.
     orchestrator_auto_investigate_enabled: bool = True
+    # When True (default), auto-investigation enforces the project owner's token
+    # budget before spawning: it skips if the owner is over budget AND skips when
+    # the owner cannot be resolved (no unbilled, unattributed background spend).
+    # Set False to allow auto-investigation regardless of budget/owner resolution.
+    auto_investigate_budget_enforcement_enabled: bool = True
 
     # Batch query execution (T19). ``batch_max_concurrency`` caps the
     # number of concurrent queries inside one batch; ``batch_result_row_cap``
