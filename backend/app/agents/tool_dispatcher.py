@@ -298,6 +298,56 @@ class ToolDispatcher:
         kept = [tc for tc in tool_calls if tc.id not in skipped]
         return kept, skipped
 
+    @staticmethod
+    def defer_premature_process_data(
+        tool_calls: list[ToolCall],
+    ) -> tuple[list[ToolCall], dict[str, str]]:
+        """Defer ``process_data`` calls batched with a fresh ``query_database``.
+
+        ``process_data`` transforms *the most recent query result*, which lives
+        in the per-workflow SQL result bucket (``_wf_sql_results``). That bucket
+        is only committed in the orchestrator's post-dispatch loop — so a
+        ``process_data`` call issued in the SAME batch as a ``query_database``
+        call would read the *previous* turn's (stale) result, silently
+        transforming the wrong dataset. ``query_database`` is the only tool that
+        feeds this bucket (other producers return non-SQL result types), so the
+        hazard is specific to that pairing.
+
+        When such a premature ``process_data`` is detected we drop it from the
+        active calls and return a ``skipped_map`` directive telling the model the
+        query has now run and to re-issue ``process_data`` on its own next turn —
+        enforcing the documented "use ``process_data`` AFTER ``query_database``"
+        contract. ``process_data`` chained after a *prior-turn* query (no fresh
+        ``query_database`` in the same batch) is unaffected.
+
+        Returns ``(kept_calls, deferred_map)`` mapping deferred
+        ``tool_call.id`` → synthetic result string.
+        """
+        has_process_data = any(tc.name == "process_data" for tc in tool_calls)
+        has_fresh_query = any(tc.name == "query_database" for tc in tool_calls)
+        if not (has_process_data and has_fresh_query):
+            return tool_calls, {}
+
+        deferred: dict[str, str] = {}
+        kept: list[ToolCall] = []
+        for tc in tool_calls:
+            if tc.name == "process_data":
+                deferred[tc.id] = (
+                    "Deferred: process_data operates on the most recent "
+                    "query_database result, which only becomes available after "
+                    "the query executes. The query_database call in this batch "
+                    "has now run — issue the process_data call again on its own "
+                    "(one at a time) to transform the retrieved rows."
+                )
+                logger.info(
+                    "Deferred premature process_data call (batched with a fresh "
+                    "query_database): %s",
+                    tc.id,
+                )
+            else:
+                kept.append(tc)
+        return kept, deferred
+
     # ------------------------------------------------------------------
     # Formatting
     # ------------------------------------------------------------------

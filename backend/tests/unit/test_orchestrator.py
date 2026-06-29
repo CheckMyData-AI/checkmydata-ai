@@ -192,6 +192,68 @@ class TestFilterAlreadyExecuted:
         assert "1" in skipped
 
 
+class TestDeferPrematureProcessData:
+    """ToolDispatcher.defer_premature_process_data (A1 ordering guard).
+
+    process_data transforms "the last query result", but a same-batch
+    query_database result is only committed to the result bucket AFTER
+    dispatch — so a process_data call batched with a fresh query_database
+    would read the *previous* turn's (stale) result. The helper defers such
+    process_data calls so they re-run next turn against the committed data.
+    """
+
+    def _tc(self, id: str, name: str, **args) -> ToolCall:
+        return ToolCall(id=id, name=name, arguments=args)
+
+    def test_process_data_alone_is_not_deferred(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        calls = [self._tc("p", "process_data", operation="aggregate_data")]
+        kept, deferred = ToolDispatcher.defer_premature_process_data(calls)
+        assert kept == calls
+        assert deferred == {}
+
+    def test_process_data_with_fresh_query_is_deferred(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        q = self._tc("q", "query_database", question="revenue")
+        p = self._tc("p", "process_data", operation="aggregate_data")
+        kept, deferred = ToolDispatcher.defer_premature_process_data([q, p])
+        # The query stays; the premature process_data is deferred.
+        assert kept == [q]
+        assert "p" in deferred
+        assert "process_data" in deferred["p"]
+
+    def test_query_without_process_data_passes_through(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        q = self._tc("q", "query_database", question="revenue")
+        kept, deferred = ToolDispatcher.defer_premature_process_data([q])
+        assert kept == [q]
+        assert deferred == {}
+
+    def test_multiple_process_data_all_deferred_when_query_present(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        q = self._tc("q", "query_database", question="revenue")
+        p1 = self._tc("p1", "process_data", operation="filter_data")
+        p2 = self._tc("p2", "process_data", operation="aggregate_data")
+        kept, deferred = ToolDispatcher.defer_premature_process_data([q, p1, p2])
+        assert kept == [q]
+        assert set(deferred) == {"p1", "p2"}
+
+    def test_process_data_with_non_query_producer_not_deferred(self):
+        from app.agents.tool_dispatcher import ToolDispatcher
+
+        # search_codebase does not feed the SQL result bucket, so a
+        # process_data chained after a prior-turn query is unaffected.
+        kb = self._tc("k", "search_codebase", question="where is auth")
+        p = self._tc("p", "process_data", operation="aggregate_data")
+        kept, deferred = ToolDispatcher.defer_premature_process_data([kb, p])
+        assert kept == [kb, p]
+        assert deferred == {}
+
+
 class TestHistoryBoundaryInPrompt:
     """Verify the orchestrator prompt builder includes focus directives."""
 

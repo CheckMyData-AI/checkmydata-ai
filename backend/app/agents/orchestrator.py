@@ -1244,6 +1244,14 @@ class OrchestratorAgent(BaseAgent):
             if turn_skipped:
                 skipped_map.update(turn_skipped)
 
+            # A1: a process_data call batched with a fresh query_database would
+            # read the PREVIOUS turn's result (the SQL bucket is only committed
+            # in the post-dispatch loop below). Defer it so it re-runs next turn
+            # against the freshly retrieved rows.
+            active_calls, deferred_pd = ToolDispatcher.defer_premature_process_data(active_calls)
+            if deferred_pd:
+                skipped_map.update(deferred_pd)
+
             has_process_data = any(tc.name == "process_data" for tc in active_calls)
 
             _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
