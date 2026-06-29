@@ -3,6 +3,7 @@
 from app.agents.response_builder import ResponseBuilder
 from app.agents.sql_agent import SQLAgentResult
 from app.agents.sql_result_reconciliation import (
+    _parse_number,
     build_reconciliation_note,
     collect_sql_totals_snapshots,
     scrub_false_sql_self_correction,
@@ -103,6 +104,52 @@ def test_sql_results_reconcile_with_mixed_refund_and_gross_queries():
     note = build_reconciliation_note(all_results)
     assert note is not None
     assert "144,693.14" in note
+
+
+class TestParseNumberNonFinite:
+    """A4: _parse_number must reject non-finite values (NaN/Inf).
+
+    A NaN propagates through the grand-total sum and makes every reconciliation
+    comparison false (NaN != NaN), producing bogus snapshots / false
+    self-correction. Non-finite inputs are treated as non-numeric (None).
+    """
+
+    def test_finite_values_parse(self):
+        assert _parse_number(5) == 5.0
+        assert _parse_number(2.5) == 2.5
+        assert _parse_number("1,234.50") == 1234.5
+
+    def test_float_nan_rejected(self):
+        assert _parse_number(float("nan")) is None
+
+    def test_float_inf_rejected(self):
+        assert _parse_number(float("inf")) is None
+        assert _parse_number(float("-inf")) is None
+
+    def test_string_nan_inf_rejected(self):
+        assert _parse_number("nan") is None
+        assert _parse_number("inf") is None
+        assert _parse_number("Infinity") is None
+        assert _parse_number("-inf") is None
+
+    def test_none_bool_empty_unchanged(self):
+        assert _parse_number(None) is None
+        assert _parse_number(True) is None
+        assert _parse_number("") is None
+
+
+def test_nan_cell_does_not_poison_totals():
+    # A column containing NaN is not a usable numeric measure — no snapshot.
+    res = SQLAgentResult(
+        status="success",
+        query="SELECT cat, amount FROM t",
+        results=QueryResult(
+            columns=["cat", "amount"],
+            rows=[["a", float("nan")], ["b", 10.0]],
+            row_count=2,
+        ),
+    )
+    assert collect_sql_totals_snapshots([res]) == []
 
 
 def test_build_synthesis_messages_includes_reconciliation_note():
