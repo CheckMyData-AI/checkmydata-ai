@@ -310,6 +310,10 @@ class TestStageValidator:
         sr2 = StageResult(stage_id="match_users", status="success", query_result=qr2)
         outcome = v.validate(sample_plan.stages[1], sr2, ctx)
         assert any("cross-stage" in w.lower() for w in outcome.warnings)
+        # L3: cross-stage checks are intentionally advisory (warn-only / fail-open)
+        # — a heuristic, planner-supplied consistency hint must NOT fail the stage
+        # (and trigger a replan). Hard correctness is owned by DataGate/SafetyGuard.
+        assert outcome.passed is True
 
 
 # ------------------------------------------------------------------
