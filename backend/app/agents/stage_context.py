@@ -144,6 +144,9 @@ class ExecutionPlan:
 # ------------------------------------------------------------------
 
 _MAX_SAMPLE_ROWS = 10
+# L4: per-field cap when serializing a dependency stage into the next stage's
+# prompt context (SQL / sample data / summary / error), to bound prompt growth.
+_CONTEXT_FIELD_CAP = 800
 
 
 @dataclass
@@ -261,20 +264,26 @@ class StageContext:
             is_dep = prev_stage.stage_id in deps
             prefix = "[DEPENDENCY] " if is_dep else ""
 
+            # L4: bound per-field serialization — a long SQL string, a wide
+            # sample row, or a long summary would otherwise bloat the prompt
+            # unboundedly across dependencies.
             lines: list[str] = [f"{prefix}Stage '{prev_stage.stage_id}': {prev_stage.description}"]
             lines.append(f"  Status: {sr.status}")
             if sr.query:
-                lines.append(f"  SQL: {sr.query}")
+                lines.append(f"  SQL: {sr.query[:_CONTEXT_FIELD_CAP]}")
             if sr.query_result:
                 lines.append(f"  Columns: {sr.query_result.columns}")
                 lines.append(f"  Rows: {sr.query_result.row_count}")
                 if sr.query_result.rows:
                     sample = sr.query_result.rows[:5]
-                    lines.append(f"  Sample data (first {len(sample)} rows): {sample}")
+                    lines.append(
+                        f"  Sample data (first {len(sample)} rows): "
+                        f"{str(sample)[:_CONTEXT_FIELD_CAP]}"
+                    )
             if sr.summary:
-                lines.append(f"  Summary: {sr.summary}")
+                lines.append(f"  Summary: {sr.summary[:_CONTEXT_FIELD_CAP]}")
             if sr.error:
-                lines.append(f"  Error: {sr.error}")
+                lines.append(f"  Error: {sr.error[:_CONTEXT_FIELD_CAP]}")
 
             parts.append("\n".join(lines))
 

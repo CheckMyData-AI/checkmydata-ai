@@ -316,6 +316,61 @@ class TestStageValidator:
         assert outcome.passed is True
 
 
+class TestValidationCriteriaAndContextBounds:
+    """L4: process_data min_rows default + bounded dependency serialization."""
+
+    def test_process_data_min_rows_defaults_to_zero(self):
+        from app.agents.adaptive_planner import AdaptivePlanner
+
+        plan = ExecutionPlan(
+            plan_id="p",
+            question="q",
+            stages=[
+                PlanStage(
+                    stage_id="q1",
+                    description="query",
+                    tool="query_database",
+                    validation=StageValidation(min_rows=1),
+                ),
+                PlanStage(
+                    stage_id="agg",
+                    description="aggregate",
+                    tool="process_data",
+                    depends_on=["q1"],
+                ),
+            ],
+        )
+        out = AdaptivePlanner._ensure_validation_criteria(plan)
+        agg = out.get_stage("agg")
+        # A transform (filter/aggregate) may legitimately yield 0 rows — it must
+        # not inherit min_rows=1 and fail-validate a correct empty result.
+        assert agg.validation.min_rows == 0
+
+    def test_build_context_caps_large_fields(self):
+        plan = ExecutionPlan(
+            plan_id="p",
+            question="q",
+            stages=[
+                PlanStage(stage_id="s1", description="d1", tool="query_database"),
+                PlanStage(stage_id="s2", description="d2", tool="process_data", depends_on=["s1"]),
+            ],
+        )
+        ctx = StageContext(plan=plan)
+        ctx.set_result(
+            "s1",
+            StageResult(
+                stage_id="s1",
+                status="success",
+                query="SELECT " + "x" * 5000,
+                query_result=QueryResult(columns=["c"], rows=[["y" * 10000]], row_count=1),
+                summary="z" * 10000,
+            ),
+        )
+        text = ctx.build_context_for_stage("s2")
+        # Raw fields total ~25k chars; the serialized context must stay bounded.
+        assert len(text) < 5000
+
+
 # ------------------------------------------------------------------
 # StageExecutor
 # ------------------------------------------------------------------

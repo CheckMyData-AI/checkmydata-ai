@@ -321,10 +321,11 @@ class AdaptivePlanner:
                     v.auto_injected = True
             if stage.tool == "process_data":
                 if v.min_rows is None:
-                    for dep_id in stage.depends_on:
-                        dep_stage = plan.get_stage(dep_id)
-                        if dep_stage and dep_stage.validation.min_rows is not None:
-                            v.min_rows = 1
-                            v.auto_injected = True
-                            break
+                    # L4: a process_data transform (filter/aggregate/cohort) can
+                    # legitimately reduce the row count — even to zero (e.g. a
+                    # filter that excludes everything). Inheriting min_rows=1
+                    # from a dependency mislabeled correct empty transforms as
+                    # failures. Default to 0, matching query_database.
+                    v.min_rows = 0
+                    v.auto_injected = True
         return plan
