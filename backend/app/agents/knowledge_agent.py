@@ -246,7 +246,9 @@ class KnowledgeAgent(BaseAgent):
                 return f"Error executing {tool_call.name}: {exc}"
         elif tool_call.name == "get_entity_info":
             try:
-                return await self._handle_get_entity_info(tool_call.arguments, context)
+                return await self._handle_get_entity_info(
+                    tool_call.arguments, context, collected_sources
+                )
             except Exception as exc:
                 logger.exception("Knowledge tool %s failed", tool_call.name)
                 return f"Error executing {tool_call.name}: {exc}"
@@ -390,7 +392,9 @@ class KnowledgeAgent(BaseAgent):
             for r in results
         ]
 
-    async def _handle_get_entity_info(self, args: dict, ctx: AgentContext) -> str:
+    async def _handle_get_entity_info(
+        self, args: dict, ctx: AgentContext, collected_sources: list[RAGSource] | None = None
+    ) -> str:
         scope: str = args.get("scope", "list")
         entity_name: str | None = args.get("entity_name")
 
@@ -404,6 +408,17 @@ class KnowledgeAgent(BaseAgent):
         if scope == "detail":
             if not entity_name:
                 return "Error: entity_name is required when scope is 'detail'."
+            # B9: attribute the entity as a source (parity with search_knowledge),
+            # using its defining file so an entity-derived answer is traceable.
+            if collected_sources is not None:
+                entity = knowledge.entities.get(entity_name)
+                if entity is not None:
+                    collected_sources.append(
+                        RAGSource(
+                            source_path=entity.file_path or f"entity:{entity_name}",
+                            doc_type="entity",
+                        )
+                    )
             return self._format_entity_detail(knowledge, entity_name)
         if scope == "table_map":
             return self._format_table_map(knowledge)
