@@ -147,6 +147,49 @@ class TestClickHouseClassification:
         assert err.error_type == QueryErrorType.TABLE_NOT_FOUND
 
 
+class TestGroupByViolationClassification:
+    """GROUP BY violations must classify across all three SQL dialects (P1)."""
+
+    def setup_method(self):
+        self.clf = ErrorClassifier()
+
+    def test_mysql_only_full_group_by(self):
+        raw = (
+            '(1055, "Expression #4 of SELECT list is not in GROUP BY clause and contains '
+            "nonaggregated column 'esim.p.created_at' which is not functionally dependent on "
+            'columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")'
+        )
+        err = self.clf.classify(raw, "mysql")
+        assert err.error_type == QueryErrorType.GROUP_BY_VIOLATION
+        assert err.is_retryable
+
+    def test_postgres_42803(self):
+        raw = (
+            'ERROR: column "p.created_at" must appear in the GROUP BY clause '
+            "or be used in an aggregate function"
+        )
+        err = self.clf.classify(raw, "postgresql")
+        assert err.error_type == QueryErrorType.GROUP_BY_VIOLATION
+        assert err.is_retryable
+
+    def test_clickhouse_not_an_aggregate(self):
+        raw = "Column `created_at` is not under aggregate function and not in GROUP BY keys"
+        err = self.clf.classify(raw, "clickhouse")
+        assert err.error_type == QueryErrorType.GROUP_BY_VIOLATION
+
+    def test_not_misclassified_as_syntax(self):
+        # MySQL also raises generic syntax errors; a GROUP BY violation must win.
+        raw = "(1055, '... is not in GROUP BY clause ...; sql_mode=only_full_group_by')"
+        err = self.clf.classify(raw, "mysql")
+        assert err.error_type != QueryErrorType.SYNTAX_ERROR
+
+    def test_cross_dialect_fallback(self):
+        # A PG-worded GROUP BY error arriving under the mysql dialect still classifies.
+        raw = 'column "x" must appear in the GROUP BY clause or be used in an aggregate function'
+        err = self.clf.classify(raw, "mysql")
+        assert err.error_type == QueryErrorType.GROUP_BY_VIOLATION
+
+
 class TestMongoClassification:
     def setup_method(self):
         self.clf = ErrorClassifier()

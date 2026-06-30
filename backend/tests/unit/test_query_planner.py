@@ -41,6 +41,20 @@ class TestValidatePlanStructure:
         errors = _validate_plan_structure(stages)
         assert any("unknown stage 'ghost'" in e for e in errors)
 
+    def test_external_dependency_is_valid(self):
+        # P2: on replan, a dependency on a carried-over successful stage (not in
+        # the new plan's stages) is valid when passed via external_ids.
+        stages = [
+            {
+                "stage_id": "s2",
+                "description": "use carried result",
+                "tool": "query_database",
+                "depends_on": ["carried"],
+            },
+        ]
+        assert any("unknown stage 'carried'" in e for e in _validate_plan_structure(stages))
+        assert _validate_plan_structure(stages, external_ids=frozenset({"carried"})) == []
+
     def test_no_data_retrieval_stage(self):
         stages = [
             {"stage_id": "s1", "tool": "synthesize", "depends_on": []},

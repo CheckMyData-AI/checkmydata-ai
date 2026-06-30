@@ -24,6 +24,9 @@ class TestQueryErrorType:
         # query (with backoff), so they are NOT in the non-retryable set.
         assert QueryErrorType.CONNECTION_ERROR not in NON_RETRYABLE_ERRORS
         assert QueryErrorType.COLUMN_NOT_FOUND not in NON_RETRYABLE_ERRORS
+        # P1: GROUP BY violations are mechanically fixable by rewriting the query
+        # — retryable, so NOT in the non-retryable set.
+        assert QueryErrorType.GROUP_BY_VIOLATION not in NON_RETRYABLE_ERRORS
 
 
 class TestQueryError:

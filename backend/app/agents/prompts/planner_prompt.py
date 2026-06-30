@@ -115,6 +115,7 @@ def build_replan_prompt(
     table_map: str = "",
     db_type: str | None = None,
     replan_history: list[dict[str, str]] | None = None,
+    allowed_dep_ids: frozenset[str] | None = None,
 ) -> str:
     """Build the user prompt for a replan after stage failure.
 
@@ -155,6 +156,12 @@ def build_replan_prompt(
         "reuse completed stage results by referencing their stage_ids in "
         "depends_on. Avoid repeating any failed query shape or table choice."
     )
+    if allowed_dep_ids:
+        parts.append(
+            "\nIMPORTANT: a new stage's `depends_on` may ONLY reference a stage id "
+            "you define in THIS new plan, or one of these carried-over completed "
+            f"stage ids: {sorted(allowed_dep_ids)}. Do not reference any other id."
+        )
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")
     if table_map:

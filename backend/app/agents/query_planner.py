@@ -32,8 +32,18 @@ _VALID_TOOLS = {
 }
 
 
-def _validate_plan_structure(stages: list[dict[str, Any]]) -> list[str]:
-    """Return a list of errors (empty = valid)."""
+def _validate_plan_structure(
+    stages: list[dict[str, Any]],
+    external_ids: frozenset[str] = frozenset(),
+) -> list[str]:
+    """Return a list of errors (empty = valid).
+
+    ``external_ids`` are stage ids that exist OUTSIDE this stage list but are
+    valid ``depends_on`` targets — used on replan, where a stage may legitimately
+    depend on a carried-over successful stage that is not re-included in the new
+    plan. They are valid deps but contribute no node to the cycle check (they are
+    already complete).
+    """
     errors: list[str] = []
     if not stages:
         return ["Plan has no stages"]
@@ -67,7 +77,7 @@ def _validate_plan_structure(stages: list[dict[str, Any]]) -> list[str]:
         if tool not in _VALID_TOOLS:
             errors.append(f"Stage '{sid}' has invalid tool '{tool}'")
         for dep in s.get("depends_on", []):
-            if dep not in ids:
+            if dep not in ids and dep not in external_ids:
                 errors.append(f"Stage '{sid}' depends on unknown stage '{dep}'")
 
     data_retrieval_tools = {

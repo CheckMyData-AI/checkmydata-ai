@@ -105,6 +105,14 @@ class AdaptivePlanner:
                 summary_parts.append(f"  Summary: {result.summary[:200]}")
             completed_summaries.append("\n".join(summary_parts))
 
+        # P2: a replanned stage may legitimately depend on a carried-over
+        # SUCCESSFUL stage that is not re-included in the new plan. Tell the
+        # planner which ids are available and accept them in validation, so a
+        # valid carried-over dependency is not rejected as "unknown stage".
+        allowed_dep_ids = frozenset(
+            sid for sid, r in completed_stages.items() if r.status == "success"
+        )
+
         prompt = build_replan_prompt(
             question=question,
             completed_summaries=completed_summaries,
@@ -115,6 +123,7 @@ class AdaptivePlanner:
             table_map=table_map,
             db_type=db_type,
             replan_history=replan_history,
+            allowed_dep_ids=allowed_dep_ids,
         )
 
         system_content = PLANNER_SYSTEM_PROMPT
@@ -123,12 +132,13 @@ class AdaptivePlanner:
                 f"KNOWLEDGE FRESHNESS WARNINGS:\n{staleness_warning}\n\n" + system_content
             )
 
+        validation_feedback = ""
         for attempt in range(2):
             try:
                 resp = await self._llm.complete(
                     messages=[
                         Message(role="system", content=system_content),
-                        Message(role="user", content=prompt),
+                        Message(role="user", content=prompt + validation_feedback),
                     ],
                     tools=[_CREATE_PLAN_TOOL],
                     preferred_provider=preferred_provider,
@@ -155,9 +165,15 @@ class AdaptivePlanner:
                     continue
 
             stages_raw = args.get("stages", [])
-            errors = _validate_plan_structure(stages_raw)
+            errors = _validate_plan_structure(stages_raw, allowed_dep_ids)
             if errors:
                 logger.warning("Replan validation failed (attempt %d): %s", attempt + 1, errors)
+                # P2: feed the specific validation errors back so the next
+                # attempt self-corrects instead of repeating the same mistake.
+                validation_feedback = (
+                    "\n\n## Your previous plan was REJECTED — fix these and try again:\n"
+                    + "\n".join(f"- {e}" for e in errors)
+                )
                 continue
 
             stages = [PlanStage.from_dict(s) for s in stages_raw]

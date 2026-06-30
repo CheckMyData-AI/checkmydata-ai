@@ -105,6 +105,100 @@ class TestPlannerStalenessInjection:
         assert "Stale" in system_msg.content
 
 
+class TestReplanDanglingDepFeedback:
+    """P2: replan must accept carried-over deps and feed validation errors back."""
+
+    @pytest.mark.asyncio
+    async def test_replan_accepts_carried_over_dependency(self, mock_router):
+        from app.agents.stage_context import PlanStage, StageResult
+
+        mock_router.complete.return_value = LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="c",
+                    name="create_execution_plan",
+                    arguments={
+                        "stages": [
+                            {"stage_id": "fetch", "description": "fetch", "tool": "query_database"},
+                            {
+                                "stage_id": "agg",
+                                "description": "aggregate carried cohort",
+                                "tool": "process_data",
+                                "depends_on": ["cohort_signups"],
+                            },
+                        ],
+                        "complexity_reason": "t",
+                    },
+                )
+            ],
+        )
+
+        planner = AdaptivePlanner(mock_router)
+        plan = await planner.replan(
+            "cohort question",
+            completed_stages={
+                "cohort_signups": StageResult(
+                    stage_id="cohort_signups", status="success", summary="ok"
+                ),
+            },
+            failed_stage=PlanStage(
+                stage_id="cohort_activity", description="X", tool="query_database"
+            ),
+            error="GROUP BY violation",
+        )
+
+        # A dependency on the carried-over successful stage must NOT fail validation.
+        assert plan is not None
+        assert plan.get_stage("agg").depends_on == ["cohort_signups"]
+
+    @pytest.mark.asyncio
+    async def test_replan_feeds_validation_error_into_retry(self, mock_router):
+        from app.agents.stage_context import PlanStage, StageResult
+
+        bad = ToolCall(
+            id="c1",
+            name="create_execution_plan",
+            arguments={
+                "stages": [
+                    {
+                        "stage_id": "x",
+                        "description": "d",
+                        "tool": "query_database",
+                        "depends_on": ["ghost"],
+                    }
+                ],
+                "complexity_reason": "t",
+            },
+        )
+        good = ToolCall(
+            id="c2",
+            name="create_execution_plan",
+            arguments={
+                "stages": [{"stage_id": "s1", "description": "fetch", "tool": "query_database"}],
+                "complexity_reason": "t",
+            },
+        )
+        mock_router.complete.side_effect = [
+            LLMResponse(content="", tool_calls=[bad]),
+            LLMResponse(content="", tool_calls=[good]),
+        ]
+
+        planner = AdaptivePlanner(mock_router)
+        plan = await planner.replan(
+            "q",
+            completed_stages={"s0": StageResult(stage_id="s0", status="success", summary="ok")},
+            failed_stage=PlanStage(stage_id="s0b", description="X", tool="query_database"),
+            error="e",
+        )
+
+        assert plan is not None
+        # The second attempt's prompt must carry the prior validation failure.
+        second_msgs = mock_router.complete.call_args_list[1].kwargs["messages"]
+        user_msg = next(m for m in second_msgs if m.role == "user")
+        assert "ghost" in user_msg.content or "unknown stage" in user_msg.content.lower()
+
+
 class TestPlannerUsageSink:
     """R2 / C3 — planner must forward its UsageSink to every LLM call."""
 
