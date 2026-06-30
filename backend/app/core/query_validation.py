@@ -18,6 +18,7 @@ class QueryErrorType(StrEnum):
     CONNECTION_ERROR = "connection_error"
     TIMEOUT = "timeout"
     COLLATION_MISMATCH = "collation_mismatch"
+    GROUP_BY_VIOLATION = "group_by_violation"
     EMPTY_RESULT = "empty_result"
     EXPLAIN_WARNING = "explain_warning"
     UNKNOWN = "unknown"

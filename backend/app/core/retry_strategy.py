@@ -67,4 +67,18 @@ class RetryStrategy:
                         parts.append(f"  - {tbl} (similarity: {score})")
             parts.append(list_all_tables_summary(schema))
 
+        elif et == QueryErrorType.GROUP_BY_VIOLATION:
+            # P1: a GROUP BY violation is mechanically fixable — give the LLM the
+            # explicit rewrite rule rather than just echoing the raw error.
+            parts.append(
+                "GROUP BY fix required. Every column in the SELECT list must EITHER appear in "
+                "the GROUP BY clause OR be wrapped in an aggregate "
+                "(SUM/COUNT/MIN/MAX/AVG/COUNT(DISTINCT ...)). Rewrite by one of: (a) add the "
+                "offending non-aggregated column(s) to GROUP BY; (b) wrap them in an aggregate. "
+                "For cohort / time-bucket analysis, GROUP BY the bucket expression "
+                "(e.g. DATE_FORMAT(created_at, '%Y-%m') in MySQL, date_trunc('month', created_at) "
+                "in Postgres) and aggregate the per-row measures — do NOT select raw per-row "
+                "timestamps alongside aggregates. Do not change the question's intent."
+            )
+
         return "\n".join(parts)

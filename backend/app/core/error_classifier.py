@@ -33,6 +33,11 @@ POSTGRES_PATTERNS: list[_Pattern] = [
         1,
     ),
     _Pattern(
+        re.compile(r"must appear in the GROUP BY clause", re.I),
+        QueryErrorType.GROUP_BY_VIOLATION,
+        None,
+    ),
+    _Pattern(
         re.compile(r"syntax error at or near", re.I),
         QueryErrorType.SYNTAX_ERROR,
         None,
@@ -82,6 +87,11 @@ MYSQL_PATTERNS: list[_Pattern] = [
         re.compile(r"Table '(?:[\w.]*\.)?(\w+)' doesn't exist", re.I),
         QueryErrorType.TABLE_NOT_FOUND,
         1,
+    ),
+    _Pattern(
+        re.compile(r"not in GROUP BY clause|only_full_group_by", re.I),
+        QueryErrorType.GROUP_BY_VIOLATION,
+        None,
     ),
     _Pattern(
         re.compile(r"You have an error in your SQL syntax", re.I),
@@ -135,6 +145,11 @@ CLICKHOUSE_PATTERNS: list[_Pattern] = [
         re.compile(r"Table (\w+) does not exist", re.I),
         QueryErrorType.TABLE_NOT_FOUND,
         1,
+    ),
+    _Pattern(
+        re.compile(r"not under aggregate function and not in GROUP BY|NOT_AN_AGGREGATE", re.I),
+        QueryErrorType.GROUP_BY_VIOLATION,
+        None,
     ),
     _Pattern(
         re.compile(r"Syntax error", re.I),

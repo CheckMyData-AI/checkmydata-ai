@@ -105,3 +105,11 @@ class TestRepairHints:
         assert "unknown" in hints
         assert "test" in hints
         assert len(hints) > 0
+
+    def test_group_by_violation_gives_actionable_hint(self):
+        # P1: the repair hint must tell the LLM how to fix a GROUP BY violation
+        # (add to GROUP BY or wrap in an aggregate), not just echo the error.
+        err = _error(QueryErrorType.GROUP_BY_VIOLATION)
+        hints = self.strategy.get_repair_hints(err, self.schema).lower()
+        assert "group by" in hints
+        assert "aggregate" in hints
