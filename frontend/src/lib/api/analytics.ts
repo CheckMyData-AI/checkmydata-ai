@@ -9,6 +9,8 @@ import type {
   ExplorationReportDTO,
   InsightDTO,
   LagResultDTO,
+  LogQueryFailureDetail,
+  LogQueryFailuresPage,
   LogRequestsPage,
   LogSummary,
   LogTraceDetail,
@@ -184,6 +186,29 @@ export const logs = {
   },
   getTraceDetail: (projectId: string, traceId: string) =>
     request<LogTraceDetail>(`/logs/${projectId}/requests/${traceId}`),
+  queryFailures: (
+    projectId: string,
+    params: {
+      error_type?: string;
+      connection_id?: string;
+      final_status?: string;
+      date_from?: string;
+      date_to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return request<LogQueryFailuresPage>(
+      `/logs/${projectId}/query-failures${q ? `?${q}` : ""}`,
+    );
+  },
+  queryFailureDetail: (projectId: string, id: string) =>
+    request<LogQueryFailureDetail>(`/logs/${projectId}/query-failures/${id}`),
   getSummary: (projectId: string, days: number = 7) =>
     request<LogSummary>(`/logs/${projectId}/summary?days=${days}`),
   errors: (

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.error_log import ErrorLog
 from app.models.indexing_run import IndexingRun
+from app.models.query_failure import QueryFailure
 from app.models.request_trace import RequestTrace
 from app.models.user import User
 
@@ -329,6 +330,71 @@ class LogsService:
         e.status = status
         await db.commit()
         return True
+
+    async def list_query_failures(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        *,
+        error_type: str | None = None,
+        connection_id: str | None = None,
+        final_status: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Paginated, filterable list of captured query failures (owner-only).
+
+        Returns summary dicts (``to_dict()`` without attempts), newest first,
+        scoped to *project_id* for tenant isolation.
+        """
+        base = select(QueryFailure).where(QueryFailure.project_id == project_id)
+        cnt = select(func.count(QueryFailure.id)).where(QueryFailure.project_id == project_id)
+        for col, val in (
+            ("error_type", error_type),
+            ("connection_id", connection_id),
+            ("final_status", final_status),
+        ):
+            if val:
+                base = base.where(getattr(QueryFailure, col) == val)
+                cnt = cnt.where(getattr(QueryFailure, col) == val)
+        if date_from:
+            base = base.where(QueryFailure.created_at >= date_from)
+            cnt = cnt.where(QueryFailure.created_at >= date_from)
+        if date_to:
+            base = base.where(QueryFailure.created_at <= date_to)
+            cnt = cnt.where(QueryFailure.created_at <= date_to)
+
+        total = (await db.execute(cnt)).scalar_one()
+        rows = (
+            (
+                await db.execute(
+                    base.order_by(QueryFailure.created_at.desc()).offset(offset).limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {
+            "items": [r.to_dict() for r in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_query_failure_detail(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        failure_id: str,
+    ) -> dict[str, Any] | None:
+        """Full query-failure record incl. parsed attempts, or ``None`` if the
+        row does not exist or belongs to another project (tenant isolation)."""
+        row = await db.get(QueryFailure, failure_id)
+        if row is None or row.project_id != project_id:
+            return None
+        return row.to_dict(include_attempts=True)
 
     async def list_runs(
         self,

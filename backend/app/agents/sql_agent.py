@@ -45,6 +45,7 @@ from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
 from app.services.project_cache_service import ProjectCacheService
+from app.services.query_failure_service import maybe_record_query_failure
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +506,17 @@ class SQLAgent(BaseAgent):
             loop_result.success,
             ctx.user_question or query,
             cfg,
+        )
+
+        # Best-effort diagnostics capture: persist the full failing-SQL / raw-error /
+        # repair-attempt history for any errored execution. The recorder no-ops on a
+        # clean success or when capture is disabled, opens its own DB session, and
+        # never raises into the query path (see query_failure_service).
+        await maybe_record_query_failure(
+            context=ctx,
+            attempts=loop_result.attempts,
+            loop_success=loop_result.success,
+            question=ctx.user_question or query,
         )
 
         if not loop_result.success:
