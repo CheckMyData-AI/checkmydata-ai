@@ -17,6 +17,7 @@ import app.models.project  # noqa: F401
 import app.models.project_cache  # noqa: F401
 import app.models.project_invite  # noqa: F401
 import app.models.project_member  # noqa: F401
+import app.models.query_failure  # noqa: F401
 import app.models.rag_feedback  # noqa: F401
 import app.models.repository  # noqa: F401
 import app.models.saved_note  # noqa: F401
