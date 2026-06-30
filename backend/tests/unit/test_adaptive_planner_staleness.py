@@ -175,9 +175,7 @@ class TestReplanDanglingDepFeedback:
             id="c2",
             name="create_execution_plan",
             arguments={
-                "stages": [
-                    {"stage_id": "s1", "description": "fetch", "tool": "query_database"}
-                ],
+                "stages": [{"stage_id": "s1", "description": "fetch", "tool": "query_database"}],
                 "complexity_reason": "t",
             },
         )
@@ -189,9 +187,7 @@ class TestReplanDanglingDepFeedback:
         planner = AdaptivePlanner(mock_router)
         plan = await planner.replan(
             "q",
-            completed_stages={
-                "s0": StageResult(stage_id="s0", status="success", summary="ok")
-            },
+            completed_stages={"s0": StageResult(stage_id="s0", status="success", summary="ok")},
             failed_stage=PlanStage(stage_id="s0b", description="X", tool="query_database"),
             error="e",
         )

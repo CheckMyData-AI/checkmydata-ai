@@ -179,7 +179,7 @@ class TestGroupByViolationClassification:
 
     def test_not_misclassified_as_syntax(self):
         # MySQL also raises generic syntax errors; a GROUP BY violation must win.
-        raw = "(1055, \"... is not in GROUP BY clause ...; incompatible with sql_mode=only_full_group_by\")"
+        raw = "(1055, '... is not in GROUP BY clause ...; sql_mode=only_full_group_by')"
         err = self.clf.classify(raw, "mysql")
         assert err.error_type != QueryErrorType.SYNTAX_ERROR
 
