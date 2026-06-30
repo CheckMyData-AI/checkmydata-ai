@@ -66,6 +66,23 @@ def _manifest_flags() -> dict[str, bool]:
     }
 
 
+def _diagnostic_flags() -> dict[str, bool]:
+    """Snapshot the ingestion-automation flags that drive background/sync runs.
+
+    Persisted into ``IndexingRun.meta_json["flags"]`` at run creation so a failed
+    background job is diagnosable after the fact ("which flag produced this run?").
+    Captures the live ``settings`` value, not a constant (spec §3.5).
+    """
+    return {
+        "git_webhook_enabled": settings.git_webhook_enabled,
+        "git_poll_enabled": settings.git_poll_enabled,
+        "auto_sync_after_index": settings.auto_sync_after_index,
+        "freshness_reconciler_enabled": settings.freshness_reconciler_enabled,
+        "schema_change_alerts_enabled": settings.schema_change_alerts_enabled,
+        "db_index_incremental_enabled": settings.db_index_incremental_enabled,
+    }
+
+
 def _aware(dt: datetime) -> datetime:
     """Normalise to UTC-aware (SQLite reads timestamps back naive)."""
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
@@ -163,7 +180,7 @@ class RunCoordinator:
             progress_pct=0,
             started_at=_now(),
             heartbeat_at=_now(),
-            meta_json=json.dumps({"force_full": force_full}),
+            meta_json=json.dumps({"force_full": force_full, "flags": _diagnostic_flags()}),
         )
         db.add(run)
         try:
@@ -317,7 +334,11 @@ class RunCoordinator:
             trigger="manual",
             force_full=force_full,
         )
-        new.meta_json = json.dumps({"force_full": force_full, "retried_from": old.id})
+        # Merge provenance onto the snapshot `start` already wrote — never clobber
+        # the flag snapshot (meta_json["flags"]) that makes the run diagnosable.
+        meta = json.loads(new.meta_json or "{}")
+        meta.update({"force_full": force_full, "retried_from": old.id})
+        new.meta_json = json.dumps(meta)
         await db.commit()
         return new
 

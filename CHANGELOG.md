@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Diagnostics capture (2026-06-30, branch `feat/diagnostics-capture-2026-06-30`)
+
+Make failed queries fully diagnosable after the fact (motivated by the cohort/GROUP BY
+incident where the failing SQL, raw DB error and repair-attempt history evaporated). Spec
+`docs/superpowers/specs/2026-06-30-diagnostics-capture-design.md`, plan
+`docs/superpowers/plans/2026-06-30-diagnostics-capture.md`.
+
+- **`query_failures` table + capture** — every failed/recovered query execution persists its
+  full failing SQL, full raw DB error (capped), classified `error_type`, and the complete
+  repair-attempt history (`QueryFailure` model + `QueryFailureService`; captured in
+  `SQLAgent._handle_execute_query` after the validation loop). Best-effort, off the request
+  path, gated by `diagnostics_capture_enabled`. Composes with the GROUP BY classifier:
+  `error_type` reads `group_by_violation` and `final_status` shows `recovered` vs `failed`.
+- **Sync/background-job flag provenance** — `IndexingRun.meta_json["flags"]` snapshots the
+  feature-flag state (git webhook/poll, auto-sync, freshness reconciler, schema-change alerts,
+  incremental index) at creation, so "which flag produced this failed run?" is answerable.
+- **Self-observability** — the diagnostics layer can no longer fail silently: persistence
+  failures increment `diagnostics_persist_failures`, surfaced at `/api/metrics` under
+  `diagnostics`.
+- **Read API** — owner-gated `GET /api/logs/{project_id}/query-failures` (list + filters) and
+  `/query-failures/{id}` (detail with attempts), project-scoped + tenant-isolated; frontend
+  analytics client methods added.
+
+Audit note: the existing trace stack (RequestTrace/TraceSpan/ErrorLog/IndexingRun + owner/admin
+read APIs + LogsScreen) is mature; verified that SSE backpressure does NOT starve trace
+persistence (persistence hooks fire for every event) — no fix needed there.
+
 ### Fixed — Orchestrator audit remediation (2026-06-27, branch `fix/orchestrator-audit-remediation-2026-06`)
 
 Remediation of the multi-specialist orchestrator audit (intake → routing → planning →

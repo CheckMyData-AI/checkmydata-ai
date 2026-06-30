@@ -658,6 +658,44 @@ export interface LogTraceDetail {
   spans: LogTraceSpan[];
 }
 
+export interface LogQueryFailure {
+  id: string;
+  project_id: string;
+  connection_id: string | null;
+  workflow_id: string | null;
+  trace_id: string | null;
+  session_id: string | null;
+  message_id: string | null;
+  db_type: string;
+  question: string;
+  failed_sql: string;
+  error_type: string;
+  failure_kind: string | null;
+  raw_error: string;
+  attempt_count: number;
+  final_status: string;
+  created_at: string | null;
+}
+
+export interface LogQueryFailureAttempt {
+  attempt: number;
+  query: string;
+  error_type: string | null;
+  raw_error: string;
+  elapsed_ms: number;
+}
+
+export interface LogQueryFailureDetail extends LogQueryFailure {
+  attempts: LogQueryFailureAttempt[];
+}
+
+export interface LogQueryFailuresPage {
+  items: LogQueryFailure[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface LogSummary {
   total_requests: number;
   successful: number;

@@ -169,6 +169,53 @@ async def update_error(
     return {"ok": True}
 
 
+@router.get("/{project_id}/query-failures")
+@limiter.limit("30/minute")
+async def list_query_failures(
+    request: Request,
+    project_id: str,
+    error_type: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
+    final_status: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Paginated list of captured query failures (owner-only)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    return await _logs_svc.list_query_failures(
+        db,
+        project_id,
+        error_type=error_type,
+        connection_id=connection_id,
+        final_status=final_status,
+        date_from=_parse_dt(date_from),
+        date_to=_parse_dt(date_to),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{project_id}/query-failures/{failure_id}")
+@limiter.limit("60/minute")
+async def get_query_failure_detail(
+    request: Request,
+    project_id: str,
+    failure_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Full query-failure detail incl. parsed attempt history (owner-only)."""
+    await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    result = await _logs_svc.get_query_failure_detail(db, project_id, failure_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Query failure not found")
+    return result
+
+
 @router.get("/{project_id}/runs")
 @limiter.limit("30/minute")
 async def list_runs(

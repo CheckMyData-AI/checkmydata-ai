@@ -121,6 +121,14 @@ class MetricsCollector:
         except Exception:
             logger.debug("MetricsCollector.add failed", exc_info=True)
 
+    def record_diagnostics_persist_failure(self) -> None:
+        """Count a failure of the diagnostics persistence layer itself.
+
+        Self-observability: the system that records failures must not fail
+        silently. Surfaced via ``/api/metrics`` under ``diagnostics``.
+        """
+        self.inc("diagnostics_persist_failures")
+
     def snapshot_counters(self, prefix: str | None = None) -> dict[str, int]:
         """Return a name -> summed-value snapshot of integer counters.
 
@@ -177,3 +185,11 @@ def get_metrics_collector() -> MetricsCollector:
     if _collector is None:
         _collector = MetricsCollector()
     return _collector
+
+
+def record_diagnostics_persist_failure() -> None:
+    """Best-effort module helper for the diagnostics persistence except-blocks."""
+    try:
+        get_metrics_collector().record_diagnostics_persist_failure()
+    except Exception:
+        logger.debug("record_diagnostics_persist_failure failed", exc_info=True)

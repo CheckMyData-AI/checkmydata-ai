@@ -80,6 +80,7 @@ async def get_metrics(_user: dict = Depends(require_admin)):
     # times, K symbols, J clusters" without scraping text format.
     code_graph_counters = collector.snapshot_counters(prefix="code_graph_")
     run_counters = collector.snapshot_counters(prefix="indexing_run")
+    diagnostics_counters = collector.snapshot_counters(prefix="diagnostics_")
 
     return {
         "active_workflows": len(active_workflows),
@@ -88,6 +89,7 @@ async def get_metrics(_user: dict = Depends(require_admin)):
         "orchestrator_recent": orchestrator_recent,
         "code_graph": code_graph_counters,
         "runs": run_counters,
+        "diagnostics": diagnostics_counters,
     }
 
 

@@ -348,6 +348,13 @@ class Settings(BaseSettings):
     indexing_run_events_max_per_run: int = 500
     error_log_ttl_days: int = 90
 
+    # Diagnostics capture — persist failed/recovered query executions (full SQL,
+    # raw DB error, classified type, repair-attempt history) to query_failures for
+    # post-hoc diagnosis. Best-effort, off the request path; set False to disable.
+    diagnostics_capture_enabled: bool = True
+    diagnostics_attempt_history_max: int = 20
+    diagnostics_raw_error_max_chars: int = 8000
+
     # Pipeline settings
     pipeline_run_ttl_days: int = 7
     max_stage_retries: int = 2
