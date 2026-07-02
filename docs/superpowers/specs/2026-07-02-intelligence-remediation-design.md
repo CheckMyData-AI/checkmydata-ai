@@ -56,26 +56,38 @@ default-ON only after its correctness fix lands and the retrieval-eval/benchmark
   path inject a `PARTIAL DATA: query capped at N rows — totals are incomplete` line when true.
 
 ### C-B/C-C — unified post-result validation (`app/agents/result_validation.py`, NEW)
-Removes the F-ARCH-3 divergence by giving both execution paths one gate.
+Removes the F-ARCH-3 divergence by giving both execution paths one gate. Authoritative signatures
+(as locked by W0 against the real collaborators — `AgentResultValidator` + the free function
+`sql_results_reconcile`; the names `SqlResultGate`/`SqlResultReconciliation` do **not** exist):
 ```python
 @dataclass
 class ResultDirective:
     action: Literal["accept", "warn", "requery", "block"]
     reason: str
-    hints: list[str]                     # e.g. repair guidance
+    hints: list[str] = field(default_factory=list)   # e.g. repair guidance
 
 class ResultValidation:
-    def __init__(self, data_gate: DataGate, sql_result_gate: SqlResultGate,
-                 reconciler: SqlResultReconciliation): ...
-    async def evaluate(self, qr: QueryResult, *, question: str, sql: str,
-                       ctx: AgentContext) -> ResultDirective: ...
+    def __init__(self, data_gate: DataGate, result_gate: AgentResultValidator, *,
+                 reconcile: Callable[[Sequence[Any]], bool] = sql_results_reconcile) -> None: ...
+    def evaluate(self, qr: QueryResult, *, question: str, sql: str,
+                 truncated: bool | None = None) -> ResultDirective: ...   # SYNC — no AgentContext
 ```
+- `evaluate` is **synchronous** (DataGate + `AgentResultValidator` are sync) and reads only the
+  result — no `AgentContext`; pass `truncated=` to override `qr.truncated`, never a context object.
 - Composes: `DataGate` hard-checks (**Decimal-aware**, **`qr.truncated`-aware** — closes
-  `DATA-07/DATA-12`), zero-rows re-query + reconciliation.
+  `DATA-07/DATA-12`), the `AgentResultValidator` result-quality gate, zero-rows re-query +
+  `sql_results_reconcile` reconciliation.
 - Invoked by **both** the flat loop (`orchestrator._run_tool_loop` post-dispatch) and the pipeline
   (`stage_executor._run_sql_stage`) — closes `ORCH-A01`, `DATA-06`.
 - `AnswerQualityGate` (thin wrapper over `AnswerValidator`) likewise invoked by both flat-loop and
-  `response_builder.build_pipeline_response` — closes `ORCH-A02`.
+  `response_builder.build_pipeline_response` — closes `ORCH-A02`. It takes the validator directly
+  and returns a `ResultDirective` (not an `AnswerValidationResult`):
+```python
+class AnswerQualityGate:
+    def __init__(self, validator: AnswerValidator) -> None: ...
+    async def evaluate(self, *, question: str, answer: str, sql_summaries=None,
+                       preferred_provider=None, model=None) -> ResultDirective: ...   # ASYNC
+```
 
 ### C-D — schema-capture surface
 - Extend models (`app/models/db_index.py`) + `SchemaInfo`/`ColumnInfo` (`app/connectors/base.py`):
@@ -225,6 +237,22 @@ by `writing-plans`.
 - `schema_retriever.py`: W4 lands capture → W2 consumes (sequence, not parallel).
 - `entity_extractor.py`: W5 (usage/table-ref regex regions) vs W6 (symbol/enum extraction regions)
   — different functions; `writing-plans` assigns per-function ownership, else sequence.
+
+## Cross-wave ownership & migrations
+- **`orchestrator.py` is W3-owned.** W2's ContextPack runtime wiring (`RET-R1`) must NOT edit
+  `orchestrator.py` in parallel with W3. It enters through a `ContextLoader.assemble_knowledge_block`
+  seam (W2-owned file) and is **sequenced after / coordinated with W3**, never concurrent — the
+  orchestrator only ever calls that seam.
+- **`context_planner.py` is split by concern:** W3 owns the `CP01` cue-precision fix (word-boundary
+  matching); W2 owns `CP02` runtime invocation (hot-path pruning behind `context_planner_enabled`).
+  Land W3's precision fix before W2 touches invocation, or coordinate — no concurrent edits.
+- **All C-D `DbIndex` columns are W0-owned — including `column_stats_json`.** W0 ships every new
+  `DbIndex`/`db_index` JSON column (back-compat empty defaults) in its migration; **W4 only
+  populates** them at capture time and ships **no migration** for those columns.
+- **Alembic single-head discipline.** W0 ships **two** migrations and W5 ships **one**. Migrations
+  are created **sequentially at execution time**: each re-checks the current head (`alembic heads`)
+  before `--autogenerate` and sets its `down_revision` to that head, so the chain stays
+  single-headed. Current head at planning time: **`760604aa1803`**.
 
 ## 6. Definition of Done (per task and per wave)
 - Per task: TDD (failing test → minimal fix → green), conventional commit, docs updated in the same
