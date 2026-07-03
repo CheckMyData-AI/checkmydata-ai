@@ -286,3 +286,33 @@ class TestEpochIntDates:
         outcome = DataGateOutcome()
         gate._check_value_ranges(qr, outcome)
         assert not outcome.errors and not outcome.warnings
+
+
+class TestDecimalAndTruncationAware:
+    def test_decimal_percent_out_of_range_hard_fails(self):
+        from decimal import Decimal
+
+        gate = DataGate()
+        qr = QueryResult(columns=["conversion_pct"], rows=[[Decimal("150.0")]], row_count=1)
+        stage = PlanStage(stage_id="s1", description="x", tool="query_database")
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        out = gate.check(
+            stage,
+            StageResult(stage_id="s1", status="success", query_result=qr),
+            StageContext(plan=plan),
+        )
+        assert out.passed is False
+        assert out.errors
+
+    def test_authoritative_truncated_flag_warns(self):
+        gate = DataGate()
+        # row_count 37 is NOT a common LIMIT value, but truncated=True is authoritative
+        qr = QueryResult(columns=["a"], rows=[[1]] * 37, row_count=37, truncated=True)
+        stage = PlanStage(stage_id="s1", description="x", tool="query_database")
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        out = gate.check(
+            stage,
+            StageResult(stage_id="s1", status="success", query_result=qr),
+            StageContext(plan=plan),
+        )
+        assert any("truncat" in w.lower() for w in out.warnings)

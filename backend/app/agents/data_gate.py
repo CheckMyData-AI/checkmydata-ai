@@ -22,6 +22,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from app.agents.stage_context import PlanStage, StageContext, StageResult
@@ -333,13 +334,14 @@ class DataGate:
                     continue
                 if val is None:
                     continue
-                numeric = isinstance(val, (int, float)) and not isinstance(val, bool)
+                numeric = isinstance(val, (int, float, Decimal)) and not isinstance(val, bool)
+                fval = float(val) if numeric else None
                 if kind == "percent" and numeric:
                     # Bounded percent (conversion/completion/ctr/occupancy/…) is
                     # a 0..100 share, so values outside [pct_min, bounded_max]
                     # are impossible (e.g. 150% conversion) — hard fail so the
                     # stage retries instead of returning bogus values.
-                    if val < pct_min or val > pct_bounded_max:
+                    if fval < pct_min or fval > pct_bounded_max:
                         if settings.data_gate_hard_checks_enabled:
                             outcome.fail(
                                 f"Column '{col_name}' has value {val} "
@@ -362,14 +364,14 @@ class DataGate:
                     # legitimately exceed 100% (e.g. 150% YoY growth, NRR 130%,
                     # -50% decline). Only an absurd magnitude is suspicious, and
                     # only as a soft WARN — never a hard fail.
-                    if val < -pct_max or val > pct_max:
+                    if fval < -pct_max or fval > pct_max:
                         outcome.warn(
                             f"Column '{col_name}' has value {val} "
                             f"with an unusually large magnitude for a rate (±{pct_max}).",
                         )
                         break
                 elif kind == "count" and numeric:
-                    if val < 0:
+                    if fval < 0:
                         # A negative count/quantity is impossible — hard fail
                         # so the stage retries (usually a bad JOIN or a signed
                         # aggregate). Vision §7: no impossible numbers.
@@ -454,7 +456,18 @@ class DataGate:
         stage: PlanStage,
         outcome: DataGateOutcome,
     ) -> None:
-        """Warn if the result looks truncated."""
+        """Warn if the result looks truncated.
+
+        Checks ``qr.truncated`` first (authoritative flag set by the connector);
+        falls back to the common-limit heuristic when the flag is absent/False.
+        """
+        if qr.truncated:
+            outcome.warn(
+                f"Result is truncated (capped at {qr.row_count} rows) — aggregates over "
+                "these rows are INCOMPLETE.",
+                suggestion="Push aggregation into SQL (GROUP BY / aggregate functions).",
+            )
+            return
         common_limits = set(settings.data_gate_common_limits)
         if qr.row_count in common_limits:
             outcome.warn(
