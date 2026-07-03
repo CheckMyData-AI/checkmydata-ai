@@ -87,7 +87,10 @@ class Settings(BaseSettings):
 
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
-    chroma_embedding_model: str = ""
+    chroma_embedding_model: str = "BAAI/bge-base-en-v1.5"
+    # Real tokenizer context window of ``chroma_embedding_model`` (tokens). Chunking
+    # sizes to this, not chars/4. Changing the model requires a full re-embed (W2).
+    embedder_max_tokens: int = 512
 
     default_llm_provider: str = "openai"
     openai_api_key: str = ""
@@ -248,10 +251,9 @@ class Settings(BaseSettings):
     # Agent settings
     # Tool-calling loop safety ceiling. The wall-clock timeout
     # (agent_wall_clock_timeout_seconds) is the real bound on a request; this
-    # ceiling just prevents a pathological infinite loop, so it is set
-    # generously (matches the documented default) rather than throttling
-    # legitimate multi-step analysis.
-    max_orchestrator_iterations: int = 100
+    # ceiling just prevents a pathological infinite loop. Reduced from 100 to 20
+    # (ORCH-T01: the step lever was inert at 100; 20 is the control target).
+    max_orchestrator_iterations: int = 20
     orchestrator_final_synthesis: bool = True
     agent_wall_clock_timeout_seconds: int = 180
     max_parallel_tool_calls: int = 2
