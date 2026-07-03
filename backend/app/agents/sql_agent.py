@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents import result_handler
 from app.agents.base import AgentContext, AgentResult, BaseAgent
 from app.agents.errors import AgentFatalError
 from app.agents.prompts import get_current_datetime_str
@@ -1854,80 +1855,15 @@ class SQLAgent(BaseAgent):
 
     @staticmethod
     def _format_query_results(results: QueryResult, max_rows: int = 20) -> str:
-        if not results.rows:
-            return "Query executed successfully but returned no rows."
-        header = "| " + " | ".join(results.columns) + " |"
-        sep = "| " + " | ".join("---" for _ in results.columns) + " |"
-        lines = [
-            f"Total rows: {results.row_count}, Execution time: {results.execution_time_ms:.1f}ms",
-            "",
-            header,
-            sep,
-        ]
-        for row in results.rows[:max_rows]:
-            lines.append("| " + " | ".join(str(v) for v in row) + " |")
-        if results.row_count > max_rows:
-            lines.append(f"\n... and {results.row_count - max_rows} more rows")
-        if results.truncated:
-            banner = (
-                f"⚠️ RESULT TRUNCATED: the result set was capped at {results.row_count} rows "
-                "(the database has more). Aggregates (SUM/COUNT/AVG) over these rows are "
-                "INCOMPLETE — push aggregation into SQL (GROUP BY / aggregate functions) "
-                "rather than computing totals from the rows here."
-            )
-            return banner + "\n\n" + "\n".join(lines)
-        return "\n".join(lines)
+        return result_handler.format_query_results(results, max_rows)
 
     @staticmethod
     def _format_schema_overview(schema: SchemaInfo) -> str:
-        if not schema.tables:
-            return "No tables found in the database."
-        lines = [
-            f"Database: {schema.db_name} ({schema.db_type})",
-            f"Tables: {len(schema.tables)}",
-            "",
-            "| Table | Columns | Rows (est.) |",
-            "|-------|---------|-------------|",
-        ]
-        for t in schema.tables:
-            row_hint = f"~{t.row_count:,}" if t.row_count is not None else "?"
-            lines.append(f"| {t.name} | {len(t.columns)} | {row_hint} |")
-        return "\n".join(lines)
+        return result_handler.format_schema_overview(schema)
 
     @staticmethod
     def _format_table_detail(schema: SchemaInfo, table_name: str) -> str:
-        table = next((t for t in schema.tables if t.name.lower() == table_name.lower()), None)
-        if not table:
-            available = ", ".join(t.name for t in schema.tables[:20])
-            return f"Table '{table_name}' not found. Available: {available}"
-        lines = [f"## {table.name}"]
-        if table.comment:
-            lines.append(table.comment)
-        if table.row_count is not None:
-            lines.append(f"Rows: ~{table.row_count:,}")
-        lines.append("")
-        lines.append("| Column | Type | PK | Nullable | Default | Comment |")
-        lines.append("|--------|------|----|----------|---------|---------|")
-        for col in table.columns:
-            pk = "PK" if col.is_primary_key else ""
-            nullable = "YES" if col.is_nullable else "NO"
-            default = str(col.default) if col.default else ""
-            comment = col.comment or ""
-            lines.append(
-                f"| {col.name} | {col.data_type} | {pk} | {nullable} | {default} | {comment} |"
-            )
-        if table.foreign_keys:
-            lines.append("")
-            lines.append("Foreign Keys:")
-            for fk in table.foreign_keys:
-                lines.append(f"  {fk.column} -> {fk.references_table}.{fk.references_column}")
-        if table.indexes:
-            lines.append("")
-            lines.append("Indexes:")
-            for idx in table.indexes:
-                u = "UNIQUE " if idx.is_unique else ""
-                lines.append(f"  {u}{idx.name}({', '.join(idx.columns)})")
-        return "\n".join(lines)
+        return result_handler.format_table_detail(schema, table_name)
 
     @staticmethod
     def _format_table_context(
