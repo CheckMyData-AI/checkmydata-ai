@@ -353,6 +353,39 @@ class OrchestratorAgent(BaseAgent):
         """
         return self._wf_suspicious.pop(wf_id, None)
 
+    def _record_request_metrics(
+        self,
+        *,
+        route: str,
+        complexity: str,
+        response_type: str,
+        sql_calls: int,
+        iterations: int,
+        wall_clock_seconds: float,
+        error: bool,
+    ) -> None:
+        """Record one request's metrics row. Never raises (W0 extraction of ORCH-A04).
+
+        Wave 3 will extend this helper to also persist ``estimated_queries`` and
+        any additional routing fields once ``RequestMetrics`` is updated (C-G task).
+        """
+        try:
+            from app.core.metrics import RequestMetrics, get_metrics_collector
+
+            get_metrics_collector().record_request(
+                RequestMetrics(
+                    route=route,
+                    complexity=complexity,
+                    response_type=response_type,
+                    sql_calls=sql_calls,
+                    iterations=iterations,
+                    wall_clock_seconds=wall_clock_seconds,
+                    error=error,
+                )
+            )
+        except Exception:
+            logger.debug("metrics collector failed (non-critical)", exc_info=True)
+
     def _result_gate_directive(self, wf_id: str, sql_result: SQLAgentResult) -> str | None:
         """Unified-path result-quality gate (R5-3).
 
@@ -1740,22 +1773,15 @@ class OrchestratorAgent(BaseAgent):
             response_type,
             error_types or "none",
         )
-        try:
-            from app.core.metrics import RequestMetrics, get_metrics_collector
-
-            get_metrics_collector().record_request(
-                RequestMetrics(
-                    route="unified",
-                    complexity=str(context.extra.get("complexity") or "unknown"),
-                    response_type=response_type,
-                    sql_calls=len(all_sql_results),
-                    iterations=iteration + 1,
-                    wall_clock_seconds=total_wall_clock,
-                    error=bool(error_types),
-                )
-            )
-        except Exception:
-            logger.debug("metrics collector failed (non-critical)", exc_info=True)
+        self._record_request_metrics(
+            route="unified",
+            complexity=str(context.extra.get("complexity") or "unknown"),
+            response_type=response_type,
+            sql_calls=len(all_sql_results),
+            iterations=iteration + 1,
+            wall_clock_seconds=total_wall_clock,
+            error=bool(error_types),
+        )
 
         followups: list[str] = []
         if (
