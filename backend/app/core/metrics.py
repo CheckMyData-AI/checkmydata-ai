@@ -129,6 +129,21 @@ class MetricsCollector:
         """
         self.inc("diagnostics_persist_failures")
 
+    def record_retrieval_degraded(self, *, leg: str, reason: str) -> None:
+        """A retrieval leg (bm25/dense) returned 0 while another had hits (RET-R4)."""
+        self.inc("retrieval_degraded_total", leg=leg, reason=reason)
+
+    def record_datagate_block(self, *, check: str = "") -> None:
+        """A DataGate hard check blocked an impossible value (C-G / DATA-06)."""
+        if check:
+            self.inc("datagate_block_total", check=check)
+        else:
+            self.inc("datagate_block_total")
+
+    def record_filter_guard_degrade(self) -> None:
+        """The required-filter guard degraded to a warning instead of hard-failing (SYNC-L1)."""
+        self.inc("filter_guard_degrade_total")
+
     def snapshot_counters(self, prefix: str | None = None) -> dict[str, int]:
         """Return a name -> summed-value snapshot of integer counters.
 
