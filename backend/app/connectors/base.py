@@ -214,6 +214,42 @@ class QueryResult:
     truncated: bool = False
 
 
+def derive_result(
+    base: QueryResult,
+    rows: list[Any],
+    *,
+    extra_truncation: bool = False,
+    columns: list[str] | None = None,
+    **overrides: Any,
+) -> QueryResult:
+    """Carry-forward constructor for a derived ``QueryResult`` (contract C-A).
+
+    Every in-memory transform (aggregate / filter / cohort / enrichment) MUST
+    build its result via this helper so ``truncated`` can never be silently
+    dropped: ``truncated = base.truncated or extra_truncation``. ``columns``
+    defaults to ``base.columns``; ``row_count`` defaults to ``len(rows)``;
+    ``execution_time_ms``/``error`` carry from ``base`` unless overridden.
+    Passing ``truncated=`` is rejected — the OR is authoritative.
+    """
+    if "truncated" in overrides:
+        raise TypeError(
+            "derive_result: pass extra_truncation=..., not truncated= "
+            "(truncated is always base.truncated OR extra_truncation)"
+        )
+    resolved_columns = columns if columns is not None else list(base.columns)
+    row_list = list(rows)
+    kwargs: dict[str, Any] = {
+        "columns": resolved_columns,
+        "rows": row_list,
+        "row_count": len(row_list),
+        "execution_time_ms": base.execution_time_ms,
+        "error": base.error,
+    }
+    kwargs.update(overrides)
+    kwargs["truncated"] = base.truncated or extra_truncation
+    return QueryResult(**kwargs)
+
+
 # -----------------------------------------------------------------------
 # DataSourceAdapter — generic interface for ALL data sources
 # -----------------------------------------------------------------------
