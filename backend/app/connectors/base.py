@@ -1,7 +1,7 @@
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -77,6 +77,14 @@ class ColumnInfo:
     is_primary_key: bool = False
     default: str | None = None
     comment: str | None = None
+    # C-D schema-capture surface (populated in Wave 4; back-compat defaults):
+    enum_labels: list[str] | None = None
+    check_constraints: list[str] = field(default_factory=list)
+    is_sort_key: bool = False
+    distinct_values: list[str] | None = None
+    distinct_count: int | None = None
+    null_rate: float | None = None
+    numeric_format: str | None = None
 
 
 @dataclass
@@ -102,6 +110,7 @@ class TableInfo:
     indexes: list[IndexInfo] = field(default_factory=list)
     row_count: int | None = None
     comment: str | None = None
+    object_kind: Literal["table", "view", "matview"] = "table"
 
 
 @dataclass
@@ -109,6 +118,7 @@ class SchemaInfo:
     tables: list[TableInfo] = field(default_factory=list)
     db_type: str = ""
     db_name: str = ""
+    object_kind: Literal["table", "view", "matview"] = "table"
 
     def fingerprint(self) -> dict[str, str]:
         """Return a table-name -> column-signature map for incremental diff.
@@ -212,6 +222,20 @@ class QueryResult:
     execution_time_ms: float = 0.0
     error: str | None = None
     truncated: bool = False
+
+
+@dataclass
+class ColumnStats:
+    """Per-column statistics captured during schema introspection (contract C-D).
+
+    Fields are all optional so an adapter can populate what it knows
+    without breaking callers that only read a subset.
+    """
+
+    distinct_count: int | None = None
+    null_rate: float | None = None
+    min_value: Any = None
+    max_value: Any = None
 
 
 def derive_result(
@@ -342,6 +366,14 @@ class DatabaseAdapter(DataSourceAdapter):
         return await self.execute_query(
             f"SELECT * FROM {quoted} LIMIT {limit}",
         )
+
+    async def distinct_values(self, table: str, column: str, limit: int) -> list[str]:
+        """Distinct values of a column (dialect-aware; Wave 4 impl). Contract C-D."""
+        raise NotImplementedError
+
+    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+        """Approximate distinct_count/null_rate/min/max (dialect-aware; Wave 4). Contract C-D."""
+        raise NotImplementedError
 
     @property
     @abstractmethod
