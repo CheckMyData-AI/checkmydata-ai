@@ -212,6 +212,9 @@ class TracePersistenceService:
         llm_model: str = "unknown",
         steps_used: int = 0,
         steps_total: int = 0,
+        route: str = "unknown",
+        complexity: str = "unknown",
+        estimated_queries: int = 0,
         tool_call_log: list[dict] | None = None,
     ) -> None:
         """Attach chat-route metadata to the trace and persist if buffer was already flushed.
@@ -247,6 +250,9 @@ class TracePersistenceService:
                             llm_model=llm_model,
                             steps_used=steps_used,
                             steps_total=steps_total,
+                            route=route,
+                            complexity=complexity,
+                            estimated_queries=estimated_queries,
                         )
                     )
                     await session.execute(upd)
@@ -276,6 +282,9 @@ class TracePersistenceService:
                         llm_model=llm_model,
                         steps_used=steps_used,
                         steps_total=steps_total,
+                        route=route,
+                        complexity=complexity,
+                        estimated_queries=estimated_queries,
                     )
                     session.add(trace)
                     await session.flush()

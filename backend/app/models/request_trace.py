@@ -51,6 +51,9 @@ class RequestTrace(Base):
     llm_model: Mapped[str] = mapped_column(String(100), nullable=False, server_default="unknown")
     steps_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     steps_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    route: Mapped[str] = mapped_column(String(30), nullable=False, server_default="unknown")
+    complexity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="unknown")
+    estimated_queries: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
