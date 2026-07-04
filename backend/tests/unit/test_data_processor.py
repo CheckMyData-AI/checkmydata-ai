@@ -1235,3 +1235,16 @@ def test_aggregate_data_untruncated_input_stays_complete():
     )
     assert out.query_result.truncated is False
     assert "PARTIAL DATA" not in out.summary
+
+
+@pytestmark_data01a
+def test_filter_data_carries_truncated_forward():
+    qr = QueryResult(
+        columns=["status", "n"],
+        rows=[["ok", 1], ["ok", 2], ["bad", 3]],
+        row_count=3,
+        truncated=True,
+    )
+    out = _proc().process(qr, "filter_data", {"column": "status", "value": "ok"})
+    assert out.query_result.truncated is True
+    assert out.query_result.row_count == 2

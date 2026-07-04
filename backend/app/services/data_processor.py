@@ -432,9 +432,10 @@ class DataProcessor:
                     continue
             filtered.append(row)
 
-        result_qr = QueryResult(
+        result_qr = derive_result(
+            qr,
+            filtered,
             columns=list(qr.columns),
-            rows=filtered,
             row_count=len(filtered),
             execution_time_ms=qr.execution_time_ms,
         )
