@@ -42,6 +42,12 @@ class DbIndex(Base):
 
     numeric_format_notes: Mapped[str] = mapped_column(Text, default="{}")
 
+    enum_labels_json: Mapped[str] = mapped_column(Text, default="{}")
+    check_constraints_json: Mapped[str] = mapped_column(Text, default="{}")
+    sort_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    column_stats_json: Mapped[str] = mapped_column(Text, default="{}")
+    object_kind: Mapped[str] = mapped_column(String(20), default="table")
+
     code_match_status: Mapped[str] = mapped_column(String(50), default="unknown")
     code_match_details: Mapped[str] = mapped_column(Text, default="")
 
