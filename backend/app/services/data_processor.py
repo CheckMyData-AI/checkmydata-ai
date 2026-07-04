@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.connectors.base import QueryResult
+from app.connectors.base import QueryResult, derive_result
 from app.services.geoip_service import GeoIPService, get_geoip_service
 from app.services.phone_country_service import PhoneCountryService, get_phone_country_service
 
@@ -39,6 +39,10 @@ SUPPORTED_OPERATIONS = (
 )
 
 _AGG_FUNCTIONS = {"count", "count_distinct", "sum", "avg", "min", "max", "median"}
+
+# Additive aggregations whose total is meaningless / misleading over a
+# truncated (row-capped) input — flag the result as partial (DATA-01).
+_AGG_ADDITIVE_OVER_ROWS: frozenset[str] = frozenset({"sum", "count", "count_distinct"})
 
 
 class DataProcessor:
@@ -332,9 +336,10 @@ class DataProcessor:
             # last per column — mirrors the explicit sort_by branch above.
             result_rows.sort(key=lambda r: tuple((v is None, v) for v in r[: len(group_by)]))
 
-        agg_qr = QueryResult(
+        agg_qr = derive_result(
+            qr,
+            result_rows,
             columns=result_columns,
-            rows=result_rows,
             row_count=len(result_rows),
             execution_time_ms=qr.execution_time_ms,
         )
@@ -344,6 +349,12 @@ class DataProcessor:
             f"by {', '.join(group_by)}. "
             f"Computed: {', '.join(f'{fn}({c})' for c, fn in agg_pairs)}."
         )
+        if qr.truncated and any(fn.lower() in _AGG_ADDITIVE_OVER_ROWS for _c, fn in agg_pairs):
+            summary = (
+                "PARTIAL DATA: the source result was capped/truncated, so these "
+                "sum/count totals are computed over an INCOMPLETE set and are lower "
+                "bounds, not full-population figures. " + summary
+            )
 
         return ProcessedData(query_result=agg_qr, summary=summary)
 

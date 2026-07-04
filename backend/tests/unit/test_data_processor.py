@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.connectors import base as _base
 from app.connectors.base import QueryResult
 from app.services.data_processor import DataProcessor, get_data_processor
 from app.services.geoip_service import GeoIPResult, GeoIPService
@@ -1167,3 +1168,70 @@ class TestGetDataProcessor:
         s1 = get_data_processor()
         s2 = get_data_processor()
         assert s1 is s2
+
+
+# ---------------------------------------------------------------------------
+# DATA-01a: aggregate_data truncated propagation + additive partial flagging
+# ---------------------------------------------------------------------------
+pytestmark_data01a = pytest.mark.skipif(
+    not hasattr(_base, "derive_result"),
+    reason="W0 C-A derive_result not merged yet — this task depends on W0.",
+)
+
+
+def _proc() -> DataProcessor:
+    return DataProcessor(geoip=None, phone_svc=None)
+
+
+@pytestmark_data01a
+def test_aggregate_data_carries_truncated_forward():
+    """A truncated input must yield a truncated aggregate (DATA-01)."""
+    qr = QueryResult(
+        columns=["region", "amount"],
+        rows=[["us", 10], ["us", 20], ["eu", 5]],
+        row_count=3,
+        truncated=True,
+    )
+    out = _proc().process(
+        qr,
+        "aggregate_data",
+        {"group_by": ["region"], "aggregations": [("amount", "sum")]},
+    )
+    assert out.query_result.truncated is True
+
+
+@pytestmark_data01a
+def test_aggregate_sum_over_truncated_is_flagged_partial_not_complete():
+    """Additive aggregation over a truncated set must NOT present a full-population total."""
+    qr = QueryResult(
+        columns=["region", "amount"],
+        rows=[["us", 10], ["us", 20]],
+        row_count=2,
+        truncated=True,
+    )
+    out = _proc().process(
+        qr,
+        "aggregate_data",
+        {"group_by": ["region"], "aggregations": [("amount", "sum")]},
+    )
+    assert out.query_result.truncated is True
+    assert "PARTIAL DATA" in out.summary
+    # the numeric value is still computed over what we have, but flagged, never silently "complete"
+    assert "30" in str(out.query_result.rows[0][1])
+
+
+@pytestmark_data01a
+def test_aggregate_data_untruncated_input_stays_complete():
+    qr = QueryResult(
+        columns=["region", "amount"],
+        rows=[["us", 10], ["eu", 5]],
+        row_count=2,
+        truncated=False,
+    )
+    out = _proc().process(
+        qr,
+        "aggregate_data",
+        {"group_by": ["region"], "aggregations": [("amount", "sum")]},
+    )
+    assert out.query_result.truncated is False
+    assert "PARTIAL DATA" not in out.summary
