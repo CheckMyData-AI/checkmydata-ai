@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — W0 intelligence-remediation foundations (2026-07-03, branch `worktree-intelligence-remediation`)
+
+Wave 0 of the intelligence-remediation audit (spec `docs/superpowers/specs/2026-07-03-intelligence-remediation-design.md`).
+All 18 tasks committed; ruff/mypy clean; unit+integration suite green at ≥72% coverage.
+
+- **`derive_result` helper** — pure function extracted from `SQLAgent._handle_execute_query`; converts raw connector rows + column list into a `QueryResult`; locks the data-shaping contract for downstream waves.
+- **`ResultValidation` façade + `AnswerQualityGate`** — `ResultValidation(data_gate, result_gate, *, reconcile)` composes the three post-query quality checks into one callable; `AnswerQualityGate.evaluate` (async) wraps `AnswerValidator`; both wired into the agent paths.
+- **DataGate Decimal/truncation fixes** — `Decimal` values are now `float()`-converted before comparison (was silently skipped → bogus pass); row-level loop `break` replaced with early `continue` so all rows are checked, not just the first suspicious one.
+- **C-D schema-capture surface** — `ColumnInfo` gains `object_kind`, `sample_values`, `distinct_count`, `null_pct`; `TableInfo` gains `object_kind`; `SchemaInfo` gains `object_kind`; `DbIndex` model gains `sample_values_json`, `stats_json` columns (Alembic migration `add_dbindex_capture_columns`).
+- **`RequestTrace` routing columns + migration** — `approach`, `complexity`, `route_ms` columns added to `RequestTrace` (Alembic migration `add_request_trace_routing_columns`); both migrations chain to a single Alembic head.
+- **Chunk metadata + `retrieval_degraded` scaffold** — `ChunkMetadata` dataclass with `source_path`, `heading_path`, `token_count`, `embedding_model`; `retrieval_degraded` flag on `KnowledgeResult`; `KnowledgeFreshnessService` emits `retrieval_degraded_total` counter when flagged.
+- **Prometheus counters** — `retrieval_degraded_total`, `datagate_block_total`, `filter_guard_degrade_total` registered in `MetricsCollector`; incremented at the gate call sites.
+- **Config defaults hardened** — `max_orchestrator_iterations` default lowered 100→20; `chroma_embedding_model` defaults to `BAAI/bge-base-en-v1.5` (512-token context model); `embedder_max_tokens` default 512.
+- **Hotspot decomposition** — `format_query_results`, `format_schema_overview`, `format_table_detail` extracted from `SQLAgent` → `app/agents/result_handler.py`; `_record_request_metrics` extracted from `OrchestratorAgent._run_tool_loop` (partial ORCH-A04; larger decomposition deferred to W3).
+- **5 validation-lock tests** — regression tests in `tests/unit/test_validation_locks_w0.py` assert current (known-buggy) behavior for findings RET-R3, SQL-S4, ORCH-A01, VAL-V3, DATA-D2; owning waves must flip assertions when fixing.
+
 ### Added — Diagnostics capture (2026-06-30, branch `feat/diagnostics-capture-2026-06-30`)
 
 Make failed queries fully diagnosable after the fact (motivated by the cohort/GROUP BY
