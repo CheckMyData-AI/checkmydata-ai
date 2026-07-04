@@ -335,8 +335,8 @@ class DataGate:
                 if val is None:
                     continue
                 numeric = isinstance(val, (int, float, Decimal)) and not isinstance(val, bool)
-                fval = float(val) if numeric else None
-                if kind == "percent" and numeric:
+                fval: float | None = float(val) if numeric else None
+                if kind == "percent" and numeric and fval is not None:
                     # Bounded percent (conversion/completion/ctr/occupancy/…) is
                     # a 0..100 share, so values outside [pct_min, bounded_max]
                     # are impossible (e.g. 150% conversion) — hard fail so the
@@ -359,7 +359,7 @@ class DataGate:
                                 "which looks out of range for a percentage.",
                             )
                         break
-                elif kind == "rate" and numeric:
+                elif kind == "rate" and numeric and fval is not None:
                     # Rate/ratio/growth and percentage-deltas are signed and can
                     # legitimately exceed 100% (e.g. 150% YoY growth, NRR 130%,
                     # -50% decline). Only an absurd magnitude is suspicious, and
@@ -370,7 +370,7 @@ class DataGate:
                             f"with an unusually large magnitude for a rate (±{pct_max}).",
                         )
                         break
-                elif kind == "count" and numeric:
+                elif kind == "count" and numeric and fval is not None:
                     if fval < 0:
                         # A negative count/quantity is impossible — hard fail
                         # so the stage retries (usually a bad JOIN or a signed

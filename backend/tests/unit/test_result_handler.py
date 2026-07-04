@@ -13,7 +13,6 @@ from app.agents.result_handler import (
 )
 from app.connectors.base import ColumnInfo, QueryResult, SchemaInfo, TableInfo
 
-
 # ---------------------------------------------------------------------------
 # format_query_results
 # ---------------------------------------------------------------------------
@@ -62,7 +61,9 @@ def test_format_schema_overview_lists_tables():
     schema = SchemaInfo(
         db_type="postgres",
         db_name="db",
-        tables=[TableInfo(name="users", columns=[ColumnInfo(name="id", data_type="int")], row_count=5)],
+        tables=[
+            TableInfo(name="users", columns=[ColumnInfo(name="id", data_type="int")], row_count=5)
+        ],
     )
     out = format_schema_overview(schema)
     assert "users" in out and "Tables: 1" in out
