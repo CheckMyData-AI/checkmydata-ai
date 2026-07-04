@@ -662,9 +662,10 @@ class DataProcessor:
                     ]
                 )
 
-        result_qr = QueryResult(
+        result_qr = derive_result(
+            qr,
+            out_rows,
             columns=out_columns,
-            rows=out_rows,
             row_count=len(out_rows),
             execution_time_ms=qr.execution_time_ms,
         )
@@ -680,6 +681,13 @@ class DataProcessor:
             summary_parts.append(
                 f"Skipped {len(bad_releases)} release(s) with unparseable dates: "
                 f"{', '.join(bad_releases[:10])}."
+            )
+        if qr.truncated:
+            summary_parts.insert(
+                0,
+                "PARTIAL DATA: the source event set was capped/truncated, so these "
+                "cohort revenue/retention values are computed over an INCOMPLETE set "
+                "and are lower bounds, not full-population figures.",
             )
         return ProcessedData(query_result=result_qr, summary=" ".join(summary_parts))
 

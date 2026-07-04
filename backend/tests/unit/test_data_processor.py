@@ -1248,3 +1248,54 @@ def test_filter_data_carries_truncated_forward():
     out = _proc().process(qr, "filter_data", {"column": "status", "value": "ok"})
     assert out.query_result.truncated is True
     assert out.query_result.row_count == 2
+
+
+# ---------------------------------------------------------------------------
+# DATA-01c: cohort_window truncated propagation + additive partial flagging
+# ---------------------------------------------------------------------------
+
+
+@pytestmark_data01a
+def test_cohort_window_carries_truncated_and_flags_partial():
+    qr = QueryResult(
+        columns=["event_date", "revenue"],
+        rows=[["2026-06-01", 100.0], ["2026-06-03", 50.0]],
+        row_count=2,
+        truncated=True,
+    )
+    out = _proc().process(
+        qr,
+        "cohort_window",
+        {
+            "release_dates": [{"tag": "v1", "date": "2026-06-01"}],
+            "event_date_column": "event_date",
+            "value_column": "revenue",
+            "windows": [7],
+            "metric": "revenue",
+        },
+    )
+    assert out.query_result.truncated is True
+    assert "PARTIAL DATA" in out.summary
+
+
+@pytestmark_data01a
+def test_cohort_window_untruncated_no_partial_flag():
+    qr = QueryResult(
+        columns=["event_date", "revenue"],
+        rows=[["2026-06-01", 100.0]],
+        row_count=1,
+        truncated=False,
+    )
+    out = _proc().process(
+        qr,
+        "cohort_window",
+        {
+            "release_dates": [{"tag": "v1", "date": "2026-06-01"}],
+            "event_date_column": "event_date",
+            "value_column": "revenue",
+            "windows": [7],
+            "metric": "revenue",
+        },
+    )
+    assert out.query_result.truncated is False
+    assert "PARTIAL DATA" not in out.summary
