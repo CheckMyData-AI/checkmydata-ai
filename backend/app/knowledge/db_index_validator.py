@@ -403,6 +403,8 @@ class DbIndexValidator:
         *,
         scrub: bool = True,
     ) -> str:
+        from app.config import settings as _settings
+
         parts: list[str] = [f"## Table: {table.name}"]
 
         if table.schema and table.schema != "public":
@@ -412,13 +414,22 @@ class DbIndexValidator:
         if table.comment:
             parts.append(f"Comment: {table.comment}")
 
+        # DBIDX-D16: cap the number of columns in the prompt to avoid unbounded
+        # prompts on very wide tables. Columns beyond the cap are replaced with
+        # a note so the LLM knows more columns exist without consuming tokens.
+        col_cap: int = _settings.db_index_max_prompt_columns
+        columns_to_show = table.columns[:col_cap]
+        hidden_count = len(table.columns) - len(columns_to_show)
+
         parts.append("\nColumns:")
-        for col in table.columns:
+        for col in columns_to_show:
             pk = " [PK]" if col.is_primary_key else ""
             nullable = " NULL" if col.is_nullable else " NOT NULL"
             default = f" DEFAULT {col.default}" if col.default else ""
             comment = f" — {col.comment}" if col.comment else ""
             parts.append(f"  - {col.name}: {col.data_type}{pk}{nullable}{default}{comment}")
+        if hidden_count > 0:
+            parts.append(f"  (… {hidden_count} more columns)")
 
         if table.foreign_keys:
             parts.append("\nForeign Keys:")

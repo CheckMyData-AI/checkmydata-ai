@@ -208,6 +208,16 @@ class Settings(BaseSettings):
     # counting (MongoDB $sample, ClickHouse SAMPLE).  SQL connectors ignore
     # this value (COUNT(DISTINCT …) already scans the full column efficiently).
     db_index_stats_sample_cap: int = 100_000
+    # DBIDX-D15: cap on the number of tables that receive a full LLM analysis
+    # call during db-indexing.  Tables beyond the cap (sorted by row_count desc,
+    # then alphabetically) receive the deterministic _fallback_analysis instead
+    # of an LLM call, preventing runaway cost on schemas with 500+ tables.
+    db_index_max_tables_analyzed: int = 500
+    # DBIDX-D16: maximum number of columns listed per-table in the LLM analysis
+    # prompt.  When a table has more columns than this cap, the excess columns
+    # are replaced with a "(… N more columns)" note so the prompt stays bounded
+    # while still conveying that extra columns exist.
+    db_index_max_prompt_columns: int = 100
     # R4-2: credit exposed learnings as "applied" when a result passes
     # validation (not only on a rare thumbs-up), so times_applied / the decay
     # and ranking signals derived from it stay live in production.

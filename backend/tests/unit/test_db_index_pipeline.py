@@ -752,9 +752,7 @@ class TestPipelineUsesConnectorMethods:
             "table_data must include 'column_stats_json' key for T9 / DBIDX-D9"
         )
         stats = json.loads(td["column_stats_json"])
-        assert "status" in stats, (
-            f"'status' key missing from column_stats_json: {stats}"
-        )
+        assert "status" in stats, f"'status' key missing from column_stats_json: {stats}"
         assert stats["status"]["distinct_count"] == 3
         assert stats["status"]["null_rate"] == 0.0
 
@@ -762,32 +760,41 @@ class TestPipelineUsesConnectorMethods:
     async def test_pipeline_stats_disabled_skips_approx_stats(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """When db_index_stats_enabled=False, approx_stats must NOT be called
-        and column_stats_json must be empty ({})."""
-        import app.config as cfg
+        """When db_index_stats_enabled=False, column_stats_json must be empty.
 
-        call_count = 0
+        NOTE: DBIDX-D17 adds a separate approx_stats call for the ordering
+        column on CH/Mongo dialects regardless of db_index_stats_enabled —
+        that call is intentional and bounded (one call per table with an
+        ordering column).  This test checks that column_stats_json stays empty
+        and that the *stats* approx_stats calls (for enum-candidate columns)
+        are skipped; it tolerates the D17 ordering-column call.
+        """
+        import app.config as cfg
+        from app.connectors.base import ConnectionConfig
+
+        stats_call_cols: list[str] = []
         original_approx = _FakeConnector.approx_stats
 
-        async def _counting_approx(self, table: str, column: str):  # noqa: ANN001
-            nonlocal call_count
-            call_count += 1
+        async def _recording_approx(self, table: str, column: str):  # noqa: ANN001
+            stats_call_cols.append(column)
             return await original_approx(self, table, column)
 
-        monkeypatch.setattr(_FakeConnector, "approx_stats", _counting_approx)
+        monkeypatch.setattr(_FakeConnector, "approx_stats", _recording_approx)
 
         fake = _FakeConnector()
         tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
         monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", False)
 
-        from app.connectors.base import ConnectionConfig
-
         pipeline = DbIndexPipeline(workflow_tracker=tracker)
         conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
         await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
 
-        assert call_count == 0, (
-            f"approx_stats was called {call_count} time(s) even though stats are disabled"
+        # The only allowed approx_stats call is the D17 ordering-col call (_id).
+        # Enum-candidate stats calls (for 'status', etc.) must NOT happen.
+        enum_stats_calls = [c for c in stats_call_cols if c == "status"]
+        assert enum_stats_calls == [], (
+            f"Enum-column approx_stats must be skipped when stats disabled; "
+            f"got calls for: {stats_call_cols}"
         )
         td = next((t for t in captured if t["table_name"] == "orders"), None)
         if td and "column_stats_json" in td:
@@ -797,7 +804,12 @@ class TestPipelineUsesConnectorMethods:
 
     @pytest.mark.asyncio
     async def test_pipeline_stats_cap_limits_columns(self, monkeypatch: pytest.MonkeyPatch):
-        """db_index_stats_max_columns=1 must cap approx_stats calls to 1 per table."""
+        """db_index_stats_max_columns=1 must cap enum-stats approx_stats calls to 1 per table.
+
+        NOTE: DBIDX-D17 adds one extra approx_stats call for the ordering column
+        on CH/Mongo, so total calls per table may be cap+1.  This test checks
+        only the enum-candidate stats calls (excluding the D17 ordering-col call).
+        """
         import app.config as cfg
 
         fake = _FakeConnector()
@@ -820,8 +832,258 @@ class TestPipelineUsesConnectorMethods:
         conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
         await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
 
-        orders_calls = [c for c in stats_calls if c[0] == "orders"]
-        assert len(orders_calls) <= 1, (
-            f"Expected at most 1 approx_stats call for 'orders' with cap=1, "
-            f"got {len(orders_calls)}: {orders_calls}"
+        # Count only enum-candidate stats calls (not the D17 ordering-col call).
+        # The ordering col for _FakeConnector's 'orders' table is '_id'.
+        ordering_col = "_id"
+        enum_stats_calls = [c for c in stats_calls if c[0] == "orders" and c[1] != ordering_col]
+        assert len(enum_stats_calls) <= 1, (
+            f"Expected ≤ 1 enum-stats approx_stats call for 'orders' with cap=1, "
+            f"got {len(enum_stats_calls)}: {enum_stats_calls} (all: {stats_calls})"
         )
+
+
+# ---------------------------------------------------------------------------
+# DBIDX-D15: LLM call cap — tables beyond db_index_max_tables_analyzed get
+# deterministic fallback, not an LLM call.
+# ---------------------------------------------------------------------------
+
+
+class _BigSchemaConnector(_FakeConnector):
+    """600-table connector for D15 cap tests."""
+
+    def __init__(self, n_tables: int = 600) -> None:
+        super().__init__()
+        self._n_tables = n_tables
+
+    async def introspect_schema(self) -> SchemaInfo:
+        tables = [
+            TableInfo(
+                name=f"tbl_{i}",
+                columns=[
+                    ColumnInfo(name="status", data_type="str"),
+                    ColumnInfo(name="_id", data_type="ObjectId", is_primary_key=True),
+                ],
+                row_count=10,
+            )
+            for i in range(self._n_tables)
+        ]
+        return SchemaInfo(db_type="mongodb", tables=tables)
+
+    async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+        return QueryResult(columns=["_id"], rows=[["x1"]], row_count=1)
+
+    async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+        return []
+
+
+class TestD15LlmCallCap:
+    """DBIDX-D15: pipeline must not issue more than db_index_max_tables_analyzed LLM calls."""
+
+    @pytest.mark.asyncio
+    async def test_600_table_schema_respects_cap(self, monkeypatch: pytest.MonkeyPatch):
+        """A 600-table schema with cap=500 must issue ≤ 500 LLM calls total."""
+        import app.config as cfg
+
+        cap = 500
+        fake = _BigSchemaConnector(n_tables=600)
+        tracker, _ = _make_pipeline_mocks(monkeypatch, fake)
+        monkeypatch.setattr(cfg.settings, "db_index_max_tables_analyzed", cap)
+
+        llm_call_count = 0
+
+        async def _counting_analyze_table(self, table, **kwargs):  # noqa: ANN001, ANN003
+            nonlocal llm_call_count
+            llm_call_count += 1
+            return TableAnalysis(
+                table_name=table.name,
+                is_active=True,
+                relevance_score=3,
+                business_description="counted",
+            )
+
+        async def _counting_batch(self, tables, **kwargs):  # noqa: ANN001, ANN003
+            nonlocal llm_call_count
+            llm_call_count += len(tables)
+            return [
+                TableAnalysis(
+                    table_name=t.name,
+                    is_active=True,
+                    relevance_score=3,
+                    business_description="counted",
+                )
+                for t, _ in tables
+            ]
+
+        monkeypatch.setattr(
+            "app.knowledge.db_index_pipeline.DbIndexValidator.analyze_table",
+            _counting_analyze_table,
+        )
+        monkeypatch.setattr(
+            "app.knowledge.db_index_pipeline.DbIndexValidator.analyze_table_batch",
+            _counting_batch,
+        )
+
+        from app.connectors.base import ConnectionConfig
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        result = await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert result["status"] == "completed", f"Pipeline failed: {result}"
+        assert llm_call_count <= cap, (
+            f"Expected ≤ {cap} LLM calls for 600-table schema, got {llm_call_count}"
+        )
+        # All 600 tables should still have an analysis (fallback fills the gap)
+        assert result["tables"] == 600
+
+
+# ---------------------------------------------------------------------------
+# DBIDX-D17: _detect_latest_record falls back to approx_max when sample has
+# no ordered rows (CH / Mongo).
+# ---------------------------------------------------------------------------
+
+
+class TestD17DetectLatestRecordApproxFallback:
+    """DBIDX-D17: approx_max kwarg enables latest_record_at for CH/Mongo."""
+
+    def test_empty_sample_falls_back_to_approx_max(self):
+        """Empty sample + approx_max → approx_max returned."""
+        result = QueryResult(columns=["created_at"], rows=[], row_count=0)
+        ts = _detect_latest_record(result, "created_at", approx_max="2026-06-30T12:00:00")
+        assert ts == "2026-06-30T12:00:00"
+
+    def test_sample_value_takes_precedence_over_approx_max(self):
+        """When sample has a value it takes precedence over approx_max."""
+        result = QueryResult(
+            columns=["created_at"],
+            rows=[["2026-06-01"]],
+            row_count=1,
+        )
+        ts = _detect_latest_record(result, "created_at", approx_max="2026-05-01")
+        assert ts == "2026-06-01"
+
+    def test_approx_max_datetime_isoformatted(self):
+        """datetime approx_max is isoformatted."""
+        from datetime import datetime
+
+        result = QueryResult(columns=["ts"], rows=[], row_count=0)
+        dt = datetime(2026, 7, 1, 9, 0, 0)
+        ts = _detect_latest_record(result, "ts", approx_max=dt)
+        assert ts is not None and "2026-07-01" in ts
+
+    def test_no_approx_max_no_rows_returns_none(self):
+        """No sample, no approx_max → None (unchanged baseline)."""
+        result = QueryResult(columns=["created_at"], rows=[], row_count=0)
+        assert _detect_latest_record(result, "created_at") is None
+
+    @pytest.mark.asyncio
+    async def test_pipeline_populates_latest_record_for_mongo(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """D17: Mongo pipeline run must populate latest_record_at from approx_stats.
+
+        The _FakeConnector (Mongo) returns no rows from sample_data but its
+        approx_stats returns max_value="2026-05-01".  With D17 the pipeline
+        must pass this max_value as approx_max to _detect_latest_record, so
+        latest_record_at is "2026-05-01" instead of None.
+        """
+        import app.config as cfg
+        from app.connectors.base import ColumnStats, ConnectionConfig
+
+        class _D17Connector(_FakeConnector):
+            async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+                # Return no rows — as if Mongo has no ordered sample
+                return QueryResult(columns=["status", "_id"], rows=[], row_count=0)
+
+            async def approx_stats(self, table: str, column: str) -> ColumnStats:
+                # ordering col (_id for orders) gets a max_value
+                if column == "_id":
+                    return ColumnStats(max_value="2026-05-01T00:00:00")
+                return ColumnStats()
+
+        fake = _D17Connector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+        # D17 path is active regardless of db_index_stats_enabled — it is a
+        # separate targeted approx_stats call gated only on db_type.
+        monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", False)
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert captured, "No table_data was upserted"
+        td = next((t for t in captured if t["table_name"] == "orders"), None)
+        assert td is not None, "No 'orders' entry in captured data"
+        assert td["latest_record_at"] == "2026-05-01T00:00:00", (
+            f"Expected latest_record_at='2026-05-01T00:00:00', got {td['latest_record_at']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# DBIDX-D18: distinct-value truncation sentinel "…" appended when the
+# connector returned exactly MAX_DISTINCT_CARDINALITY values.
+# ---------------------------------------------------------------------------
+
+
+class TestD18DistinctTruncationSentinel:
+    """DBIDX-D18: pipeline must append '…' when distinct values list is at the cap."""
+
+    @pytest.mark.asyncio
+    async def test_truncated_distinct_has_sentinel(self, monkeypatch: pytest.MonkeyPatch):
+        """A column whose distinct_values returns exactly MAX_DISTINCT_CARDINALITY
+        values must end up with '…' in the persisted JSON."""
+        from app.connectors.base import ConnectionConfig
+        from app.knowledge.db_index_pipeline import MAX_DISTINCT_CARDINALITY
+
+        full_vals = [str(i) for i in range(MAX_DISTINCT_CARDINALITY)]  # exactly at cap
+
+        class _D18Connector(_FakeConnector):
+            async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+                if column == "status":
+                    return full_vals
+                return []
+
+        fake = _D18Connector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert captured, "No table_data was upserted"
+        td = next((t for t in captured if t["table_name"] == "orders"), None)
+        assert td is not None
+        distinct_json = td["column_distinct_values_json"]
+        distinct = json.loads(distinct_json)
+        assert "status" in distinct, f"'status' key missing: {distinct_json}"
+        assert "…" in distinct["status"], (
+            f"Expected '…' truncation sentinel in distinct values for 'status', "
+            f"got: {distinct['status']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_truncated_distinct_no_sentinel(self, monkeypatch: pytest.MonkeyPatch):
+        """A column with few distinct values must NOT have the '…' sentinel."""
+        from app.connectors.base import ConnectionConfig
+
+        class _D18SmallConnector(_FakeConnector):
+            async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+                if column == "status":
+                    return ["paid", "new", "refunded"]  # only 3 — no truncation
+                return []
+
+        fake = _D18SmallConnector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert captured
+        td = next((t for t in captured if t["table_name"] == "orders"), None)
+        assert td is not None
+        distinct = json.loads(td["column_distinct_values_json"])
+        if "status" in distinct:
+            assert "…" not in distinct["status"], (
+                "Must NOT have '…' sentinel when distinct values count < cap"
+            )

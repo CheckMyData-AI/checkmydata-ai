@@ -540,3 +540,47 @@ class TestCodeMatchStatusClamping:
             table=_make_table(), sample_data=None, code_context="", rules_context=""
         )
         assert result.code_match_status == "no_code_info"
+
+
+class TestBuildTablePromptColumnCap:
+    """DBIDX-D16: _build_table_prompt must cap columns at db_index_max_prompt_columns."""
+
+    def test_wide_table_prompt_capped(self, monkeypatch: pytest.MonkeyPatch):
+        """A 300-column table's prompt must list ≤ cap columns + the overflow note."""
+        import app.config as cfg
+
+        cap = 100
+        monkeypatch.setattr(cfg.settings, "db_index_max_prompt_columns", cap)
+
+        cols = [
+            ColumnInfo(name=f"col_{i}", data_type="varchar", is_nullable=True) for i in range(300)
+        ]
+        table = TableInfo(name="wide_table", columns=cols, row_count=1000)
+        prompt = DbIndexValidator._build_table_prompt(
+            table, sample_data=None, code_context="", rules_context=""
+        )
+
+        # Count column lines (lines starting with "  - ")
+        col_lines = [ln for ln in prompt.splitlines() if ln.startswith("  - ")]
+        assert len(col_lines) <= cap, f"Expected ≤ {cap} column lines, got {len(col_lines)}"
+        # The overflow note must be present
+        assert "(… 200 more columns)" in prompt, (
+            "Expected '(… 200 more columns)' note for 300-col table with cap=100"
+        )
+
+    def test_narrow_table_no_truncation_note(self, monkeypatch: pytest.MonkeyPatch):
+        """A table with fewer columns than the cap must NOT have a truncation note."""
+        import app.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "db_index_max_prompt_columns", 100)
+
+        cols = [
+            ColumnInfo(name=f"col_{i}", data_type="integer", is_nullable=False) for i in range(5)
+        ]
+        table = TableInfo(name="narrow_table", columns=cols, row_count=10)
+        prompt = DbIndexValidator._build_table_prompt(
+            table, sample_data=None, code_context="", rules_context=""
+        )
+        assert "more columns" not in prompt, (
+            "No truncation note expected for 5-column table with cap=100"
+        )

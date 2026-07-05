@@ -249,19 +249,37 @@ def _build_distinct_query(
     )
 
 
-def _detect_latest_record(result: QueryResult, ordering_col: str | None) -> str | None:
-    """Try to extract the timestamp of the newest row."""
-    if not result.rows or not ordering_col:
+def _detect_latest_record(
+    result: QueryResult,
+    ordering_col: str | None,
+    *,
+    approx_max: object = None,
+) -> str | None:
+    """Try to extract the timestamp of the newest row.
+
+    DBIDX-D17: when the ordered sample does not yield a value (CH/Mongo lack
+    native ORDER BY on sample), fall back to ``approx_max`` (the ``max_value``
+    from ``connector.approx_stats()`` for the ordering column), giving CH and
+    Mongo schemas a best-effort ``latest_record_at`` value.
+    """
+    if not ordering_col:
         return None
-    try:
-        idx = result.columns.index(ordering_col)
-        val = result.rows[0][idx]
-        if val is not None:
-            if isinstance(val, datetime):
-                return val.isoformat()
-            return str(val)
-    except (ValueError, IndexError):
-        pass
+    if result.rows:
+        try:
+            idx = result.columns.index(ordering_col)
+            val = result.rows[0][idx]
+            if val is not None:
+                if isinstance(val, datetime):
+                    return val.isoformat()
+                return str(val)
+        except (ValueError, IndexError):
+            pass
+    # D17: fall back to approx_stats max_value for dialects whose sample is
+    # not ordered (CH, Mongo) or when the ordered sample returned no useful value.
+    if approx_max is not None:
+        if isinstance(approx_max, datetime):
+            return approx_max.isoformat()
+        return str(approx_max)
     return None
 
 
@@ -426,6 +444,7 @@ class DbIndexPipeline:
                     bool,
                     int,
                     dict[str, dict],
+                    object,  # approx_max for ordering_col (D17)
                 ]:
                     async with _sample_sem:
                         sample_failed = False
@@ -480,7 +499,15 @@ class DbIndexPipeline:
                                     table.name, col_name, MAX_DISTINCT_CARDINALITY
                                 )
                                 if vals:
-                                    tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
+                                    displayed = vals[:MAX_DISTINCT_VALUES]
+                                    # DBIDX-D18: when the connector returned exactly
+                                    # MAX_DISTINCT_CARDINALITY values the result was
+                                    # likely truncated by the LIMIT clause.  Append
+                                    # a "…" sentinel so downstream consumers (LLM
+                                    # prompt, UI) know the value set is incomplete.
+                                    if len(vals) >= MAX_DISTINCT_CARDINALITY:
+                                        displayed = displayed + ["…"]
+                                    tbl_distinct[col_name] = displayed
                                 # An empty list from distinct_values is not a failure
                                 # (the column simply has no non-NULL values in range).
                             except Exception:
@@ -521,6 +548,26 @@ class DbIndexPipeline:
                                         exc_info=True,
                                     )
 
+                        # DBIDX-D17: best-effort latest_record_at for CH/Mongo.
+                        # These dialects do not guarantee row ordering in sample_data
+                        # (no SQL ORDER BY), so the sample-based heuristic often
+                        # returns None.  When ordering_col is known, run a bounded
+                        # approx_stats call and return the max_value so the pipeline
+                        # can use it as a fallback in _detect_latest_record.
+                        approx_max: object = None
+                        _noorder_dialects = {"clickhouse", "mongodb", "mongo"}
+                        if ordering_col and connection_config.db_type.lower() in _noorder_dialects:
+                            try:
+                                oc_stats = await connector.approx_stats(table.name, ordering_col)
+                                approx_max = oc_stats.max_value
+                            except Exception:
+                                logger.debug(
+                                    "D17 approx_stats for ordering col %s.%s failed",
+                                    table.name,
+                                    ordering_col,
+                                    exc_info=True,
+                                )
+
                         _sampled_count[0] += 1
                         row_info = f"{result.row_count or len(result.rows)} rows"
                         enum_info = f"{len(tbl_distinct)} enum cols" if tbl_distinct else ""
@@ -541,9 +588,13 @@ class DbIndexPipeline:
                             sample_failed,
                             tbl_distinct_failures,
                             tbl_stats,
+                            approx_max,
                         )
 
                 column_stats: dict[str, dict[str, dict]] = {}
+                # D17: per-table max_value from approx_stats for the ordering column
+                # (populated for CH/Mongo only; None for SQL dialects).
+                ordering_approx_max: dict[str, object] = {}
 
                 async with self._tracker.step(
                     wf_id,
@@ -561,12 +612,15 @@ class DbIndexPipeline:
                         sample_failed,
                         tbl_distinct_failures,
                         tbl_stats,
+                        approx_max,
                     ) in results:
                         samples[tname] = (result, ordering_col)
                         if tbl_distinct:
                             distinct_values[tname] = tbl_distinct
                         if tbl_stats:
                             column_stats[tname] = tbl_stats
+                        if approx_max is not None:
+                            ordering_approx_max[tname] = approx_max
                         if sample_failed:
                             sample_failures.add(tname)
                         distinct_failures += tbl_distinct_failures
@@ -618,8 +672,21 @@ class DbIndexPipeline:
                     large_tables = []
                     small_tables = []
 
+                    # DBIDX-D15: cap on total LLM-analyzed tables per run.  Tables
+                    # beyond the cap (sorted by row_count desc, then name asc for
+                    # determinism) receive the deterministic _fallback_analysis
+                    # instead of an LLM call, preventing runaway cost on large schemas.
+                    # Reused tables (R2-3 incremental) don't consume cap budget —
+                    # they already have stored LLM analyses.
+                    llm_cap: int = settings.db_index_max_tables_analyzed
+                    llm_budget_remaining: int = llm_cap
+                    fallback_tables: list[TableInfo] = []
+
                     # R2-3: tables with an unchanged signature reuse their stored
                     # analysis and are excluded from LLM classification entirely.
+                    # Sort the remaining tables by row_count desc so high-value
+                    # tables are prioritized within the LLM budget (D15).
+                    candidate_tables = []
                     for table in schema.tables:
                         if table.name in reuse_analyses:
                             # R2-3 follow-up: the column signature is unchanged so the
@@ -640,15 +707,35 @@ class DbIndexPipeline:
                             )
                             analyses.append(reused)
                             continue
+                        candidate_tables.append(table)
 
+                    # D15: sort candidates by row_count desc, name asc for determinism.
+                    candidate_tables.sort(key=lambda t: (-(t.row_count or 0), t.name))
+
+                    for table in candidate_tables:
                         row_count = table.row_count or 0
                         sample_result = samples.get(table.name, (QueryResult(), None))[0]
                         has_data = bool(sample_result.rows)
 
-                        if row_count > 100 or has_data:
-                            large_tables.append(table)
+                        if llm_budget_remaining > 0:
+                            if row_count > 100 or has_data:
+                                large_tables.append(table)
+                            else:
+                                small_tables.append(table)
+                            llm_budget_remaining -= 1
                         else:
-                            small_tables.append(table)
+                            # D15: budget exhausted — deterministic fallback, no LLM call.
+                            fallback_tables.append(table)
+
+                    fallback_count = len(fallback_tables)
+                    if fallback_count:
+                        await self._tracker.emit(
+                            wf_id,
+                            "validate_tables",
+                            "started",
+                            f"D15 cap: {fallback_count} table(s) beyond "
+                            f"db_index_max_tables_analyzed={llm_cap} — using fallback analysis",
+                        )
 
                     await self._tracker.emit(
                         wf_id,
@@ -656,7 +743,8 @@ class DbIndexPipeline:
                         "started",
                         f"Classified: {len(large_tables)} large tables (individual), "
                         f"{len(small_tables)} small tables (batched), "
-                        f"{len(reuse_analyses)} reused (unchanged)",
+                        f"{len(reuse_analyses)} reused (unchanged)"
+                        + (f", {fallback_count} fallback (cap)" if fallback_count else ""),
                     )
 
                     _llm_sem = asyncio.Semaphore(3)
@@ -692,6 +780,11 @@ class DbIndexPipeline:
                         *[_analyze_large_table(t) for t in large_tables]
                     )
                     analyses.extend(large_results)
+
+                    # D15: apply deterministic fallback for tables beyond the LLM cap.
+                    for ftable in fallback_tables:
+                        fsample, _ = samples.get(ftable.name, (QueryResult(), None))
+                        analyses.append(self._validator._fallback_analysis(ftable, fsample))
 
                     total_small_batches = (
                         (len(small_tables) + self._batch_size - 1) // self._batch_size
@@ -793,7 +886,9 @@ class DbIndexPipeline:
                                 "column_stats_json": json.dumps(tbl_col_stats, default=str),
                                 "ordering_column": ordering_col,
                                 "latest_record_at": _detect_latest_record(
-                                    sample_result, ordering_col
+                                    sample_result,
+                                    ordering_col,
+                                    approx_max=ordering_approx_max.get(analysis.table_name),
                                 ),
                                 "is_active": analysis.is_active,
                                 "relevance_score": analysis.relevance_score,
