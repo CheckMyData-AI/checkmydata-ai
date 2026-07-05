@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 from app.agents.schema_context_builder import format_table_context
-from app.connectors.base import ColumnInfo, ForeignKeyInfo, TableInfo
+from app.connectors.base import ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -259,3 +259,112 @@ def test_no_schema_table_still_renders_header():
     assert "### orders" in out
     assert "Customer orders" in out
     assert "Columns:" not in out
+
+
+# ---------------------------------------------------------------------------
+# Wave 4 (T13): column comments, indexes, enum labels, sort-key flag
+# ---------------------------------------------------------------------------
+
+
+def test_renders_column_comment():
+    cols = [ColumnInfo(name="status", data_type="text", comment="order lifecycle state")]
+    out = format_table_context(_db(), _table(columns=cols), None, None)
+    assert "order lifecycle state" in out
+
+
+def test_renders_index_block():
+    cols = [ColumnInfo(name="status", data_type="text")]
+    tbl = TableInfo(
+        name="orders",
+        columns=cols,
+        indexes=[IndexInfo(name="ix_status", columns=["status"], is_unique=False)],
+    )
+    out = format_table_context(_db(), tbl, None, None)
+    assert "Indexes:" in out
+    assert "ix_status" in out
+    assert "status" in out
+
+
+def test_renders_unique_index():
+    cols = [ColumnInfo(name="email", data_type="text")]
+    tbl = TableInfo(
+        name="orders",
+        columns=cols,
+        indexes=[IndexInfo(name="uq_email", columns=["email"], is_unique=True)],
+    )
+    out = format_table_context(_db(), tbl, None, None)
+    assert "UNIQUE" in out
+    assert "uq_email" in out
+
+
+def test_renders_enum_labels():
+    cols = [ColumnInfo(name="status", data_type="text", enum_labels=["new", "paid", "cancelled"])]
+    out = format_table_context(_db(), _table(columns=cols), None, None)
+    assert "new" in out
+    assert "paid" in out
+    assert "cancelled" in out
+
+
+def test_renders_sort_key_flag():
+    cols = [ColumnInfo(name="created_at", data_type="timestamp", is_sort_key=True)]
+    out = format_table_context(_db(), _table(columns=cols), None, None)
+    assert "sort key" in out.lower()
+
+
+def test_combined_comment_and_index_and_enum():
+    """Full scenario matching the brief's test template."""
+    cols = [
+        ColumnInfo(
+            name="status",
+            data_type="text",
+            comment="order lifecycle state",
+            enum_labels=["new", "paid"],
+            is_sort_key=True,
+        )
+    ]
+    tbl = TableInfo(
+        name="orders",
+        columns=cols,
+        indexes=[IndexInfo(name="ix_status", columns=["status"], is_unique=False)],
+    )
+    out = format_table_context(_db(), tbl, None, None)
+    assert "order lifecycle state" in out
+    assert "ix_status" in out
+    assert "new" in out and "paid" in out
+
+
+def test_no_comment_artifacts_when_no_comments():
+    """Columns without comments produce no stray dashes or empty comment markers."""
+    cols = [ColumnInfo(name="id", data_type="int", is_primary_key=True, is_nullable=False)]
+    out = format_table_context(_db(), _table(columns=cols), None, None)
+    # No "  id: int PK —" with a trailing dash
+    assert " — " not in out
+    assert "Allowed:" not in out
+
+
+def test_no_index_block_when_no_indexes():
+    """Tables without indexes don't emit an Indexes: section."""
+    out = format_table_context(_db(), _table(), None, None)
+    assert "Indexes:" not in out
+
+
+def test_multi_column_index_rendered():
+    cols = [
+        ColumnInfo(name="tenant_id", data_type="int"),
+        ColumnInfo(name="created_at", data_type="timestamp"),
+    ]
+    tbl = TableInfo(
+        name="orders",
+        columns=cols,
+        indexes=[
+            IndexInfo(
+                name="ix_tenant_created",
+                columns=["tenant_id", "created_at"],
+                is_unique=False,
+            )
+        ],
+    )
+    out = format_table_context(_db(), tbl, None, None)
+    assert "ix_tenant_created" in out
+    assert "tenant_id" in out
+    assert "created_at" in out

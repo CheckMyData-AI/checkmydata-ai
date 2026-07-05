@@ -35,7 +35,14 @@ def format_table_context(
         for col in schema_table.columns:
             pk = " PK" if col.is_primary_key else ""
             null = " NULL" if col.is_nullable else ""
-            cols_lines.append(f"  {col.name}: {col.data_type}{pk}{null}")
+            sort = " [sort key]" if getattr(col, "is_sort_key", False) else ""
+            comment_suffix = f" — {col.comment}" if getattr(col, "comment", None) else ""
+            line = f"  {col.name}: {col.data_type}{pk}{null}{sort}{comment_suffix}"
+            enum_labels = getattr(col, "enum_labels", None)
+            if enum_labels:
+                labels_str = ", ".join(str(v) for v in enum_labels[:20])
+                line += f" | Allowed: [{labels_str}]"
+            cols_lines.append(line)
         parts.append("Columns:\n" + "\n".join(cols_lines))
         if schema_table.foreign_keys:
             fk_lines = [
@@ -43,6 +50,13 @@ def format_table_context(
                 for fk in schema_table.foreign_keys
             ]
             parts.append("FKs:\n" + "\n".join(fk_lines))
+        indexes = getattr(schema_table, "indexes", None)
+        if indexes:
+            idx_lines = []
+            for idx in indexes:
+                u = "UNIQUE " if idx.is_unique else ""
+                idx_lines.append(f"  {u}{idx.name}({', '.join(idx.columns)})")
+            parts.append("Indexes:\n" + "\n".join(idx_lines))
 
     dv_json = getattr(db_entry, "column_distinct_values_json", "{}")
     try:
