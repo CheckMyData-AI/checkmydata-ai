@@ -103,3 +103,53 @@ class TestBuildSearchSnippet:
         text = "x" * 100 + "needle" + "y" * 100
         snippet = build_search_snippet(text, "needle", max_len=60)
         assert "needle" in snippet
+
+
+class TestBuildSynthesisMessagesPartialData:
+    """DATA-04a: truncated results must surface as an explicit PARTIAL DATA line."""
+
+    def test_synthesis_surfaces_partial_data_when_truncated(self):
+        from app.agents.response_builder import ResponseBuilder
+        from app.agents.sql_agent import SQLAgentResult
+        from app.connectors.base import QueryResult
+        from app.llm.base import Message
+
+        sr = SQLAgentResult(
+            query="SELECT SUM(amount) FROM purchases",
+            query_explanation="total revenue",
+            results=QueryResult(columns=["total"], rows=[[123456]], row_count=1, truncated=True),
+        )
+        msgs = ResponseBuilder.build_synthesis_messages(
+            loop_messages=[
+                Message(role="system", content="s"),
+                Message(role="user", content="revenue?"),
+            ],
+            sql_result=sr,
+            knowledge_sources=[],
+            context_window=8000,
+        )
+        joined = "\n".join(m.content for m in msgs)
+        assert "PARTIAL DATA" in joined
+
+    def test_synthesis_no_partial_line_when_not_truncated(self):
+        from app.agents.response_builder import ResponseBuilder
+        from app.agents.sql_agent import SQLAgentResult
+        from app.connectors.base import QueryResult
+        from app.llm.base import Message
+
+        sr = SQLAgentResult(
+            query="SELECT SUM(amount) FROM purchases",
+            query_explanation="total revenue",
+            results=QueryResult(columns=["total"], rows=[[123456]], row_count=1, truncated=False),
+        )
+        msgs = ResponseBuilder.build_synthesis_messages(
+            loop_messages=[
+                Message(role="system", content="s"),
+                Message(role="user", content="revenue?"),
+            ],
+            sql_result=sr,
+            knowledge_sources=[],
+            context_window=8000,
+        )
+        joined = "\n".join(m.content for m in msgs)
+        assert "PARTIAL DATA" not in joined

@@ -255,6 +255,12 @@ class ResponseBuilder:
                         data_parts.append(f"    {row}")
                     if r.row_count > 10:
                         data_parts.append(f"    ... and {r.row_count - 10} more rows")
+                if r.truncated:
+                    data_parts.append(
+                        "    PARTIAL DATA: this result was capped/truncated — any SUM/COUNT "
+                        "shown is a LOWER BOUND over an incomplete set, NOT a full-population "
+                        "total. Say so explicitly in the answer and do not present it as complete."
+                    )
             if sr.insights:
                 for ins in sr.insights[:3]:
                     lbl = ins.get("label", "")
