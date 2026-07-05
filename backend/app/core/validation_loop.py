@@ -145,7 +145,10 @@ class ValidationLoop:
                 span_type="validation",
             ):
                 filter_result = self._enricher.validate_required_filters(
-                    current_query, schema.db_type
+                    current_query,
+                    schema.db_type,
+                    attempt=attempt_num,
+                    max_attempts=self._config.max_retries,
                 )
 
             if not filter_result.is_valid and filter_result.error:
@@ -179,6 +182,10 @@ class ValidationLoop:
                 current_query, current_explanation = repair
                 continue
 
+            # Surface the degrade-not-die warning (SYNC-L1) into the loop's
+            # accumulated warnings so it reaches the user via the final result.
+            if filter_result.warning:
+                all_warnings.append(filter_result.warning)
             all_warnings.extend(filter_result.warnings)
 
             # --- Safety check ---

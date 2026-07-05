@@ -44,8 +44,21 @@ class ContextEnricher:
         self._required_filters_by_table = required_filters_by_table or {}
         self._retry_strategy = RetryStrategy()
 
-    def validate_required_filters(self, query: str, db_type: str) -> ValidationResult:
-        return check_required_filters(query, db_type, self._required_filters_by_table)
+    def validate_required_filters(
+        self,
+        query: str,
+        db_type: str,
+        *,
+        attempt: int = 1,
+        max_attempts: int = 3,
+    ) -> ValidationResult:
+        return check_required_filters(
+            query,
+            db_type,
+            self._required_filters_by_table,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
 
     async def build_repair_context(
         self,

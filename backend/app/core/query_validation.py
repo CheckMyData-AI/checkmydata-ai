@@ -61,6 +61,10 @@ class ValidationResult:
     is_valid: bool
     error: QueryError | None = None
     warnings: list[str] = field(default_factory=list)
+    # SYNC-L1: single user-facing warning for degrade-not-die path (filter guard).
+    # Distinct from the list-valued ``warnings`` used by other validators so the
+    # guard can carry a rich message without touching caller list-extend logic.
+    warning: str | None = None
 
 
 @dataclass
