@@ -1224,3 +1224,186 @@ class TestSqlCaptureDefaults:
         vals = await c.distinct_values("events", "action")
         assert vals == ["foo", "bar"]
         assert "DISTINCT" in c.last_query
+
+
+# ---------------------------------------------------------------------------
+# ClickHouse sort-key / primary-key → is_sort_key  (DBIDX-D4)
+# ---------------------------------------------------------------------------
+
+
+class TestClickHouseSortKey:
+    """Tests for _parse_ch_key_columns (pure parser) and introspect is_sort_key mapping."""
+
+    # ------------------------------------------------------------------
+    # Parser unit tests (no network / no connector instance needed)
+    # ------------------------------------------------------------------
+
+    def test_parses_bare_columns(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        assert _parse_ch_key_columns("user_id, created_at", "") == {"user_id", "created_at"}
+
+    def test_ignores_function_wrapped_but_keeps_arg(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        result = _parse_ch_key_columns("toDate(ts), user_id", "")
+        assert "ts" in result
+        assert "user_id" in result
+
+    def test_empty_keys(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        assert _parse_ch_key_columns("", "") == set()
+
+    def test_primary_key_columns_also_included(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        # primary_key supplements sorting_key
+        result = _parse_ch_key_columns("event_date", "tenant_id, event_date")
+        assert "tenant_id" in result
+        assert "event_date" in result
+
+    def test_deduplicates_across_sorting_and_primary(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        result = _parse_ch_key_columns("id, ts", "id")
+        assert result == {"id", "ts"}
+
+    def test_nested_function_extracts_all_identifiers(self):
+        from app.connectors.clickhouse import _parse_ch_key_columns
+
+        # intHash32(user_id) → user_id, toStartOfHour(ts) → ts
+        result = _parse_ch_key_columns("intHash32(user_id), toStartOfHour(ts)", "")
+        assert "user_id" in result
+        assert "ts" in result
+
+    def test_columninfo_default_is_sort_key_false(self):
+        from app.connectors.base import ColumnInfo
+
+        assert ColumnInfo(name="x", data_type="int").is_sort_key is False
+
+    # ------------------------------------------------------------------
+    # Introspect integration: is_sort_key set on right columns
+    # ------------------------------------------------------------------
+
+    async def test_introspect_sets_is_sort_key_on_key_columns(self):
+        """is_sort_key=True on key columns, False on non-key columns."""
+        from unittest.mock import MagicMock
+
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        mock_client = MagicMock()
+
+        # system.tables row: (name, comment, total_rows, sorting_key, primary_key)
+        tbl_mock = MagicMock()
+        tbl_mock.result_rows = [("events", "", 1000, "user_id, toDate(ts)", "")]
+
+        # system.columns rows: (table, name, type, default_kind, default_expression, comment)
+        col_mock = MagicMock()
+        col_mock.result_rows = [
+            ("events", "user_id", "UInt64", "", "", ""),
+            ("events", "ts", "DateTime", "", "", ""),
+            ("events", "action", "String", "", "", ""),
+        ]
+
+        # system.data_skipping_indices — empty is fine
+        idx_mock = MagicMock()
+        idx_mock.result_rows = []
+
+        def _query(sql, parameters=None):
+            if "sorting_key" in sql:
+                return tbl_mock
+            if "system.columns" in sql:
+                return col_mock
+            if "data_skipping_indices" in sql:
+                return idx_mock
+            return MagicMock(result_rows=[])
+
+        mock_client.query.side_effect = _query
+
+        connector = ClickHouseConnector()
+        connector._client = mock_client
+        connector._config = MagicMock(db_name="mydb")
+
+        schema = await connector.introspect_schema()
+        assert len(schema.tables) == 1
+        cols = {c.name: c for c in schema.tables[0].columns}
+
+        assert cols["user_id"].is_sort_key is True
+        assert cols["ts"].is_sort_key is True
+        assert cols["action"].is_sort_key is False
+
+    async def test_introspect_empty_sorting_key_all_false(self):
+        """When sorting_key and primary_key are both empty, no column is marked."""
+        from unittest.mock import MagicMock
+
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        mock_client = MagicMock()
+
+        tbl_mock = MagicMock()
+        tbl_mock.result_rows = [("logs", "", 0, "", "")]
+
+        col_mock = MagicMock()
+        col_mock.result_rows = [
+            ("logs", "message", "String", "", "", ""),
+        ]
+
+        idx_mock = MagicMock()
+        idx_mock.result_rows = []
+
+        def _query(sql, parameters=None):
+            if "sorting_key" in sql:
+                return tbl_mock
+            if "system.columns" in sql:
+                return col_mock
+            if "data_skipping_indices" in sql:
+                return idx_mock
+            return MagicMock(result_rows=[])
+
+        mock_client.query.side_effect = _query
+
+        connector = ClickHouseConnector()
+        connector._client = mock_client
+        connector._config = MagicMock(db_name="mydb")
+
+        schema = await connector.introspect_schema()
+        cols = schema.tables[0].columns
+        assert all(not c.is_sort_key for c in cols)
+
+    async def test_introspect_older_ch_no_sorting_key_column(self):
+        """Older CH tables rows without sorting_key/primary_key don't crash."""
+        from unittest.mock import MagicMock
+
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        mock_client = MagicMock()
+
+        # Only 3 columns in tbl row (old format: name, comment, total_rows)
+        tbl_mock = MagicMock()
+        tbl_mock.result_rows = [("t1", "", 5)]
+
+        col_mock = MagicMock()
+        col_mock.result_rows = [("t1", "id", "UInt32", "", "", "")]
+
+        idx_mock = MagicMock()
+        idx_mock.result_rows = []
+
+        def _query(sql, parameters=None):
+            if "sorting_key" in sql:
+                return tbl_mock
+            if "system.columns" in sql:
+                return col_mock
+            if "data_skipping_indices" in sql:
+                return idx_mock
+            return MagicMock(result_rows=[])
+
+        mock_client.query.side_effect = _query
+
+        connector = ClickHouseConnector()
+        connector._client = mock_client
+        connector._config = MagicMock(db_name="mydb")
+
+        schema = await connector.introspect_schema()
+        assert len(schema.tables) == 1
+        assert schema.tables[0].columns[0].is_sort_key is False

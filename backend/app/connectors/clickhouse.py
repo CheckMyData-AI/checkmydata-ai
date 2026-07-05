@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -22,6 +23,40 @@ logger = logging.getLogger(__name__)
 
 # R1-4: all connectors share one process-wide tunnel manager.
 _tunnel_mgr = shared_tunnel_manager
+
+
+def _parse_ch_key_columns(sorting_key: str, primary_key: str) -> set[str]:
+    """Return the set of bare column names referenced by a ClickHouse sorting/primary key.
+
+    ClickHouse stores the key as a comma-separated expression string, e.g.
+    ``"user_id, toDate(ts)"``.  We extract every identifier token from each
+    comma-separated fragment via a simple regex so that both bare column names
+    and function-argument column names are captured.  The caller intersects this
+    set with the table's real column names to avoid false positives from
+    function names themselves (e.g. ``toDate`` is not a column).
+
+    Examples::
+
+        _parse_ch_key_columns("user_id, created_at", "")
+        # → {"user_id", "created_at"}
+
+        _parse_ch_key_columns("toDate(ts), user_id", "")
+        # → {"toDate", "ts", "user_id"}  (caller intersects with real cols → ts, user_id)
+
+        _parse_ch_key_columns("", "")
+        # → set()
+    """
+    candidates: set[str] = set()
+    for key_expr in (sorting_key, primary_key):
+        key_expr = key_expr.strip()
+        if not key_expr:
+            continue
+        # Split on top-level commas (ClickHouse keys are flat — no nested commas
+        # in practice, but regex extraction handles the general case).
+        for token in key_expr.split(","):
+            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", token):
+                candidates.add(ident)
+    return candidates
 
 
 class ClickHouseConnector(BaseConnector):
@@ -164,8 +199,12 @@ class ClickHouseConnector(BaseConnector):
             from ``system.columns`` / ``system.data_skipping_indices`` and
             group in Python.
             """
+            # Fetch sorting_key and primary_key alongside the usual table metadata
+            # (DBIDX-D4).  Older ClickHouse versions that lack these columns will
+            # return rows with len < 5; we guard with len() checks below.
             tbl_result = client.query(
-                "SELECT name, comment, total_rows FROM system.tables WHERE database = %(db)s",
+                "SELECT name, comment, total_rows, sorting_key, primary_key "
+                "FROM system.tables WHERE database = %(db)s",
                 parameters={"db": db_name},
             )
 
@@ -212,11 +251,39 @@ class ClickHouseConnector(BaseConnector):
                 tname = trow[0]
                 tcomment = trow[1] if len(trow) > 1 else ""
                 trow_count = trow[2] if len(trow) > 2 else None
+                # sorting_key / primary_key are present on CH ≥ 20.x; guard for
+                # older deployments that may return shorter rows (DBIDX-D4 DoD).
+                sorting_key = trow[3] if len(trow) > 3 and trow[3] else ""
+                primary_key = trow[4] if len(trow) > 4 and trow[4] else ""
+
+                # Build the candidate key-column set and intersect with real column
+                # names to avoid false positives from function names (e.g. "toDate").
+                real_col_names = {c.name for c in columns_by_table.get(tname, [])}
+                key_candidates = _parse_ch_key_columns(sorting_key, primary_key)
+                key_cols = key_candidates & real_col_names
+
+                # Apply is_sort_key to the ColumnInfo objects in-place.
+                final_cols: list[ColumnInfo] = []
+                for col in columns_by_table.get(tname, []):
+                    if col.name in key_cols:
+                        final_cols.append(
+                            ColumnInfo(
+                                name=col.name,
+                                data_type=col.data_type,
+                                is_nullable=col.is_nullable,
+                                default=col.default,
+                                comment=col.comment,
+                                is_sort_key=True,
+                            )
+                        )
+                    else:
+                        final_cols.append(col)
+
                 tables.append(
                     TableInfo(
                         name=tname,
                         schema=db_name,
-                        columns=columns_by_table.get(tname, []),
+                        columns=final_cols,
                         comment=tcomment if tcomment else None,
                         row_count=trow_count,
                         indexes=indexes_by_table.get(tname, []),
