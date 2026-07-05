@@ -274,26 +274,46 @@ _SORTED_PREFIXES: list[str] = sorted(_DIALING_CODE_MAP.keys(), key=lambda p: -le
 class PhoneCountryResult:
     country_code: str
     country_name: str
+    confidence: float = 1.0  # 0.0 for Unknown/ambiguous; 1.0 for a confirmed E.164 match
 
 
-_UNKNOWN = PhoneCountryResult(country_code="", country_name="Unknown")
+_UNKNOWN = PhoneCountryResult(country_code="", country_name="Unknown", confidence=0.0)
 
 
 class PhoneCountryService:
-    """Resolves phone numbers to country via E.164 dialing code prefixes."""
+    """Resolves phone numbers to country via E.164 dialing code prefixes.
+
+    DATA-05: only international-form inputs are resolved.  A leading ``+`` is
+    canonical E.164; a leading ``00`` is the ITU international call prefix.
+    Any other form (bare national digits, local formats) is ambiguous and
+    returns ``_UNKNOWN`` with ``confidence=0.0`` rather than misclassifying
+    (e.g. a US "702…" number starting with "7" must NOT be labelled Russia).
+    """
 
     def lookup(self, phone: str) -> PhoneCountryResult:
         if not phone:
             return _UNKNOWN
 
-        digits = "".join(_DIGITS_RE.findall(phone))
+        text = phone.strip()
+
+        # DATA-05: require an explicit international prefix before matching.
+        # A '+' prefix is canonical E.164; '00' is the ITU international
+        # exit code.  Bare national numbers are ambiguous — do not guess.
+        if text.startswith("+"):
+            digits = "".join(_DIGITS_RE.findall(text))
+        elif text.startswith("00"):
+            # Strip the two leading '00' exit-code digits then match the rest.
+            digits = "".join(_DIGITS_RE.findall(text))[2:]
+        else:
+            return _UNKNOWN
+
         if not digits:
             return _UNKNOWN
 
         for prefix in _SORTED_PREFIXES:
             if digits.startswith(prefix):
                 cc, cn = _DIALING_CODE_MAP[prefix]
-                return PhoneCountryResult(country_code=cc, country_name=cn)
+                return PhoneCountryResult(country_code=cc, country_name=cn, confidence=1.0)
 
         return _UNKNOWN
 

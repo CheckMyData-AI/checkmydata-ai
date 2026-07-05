@@ -85,10 +85,12 @@ class TestPhoneCountryServiceLookup:
         assert us_result.country_code == "US"
         assert ca_result.country_code == "CA"
 
-    def test_number_without_plus(self):
+    def test_number_without_plus_is_unknown(self):
+        # DATA-05: bare national format (no '+' / '00') must NOT auto-resolve (ambiguous).
         svc = PhoneCountryService()
         result = svc.lookup("442071234567")
-        assert result.country_code == "GB"
+        assert result.country_code == ""
+        assert result.country_name == "Unknown"
 
     def test_number_with_dashes(self):
         svc = PhoneCountryService()
@@ -138,3 +140,48 @@ class TestGetPhoneCountryService:
         s1 = get_phone_country_service()
         s2 = get_phone_country_service()
         assert s1 is s2
+
+
+class TestE164Requirement:
+    """DATA-05: only international-form numbers should resolve; national-format → Unknown."""
+
+    def test_e164_plus_prefix_resolves(self):
+        svc = PhoneCountryService()
+        res = svc.lookup("+79991234567")
+        assert res.country_code == "RU"
+        assert res.confidence == 1.0
+
+    def test_national_format_without_plus_is_unknown(self):
+        """A bare '7…' national number must NOT be mislabeled Russia (DATA-05)."""
+        svc = PhoneCountryService()
+        res = svc.lookup("7999123456")  # no '+', no '00' — ambiguous national format
+        assert res.country_code == ""
+        assert res.country_name == "Unknown"
+        assert res.confidence == 0.0
+
+    def test_double_zero_international_prefix_resolves(self):
+        svc = PhoneCountryService()
+        res = svc.lookup("0033123456789")  # 00 + 33 (France)
+        assert res.country_code == "FR"
+        assert res.confidence == 1.0
+
+    def test_empty_is_unknown_zero_confidence(self):
+        svc = PhoneCountryService()
+        res = svc.lookup("")
+        assert res.country_code == ""
+        assert res.confidence == 0.0
+
+    def test_confidence_field_present_on_resolved_result(self):
+        """confidence=1.0 on any successful E.164 resolve."""
+        svc = PhoneCountryService()
+        res = svc.lookup("+12125551234")
+        assert hasattr(res, "confidence")
+        assert res.confidence == 1.0
+
+    def test_national_format_no_plus_702_is_unknown(self):
+        """702-555-1234 without '+' is ambiguous (leading '7' would be Russia in old code)."""
+        svc = PhoneCountryService()
+        res = svc.lookup("7025551234")
+        assert res.country_code == ""
+        assert res.country_name == "Unknown"
+        assert res.confidence == 0.0
