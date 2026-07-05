@@ -26,6 +26,10 @@ Wave 1 of the intelligence-remediation audit. All 15 tasks committed; ruff/mypy 
 - **DATA-21 (small-fan-out cartesian)** — `xfail` test documents that `_check_cross_stage_consistency` only warns above `cartesian_multiplier` (default 100×); a 2× fan-out passes silently. Known limitation, no over-engineering.
 - **DATA-22 (sampled signals unmarked)** — Null-rate and duplicate-rate warnings now include "sampled" / "advisory, based on sample only" labels so the LLM knows the signal is partial.
 
+### Removed — W4 intelligence-remediation: dead-code pruning (2026-07-06, branch `worktree-intelligence-remediation`)
+
+- **DBIDX-D13 (dead `SchemaIndexer`)** — removed `app/knowledge/schema_indexer.py` and its unit test; schema rendering is unified in `DbIndexService` + `_format_table_context` (T13); no runtime path lost coverage.
+
 ### Added — W0 intelligence-remediation foundations (2026-07-03, branch `worktree-intelligence-remediation`)
 
 Wave 0 of the intelligence-remediation audit (spec `docs/superpowers/specs/2026-07-03-intelligence-remediation-design.md`).
