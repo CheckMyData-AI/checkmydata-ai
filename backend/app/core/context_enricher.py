@@ -31,7 +31,7 @@ class ContextEnricher:
         distinct_values: dict[str, dict[str, list[str]]] | None = None,
         learnings_context: str = "",
         sync_query_tips: str = "",
-        required_filters_by_table: dict[str, set[str]] | None = None,
+        required_filters_by_table: dict[str, set[str]] | dict[str, dict[str, str]] | None = None,
     ):
         self._schema = schema
         self._vector_store = vector_store

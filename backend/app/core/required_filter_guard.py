@@ -112,18 +112,33 @@ def parse_required_columns_from_hint(hint: str) -> set[str]:
 def merge_required_filters(
     sync_filters: dict[str, dict[str, str]],
     index_hints: dict[str, str],
-) -> dict[str, set[str]]:
-    """Merge code_db_sync required_filters_json with db_index query_hints per table."""
-    merged: dict[str, set[str]] = {}
+) -> dict[str, dict[str, str]]:
+    """Merge code_db_sync required_filters_json with db_index query_hints per table.
+
+    Returns ``dict[str, dict[str, str]]`` — column → predicate string — so that
+    data-driven predicates from ``required_filters_json`` (e.g. ``is_active = 1``)
+    are preserved end-to-end and not reduced to bare column names.
+
+    Columns sourced only from index hints receive their legacy predicate via
+    ``_LEGACY_PREDICATES`` (or an empty string for unknown columns, which falls
+    back to a bare presence check in the guard).
+    """
+    merged: dict[str, dict[str, str]] = {}
     for table, filters in sync_filters.items():
-        cols = set(filters.keys())
-        cols |= parse_required_columns_from_hint(index_hints.get(table, ""))
-        if cols:
-            merged[table.lower()] = cols
+        key = table.lower()
+        col_preds: dict[str, str] = dict(filters)  # preserve predicates from sync
+        hint_cols = parse_required_columns_from_hint(index_hints.get(table, ""))
+        for c in hint_cols:
+            col_preds.setdefault(c, _LEGACY_PREDICATES.get(c, ""))
+        if col_preds:
+            merged[key] = col_preds
     for table, hint in index_hints.items():
-        cols = parse_required_columns_from_hint(hint)
-        if cols:
-            merged.setdefault(table.lower(), set()).update(cols)
+        key = table.lower()
+        hint_cols = parse_required_columns_from_hint(hint)
+        if hint_cols:
+            existing = merged.setdefault(key, {})
+            for c in hint_cols:
+                existing.setdefault(c, _LEGACY_PREDICATES.get(c, ""))
     return merged
 
 

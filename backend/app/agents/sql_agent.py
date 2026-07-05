@@ -1637,7 +1637,9 @@ class SQLAgent(BaseAgent):
             logger.debug("_load_sync_filters_and_mappings failed", exc_info=True)
             return "", ""
 
-    async def _load_required_filters_by_table(self, cfg: ConnectionConfig) -> dict[str, set[str]]:
+    async def _load_required_filters_by_table(
+        self, cfg: ConnectionConfig
+    ) -> dict[str, dict[str, str]]:
         """Merge code-DB sync required_filters with db_index query_hints per table."""
         if not cfg.connection_id:
             return {}
