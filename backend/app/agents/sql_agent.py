@@ -79,6 +79,21 @@ def _build_enriched_table_map(entries: list, sync_warnings_map: dict[str, str]) 
     return ", ".join(items) if items else ""
 
 
+def _build_result_validation(agent: SQLAgent):  # noqa: ARG001 — agent reserved for future use
+    """Assemble the shared ResultValidation gate (C-B/C-C, DATA-06).
+
+    Factory is module-level so tests can monkeypatch it without subclassing.
+    Lazy imports avoid circular imports at module load time.
+    """
+    from app.agents.data_gate import DataGate
+    from app.agents.result_validation import ResultValidation
+    from app.agents.validation import AgentResultValidator
+
+    # reconcile keeps its default (sql_results_reconcile free function inside
+    # ResultValidation) — no extra collaborator needed on the single-query path.
+    return ResultValidation(DataGate(), AgentResultValidator())
+
+
 @dataclass
 class SQLAgentResult(AgentResult):
     """Typed result returned by the SQL agent."""
@@ -560,6 +575,16 @@ class SQLAgent(BaseAgent):
         except Exception:
             logger.debug("Sanity check failed (non-critical)", exc_info=True)
 
+        # DATA-06: run the shared ResultValidation hard-checks (DataGate impossible-value
+        # detection) on the single-query path so a 150% conversion or negative count is
+        # flagged before being returned to the LLM/user.
+        try:
+            gate_text = await self._run_result_gate(results, loop_result.query, ctx)
+            if gate_text:
+                formatted += gate_text
+        except Exception:
+            logger.debug("result gate wiring failed (non-critical)", exc_info=True)
+
         return formatted
 
     async def _handle_get_schema_info(
@@ -958,6 +983,50 @@ class SQLAgent(BaseAgent):
                 "confidence": round(entry.confidence, 2),
             }
         )
+
+    # ------------------------------------------------------------------
+    # Shared ResultValidation gate (DATA-06)
+    # ------------------------------------------------------------------
+
+    async def _run_result_gate(
+        self,
+        results: QueryResult,
+        query: str,
+        ctx: AgentContext,
+    ) -> str:
+        """Run the shared post-result gate on the single-query path (DATA-06).
+
+        Returns warning text to append to the tool output when the gate flags
+        an impossible/partial result; empty string on accept/no issue.
+        Never raises — any internal failure is swallowed at DEBUG level so it
+        cannot break the query response path.
+        """
+        try:
+            gate = _build_result_validation(self)
+            directive = gate.evaluate(  # SYNC — do not await
+                results,
+                question=getattr(ctx, "user_question", "") or query,
+                sql=query,
+                truncated=getattr(results, "truncated", None),
+            )
+        except Exception:
+            logger.debug("single-query result gate failed (non-critical)", exc_info=True)
+            return ""
+
+        if directive.action in ("block", "warn", "requery"):
+            if directive.action == "block":
+                try:
+                    from app.core.metrics import get_metrics_collector
+
+                    get_metrics_collector().inc("datagate_block_total", path="single_query")
+                except Exception:
+                    logger.debug("datagate_block_total inc failed (non-critical)", exc_info=True)
+            hint_lines = ("\n  " + "\n  ".join(directive.hints)) if directive.hints else ""
+            return (
+                f"\n\n**DATA QUALITY WARNING ({directive.action.upper()}):** "
+                f"{directive.reason}{hint_lines}"
+            )
+        return ""
 
     # ------------------------------------------------------------------
     # Sanity checker integration
