@@ -843,3 +843,48 @@ class TestRunEdgeCases:
             )
 
         mock_connector.disconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_diagnostic_query_surfaces_truncation(self, agent, context):
+        """DATA-17: truncated result must carry a WARNING note in the output."""
+        mock_connector = AsyncMock()
+        mock_connector.connect = AsyncMock()
+        mock_connector.disconnect = AsyncMock()
+        mock_connector.execute_query = AsyncMock(
+            return_value=QueryResult(
+                columns=["x"],
+                rows=[[i] for i in range(20)],
+                row_count=20,
+                truncated=True,
+            )
+        )
+
+        with patch("app.agents.investigation_agent.get_connector", return_value=mock_connector):
+            out = await agent._handle_run_diagnostic_query(
+                {"query": "SELECT x FROM t", "hypothesis": "h"}, context
+            )
+
+        assert "truncat" in out.lower() or "capped" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_diagnostic_query_surfaces_truncation_by_row_count(self, agent, context):
+        """DATA-17: even when truncated=False, >15 rows must still carry a truncation note."""
+        mock_connector = AsyncMock()
+        mock_connector.connect = AsyncMock()
+        mock_connector.disconnect = AsyncMock()
+        mock_connector.execute_query = AsyncMock(
+            return_value=QueryResult(
+                columns=["x"],
+                rows=[[i] for i in range(20)],
+                row_count=20,
+                truncated=False,
+            )
+        )
+
+        with patch("app.agents.investigation_agent.get_connector", return_value=mock_connector):
+            out = await agent._handle_run_diagnostic_query(
+                {"query": "SELECT x FROM t", "hypothesis": "h"}, context
+            )
+
+        # Should contain warning about truncation
+        assert "WARNING" in out or "truncat" in out.lower() or "capped" in out.lower()

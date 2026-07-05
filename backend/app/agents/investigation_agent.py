@@ -205,8 +205,12 @@ class InvestigationAgent(BaseAgent):
             lines = [f"Hypothesis: {hypothesis}", f"Columns: {', '.join(result.columns)}"]
             for row in result.rows[:15]:
                 lines.append(" | ".join(str(v) for v in row))
-            if result.row_count > 15:
-                lines.append(f"... {result.row_count - 15} more rows")
+            if result.row_count > 15 or result.truncated:
+                lines.append(
+                    f"... {max(result.row_count - 15, 0)} more rows. "
+                    "WARNING: this diagnostic sample is TRUNCATED/capped — do NOT reason about "
+                    "totals or store a 'corrected' query from it without re-running unbounded."
+                )
             return "\n".join(lines)
         finally:
             await connector.disconnect()

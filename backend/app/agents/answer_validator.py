@@ -64,6 +64,8 @@ class AnswerValidator:
         question: str,
         answer: str,
         sql_summaries: list[str] | None = None,
+        row_count: int | None = None,
+        truncated: bool = False,
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> AnswerValidationResult:
@@ -87,10 +89,20 @@ class AnswerValidator:
         if sql_summaries:
             evidence = "\n\n## Supporting data\n" + "\n".join(f"- {s}" for s in sql_summaries[:5])
 
+        data_facts = ""
+        if row_count is not None:
+            data_facts += f"\n\n## Result facts\n- rows returned: {row_count}"
+            if truncated:
+                data_facts += (
+                    "\n- PARTIAL DATA: the result was TRUNCATED/capped — any total is a "
+                    "lower bound. An answer that presents it as a complete/exact total does "
+                    "NOT correctly address the question."
+                )
+
         user_payload = (
             f"## User question\n{question.strip()}\n\n"
             f"## Agent answer\n{answer.strip()[:4000]}"
-            f"{evidence}"
+            f"{evidence}{data_facts}"
         )
 
         try:

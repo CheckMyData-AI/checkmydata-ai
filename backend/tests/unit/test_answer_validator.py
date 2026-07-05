@@ -180,6 +180,97 @@ class TestAnswerValidator:
         assert verdict.confidence == 0.0
 
 
+class TestAnswerValidatorTruncation:
+    """DATA-16: validator receives row_count/truncated and injects them into the payload."""
+
+    @pytest.mark.asyncio
+    async def test_validate_injects_truncation_into_payload(self):
+        from app.llm.base import LLMResponse
+
+        captured: dict = {}
+
+        async def _complete(*, messages, **kwargs):
+            captured["user"] = messages[-1].content
+            return LLMResponse(
+                content='{"addresses_question": true, "confidence": 0.9, '
+                '"is_partial": false, "reason": "ok"}',
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                model="gpt-4",
+                provider="openai",
+            )
+
+        llm = MagicMock()
+        llm.complete = _complete
+        v = AnswerValidator(llm)
+        await v.validate(
+            question="total revenue?",
+            answer="Revenue is 123456.",
+            sql_summaries=["1 row"],
+            row_count=10000,
+            truncated=True,
+        )
+        payload = captured["user"]
+        assert "PARTIAL" in payload or "truncat" in payload.lower()
+        assert "10000" in payload
+
+    @pytest.mark.asyncio
+    async def test_validate_row_count_only_no_truncation_flag(self):
+        """row_count without truncated=True should still surface row count in payload."""
+        from app.llm.base import LLMResponse
+
+        captured: dict = {}
+
+        async def _complete(*, messages, **kwargs):
+            captured["user"] = messages[-1].content
+            return LLMResponse(
+                content='{"addresses_question": true, "confidence": 0.9, '
+                '"is_partial": false, "reason": "ok"}',
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                model="gpt-4",
+                provider="openai",
+            )
+
+        llm = MagicMock()
+        llm.complete = _complete
+        v = AnswerValidator(llm)
+        await v.validate(
+            question="total revenue?",
+            answer="Revenue is 5.",
+            row_count=5,
+            truncated=False,
+        )
+        assert "5" in captured["user"]
+
+    @pytest.mark.asyncio
+    async def test_validate_no_row_count_omits_facts_section(self):
+        """When row_count is None the payload should not have a spurious facts section."""
+        from app.llm.base import LLMResponse
+
+        captured: dict = {}
+
+        async def _complete(*, messages, **kwargs):
+            captured["user"] = messages[-1].content
+            return LLMResponse(
+                content='{"addresses_question": true, "confidence": 0.9, '
+                '"is_partial": false, "reason": "ok"}',
+                tool_calls=[],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                model="gpt-4",
+                provider="openai",
+            )
+
+        llm = MagicMock()
+        llm.complete = _complete
+        v = AnswerValidator(llm)
+        await v.validate(
+            question="q?",
+            answer="some answer",
+        )
+        assert "Result facts" not in captured["user"]
+
+
 class TestAnswerValidatorUsageSink:
     """R2 / C3 — validator must forward its UsageSink to the LLM call."""
 
