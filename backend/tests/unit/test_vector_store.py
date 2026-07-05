@@ -243,28 +243,21 @@ class TestGetEmbeddingFunction:
         assert result is None
 
     def test_returns_embedding_fn_when_model_set(self):
+        # SentenceTransformerEmbeddingFunction is now imported at module level,
+        # so patch the name in the vector_store module's namespace directly.
+        mock_fn = MagicMock()
+        mock_fn._model = MagicMock()
+        mock_fn._model.max_seq_length = 512  # matches default embedder_max_tokens
         with (
             patch("app.knowledge.vector_store.settings") as m,
             patch(
-                "app.knowledge.vector_store."
-                "chromadb.utils.embedding_functions."
-                "SentenceTransformerEmbeddingFunction",
-                create=True,
-            ) as mock_cls,
+                "app.knowledge.vector_store.SentenceTransformerEmbeddingFunction",
+                return_value=mock_fn,
+            ),
         ):
             m.chroma_embedding_model = "model-v1"
-            mock_fn = MagicMock()
-            mock_cls.return_value = mock_fn
-
-            with patch.dict(
-                "sys.modules",
-                {
-                    "chromadb.utils.embedding_functions": MagicMock(
-                        SentenceTransformerEmbeddingFunction=mock_cls
-                    )
-                },
-            ):
-                result = _get_embedding_function()
+            m.embedder_max_tokens = 512
+            result = _get_embedding_function()
         assert result is mock_fn
 
     def test_falls_back_on_import_error(self):

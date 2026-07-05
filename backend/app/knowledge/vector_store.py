@@ -9,17 +9,61 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+try:
+    from chromadb.utils.embedding_functions import (
+        SentenceTransformerEmbeddingFunction,
+    )
+except Exception:  # pragma: no cover
+    SentenceTransformerEmbeddingFunction = None  # type: ignore[assignment,misc]
+
+
+def _check_window_mismatch(ef: object, configured_max: int, model_name: str) -> None:
+    """Emit a WARNING when the loaded model's ``max_seq_length`` differs from
+    ``settings.embedder_max_tokens``.
+
+    This is a best-effort check: if the attribute is missing (model didn't
+    expose it) or any other error occurs the check is silently skipped so the
+    startup path is never disrupted.
+    """
+    try:
+        model_max = ef._model.max_seq_length  # type: ignore[attr-defined]
+        if model_max != configured_max:
+            logger.warning(
+                "Embedding window mismatch: model '%s' max_seq_length=%d but "
+                "embedder_max_tokens=%d. Existing ChromaDB collections hold "
+                "stale/truncated vectors. Run queue_embedding_reindex() to "
+                "drop and re-embed all project collections before serving queries.",
+                model_name,
+                model_max,
+                configured_max,
+            )
+    except Exception:
+        # Attribute absent or any other error — skip silently.
+        pass
+
 
 def _get_embedding_function() -> EmbeddingFunction | None:
-    """Return a custom embedding function if configured, else None (ChromaDB default)."""
+    """Return a custom embedding function if configured, else None (ChromaDB default).
+
+    Also runs a best-effort startup check: if the loaded model's
+    ``max_seq_length`` disagrees with ``settings.embedder_max_tokens`` a
+    WARNING is logged so operators know a ``queue_embedding_reindex`` run is
+    required before search quality is reliable.
+    """
     model_name = settings.chroma_embedding_model
     if not model_name:
         return None
+    if SentenceTransformerEmbeddingFunction is None:
+        logger.warning(
+            "Failed to load embedding model %s, falling back to default",
+            model_name,
+        )
+        return None
     try:
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
         logger.info("ChromaDB: using custom embedding model %s", model_name)
-        return SentenceTransformerEmbeddingFunction(model_name=model_name)
+        ef = SentenceTransformerEmbeddingFunction(model_name=model_name)
+        _check_window_mismatch(ef, settings.embedder_max_tokens, model_name)
+        return ef
     except Exception:
         logger.warning(
             "Failed to load embedding model %s, falling back to default",
