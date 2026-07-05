@@ -10,9 +10,10 @@ Decision table for :meth:`ResultValidation.evaluate`:
 2. ``validate_sql_result`` fails → **requery** (hints = gate error messages)
 3. zero rows + ``query_empty_result_retry`` flag → **requery**
 4. ``qr.truncated`` or ``truncated`` kwarg  → **warn**  (partial data)
-5. otherwise                  → **accept**
+5. :class:`DataGate` hard-checks (impossible values) → **block**
+6. otherwise                  → **accept**
 
-:class:`DataGate` is held for W3 stage-level integration; the
+:class:`DataGate` is invoked in branch 5 (not held for W3); the
 :attr:`reconcile` callable is available for multi-result cross-checking at
 the call-site level.
 """

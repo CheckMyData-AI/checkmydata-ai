@@ -1013,14 +1013,24 @@ class SQLAgent(BaseAgent):
             logger.debug("single-query result gate failed (non-critical)", exc_info=True)
             return ""
 
-        if directive.action in ("block", "warn", "requery"):
-            if directive.action == "block":
-                try:
-                    from app.core.metrics import get_metrics_collector
-
-                    get_metrics_collector().inc("datagate_block_total", path="single_query")
-                except Exception:
-                    logger.debug("datagate_block_total inc failed (non-critical)", exc_info=True)
+        if directive.action == "block":
+            # DATA-06: metric is counted ONCE inside ResultValidation.evaluate — do NOT
+            # increment here to avoid the double-count bug.
+            hint_lines = ("\n  " + "\n  ".join(directive.hints)) if directive.hints else ""
+            # Emit a hard-stop marker distinct from a warn so the LLM treats this as a
+            # deterministic data-integrity failure (W1 behaviour): it must NOT use the
+            # result.  Appending this to the tool output ensures the orchestrator/LLM
+            # sees the veto on its very next iteration rather than silently accepting
+            # the impossible value.  (Option B surface: bounded-retry routing would
+            # require invasive refactor of the ValidationLoop contract; the LLM hard-stop
+            # is the correct W1 signal here.)
+            return (
+                f"\n\n**[DATA-GATE BLOCK — DO NOT USE THIS RESULT]** "
+                f"Impossible data value detected: {directive.reason}"
+                f"{hint_lines}\n"
+                f"You MUST rewrite the query or report a data-integrity issue to the user."
+            )
+        if directive.action in ("warn", "requery"):
             hint_lines = ("\n  " + "\n  ".join(directive.hints)) if directive.hints else ""
             return (
                 f"\n\n**DATA QUALITY WARNING ({directive.action.upper()}):** "

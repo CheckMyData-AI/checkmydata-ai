@@ -147,7 +147,9 @@ def test_negative_count_blocks_or_requeries():
         rows=[[-5]],
         row_count=1,
     )
-    d = _rv().evaluate(qr, question="how many orders", sql="SELECT count(*) AS order_count FROM orders")
+    d = _rv().evaluate(
+        qr, question="how many orders", sql="SELECT count(*) AS order_count FROM orders"
+    )
     assert d.action in ("block", "requery"), (
         f"Expected block or requery for negative count but got {d.action!r}: {d.reason}"
     )
@@ -156,7 +158,9 @@ def test_negative_count_blocks_or_requeries():
 def test_clean_result_still_accepts():
     """Regression guard: a clean numeric result must still return accept after DATA-06."""
     qr = QueryResult(columns=["revenue"], rows=[[9999.99]], row_count=1)
-    d = _rv().evaluate(qr, question="total revenue", sql="SELECT SUM(revenue) AS revenue FROM sales")
+    d = _rv().evaluate(
+        qr, question="total revenue", sql="SELECT SUM(revenue) AS revenue FROM sales"
+    )
     assert d.action == "accept"
 
 
@@ -177,8 +181,33 @@ def test_datagate_block_increments_metric():
     ):
         d = _rv().evaluate(qr, question="conversion", sql="SELECT conversion FROM kpi")
 
-    if d.action in ("block", "requery"):
-        mock_collector.inc.assert_called()
+    assert d.action in ("block", "requery"), (
+        f"Expected block/requery for impossible value but got {d.action!r}"
+    )
+    mock_collector.inc.assert_called()
+
+
+def test_datagate_block_increments_metric_exactly_once():
+    """DataGate block must increment datagate_block_total by EXACTLY 1 — not 0, not 2+."""
+    from decimal import Decimal
+    from unittest.mock import MagicMock, patch
+
+    qr = QueryResult(
+        columns=["conversion"],
+        rows=[[Decimal("150.0")]],
+        row_count=1,
+    )
+    mock_collector = MagicMock()
+    with patch(
+        "app.agents.result_validation.get_metrics_collector",
+        return_value=mock_collector,
+    ):
+        d = _rv().evaluate(qr, question="conversion", sql="SELECT conversion FROM kpi")
+
+    assert d.action in ("block", "requery"), (
+        f"Expected block/requery for 150% conversion but got {d.action!r}"
+    )
+    mock_collector.inc.assert_called_once_with("datagate_block_total", check="value_range")
 
 
 # ---------------------------------------------------------------------------

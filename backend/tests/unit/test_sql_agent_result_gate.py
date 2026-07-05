@@ -54,7 +54,13 @@ async def test_result_gate_silent_on_accept(monkeypatch):
 
 
 async def test_result_gate_increments_datagate_block_total(monkeypatch):
-    """Blocking result increments the datagate_block_total metric."""
+    """DATA-06: _run_result_gate must NOT double-count datagate_block_total.
+
+    The metric is incremented ONCE inside ResultValidation.evaluate — not in
+    _run_result_gate.  This test verifies (a) warning text is still emitted on
+    a block directive and (b) the counter does NOT change a second time inside
+    _run_result_gate itself.
+    """
     from app.agents import sql_agent as sql_agent_mod
     from app.agents.result_validation import ResultDirective
     from app.core.metrics import get_metrics_collector
@@ -81,7 +87,13 @@ async def test_result_gate_increments_datagate_block_total(monkeypatch):
     text = await agent._run_result_gate(qr, "SELECT COUNT(*) FROM t", ctx)
 
     after = collector.snapshot_counters().get("datagate_block_total", 0)
-    assert after > before, "datagate_block_total should increment on block"
+    # The metric must NOT be incremented inside _run_result_gate (DATA-06 fix).
+    # ResultValidation.evaluate is mocked here so the evaluate-side increment
+    # is also skipped — counter must stay flat.
+    assert after == before, (
+        "datagate_block_total must NOT be incremented inside _run_result_gate "
+        f"(double-count fix DATA-06); before={before}, after={after}"
+    )
     assert text != "", "warning text should be non-empty on block"
 
 
