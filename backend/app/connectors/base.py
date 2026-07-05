@@ -368,12 +368,48 @@ class DatabaseAdapter(DataSourceAdapter):
         )
 
     async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
-        """Distinct values of a column (dialect-aware; Wave 4 impl). Contract C-D."""
-        raise NotImplementedError
+        """Distinct non-NULL values of a column, ordered, capped at *limit*.
+
+        SQL default implementation — works for PostgreSQL and MySQL.
+        ClickHouse inherits this unchanged (standard SQL dialect).
+        Non-SQL adapters (e.g. MongoDB) override this method entirely.
+        Contract C-D / DBIDX-D2.
+        """
+        tq = self._quote_identifier(table)
+        cq = self._quote_identifier(column)
+        qr = await self.execute_query(
+            f"SELECT DISTINCT {cq} FROM {tq} "
+            f"WHERE {cq} IS NOT NULL "
+            f"ORDER BY {cq} "
+            f"LIMIT {int(limit)}"
+        )
+        if qr.error or not qr.rows:
+            return []
+        return [str(r[0]) for r in qr.rows if r[0] is not None][:limit]
 
     async def approx_stats(self, table: str, column: str) -> ColumnStats:
-        """Approximate distinct_count/null_rate/min/max (dialect-aware; Wave 4). Contract C-D."""
-        raise NotImplementedError
+        """Return approximate per-column statistics (distinct count, null rate, min, max).
+
+        SQL default — uses standard COUNT(DISTINCT ...) / CASE-based null count.
+        ClickHouse overrides this to use ``uniqExact`` / ``countIf``.
+        Non-SQL adapters override entirely.
+        Contract C-D / DBIDX-D9.
+        """
+        tq = self._quote_identifier(table)
+        cq = self._quote_identifier(column)
+        qr = await self.execute_query(
+            f"SELECT COUNT(DISTINCT {cq}) AS dc, "
+            f"SUM(CASE WHEN {cq} IS NULL THEN 1 ELSE 0 END) AS nulls, "
+            f"COUNT(*) AS total, "
+            f"MIN({cq}) AS mn, "
+            f"MAX({cq}) AS mx "
+            f"FROM {tq}"
+        )
+        if qr.error or not qr.rows:
+            return ColumnStats()
+        dc, nulls, total, mn, mx = qr.rows[0]
+        null_rate = (nulls / total) if total else None
+        return ColumnStats(distinct_count=dc, null_rate=null_rate, min_value=mn, max_value=mx)
 
     @property
     @abstractmethod

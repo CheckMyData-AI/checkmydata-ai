@@ -9,6 +9,7 @@ import clickhouse_connect
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
+    ColumnStats,
     ConnectionConfig,
     IndexInfo,
     QueryResult,
@@ -236,3 +237,33 @@ class ClickHouseConnector(BaseConnector):
         except Exception as exc:
             logger.warning("ClickHouse test_connection failed: %s", exc)
             return False
+
+    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+        """ClickHouse override: use ``uniqExact`` / ``countIf`` / ``min`` / ``max``.
+
+        ClickHouse supports backtick-quoted identifiers.  Standard
+        ``COUNT(DISTINCT ...)`` is valid SQL but ``uniqExact`` is the idiomatic
+        ClickHouse function that matches ``DISTINCT`` semantics exactly.
+        ``countIf(col IS NULL)`` replaces the CASE-based null counter from the
+        base implementation.  Contract C-D / DBIDX-D9.
+        """
+
+        def _bq(name: str) -> str:
+            """Backtick-quote a ClickHouse identifier."""
+            return f"`{name.replace('`', '``')}`"
+
+        tq = _bq(table)
+        cq = _bq(column)
+        qr = await self.execute_query(
+            f"SELECT uniqExact({cq}) AS dc, "
+            f"countIf({cq} IS NULL) AS nulls, "
+            f"count() AS total, "
+            f"min({cq}) AS mn, "
+            f"max({cq}) AS mx "
+            f"FROM {tq}"
+        )
+        if qr.error or not qr.rows:
+            return ColumnStats()
+        dc, nulls, total, mn, mx = qr.rows[0]
+        null_rate = (nulls / total) if total else None
+        return ColumnStats(distinct_count=dc, null_rate=null_rate, min_value=mn, max_value=mx)

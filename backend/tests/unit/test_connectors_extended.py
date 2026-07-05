@@ -1005,3 +1005,222 @@ class TestRowCountTruncationContract:
         assert result.truncated is True
         # row_count == number of rows actually returned (the capped count).
         assert result.row_count == len(result.rows) == MAX_RESULT_ROWS
+
+
+# ---------------------------------------------------------------------------
+# T2: SQL-dialect distinct_values / approx_stats (DBIDX-D2/D9)
+# ---------------------------------------------------------------------------
+
+
+class TestSqlCaptureDefaults:
+    """Test SQL shape (no live DB) for distinct_values and approx_stats.
+
+    Each test subclasses a concrete connector but monkeypatches execute_query
+    so no real database connection is needed.  We verify:
+    - The generated SQL contains correct keywords and dialect-aware quoting.
+    - Parsed results match expected shapes.
+    - Error path degrades gracefully to [] / ColumnStats().
+    """
+
+    # ------------------------------------------------------------------
+    # Stub helpers
+    # ------------------------------------------------------------------
+
+    def _make_pg_stub(self, qr):
+        from app.connectors.postgres import PostgresConnector
+
+        class _StubPG(PostgresConnector):
+            def __init__(self, fixed_qr):
+                PostgresConnector.__init__(self)
+                self._qr = fixed_qr
+                self.last_query: str = ""
+
+            async def execute_query(self, query, params=None, *, timeout_seconds=None):
+                self.last_query = query
+                return self._qr
+
+        return _StubPG(qr)
+
+    def _make_mysql_stub(self, qr):
+        from app.connectors.mysql import MySQLConnector
+
+        class _StubMy(MySQLConnector):
+            def __init__(self, fixed_qr):
+                MySQLConnector.__init__(self)
+                self._qr = fixed_qr
+                self.last_query: str = ""
+
+            async def execute_query(self, query, params=None, *, timeout_seconds=None):
+                self.last_query = query
+                return self._qr
+
+        return _StubMy(qr)
+
+    def _make_ch_stub(self, qr):
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        class _StubCH(ClickHouseConnector):
+            def __init__(self, fixed_qr):
+                ClickHouseConnector.__init__(self)
+                self._qr = fixed_qr
+                self.last_query: str = ""
+
+            async def execute_query(self, query, params=None, *, timeout_seconds=None):
+                self.last_query = query
+                return self._qr
+
+        return _StubCH(qr)
+
+    # ------------------------------------------------------------------
+    # distinct_values — SQL shape & result parsing
+    # ------------------------------------------------------------------
+
+    async def test_distinct_values_sql_quotes_and_caps(self):
+        """PG: double-quoted identifiers, DISTINCT keyword, LIMIT, NULLs dropped."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_pg_stub(QueryResult(columns=["s"], rows=[["a"], ["b"], [None]]))
+        vals = await c.distinct_values("orders", "status", limit=50)
+        assert vals == ["a", "b"]  # NULL row dropped
+        assert '"orders"' in c.last_query
+        assert '"status"' in c.last_query
+        assert "DISTINCT" in c.last_query
+        assert "LIMIT 50" in c.last_query
+
+    async def test_distinct_values_error_degrades_to_empty_list(self):
+        """Error result degrades gracefully to empty list."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_pg_stub(QueryResult(error="boom"))
+        assert await c.distinct_values("t", "c") == []
+
+    async def test_distinct_values_empty_rows_returns_empty_list(self):
+        """Empty result set returns empty list."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_pg_stub(QueryResult(columns=["c"], rows=[]))
+        assert await c.distinct_values("t", "c") == []
+
+    async def test_distinct_values_limit_applied(self):
+        """limit parameter is reflected in the generated SQL LIMIT clause."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_pg_stub(QueryResult(columns=["v"], rows=[["x"]]))
+        await c.distinct_values("tbl", "col", limit=25)
+        assert "LIMIT 25" in c.last_query
+
+    # ------------------------------------------------------------------
+    # approx_stats — SQL shape & result parsing
+    # ------------------------------------------------------------------
+
+    async def test_approx_stats_sql_computes_null_rate(self):
+        """PG: correct column aliases, null_rate = nulls/total."""
+        from app.connectors.base import ColumnStats, QueryResult
+
+        c = self._make_pg_stub(
+            QueryResult(
+                columns=["dc", "nulls", "total", "mn", "mx"],
+                rows=[[4, 2, 10, 1, 99]],
+            )
+        )
+        s = await c.approx_stats("t", "amount")
+        assert isinstance(s, ColumnStats)
+        assert s.distinct_count == 4
+        assert s.null_rate == pytest.approx(0.2)
+        assert s.min_value == 1
+        assert s.max_value == 99
+        # SQL must use COUNT(DISTINCT ...) for the base implementation
+        assert "COUNT(DISTINCT" in c.last_query
+
+    async def test_approx_stats_zero_total_null_rate_none(self):
+        """null_rate is None when total is 0 (division guard)."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_pg_stub(
+            QueryResult(
+                columns=["dc", "nulls", "total", "mn", "mx"],
+                rows=[[0, 0, 0, None, None]],
+            )
+        )
+        s = await c.approx_stats("t", "c")
+        assert s.null_rate is None
+
+    async def test_approx_stats_error_degrades(self):
+        """Error result degrades gracefully to empty ColumnStats."""
+        from app.connectors.base import ColumnStats, QueryResult
+
+        c = self._make_pg_stub(QueryResult(error="boom"))
+        s = await c.approx_stats("t", "c")
+        assert isinstance(s, ColumnStats)
+        assert s.distinct_count is None
+        assert s.null_rate is None
+
+    # ------------------------------------------------------------------
+    # MySQL — backtick quoting
+    # ------------------------------------------------------------------
+
+    async def test_mysql_backtick_quoting_distinct_values(self):
+        """`distinct_values` for MySQL uses backtick-quoted identifiers."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_mysql_stub(QueryResult(columns=["s"], rows=[["x"]]))
+        await c.distinct_values("orders", "status")
+        assert "`orders`" in c.last_query
+        assert "`status`" in c.last_query
+
+    async def test_mysql_backtick_quoting_approx_stats(self):
+        """`approx_stats` for MySQL uses backtick-quoted identifiers."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_mysql_stub(
+            QueryResult(
+                columns=["dc", "nulls", "total", "mn", "mx"],
+                rows=[[3, 1, 10, 0, 9]],
+            )
+        )
+        s = await c.approx_stats("t", "c")
+        assert "`t`" in c.last_query
+        assert "`c`" in c.last_query
+        assert s.distinct_count == 3
+        assert s.null_rate == pytest.approx(0.1)
+
+    # ------------------------------------------------------------------
+    # ClickHouse — uniqExact override
+    # ------------------------------------------------------------------
+
+    async def test_clickhouse_uniqexact_override(self):
+        """ClickHouse `approx_stats` uses uniqExact, not COUNT(DISTINCT ...)."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_ch_stub(
+            QueryResult(
+                columns=["dc", "nulls", "total", "mn", "mx"],
+                rows=[[3, 0, 5, 0, 9]],
+            )
+        )
+        s = await c.approx_stats("t", "c")
+        assert "uniqExact" in c.last_query
+        assert "COUNT(DISTINCT" not in c.last_query
+        assert s.distinct_count == 3
+
+    async def test_clickhouse_countif_null_syntax(self):
+        """ClickHouse uses countIf(col IS NULL) instead of CASE/SUM."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_ch_stub(
+            QueryResult(
+                columns=["dc", "nulls", "total", "mn", "mx"],
+                rows=[[2, 1, 5, 10, 99]],
+            )
+        )
+        await c.approx_stats("events", "value")
+        assert "countIf" in c.last_query
+
+    async def test_clickhouse_distinct_values_uses_base_sql(self):
+        """ClickHouse distinct_values inherits base SQL (no override needed)."""
+        from app.connectors.base import QueryResult
+
+        c = self._make_ch_stub(QueryResult(columns=["v"], rows=[["foo"], ["bar"]]))
+        vals = await c.distinct_values("events", "action")
+        assert vals == ["foo", "bar"]
+        assert "DISTINCT" in c.last_query
