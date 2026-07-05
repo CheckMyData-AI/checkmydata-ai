@@ -15,7 +15,6 @@ import pytest
 from app.core.schema_cache_registry import invalidate_connection, register_schema_cache, reset
 from app.core.ttl_cache import TTLCache
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

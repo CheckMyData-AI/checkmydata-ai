@@ -26,6 +26,28 @@ Wave 1 of the intelligence-remediation audit. All 15 tasks committed; ruff/mypy 
 - **DATA-21 (small-fan-out cartesian)** — `xfail` test documents that `_check_cross_stage_consistency` only warns above `cartesian_multiplier` (default 100×); a 2× fan-out passes silently. Known limitation, no over-engineering.
 - **DATA-22 (sampled signals unmarked)** — Null-rate and duplicate-rate warnings now include "sampled" / "advisory, based on sample only" labels so the LLM knows the signal is partial.
 
+### Added — W4 intelligence-remediation: schema-capture depth (2026-07-06, branch `worktree-intelligence-remediation`)
+
+Wave 4 of the intelligence-remediation audit. All 18 tasks committed; ruff/mypy clean; unit+integration suite green at 77% coverage (≥72% gate).
+
+- **DBIDX-D1/D2/D3 (MongoDB native introspection)** — `MongoDBConnector` overrides `distinct_values` and `approx_stats` using native aggregation pipelines (`$group`/`$sortByCount`/`$sample`). Field types are inferred by union-sampling nested documents; `$type` operator maps BSON types to SQL equivalents. `ProbeService` routes `distinct_count` and `sample` through connector methods so Mongo never receives a raw SQL fallback.
+- **DBIDX-D4 (ClickHouse sort key)** — `ClickHouseConnector.introspect_schema` reads `system.columns.is_in_sorting_key` and sets `ColumnInfo.is_sort_key`; schema-context renderer surfaces it as `[sort-key]`.
+- **DBIDX-D5 (PostgreSQL enum + CHECK constraints)** — `PostgresConnector.introspect_schema` queries `pg_type`/`pg_enum` for enum labels and `information_schema.check_constraints` for per-column CHECK expressions; both land in `ColumnInfo.enum_labels` and `ColumnInfo.check_constraints`.
+- **DBIDX-D6 (views + `object_kind`)** — all four connectors (PG, MySQL, ClickHouse, MongoDB) index VIEWs and MATERIALIZED VIEWs alongside base tables; `TableInfo.object_kind` is set to `"table"`, `"view"`, or `"materialized_view"` so query generation knows not to DML a view.
+- **DBIDX-D8 (comments + indexes render)** — `_format_table_context` in `DbIndexService` (the default multi-table schema context path) now renders column comments, table/column-level indexes, enum labels, and ClickHouse sort-key markers in the schema block handed to the LLM.
+- **DBIDX-D9 (approx_stats persistence)** — `DbIndexService` persists `ColumnInfo.distinct_count`, `null_pct`, `numeric_format`, and `enum_labels` into `DbIndex.column_stats_json` and `DbIndex.column_distinct_values_json` (JSON columns added in W0); gated by `db_index_stats_enabled` (default on). These fields are now available to the schema-context renderer and downstream consumers (R9/D7 handoff).
+- **DBIDX-D10 (completeness gate)** — `DbIndexService` emits a deterministic completeness score (0–1) per index run; runs below the threshold are logged as warnings rather than silently accepted; prevents regressions from partial connector failures.
+- **DBIDX-D11 (MongoDB field inference)** — MongoDB schema inference samples `mongo_schema_sample_size` (default 100) documents per collection, unions field paths across the sample, and derives `ColumnInfo` entries for nested sub-document paths; wider schemas with optional fields get better coverage.
+- **DBIDX-D12 (schema-cache bust)** — `SchemaCacheRegistry` invalidates the 300-second TTL schema cache on explicit re-index or schema-change event so a re-index is immediately visible to the next query agent turn.
+- **DBIDX-D14 (reltuples < 0 fix)** — `PostgresConnector` treats `pg_class.reltuples < 0` (un-analyzed tables in PG 13+) as `None` (unknown) rather than surfacing a negative row count that confuses LLM table selection.
+- **DBIDX-D15 (LLM cap)** — DB-indexing LLM analysis is capped at `db_index_max_tables_analyzed` (default 500) tables per run; tables beyond the cap receive a deterministic fallback analysis to prevent runaway cost on very wide schemas.
+- **DBIDX-D16 (column prompt cap)** — the LLM analysis prompt is capped at `db_index_max_prompt_columns` (default 100) columns per table; excess columns are replaced with a `"(… N more columns)"` note.
+- **DBIDX-D17 (ClickHouse freshness)** — ClickHouse connector surfaces table `last_modified` from `system.tables.metadata_modification_time` so `KnowledgeFreshnessService` can detect stale schema without a full re-index.
+- **DBIDX-D18 (MongoDB freshness)** — MongoDB connector surfaces collection `last_modified` approximated from `collStats.lastModified` (if present) or `$natural` order sampling so freshness checks work on document stores.
+- **Pipeline routed via connector methods** — `ProbeService` dialect-aware dispatch means `sample(n)`, `distinct_count(col)`, and `approx_stats(col)` calls go through each connector's native implementation (T6/T7); no raw SQL fallbacks for MongoDB.
+
+**W4 handoff note (R9/D7):** `ColumnInfo.distinct_values`, `distinct_count`, `numeric_format`, and `enum_labels` are now populated by all connectors and persisted to `DbIndex.column_stats_json` / `column_distinct_values_json`; downstream waves can read these from the index without re-querying the DB.
+
 ### Removed — W4 intelligence-remediation: dead-code pruning (2026-07-06, branch `worktree-intelligence-remediation`)
 
 - **DBIDX-D13 (dead `SchemaIndexer`)** — removed `app/knowledge/schema_indexer.py` and its unit test; schema rendering is unified in `DbIndexService` + `_format_table_context` (T13); no runtime path lost coverage.
