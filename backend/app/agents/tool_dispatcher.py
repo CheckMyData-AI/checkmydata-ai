@@ -613,11 +613,7 @@ class ToolDispatcher:
             for row in result_qr.rows[:5]:
                 parts.append(" | ".join(str(v) for v in row))
             if result_qr.row_count > 5:
-                parts.append(
-                    f"\nFull enriched data contains {result_qr.row_count} rows. "
-                    "Use process_data with operation='aggregate_data' to compute "
-                    "groupings and statistics over the complete dataset."
-                )
+                parts.append("\n" + self._full_data_hint(result_qr.row_count, result_qr.truncated))
 
         await self._tracker.emit(wf_id, "thinking", "completed", processed.summary[:120])
         return "\n".join(parts)
@@ -663,6 +659,26 @@ class ToolDispatcher:
             except (ValueError, TypeError):
                 logger.warning("process_data: could not parse params_json")
         return params
+
+    @staticmethod
+    def _full_data_hint(row_count: int, truncated: bool) -> str:
+        """Guidance line for the LLM after enrichment.
+
+        DATA-02: never describe a row-capped/truncated result as "the complete
+        dataset" — that makes the model aggregate a sample as the whole.
+        """
+        if truncated:
+            return (
+                f"WARNING: this enriched data is a CAPPED/TRUNCATED SAMPLE of "
+                f"{row_count} row(s) — any sum/count you compute over it is a lower bound. "
+                "Re-run the underlying query with a tighter WHERE or server-side aggregation "
+                "before reporting totals."
+            )
+        return (
+            f"Full enriched data contains {row_count} rows. Use process_data with "
+            "operation='aggregate_data' to compute groupings and statistics over "
+            "the complete dataset."
+        )
 
     async def _handle_search_codebase(
         self,
