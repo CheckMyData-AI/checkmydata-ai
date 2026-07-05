@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 
@@ -54,6 +54,21 @@ def _build_check_map(
         key = (row["table_schema"], row["table_name"])
         result.setdefault(key, []).append(row["expr"])
     return result
+
+
+def _map_pg_object_kind(table_type: str) -> Literal["table", "view", "matview"]:
+    """Map an ``information_schema.tables.table_type`` (or sentinel) to an ``object_kind`` value.
+
+    Accepted inputs:
+    - ``"BASE TABLE"``      → ``"table"``
+    - ``"VIEW"``            → ``"view"``
+    - ``"MATERIALIZED VIEW"`` → ``"matview"``  (sentinel used for pg_matviews rows)
+    """
+    if table_type == "VIEW":
+        return "view"
+    if table_type == "MATERIALIZED VIEW":
+        return "matview"
+    return "table"
 
 
 def _normalize_reltuples(approx_rows: int | None) -> int | None:
@@ -260,18 +275,31 @@ class PostgresConnector(BaseConnector):
         _excluded = ("pg_catalog", "information_schema")
         tables: list[TableInfo] = []
         async with self._pool.acquire() as conn:
-            # 1) All tables (already bulk)
+            # 1) All base tables and (regular) views — MATERIALIZED VIEWs are
+            #    not present in information_schema.tables; they're fetched in
+            #    step 1b via pg_matviews.
             table_rows = await conn.fetch(
                 """
                 SELECT t.table_schema, t.table_name,
+                       t.table_type,
                        c.reltuples::bigint AS approx_rows,
                        obj_description(c.oid) AS table_comment
                 FROM information_schema.tables t
                 JOIN pg_class c ON c.relname = t.table_name
                 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema
                 WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema')
-                  AND t.table_type = 'BASE TABLE'
+                  AND t.table_type IN ('BASE TABLE', 'VIEW')
                 ORDER BY t.table_schema, t.table_name
+                """
+            )
+
+            # 1b) Materialized views — live in pg_matviews, not information_schema.
+            matview_rows = await conn.fetch(
+                """
+                SELECT schemaname, matviewname
+                FROM pg_matviews
+                WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+                ORDER BY schemaname, matviewname
                 """
             )
 
@@ -412,7 +440,7 @@ class PostgresConnector(BaseConnector):
             )
             check_map = _build_check_map(list(all_check_rows))
 
-            # Assemble TableInfo objects
+            # Assemble TableInfo objects for base tables and regular views.
             for tr in table_rows:
                 schema_name = tr["table_schema"]
                 table_name = tr["table_name"]
@@ -458,6 +486,35 @@ class PostgresConnector(BaseConnector):
                         indexes=idx_map.get(key, []),
                         row_count=_normalize_reltuples(approx_rows),
                         comment=tr["table_comment"],
+                        object_kind=_map_pg_object_kind(tr["table_type"]),
+                    )
+                )
+
+            # Assemble TableInfo objects for materialized views.
+            # information_schema.columns includes matview columns, so col_map
+            # already covers them — no extra column query needed.
+            for mv in matview_rows:
+                schema_name = mv["schemaname"]
+                table_name = mv["matviewname"]
+                key = (schema_name, table_name)
+                col_rows = col_map.get(key, [])
+                columns = [
+                    ColumnInfo(
+                        name=c["column_name"],
+                        data_type=c["data_type"],
+                        is_nullable=c["is_nullable"] == "YES",
+                        default=c["column_default"],
+                        comment=c["column_comment"],
+                    )
+                    for c in col_rows
+                ]
+                tables.append(
+                    TableInfo(
+                        name=table_name,
+                        schema=schema_name,
+                        columns=columns,
+                        indexes=idx_map.get(key, []),
+                        object_kind="matview",
                     )
                 )
 

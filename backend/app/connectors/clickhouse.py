@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import clickhouse_connect
@@ -57,6 +57,20 @@ def _parse_ch_key_columns(sorting_key: str, primary_key: str) -> set[str]:
             for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", token):
                 candidates.add(ident)
     return candidates
+
+
+def _ch_engine_to_kind(engine: str) -> Literal["table", "view", "matview"]:
+    """Map a ClickHouse ``system.tables.engine`` value to an ``object_kind`` string.
+
+    - ``"View"``              → ``"view"``
+    - ``"MaterializedView"``  → ``"matview"``
+    - anything else           → ``"table"``
+    """
+    if engine == "View":
+        return "view"
+    if engine == "MaterializedView":
+        return "matview"
+    return "table"
 
 
 class ClickHouseConnector(BaseConnector):
@@ -199,11 +213,12 @@ class ClickHouseConnector(BaseConnector):
             from ``system.columns`` / ``system.data_skipping_indices`` and
             group in Python.
             """
-            # Fetch sorting_key and primary_key alongside the usual table metadata
-            # (DBIDX-D4).  Older ClickHouse versions that lack these columns will
-            # return rows with len < 5; we guard with len() checks below.
+            # Fetch sorting_key, primary_key, and engine alongside the usual table
+            # metadata (DBIDX-D4 / DBIDX-D6).  Older ClickHouse versions that lack
+            # these columns will return rows with len < 5; we guard with len() checks.
+            # ``engine`` distinguishes View / MaterializedView from regular tables.
             tbl_result = client.query(
-                "SELECT name, comment, total_rows, sorting_key, primary_key "
+                "SELECT name, comment, total_rows, sorting_key, primary_key, engine "
                 "FROM system.tables WHERE database = %(db)s",
                 parameters={"db": db_name},
             )
@@ -255,6 +270,9 @@ class ClickHouseConnector(BaseConnector):
                 # older deployments that may return shorter rows (DBIDX-D4 DoD).
                 sorting_key = trow[3] if len(trow) > 3 and trow[3] else ""
                 primary_key = trow[4] if len(trow) > 4 and trow[4] else ""
+                # engine column added in DBIDX-D6; guard for rows from older
+                # ClickHouse deployments that may have fewer columns.
+                engine = trow[5] if len(trow) > 5 and trow[5] else ""
 
                 # Build the candidate key-column set and intersect with real column
                 # names to avoid false positives from function names (e.g. "toDate").
@@ -287,6 +305,7 @@ class ClickHouseConnector(BaseConnector):
                         comment=tcomment if tcomment else None,
                         row_count=trow_count,
                         indexes=indexes_by_table.get(tname, []),
+                        object_kind=_ch_engine_to_kind(engine),
                     )
                 )
             return tables

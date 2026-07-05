@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import aiomysql
@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 
 # R1-4: all connectors share one process-wide tunnel manager.
 _tunnel_mgr = shared_tunnel_manager
+
+
+def _map_mysql_object_kind(table_type: str) -> Literal["table", "view", "matview"]:
+    """Map ``information_schema.tables.table_type`` to an ``object_kind`` value.
+
+    MySQL has no materialized views; accepted inputs:
+    - ``"BASE TABLE"`` → ``"table"``
+    - ``"VIEW"``       → ``"view"``
+    """
+    if table_type == "VIEW":
+        return "view"
+    return "table"
 
 
 class MySQLConnector(BaseConnector):
@@ -212,12 +224,12 @@ class MySQLConnector(BaseConnector):
 
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                # 1) All tables
+                # 1) All base tables and views (MySQL has no materialized views).
                 await cur.execute(
                     """
-                    SELECT table_name, table_rows, table_comment
+                    SELECT table_name, table_type, table_rows, table_comment
                     FROM information_schema.tables
-                    WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                    WHERE table_schema = %s AND table_type IN ('BASE TABLE', 'VIEW')
                     """,
                     (db_name,),
                 )
@@ -295,6 +307,9 @@ class MySQLConnector(BaseConnector):
                     tname = tr.get("TABLE_NAME", tr.get("table_name", ""))
                     approx_rows = tr.get("TABLE_ROWS", tr.get("table_rows"))
                     table_comment = tr.get("TABLE_COMMENT", tr.get("table_comment")) or None
+                    raw_table_type = (
+                        tr.get("TABLE_TYPE", tr.get("table_type", "BASE TABLE")) or "BASE TABLE"
+                    )
 
                     columns = [
                         ColumnInfo(
@@ -326,6 +341,7 @@ class MySQLConnector(BaseConnector):
                             indexes=indexes,
                             row_count=int(approx_rows) if approx_rows is not None else None,
                             comment=table_comment,
+                            object_kind=_map_mysql_object_kind(raw_table_type),
                         )
                     )
 
