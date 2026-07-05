@@ -884,9 +884,23 @@ class OrchestratorAgent(BaseAgent):
                 if recent_learnings
                 else active_insights
             )
+        # W2-T8 (RET-R1): route through assemble_knowledge_block so the
+        # context_planner_enabled flag selects pack-vs-legacy at runtime.
+        # When the flag is OFF (default) this is a transparent pass-through to
+        # load_relevant_knowledge; when ON it uses build_context_pack +
+        # pack_context + render_context_block (T15 flips the flag under eval).
         if has_kb and context.user_question:
-            relevant_knowledge = await self._ctx_loader.load_relevant_knowledge(
-                context.project_id, context.user_question
+            conn_id_for_pack = (
+                context.connection_config.connection_id if context.connection_config else None
+            )
+            relevant_knowledge = await self._ctx_loader.assemble_knowledge_block(
+                project_id=context.project_id,
+                connection_id=conn_id_for_pack,
+                question=context.user_question,
+                has_connection=has_connection,
+                has_repo=has_repo,
+                estimated_queries=route_result.estimated_queries,
+                needs_multiple_data_sources=route_result.needs_multiple_data_sources,
             )
             if relevant_knowledge:
                 recent_learnings = (

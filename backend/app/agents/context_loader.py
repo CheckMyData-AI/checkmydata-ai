@@ -398,6 +398,66 @@ class ContextLoader:
             logger.debug("Failed to load relevant knowledge", exc_info=True)
             return None
 
+    async def assemble_knowledge_block(
+        self,
+        *,
+        project_id: str,
+        connection_id: str | None,
+        question: str,
+        has_connection: bool = True,
+        has_repo: bool = False,
+        estimated_queries: int = 1,
+        needs_multiple_data_sources: bool = False,
+    ) -> str | None:
+        """Knowledge-assembly seam for the orchestrator (RET-R1).
+
+        When ``context_planner_enabled`` is *True*, delegates to
+        :meth:`build_context_pack` →
+        :func:`~app.knowledge.context_pack_renderer.pack_context` →
+        :func:`~app.knowledge.context_pack_renderer.render_context_block` to
+        produce a budget-packed, provenance-annotated block.
+
+        Falls back to :meth:`load_relevant_knowledge` (the legacy thin-RAG
+        path) when:
+
+        * ``context_planner_enabled`` is *False* (default — T15 will flip it
+          under an eval gate), or
+        * ``build_context_pack`` returns *None* (failure/timeout — vision
+          invariant #5 graceful degradation), or
+        * the returned pack is empty.
+        """
+        from app.config import settings as _settings
+
+        if _settings.context_planner_enabled:
+            try:
+                pack = await self.build_context_pack(
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    question=question,
+                    has_connection=has_connection,
+                    has_repo=has_repo,
+                    estimated_queries=estimated_queries,
+                    needs_multiple_data_sources=needs_multiple_data_sources,
+                )
+                if pack is not None and not pack.is_empty():
+                    from app.knowledge.context_pack_renderer import (
+                        pack_context,
+                        render_context_block,
+                    )
+
+                    packing_result = pack_context(pack)
+                    block = render_context_block(packing_result.pack.all_artifacts())
+                    if block:
+                        return block
+            except Exception:
+                logger.warning(
+                    "assemble_knowledge_block (pack path) failed — falling back to legacy",
+                    exc_info=True,
+                )
+            # Fallthrough: pack unavailable or empty → legacy
+
+        return await self.load_relevant_knowledge(project_id, question)
+
     async def check_staleness(
         self,
         project_id: str,
