@@ -29,6 +29,7 @@ from app.agents.sql_result_reconciliation import sql_results_reconcile
 from app.agents.validation import AgentResultValidator
 from app.config import settings
 from app.connectors.base import QueryResult
+from app.core.metrics import get_metrics_collector
 
 
 @dataclass
@@ -149,7 +150,23 @@ class ResultValidation:
                 hints=["Push aggregation into SQL (GROUP BY / aggregate functions)."],
             )
 
-        # 5. All checks passed.
+        # 5. DataGate value-range hard-checks — catch impossible values
+        #    (150% conversion, negative counts) that the structural gate above
+        #    doesn't cover.  Runs only when hard checks are enabled (config
+        #    data_gate_hard_checks_enabled=True, the default).
+        dg_outcome = self._data_gate.check_query_result(qr, question=question)
+        if not dg_outcome.passed:
+            try:
+                get_metrics_collector().inc("datagate_block_total", check="value_range")
+            except Exception:
+                pass
+            return ResultDirective(
+                action="block",
+                reason=dg_outcome.error_summary or "impossible data value detected",
+                hints=list(dg_outcome.suggestions),
+            )
+
+        # 6. All checks passed.
         return ResultDirective(action="accept", reason="ok", hints=[])
 
 

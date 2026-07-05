@@ -187,6 +187,29 @@ class DataGate:
 
         return outcome
 
+    def check_query_result(
+        self,
+        qr: QueryResult,
+        *,
+        question: str = "",
+    ) -> DataGateOutcome:
+        """Run value-range hard-checks on a bare ``QueryResult``.
+
+        This is the single-query counterpart of :meth:`check` — it runs only
+        ``_check_value_ranges`` (the impossible-value detector) without needing
+        stage / context objects. Used by :class:`~app.agents.result_validation.
+        ResultValidation` on the flat-loop path so a 150% conversion or negative
+        count is caught before being returned to the LLM.
+
+        The *question* parameter is accepted for future context-aware
+        classification; it is unused in the current keyword-heuristic path.
+        """
+        outcome = DataGateOutcome()
+        if not qr.rows:
+            return outcome
+        self._check_value_ranges(qr, outcome)
+        return outcome
+
     # ------------------------------------------------------------------
     # Individual checks
     # ------------------------------------------------------------------

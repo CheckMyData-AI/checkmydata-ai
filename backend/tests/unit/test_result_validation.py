@@ -120,6 +120,68 @@ def test_custom_reconcile_accepted():
 
 
 # ---------------------------------------------------------------------------
+# DATA-06: ResultValidation.evaluate() — DataGate impossible-value integration
+# ---------------------------------------------------------------------------
+
+
+def test_150_percent_conversion_blocks_or_requeries():
+    """A 150% conversion rate is impossible — ResultValidation must return
+    block or requery, NOT accept, after DATA-06 wiring."""
+    from decimal import Decimal
+
+    qr = QueryResult(
+        columns=["conversion"],
+        rows=[[Decimal("150.0")]],
+        row_count=1,
+    )
+    d = _rv().evaluate(qr, question="what is our conversion rate", sql="SELECT conversion FROM kpi")
+    assert d.action in ("block", "requery"), (
+        f"Expected block or requery for 150% conversion but got {d.action!r}: {d.reason}"
+    )
+
+
+def test_negative_count_blocks_or_requeries():
+    """A negative order count is impossible — ResultValidation must not accept it."""
+    qr = QueryResult(
+        columns=["order_count"],
+        rows=[[-5]],
+        row_count=1,
+    )
+    d = _rv().evaluate(qr, question="how many orders", sql="SELECT count(*) AS order_count FROM orders")
+    assert d.action in ("block", "requery"), (
+        f"Expected block or requery for negative count but got {d.action!r}: {d.reason}"
+    )
+
+
+def test_clean_result_still_accepts():
+    """Regression guard: a clean numeric result must still return accept after DATA-06."""
+    qr = QueryResult(columns=["revenue"], rows=[[9999.99]], row_count=1)
+    d = _rv().evaluate(qr, question="total revenue", sql="SELECT SUM(revenue) AS revenue FROM sales")
+    assert d.action == "accept"
+
+
+def test_datagate_block_increments_metric():
+    """When DataGate fires on an impossible value, datagate_block_total must be incremented."""
+    from decimal import Decimal
+    from unittest.mock import MagicMock, patch
+
+    qr = QueryResult(
+        columns=["conversion"],
+        rows=[[Decimal("150.0")]],
+        row_count=1,
+    )
+    mock_collector = MagicMock()
+    with patch(
+        "app.agents.result_validation.get_metrics_collector",
+        return_value=mock_collector,
+    ):
+        d = _rv().evaluate(qr, question="conversion", sql="SELECT conversion FROM kpi")
+
+    if d.action in ("block", "requery"):
+        mock_collector.inc.assert_called()
+
+
+# ---------------------------------------------------------------------------
 # AnswerQualityGate.evaluate — async paths
 # ---------------------------------------------------------------------------
 

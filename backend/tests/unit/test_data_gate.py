@@ -316,3 +316,57 @@ class TestDecimalAndTruncationAware:
             StageContext(plan=plan),
         )
         assert any("truncat" in w.lower() for w in out.warnings)
+
+
+class TestCheckQueryResult:
+    """DATA-06: DataGate.check_query_result() — public bare-QueryResult API.
+
+    The existing `check()` method requires stage objects. `check_query_result()`
+    exposes the same value-range logic on a bare QueryResult so ResultValidation
+    can call it on the single-query path without constructing fake stage objects.
+    """
+
+    def test_150_percent_conversion_fails(self):
+        """Decimal(150.0) in a 'conversion' column → impossible → fail."""
+        from decimal import Decimal
+
+        gate = DataGate()
+        qr = QueryResult(columns=["conversion"], rows=[[Decimal("150.0")]], row_count=1)
+        outcome = gate.check_query_result(qr, question="what is the conversion rate")
+        assert outcome.passed is False, "150% conversion must hard-fail via check_query_result"
+        assert outcome.errors
+
+    def test_negative_count_fails(self):
+        gate = DataGate()
+        qr = QueryResult(columns=["order_count"], rows=[[-3]], row_count=1)
+        outcome = gate.check_query_result(qr, question="how many orders")
+        assert outcome.passed is False, "Negative count must hard-fail via check_query_result"
+        assert outcome.errors
+
+    def test_clean_result_passes(self):
+        gate = DataGate()
+        qr = QueryResult(columns=["revenue"], rows=[[1234.56]], row_count=1)
+        outcome = gate.check_query_result(qr, question="total revenue")
+        assert outcome.passed is True
+
+    def test_valid_percent_passes(self):
+        gate = DataGate()
+        qr = QueryResult(columns=["conversion"], rows=[[42.5]], row_count=1)
+        outcome = gate.check_query_result(qr, question="conversion rate")
+        assert outcome.passed is True
+
+    def test_reuses_check_value_ranges_logic(self):
+        """Ensures check_query_result and _check_value_ranges are consistent —
+        the same impossible value must fail in both paths."""
+        gate = DataGate()
+        qr = QueryResult(columns=["occupancy"], rows=[[200.0]], row_count=1)
+
+        # Via the new public method
+        outcome_public = gate.check_query_result(qr, question="")
+
+        # Via the internal method directly
+        outcome_internal = DataGateOutcome()
+        gate._check_value_ranges(qr, outcome_internal)
+
+        assert outcome_public.passed == outcome_internal.passed
+        assert bool(outcome_public.errors) == bool(outcome_internal.errors)
