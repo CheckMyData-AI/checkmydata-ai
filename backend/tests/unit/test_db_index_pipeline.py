@@ -640,6 +640,10 @@ def _make_pipeline_mocks(monkeypatch: pytest.MonkeyPatch, fake_connector: _FakeC
     monkeypatch.setattr(cfg.settings, "schema_change_alerts_enabled", False)
     monkeypatch.setattr(cfg.settings, "schema_retrieval_enabled", False)
     monkeypatch.setattr(cfg.settings, "heartbeat_interval_seconds", 30)
+    # T9: disable stats by default in the shared harness so existing T8 tests
+    # are not affected; individual T9 tests opt in explicitly.
+    monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", False)
+    monkeypatch.setattr(cfg.settings, "db_index_stats_max_columns", 20)
 
     return tracker, captured
 
@@ -709,4 +713,115 @@ class TestPipelineUsesConnectorMethods:
         )
         assert "paid" in distinct_json, (
             f"Expected distinct values ('paid') missing from JSON: {distinct_json}"
+        )
+
+    # -----------------------------------------------------------------------
+    # T9 / DBIDX-D9: pipeline must collect approx_stats and persist them
+    # into column_stats_json keyed by column name.
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_pipeline_persists_column_stats(self, monkeypatch: pytest.MonkeyPatch):
+        """approx_stats results must be persisted into column_stats_json.
+
+        _FakeConnector.approx_stats returns ColumnStats(distinct_count=3,
+        null_rate=0.0) for every column.  After the pipeline run the upserted
+        table_data for 'orders' must contain a 'column_stats_json' key whose
+        JSON value has an entry for 'status' with the expected fields.
+        """
+        import app.config as cfg
+
+        fake = _FakeConnector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+
+        # Enable stats collection so the pipeline actually calls approx_stats.
+        monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", True)
+        monkeypatch.setattr(cfg.settings, "db_index_stats_max_columns", 20)
+
+        from app.connectors.base import ConnectionConfig
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert captured, "No table_data was upserted — pipeline may have failed"
+        td = next((t for t in captured if t["table_name"] == "orders"), None)
+        assert td is not None, "No orders entry in captured upsert calls"
+
+        assert "column_stats_json" in td, (
+            "table_data must include 'column_stats_json' key for T9 / DBIDX-D9"
+        )
+        stats = json.loads(td["column_stats_json"])
+        assert "status" in stats, (
+            f"'status' key missing from column_stats_json: {stats}"
+        )
+        assert stats["status"]["distinct_count"] == 3
+        assert stats["status"]["null_rate"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_pipeline_stats_disabled_skips_approx_stats(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When db_index_stats_enabled=False, approx_stats must NOT be called
+        and column_stats_json must be empty ({})."""
+        import app.config as cfg
+
+        call_count = 0
+        original_approx = _FakeConnector.approx_stats
+
+        async def _counting_approx(self, table: str, column: str):  # noqa: ANN001
+            nonlocal call_count
+            call_count += 1
+            return await original_approx(self, table, column)
+
+        monkeypatch.setattr(_FakeConnector, "approx_stats", _counting_approx)
+
+        fake = _FakeConnector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+        monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", False)
+
+        from app.connectors.base import ConnectionConfig
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        assert call_count == 0, (
+            f"approx_stats was called {call_count} time(s) even though stats are disabled"
+        )
+        td = next((t for t in captured if t["table_name"] == "orders"), None)
+        if td and "column_stats_json" in td:
+            assert json.loads(td["column_stats_json"]) == {}, (
+                "column_stats_json must be empty when stats disabled"
+            )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_stats_cap_limits_columns(self, monkeypatch: pytest.MonkeyPatch):
+        """db_index_stats_max_columns=1 must cap approx_stats calls to 1 per table."""
+        import app.config as cfg
+
+        fake = _FakeConnector()
+        tracker, captured = _make_pipeline_mocks(monkeypatch, fake)
+        monkeypatch.setattr(cfg.settings, "db_index_stats_enabled", True)
+        monkeypatch.setattr(cfg.settings, "db_index_stats_max_columns", 1)
+
+        stats_calls: list[tuple[str, str]] = []
+        original_approx = _FakeConnector.approx_stats
+
+        async def _recording_approx(self, table: str, column: str):  # noqa: ANN001
+            stats_calls.append((table, column))
+            return await original_approx(self, table, column)
+
+        monkeypatch.setattr(_FakeConnector, "approx_stats", _recording_approx)
+
+        from app.connectors.base import ConnectionConfig
+
+        pipeline = DbIndexPipeline(workflow_tracker=tracker)
+        conn_cfg = ConnectionConfig(db_type="mongodb", db_host="localhost", db_name="test")
+        await pipeline.run("conn1", conn_cfg, "proj1", wf_id="wf-test")
+
+        orders_calls = [c for c in stats_calls if c[0] == "orders"]
+        assert len(orders_calls) <= 1, (
+            f"Expected at most 1 approx_stats call for 'orders' with cap=1, "
+            f"got {len(orders_calls)}: {orders_calls}"
         )

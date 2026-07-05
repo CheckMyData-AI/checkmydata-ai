@@ -384,7 +384,15 @@ class DbIndexPipeline:
 
                 async def _fetch_table_samples(
                     table: TableInfo,
-                ) -> tuple[str, QueryResult, str | None, dict[str, list[str]], bool, int]:
+                ) -> tuple[
+                    str,
+                    QueryResult,
+                    str | None,
+                    dict[str, list[str]],
+                    bool,
+                    int,
+                    dict[str, dict],
+                ]:
                     async with _sample_sem:
                         sample_failed = False
                         tbl_distinct_failures = 0
@@ -450,6 +458,35 @@ class DbIndexPipeline:
                                     exc_info=True,
                                 )
 
+                        # DBIDX-D9: collect per-column approximate stats for
+                        # enum-candidate / low-cardinality columns, bounded by
+                        # db_index_stats_max_columns to cap cost on wide tables.
+                        tbl_stats: dict[str, dict] = {}
+                        if settings.db_index_stats_enabled:
+                            stats_cols = list(all_distinct_cols)[
+                                : settings.db_index_stats_max_columns
+                            ]
+                            for stats_col in stats_cols:
+                                try:
+                                    cs = await connector.approx_stats(table.name, stats_col)
+                                    tbl_stats[stats_col] = {
+                                        "distinct_count": cs.distinct_count,
+                                        "null_rate": cs.null_rate,
+                                        "min": (
+                                            str(cs.min_value) if cs.min_value is not None else None
+                                        ),
+                                        "max": (
+                                            str(cs.max_value) if cs.max_value is not None else None
+                                        ),
+                                    }
+                                except Exception:
+                                    logger.debug(
+                                        "approx_stats failed for %s.%s",
+                                        table.name,
+                                        stats_col,
+                                        exc_info=True,
+                                    )
+
                         _sampled_count[0] += 1
                         row_info = f"{result.row_count or len(result.rows)} rows"
                         enum_info = f"{len(tbl_distinct)} enum cols" if tbl_distinct else ""
@@ -469,7 +506,10 @@ class DbIndexPipeline:
                             tbl_distinct,
                             sample_failed,
                             tbl_distinct_failures,
+                            tbl_stats,
                         )
+
+                column_stats: dict[str, dict[str, dict]] = {}
 
                 async with self._tracker.step(
                     wf_id,
@@ -486,10 +526,13 @@ class DbIndexPipeline:
                         tbl_distinct,
                         sample_failed,
                         tbl_distinct_failures,
+                        tbl_stats,
                     ) in results:
                         samples[tname] = (result, ordering_col)
                         if tbl_distinct:
                             distinct_values[tname] = tbl_distinct
+                        if tbl_stats:
+                            column_stats[tname] = tbl_stats
                         if sample_failed:
                             sample_failures.add(tname)
                         distinct_failures += tbl_distinct_failures
@@ -702,6 +745,7 @@ class DbIndexPipeline:
                                 None,
                             )
                             tbl_distinct = distinct_values.get(analysis.table_name, {})
+                            tbl_col_stats = column_stats.get(analysis.table_name, {})
 
                             table_data = {
                                 "table_name": analysis.table_name,
@@ -712,6 +756,7 @@ class DbIndexPipeline:
                                 "column_distinct_values_json": json.dumps(
                                     tbl_distinct, default=str
                                 ),
+                                "column_stats_json": json.dumps(tbl_col_stats, default=str),
                                 "ordering_column": ordering_col,
                                 "latest_record_at": _detect_latest_record(
                                     sample_result, ordering_col

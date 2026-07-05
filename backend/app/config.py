@@ -195,6 +195,19 @@ class Settings(BaseSettings):
     # table on each run. Samples/row-counts still refresh; only the expensive
     # business-description generation is skipped for unchanged tables.
     db_index_incremental_enabled: bool = True
+    # DBIDX-D9: collect per-column approximate stats (distinct count, null rate,
+    # min/max) during db-indexing via connector.approx_stats().  Gated so the
+    # extra per-column queries can be disabled if they add unacceptable latency
+    # against very wide or large tables.
+    db_index_stats_enabled: bool = True
+    # DBIDX-D9: maximum number of columns per table for which approx_stats is
+    # called.  Caps cost on wide tables (e.g. 200-column staging tables).
+    # Only the first N enum-candidate / low-cardinality columns are sampled.
+    db_index_stats_max_columns: int = 20
+    # DBIDX-D9: row-sample cap passed to connectors that support approximate
+    # counting (MongoDB $sample, ClickHouse SAMPLE).  SQL connectors ignore
+    # this value (COUNT(DISTINCT …) already scans the full column efficiently).
+    db_index_stats_sample_cap: int = 100_000
     # R4-2: credit exposed learnings as "applied" when a result passes
     # validation (not only on a rare thumbs-up), so times_applied / the decay
     # and ranking signals derived from it stay live in production.
