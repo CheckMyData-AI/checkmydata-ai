@@ -25,6 +25,37 @@ logger = logging.getLogger(__name__)
 _tunnel_mgr = shared_tunnel_manager
 
 
+def _build_enum_map(
+    enum_rows: list[Any],
+) -> dict[tuple[str, str, str], list[str]]:
+    """Build (schema, table, column) -> sorted label list from pg_enum rows.
+
+    Each row must expose: table_schema, table_name, column_name, label, sortorder.
+    Rows may arrive in any order; labels are sorted by sortorder before being stored.
+    """
+    # Accumulate as (sortorder, label) pairs keyed by (schema, table, col).
+    tmp: dict[tuple[str, str, str], list[tuple[float, str]]] = {}
+    for row in enum_rows:
+        key = (row["table_schema"], row["table_name"], row["column_name"])
+        tmp.setdefault(key, []).append((row["sortorder"], row["label"]))
+    return {k: [lbl for _, lbl in sorted(pairs)] for k, pairs in tmp.items()}
+
+
+def _build_check_map(
+    check_rows: list[Any],
+) -> dict[tuple[str, str], list[str]]:
+    """Build (schema, table) -> [check expressions] from pg_constraint rows.
+
+    Each row must expose: table_schema, table_name, expr.
+    Order is preserved (insertion order from the query result).
+    """
+    result: dict[tuple[str, str], list[str]] = {}
+    for row in check_rows:
+        key = (row["table_schema"], row["table_name"])
+        result.setdefault(key, []).append(row["expr"])
+    return result
+
+
 class PostgresConnector(BaseConnector):
     def __init__(self):
         self._pool: asyncpg.Pool | None = None
@@ -297,6 +328,7 @@ class PostgresConnector(BaseConnector):
                 )
 
             # 5) All indexes in one bulk query
+            # (numbered 5 in the original; enum + check are 6 and 7)
             all_idx_rows = await conn.fetch(
                 """
                 SELECT ns.nspname AS table_schema, tc.relname AS table_name,
@@ -324,6 +356,43 @@ class PostgresConnector(BaseConnector):
                     )
                 )
 
+            # 6) Enum labels — one row per (schema, table, column, label)
+            all_enum_rows = await conn.fetch(
+                """
+                SELECT n.nspname  AS table_schema,
+                       c.relname  AS table_name,
+                       a.attname  AS column_name,
+                       e.enumlabel     AS label,
+                       e.enumsortorder AS sortorder
+                FROM pg_attribute a
+                JOIN pg_class     c ON c.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_type      t ON t.oid = a.atttypid
+                JOIN pg_enum      e ON e.enumtypid = t.oid
+                WHERE t.typtype = 'e'
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+                  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                ORDER BY n.nspname, c.relname, a.attname, e.enumsortorder
+                """
+            )
+            enum_map = _build_enum_map(list(all_enum_rows))
+
+            # 7) CHECK constraints — one row per (schema, table, constraint)
+            all_check_rows = await conn.fetch(
+                """
+                SELECT n.nspname  AS table_schema,
+                       cl.relname AS table_name,
+                       pg_get_constraintdef(con.oid) AS expr
+                FROM pg_constraint con
+                JOIN pg_class     cl ON cl.oid = con.conrelid
+                JOIN pg_namespace n  ON n.oid  = cl.relnamespace
+                WHERE con.contype = 'c'
+                  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                """
+            )
+            check_map = _build_check_map(list(all_check_rows))
+
             # Assemble TableInfo objects
             for tr in table_rows:
                 schema_name = tr["table_schema"]
@@ -331,6 +400,21 @@ class PostgresConnector(BaseConnector):
                 key = (schema_name, table_name)
 
                 pk_names = pk_map.get(key, set())
+                col_rows = col_map.get(key, [])
+
+                # Distribute table-level CHECK expressions to the first column
+                # name that appears as a word token inside each expression.
+                col_names = [c["column_name"] for c in col_rows]
+                table_checks = check_map.get(key, [])
+                # col_check_map: column_name -> [check exprs that mention it first]
+                col_check_map: dict[str, list[str]] = {}
+                for expr in table_checks:
+                    for col_name in col_names:
+                        if re.search(r"\b" + re.escape(col_name) + r"\b", expr):
+                            col_check_map.setdefault(col_name, []).append(expr)
+                            break
+                    # if no column matched, the expression is silently skipped per brief
+
                 columns = [
                     ColumnInfo(
                         name=c["column_name"],
@@ -339,8 +423,10 @@ class PostgresConnector(BaseConnector):
                         is_primary_key=c["column_name"] in pk_names,
                         default=c["column_default"],
                         comment=c["column_comment"],
+                        enum_labels=enum_map.get((schema_name, table_name, c["column_name"])),
+                        check_constraints=col_check_map.get(c["column_name"], []),
                     )
-                    for c in col_map.get(key, [])
+                    for c in col_rows
                 ]
 
                 approx_rows = tr["approx_rows"]

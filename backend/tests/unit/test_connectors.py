@@ -1,6 +1,7 @@
 import pytest
 
-from app.connectors.base import ConnectionConfig
+from app.connectors.base import ColumnInfo, ConnectionConfig
+from app.connectors.postgres import _build_check_map, _build_enum_map
 from app.connectors.registry import get_connector
 
 
@@ -94,3 +95,69 @@ class TestConnectionConfig:
         )
         assert config.db_type == "mysql"
         assert config.ssh_host == "jump.example.com"
+
+
+class TestPostgresEnumAndCheck:
+    def test_enum_map_groups_labels_in_order(self):
+        rows = [
+            {
+                "table_schema": "public",
+                "table_name": "orders",
+                "column_name": "status",
+                "label": "new",
+                "sortorder": 1,
+            },
+            {
+                "table_schema": "public",
+                "table_name": "orders",
+                "column_name": "status",
+                "label": "paid",
+                "sortorder": 2,
+            },
+        ]
+        m = _build_enum_map(rows)
+        assert m[("public", "orders", "status")] == ["new", "paid"]
+
+    def test_enum_map_respects_sort_order(self):
+        rows = [
+            {
+                "table_schema": "public",
+                "table_name": "t",
+                "column_name": "c",
+                "label": "z",
+                "sortorder": 2,
+            },
+            {
+                "table_schema": "public",
+                "table_name": "t",
+                "column_name": "c",
+                "label": "a",
+                "sortorder": 1,
+            },
+        ]
+        m = _build_enum_map(rows)
+        assert m[("public", "t", "c")] == ["a", "z"]
+
+    def test_enum_map_empty_rows(self):
+        assert _build_enum_map([]) == {}
+
+    def test_check_map_collects_expressions(self):
+        rows = [{"table_schema": "public", "table_name": "orders", "expr": "amount > 0"}]
+        assert _build_check_map(rows)[("public", "orders")] == ["amount > 0"]
+
+    def test_check_map_multiple_constraints_same_table(self):
+        rows = [
+            {"table_schema": "public", "table_name": "t", "expr": "a > 0"},
+            {"table_schema": "public", "table_name": "t", "expr": "b IS NOT NULL"},
+        ]
+        m = _build_check_map(rows)
+        assert m[("public", "t")] == ["a > 0", "b IS NOT NULL"]
+
+    def test_check_map_empty_rows(self):
+        assert _build_check_map([]) == {}
+
+    def test_columninfo_gets_enum_labels_when_matched(self):
+        ci = ColumnInfo(name="status", data_type="USER-DEFINED", enum_labels=["new", "paid"])
+        assert ci.enum_labels == ["new", "paid"]
+        assert ColumnInfo(name="x", data_type="int").enum_labels is None
+        assert ColumnInfo(name="x", data_type="int").check_constraints == []
