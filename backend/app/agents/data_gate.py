@@ -234,7 +234,7 @@ class DataGate:
             if ratio >= self._null_threshold:
                 outcome.warn(
                     f"Column '{col_name}' has {ratio:.0%} null/empty values "
-                    f"({nulls}/{n} sampled rows)",
+                    f"({nulls}/{n} sampled rows — advisory, based on sample only)",
                     suggestion=(
                         f"Verify the query returns meaningful data for '{col_name}'; "
                         "consider adding a WHERE clause or choosing a different column."
@@ -263,9 +263,14 @@ class DataGate:
                 )
 
     def _check_duplicates(self, qr: QueryResult, outcome: DataGateOutcome) -> None:
-        """Detect suspiciously high duplicate-row ratio."""
+        """Detect suspiciously high duplicate-row ratio.
+
+        DATA-18: gate requires a minimum sample of 10 rows to avoid false
+        positives on legitimately-sparse tables (e.g. a config table with
+        3 rows where all values differ on one column).
+        """
         sample = qr.rows[: self._max_sample]
-        if len(sample) < 3:
+        if len(sample) < 10:
             return
         seen: set[tuple] = set()
         dupes = 0
@@ -278,7 +283,8 @@ class DataGate:
         ratio = dupes / len(sample) if sample else 0
         if ratio >= self._dup_threshold:
             outcome.warn(
-                f"{ratio:.0%} of sampled rows are exact duplicates ({dupes}/{len(sample)})",
+                f"{ratio:.0%} of sampled rows are exact duplicates "
+                f"({dupes}/{len(sample)} sampled — signal based on sample only)",
                 suggestion="Add DISTINCT or GROUP BY to the query if duplicates are unintended.",
             )
 

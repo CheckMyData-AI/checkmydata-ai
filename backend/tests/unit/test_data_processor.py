@@ -1299,3 +1299,36 @@ def test_cohort_window_untruncated_no_partial_flag():
     )
     assert out.query_result.truncated is False
     assert "PARTIAL DATA" not in out.summary
+
+
+# ---------------------------------------------------------------------------
+# DATA-19: _compute_agg NULL semantics documentation
+# ---------------------------------------------------------------------------
+
+
+class TestComputeAggNullSemantics:
+    """DATA-19: document and verify count vs count_distinct NULL handling."""
+
+    def test_count_includes_nulls(self):
+        """count() counts ALL rows including those with NULL values — SQL COUNT(*) semantics."""
+        from app.services.data_processor import DataProcessor
+
+        rows = [[None], [1], [None], [2]]
+        result = DataProcessor._compute_agg("count", 0, rows)
+        assert result == 4, "count must include NULL rows (SQL COUNT(*) semantics)"
+
+    def test_count_distinct_excludes_nulls(self):
+        """count_distinct() excludes NULL values — SQL COUNT(DISTINCT col) semantics."""
+        from app.services.data_processor import DataProcessor
+
+        rows = [[None], [1], [None], [2], [1]]
+        result = DataProcessor._compute_agg("count_distinct", 0, rows)
+        assert result == 2, "count_distinct must exclude NULLs, count unique non-null values"
+
+    def test_count_distinct_all_nulls(self):
+        """count_distinct with all NULL values returns 0."""
+        from app.services.data_processor import DataProcessor
+
+        rows = [[None], [None], [None]]
+        result = DataProcessor._compute_agg("count_distinct", 0, rows)
+        assert result == 0

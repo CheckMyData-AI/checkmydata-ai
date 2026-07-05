@@ -360,7 +360,16 @@ class DataProcessor:
 
     @staticmethod
     def _compute_agg(fn: str, col_i: int | None, rows: list[list[Any]]) -> Any:
-        """Compute a single aggregation value."""
+        """Compute a single aggregation value.
+
+        NULL semantics (DATA-19):
+        - ``count``: SQL COUNT(*) semantics — counts ALL rows including NULLs.
+          Returns ``len(rows)`` regardless of column values.
+        - ``count_distinct``: SQL COUNT(DISTINCT col) semantics — counts unique
+          non-NULL values only; NULLs are excluded per SQL standard.
+        - All other aggregations (sum/avg/min/max/median) also silently skip
+          NULLs (matching SQL aggregate behaviour).
+        """
         if fn == "count":
             return len(rows)
 

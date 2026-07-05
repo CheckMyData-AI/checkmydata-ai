@@ -604,7 +604,7 @@ class ToolDispatcher:
             parts.append(header)
             parts.append("-" * len(header))
             for row in result_qr.rows[:200]:
-                parts.append(" | ".join(str(v) for v in row))
+                parts.append(" | ".join(ToolDispatcher._fmt_cell(v) for v in row))
             if result_qr.row_count > 200:
                 parts.append(f"... and {result_qr.row_count - 200} more groups")
         else:
@@ -679,6 +679,25 @@ class ToolDispatcher:
             "operation='aggregate_data' to compute groupings and statistics over "
             "the complete dataset."
         )
+
+    @staticmethod
+    def _fmt_cell(v: Any) -> str:
+        """Render a cell readably: thousands separators for ints/Decimal, str otherwise.
+
+        DATA-20: large integers and Decimal values are formatted with commas
+        so aggregation output is human-readable (e.g. 1,234,567 not 1234567).
+        Booleans are rendered as 'True'/'False' (not as 1/0) and are excluded
+        from numeric formatting deliberately.
+        """
+        from decimal import Decimal
+
+        if isinstance(v, bool):
+            return str(v)
+        if isinstance(v, int):
+            return f"{v:,}"
+        if isinstance(v, Decimal):
+            return f"{v:,}"
+        return str(v)
 
     async def _handle_search_codebase(
         self,

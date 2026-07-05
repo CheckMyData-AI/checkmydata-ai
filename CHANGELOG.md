@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — W1 intelligence-remediation: data-quality hardening (2026-07-05, branch `worktree-intelligence-remediation`)
+
+Wave 1 of the intelligence-remediation audit. All 15 tasks committed; ruff/mypy clean; unit+integration suite green at ≥72% coverage.
+
+- **DATA-01 (truncation propagation)** — `DataProcessor` additive aggregations (sum/count/count_distinct) over a row-capped input are flagged as `PARTIAL DATA`; the summary and the agent-facing output both carry the caveat; never silently presented as a complete total.
+- **DATA-02/04 (dispatcher/synthesis/pipeline truncation honesty)** — `ToolDispatcher._full_data_hint` now distinguishes truncated from complete datasets; the synthesis path and pipeline result builder propagate the same caveat; LLMs downstream cannot conflate a capped sample with the whole.
+- **DATA-03 (SQL-correctness prompt)** — `SQLAgent` system prompt updated with explicit instructions on GROUP BY completeness, COUNT(*) vs COUNT(DISTINCT), and NULL-handling to reduce silent miscounts at the generation step.
+- **DATA-05 (phone E.164)** — `PhoneCountryService` now requires E.164 format (`+<country_code><number>`); non-E.164 inputs degrade gracefully with a warning rather than producing a silent wrong-country mapping. User-facing: phone→country enrichment now needs E.164-formatted numbers.
+- **DATA-06 (DataGate on single-query path)** — `DataGate.check_query_result()` public method added; wired into `ResultValidation` so impossible values (150% conversion, negative counts) are caught on the direct single-query path, not only inside multi-stage pipelines.
+- **DATA-09 (chart nulls)** — Chart-building path guards against null/missing values in series data; nulls are rendered as gaps rather than plotted as zero, preventing silent chart distortion.
+- **DATA-16/17 (validator/investigation honesty)** — `AnswerValidator` and `InvestigationAgent` prompts updated: both must declare uncertainty when data is partial, and must not assert completeness when the result set is capped or the investigation is inconclusive.
+- **SYNC-L1 (satisfiable required-filter guard)** — `RequiredFilterGuard` degrades gracefully when a required filter is satisfiable but cannot be applied (emits a warning + increments `filter_guard_degrade_total`) instead of blocking the query entirely.
+- **DATA-14 (range-scan late rows)** — Regression test confirms `_check_value_ranges` scans the full in-memory result when `data_gate_value_range_sample=0` (default); impossible value in the last row of a 501-row result is caught. Positive-cap behaviour documented as intentional speed/correctness trade-off.
+- **DATA-15 (reconciliation rounding tolerance)** — Deferred: fix belongs to `insight_memory.py` (W3-owned file). `xfail` test documents the gap.
+- **DATA-18 (duplicate/null-rate false signals)** — `_check_duplicates` minimum sample raised from 3 → 10 rows to avoid false positives on legitimately-sparse tables. Null-rate warnings labelled "advisory, based on sample only" per DATA-22.
+- **DATA-19 (COUNT semantics doc)** — `_compute_agg` docstring updated with explicit NULL-handling notes: `count` uses SQL COUNT(*) semantics (includes NULLs); `count_distinct` uses SQL COUNT(DISTINCT col) semantics (excludes NULLs).
+- **DATA-20 (unformatted numbers)** — `ToolDispatcher._fmt_cell` static helper added; aggregation output loop now calls it instead of `str(v)`; large integers and Decimal values render with thousands separators (e.g. `1,234,567`).
+- **DATA-21 (small-fan-out cartesian)** — `xfail` test documents that `_check_cross_stage_consistency` only warns above `cartesian_multiplier` (default 100×); a 2× fan-out passes silently. Known limitation, no over-engineering.
+- **DATA-22 (sampled signals unmarked)** — Null-rate and duplicate-rate warnings now include "sampled" / "advisory, based on sample only" labels so the LLM knows the signal is partial.
+
 ### Added — W0 intelligence-remediation foundations (2026-07-03, branch `worktree-intelligence-remediation`)
 
 Wave 0 of the intelligence-remediation audit (spec `docs/superpowers/specs/2026-07-03-intelligence-remediation-design.md`).

@@ -238,6 +238,16 @@ All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, 
 
 Both metrics endpoints require an **admin** user (`ADMIN_EMAILS`).
 
+### Prometheus counters (W1 intelligence-remediation)
+
+The following counters are registered by `MetricsCollector` and exposed via `/api/metrics/prometheus`:
+
+| Counter | Labels | Description |
+|---------|--------|-------------|
+| `datagate_block_total` | `stage_id`, `check` | Incremented each time DataGate hard-fails a pipeline stage result (impossible value, impossible count). Useful for alerting on persistent data quality issues. |
+| `filter_guard_degrade_total` | `project_id` | Incremented when the required-filter guard degrades (satisfiable filter present but cannot be applied — query is answered with a warning rather than blocked). |
+| `retrieval_degraded_total` | `project_id` | Incremented when `KnowledgeFreshnessService` flags a retrieval result as degraded (stale index, missing BM25 snapshot, etc). |
+
 ## Backup
 
 | Method | Endpoint | Description |

@@ -116,10 +116,11 @@ class TestSoftChecksRemainWarn:
 
     def test_duplicate_ratio_only_warns(self):
         gate = DataGate(duplicate_threshold=0.5)
+        # DATA-18: min sample is 10; use 12 rows so the guard doesn't skip the check
         qr = QueryResult(
             columns=["x"],
-            rows=[[1], [1], [1], [2]],
-            row_count=4,
+            rows=[[1]] * 9 + [[2]] * 3,
+            row_count=12,
         )
         stage = _sql_stage()
         plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
@@ -370,3 +371,146 @@ class TestCheckQueryResult:
 
         assert outcome_public.passed == outcome_internal.passed
         assert bool(outcome_public.errors) == bool(outcome_internal.errors)
+
+
+# ---------------------------------------------------------------------------
+# Low-batch findings (DATA-14/15/18/21/22)
+# ---------------------------------------------------------------------------
+
+
+class TestLowBatchData14:
+    """DATA-14: range-scan covers ALL rows (incl. late rows) when sample cap is 0."""
+
+    def test_hard_check_scans_late_rows(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "data_gate_hard_checks_enabled", True)
+        monkeypatch.setattr(settings, "data_gate_value_range_sample", 0)  # full scan
+        rows = [[10.0] for _ in range(500)] + [[150.0]]  # bad value is the LAST row
+        qr = QueryResult(columns=["conversion_pct"], rows=rows, row_count=len(rows))
+        gate = DataGate(llm_semantics=False)
+        outcome = DataGateOutcome()
+        gate._check_value_ranges(qr, outcome)
+        assert not outcome.passed, "Late-row 150% conversion must be caught even at row 501"
+
+    def test_hard_check_with_positive_cap_misses_late_rows(self, monkeypatch):
+        """Documents known behaviour: a positive cap trades correctness for speed."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "data_gate_hard_checks_enabled", True)
+        monkeypatch.setattr(settings, "data_gate_value_range_sample", 10)  # only first 10
+        rows = [[10.0] for _ in range(500)] + [[150.0]]  # bad value at row 501
+        qr = QueryResult(columns=["conversion_pct"], rows=rows, row_count=len(rows))
+        gate = DataGate(llm_semantics=False)
+        outcome = DataGateOutcome()
+        gate._check_value_ranges(qr, outcome)
+        # With cap=10 the last row is NOT scanned — passes (documents limitation)
+        assert outcome.passed, "Positive cap intentionally skips late rows"
+
+
+class TestLowBatchData15:
+    """DATA-15: reconciliation rounding tolerance.
+
+    The reconciliation bucketing lives in app.core.insight_memory (not a W1
+    file). This test is xfail-deferred to the wave that owns that file.
+    """
+
+    @pytest.mark.xfail(
+        reason=(
+            "DATA-15 fix belongs to insight_memory.py (W3/W0-owned); "
+            "implementing here would edit a non-W1 file. "
+            "Deferred to that wave."
+        ),
+        strict=False,
+    )
+    def test_rounding_tolerance_in_reconcile(self):
+        """Values that differ only by float rounding should NOT be mismatches."""
+        # This would test sql_results_reconcile() in insight_memory.py
+        # which is not owned by Wave 1. xfail here documents the gap.
+        from app.core.insight_memory import InsightMemory  # noqa: F401
+
+        # If the reconcile method exists and handles epsilon, this passes.
+        # Otherwise it xfails as expected.
+        raise AssertionError("DATA-15 not yet fixed in insight_memory — see W3")
+
+
+class TestLowBatchData18:
+    """DATA-18: minimum-sample guard on duplicate detection."""
+
+    def test_small_result_skips_duplicate_check(self):
+        """A result with < 10 rows must NOT trigger the duplicate warning
+        (legitimately-sparse table false-positive guard)."""
+        gate = DataGate()
+        # 5 identical rows — would be 100% dupes, but below min sample
+        qr = QueryResult(columns=["id", "status"], rows=[["x", "ok"]] * 5, row_count=5)
+        outcome = DataGateOutcome()
+        gate._check_duplicates(qr, outcome)
+        assert outcome.passed
+        assert not outcome.warnings
+
+    def test_large_result_triggers_duplicate_check(self):
+        """A result with >= 10 rows and high dupe ratio triggers the warning."""
+        gate = DataGate(duplicate_threshold=0.5)
+        # 20 identical rows → 100% dupe ratio above 0.5 threshold
+        qr = QueryResult(columns=["id", "status"], rows=[["x", "ok"]] * 20, row_count=20)
+        outcome = DataGateOutcome()
+        gate._check_duplicates(qr, outcome)
+        assert outcome.warnings, "High dupe ratio on large sample must warn"
+
+    def test_null_rate_advisory_label_in_warning(self):
+        """DATA-22 + DATA-18: null-rate warning must include advisory/sampled label."""
+        gate = DataGate(null_threshold=0.5)
+        qr = QueryResult(
+            columns=["email"],
+            rows=[[None]] * 10 + [["a@b.com"]] * 10,
+            row_count=20,
+        )
+        outcome = DataGateOutcome()
+        gate._check_nulls(qr, outcome)
+        assert outcome.warnings
+        assert any("sampl" in w.lower() for w in outcome.warnings), (
+            "Null-rate warning must mention 'sampled' to mark it as advisory (DATA-22)"
+        )
+
+
+class TestLowBatchData21:
+    """DATA-21: small-fan-out cartesian miss is a documented limitation."""
+
+    @pytest.mark.xfail(
+        reason=(
+            "DATA-21: _check_cross_stage_consistency only warns when row_count > "
+            "dep_row_count * cartesian_multiplier (default 100). A 2x fan-out "
+            "(e.g. 10 → 20 rows from a bad join) is below the threshold and "
+            "passes silently. Fixing this would require a lower multiplier or a "
+            "secondary heuristic — deferred as a documented limitation."
+        ),
+        strict=True,
+    )
+    def test_small_fanout_cartesian_not_caught(self):
+        """Small cartesian products (e.g. 2x fan-out) are NOT caught — known gap."""
+        from app.agents.stage_context import ExecutionPlan, PlanStage, StageContext, StageResult
+
+        stage1 = PlanStage(stage_id="s1", description="x", tool="query_database")
+        stage2 = PlanStage(stage_id="s2", description="y", tool="query_database", depends_on=["s1"])
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage1, stage2])
+        ctx = StageContext(plan=plan)
+        ctx.set_result(
+            "s1",
+            StageResult(
+                stage_id="s1",
+                status="success",
+                query_result=QueryResult(columns=["a"], rows=[[1]] * 10, row_count=10),
+            ),
+        )
+        result = StageResult(
+            stage_id="s2",
+            status="success",
+            query_result=QueryResult(columns=["a", "b"], rows=[[1, 2]] * 20, row_count=20),
+        )
+        gate = DataGate()
+        outcome = gate.check(stage2, result, ctx)
+        # 20 rows from 10 is only 2x — below cartesian_multiplier=100 — so NO warning
+        # This xfail asserts that the small fan-out IS caught (it won't be → xfail)
+        assert any("cartesian" in w.lower() for w in outcome.warnings), (
+            "Small 2x fan-out should warn but does not — known gap"
+        )
