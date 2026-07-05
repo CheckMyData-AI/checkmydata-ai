@@ -944,6 +944,19 @@ async def _run_db_index_background(
                     result.get("tables") if isinstance(result, dict) else "ok",
                 )
                 final_status = "completed"
+            # Bust the per-agent 300-second schema cache so the next query
+            # re-introspects the freshly-indexed schema instead of serving
+            # stale column names (DBIDX-D12).
+            try:
+                from app.core.schema_cache_registry import invalidate_connection
+
+                invalidate_connection(connection_id)
+            except Exception:
+                logger.debug(
+                    "DB index: schema cache invalidation failed for connection=%s",
+                    connection_id[:8],
+                    exc_info=True,
+                )
             await _regenerate_overview(project_id, connection_id)
             await _run_data_probes(
                 connection_id,

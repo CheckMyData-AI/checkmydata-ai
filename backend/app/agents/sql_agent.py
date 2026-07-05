@@ -132,6 +132,12 @@ class SQLAgent(BaseAgent):
             ttl=settings.schema_cache_ttl_seconds,
             max_size=128,
         )
+        # Register with the process-wide schema-cache invalidation registry so
+        # that run_db_index completion and schema-change alerts can bust stale
+        # SchemaInfo entries without waiting for the 300-second TTL to expire.
+        from app.core.schema_cache_registry import register_schema_cache
+
+        register_schema_cache(self)
         self._query_cache = QueryCache()
         self._knowledge_cache: TTLCache[str, ProjectKnowledge] = TTLCache(ttl=300.0, max_size=128)
 

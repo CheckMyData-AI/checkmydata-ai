@@ -93,6 +93,19 @@ async def run_db_index(  # noqa: ARG001
                     result.get("tables") if isinstance(result, dict) else "ok",
                 )
                 final_status = "completed"
+            # Bust the per-agent 300-second schema cache so the next query
+            # re-introspects the freshly-indexed schema instead of serving
+            # stale column names (DBIDX-D12).
+            try:
+                from app.core.schema_cache_registry import invalidate_connection
+
+                invalidate_connection(connection_id)
+            except Exception:
+                logger.debug(
+                    "run_db_index: schema cache invalidation failed for %s",
+                    connection_id[:8],
+                    exc_info=True,
+                )
             try:
                 from app.api.routes.connections import (
                     _regenerate_overview,

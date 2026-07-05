@@ -118,6 +118,18 @@ class SchemaChangeDetector:
                 connection_id=connection_id,
                 diff=diff,
             )
+            # Bust the per-agent schema cache so the next SQL query
+            # re-introspects the changed schema immediately (DBIDX-D12).
+            try:
+                from app.core.schema_cache_registry import invalidate_connection
+
+                invalidate_connection(connection_id)
+            except Exception:
+                logger.debug(
+                    "schema_change_detector: schema cache invalidation failed for conn=%s",
+                    connection_id[:8],
+                    exc_info=True,
+                )
         except Exception:
             logger.warning(
                 "schema_change_detector: failed to store insight for conn=%s",
