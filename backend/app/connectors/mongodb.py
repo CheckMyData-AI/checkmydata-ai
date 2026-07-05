@@ -13,6 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.connectors.base import (
     BaseConnector,
     ColumnInfo,
+    ColumnStats,
     ConnectionConfig,
     IndexInfo,
     QueryResult,
@@ -340,6 +341,95 @@ class MongoDBConnector(BaseConnector):
             }
         )
         return await self.execute_query(query)
+
+    _COLL_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.\-]{0,127}$")
+
+    async def distinct_values(
+        self,
+        table: str,
+        column: str,
+        limit: int = 50,
+    ) -> list[str]:
+        """Return distinct string values of *column* in *table* via native ``distinct``.
+
+        Uses the motor ``distinct`` command — never builds a SQL string (which would
+        be passed to ``execute_query`` where ``json.loads`` would fail). Degrades to
+        ``[]`` on any error so callers never receive an exception.
+        """
+        if not self._db:
+            return []
+        if not self._COLL_NAME_RE.match(table):
+            logger.debug("distinct_values: invalid collection name %r — returning []", table)
+            return []
+        try:
+            collection = self._db[table]
+            vals = await collection.distinct(column, {column: {"$ne": None}})
+            return [str(_to_jsonable(v)) for v in vals][:limit]
+        except Exception:
+            logger.debug(
+                "distinct_values(%r, %r) failed — returning []", table, column, exc_info=True
+            )
+            return []
+
+    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+        """Return approximate per-column statistics via a native aggregation pipeline.
+
+        The pipeline uses ``$group`` to compute distinct count, null rate, min and max
+        in a single server-side pass. A leading ``$limit`` stage bounds the scan on
+        large collections. Never builds a SQL string. Degrades to ``ColumnStats()``
+        on any error.
+        """
+        if not self._db:
+            return ColumnStats()
+        if not self._COLL_NAME_RE.match(table):
+            logger.debug("approx_stats: invalid collection name %r — returning empty", table)
+            return ColumnStats()
+        try:
+            from app.config import settings
+
+            sample_cap: int = getattr(settings, "db_index_stats_sample_cap", 100_000)
+            col_ref = f"${column}"
+            pipeline = [
+                {"$limit": sample_cap},
+                {
+                    "$group": {
+                        "_id": None,
+                        "distinct": {"$addToSet": col_ref},
+                        "nulls": {"$sum": {"$cond": [{"$eq": [col_ref, None]}, 1, 0]}},
+                        "total": {"$sum": 1},
+                        "min": {"$min": col_ref},
+                        "max": {"$max": col_ref},
+                    }
+                },
+            ]
+            collection = self._db[table]
+            cursor = collection.aggregate(pipeline)
+            rows = await cursor.to_list(length=1)
+            if not rows:
+                return ColumnStats()
+            row = rows[0]
+            raw_distinct = row.get("distinct")
+            if isinstance(raw_distinct, list):
+                distinct_count: int | None = len(raw_distinct)
+            else:
+                distinct_count = int(raw_distinct) if raw_distinct is not None else None
+            total = row.get("total") or 0
+            nulls = row.get("nulls") or 0
+            null_rate = (nulls / total) if total > 0 else None
+            return ColumnStats(
+                distinct_count=distinct_count,
+                null_rate=null_rate,
+                min_value=_to_jsonable(row.get("min")),
+                max_value=_to_jsonable(row.get("max")),
+            )
+        except Exception:
+            logger.debug(
+                "approx_stats(%r, %r) failed — returning empty ColumnStats",
+                table,
+                column,
+                exc_info=True,
+            )
+            return ColumnStats()
 
     async def test_connection(self) -> bool:
         if not self._client:

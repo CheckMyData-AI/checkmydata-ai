@@ -237,3 +237,69 @@ class TestExecuteQueryReadOnlyGuard:
 
         assert result.error is None
         assert result.row_count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestMongoNativeCapture — DBIDX-D1/D2/D3 native distinct/stats overrides
+# ---------------------------------------------------------------------------
+
+
+class _FakeDistinctCollection(_FakeCollection):
+    def __init__(self, docs, distinct_map=None, agg_rows=None):
+        super().__init__(docs)
+        self._distinct_map = distinct_map or {}
+        self._agg_rows = agg_rows or []
+
+    async def distinct(self, key, filter=None):
+        return self._distinct_map.get(key, [])
+
+    def aggregate(self, pipeline):
+        return _FakeCursor(self._agg_rows)
+
+
+class _FakeDistinctDB(_FakeDB):
+    def __init__(self, docs, **kw):
+        super().__init__(docs)
+        self._kw = kw
+
+    def __getitem__(self, name):
+        return _FakeDistinctCollection(self._docs, **self._kw)
+
+
+class TestMongoNativeCapture:
+    @pytest.mark.asyncio
+    async def test_distinct_values_uses_native_distinct(self):
+        conn = MongoDBConnector()
+        conn._db = _FakeDistinctDB([], distinct_map={"status": ["a", "b", "c"]})
+        conn._config = ConnectionConfig(db_type="mongodb", is_read_only=True)
+        vals = await conn.distinct_values("orders", "status", limit=50)
+        assert vals == ["a", "b", "c"]  # NOT empty — the D2 regression was empty
+
+    @pytest.mark.asyncio
+    async def test_distinct_values_caps_to_limit(self):
+        conn = MongoDBConnector()
+        conn._db = _FakeDistinctDB([], distinct_map={"c": [str(i) for i in range(200)]})
+        conn._config = ConnectionConfig(db_type="mongodb", is_read_only=True)
+        vals = await conn.distinct_values("t", "c", limit=50)
+        assert len(vals) == 50
+
+    @pytest.mark.asyncio
+    async def test_approx_stats_uses_group_pipeline(self):
+        conn = MongoDBConnector()
+        # $group row shape: {_id:None, distinct:.., nulls:.., total:.., min:.., max:..}
+        conn._db = _FakeDistinctDB(
+            [],
+            agg_rows=[{"_id": None, "distinct": 4, "nulls": 1, "total": 10, "min": 1, "max": 99}],
+        )
+        conn._config = ConnectionConfig(db_type="mongodb", is_read_only=True)
+        stats = await conn.approx_stats("t", "amount")
+        assert stats.distinct_count == 4
+        assert stats.null_rate == 0.1
+        assert stats.min_value == 1 and stats.max_value == 99
+
+    @pytest.mark.asyncio
+    async def test_capture_methods_no_db_return_empty(self):
+        conn = MongoDBConnector()  # _db is None
+        assert await conn.distinct_values("t", "c") == []
+        s = await conn.approx_stats("t", "c")
+        assert s.distinct_count is None

@@ -367,7 +367,7 @@ class DatabaseAdapter(DataSourceAdapter):
             f"SELECT * FROM {quoted} LIMIT {limit}",
         )
 
-    async def distinct_values(self, table: str, column: str, limit: int) -> list[str]:
+    async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
         """Distinct values of a column (dialect-aware; Wave 4 impl). Contract C-D."""
         raise NotImplementedError
 
