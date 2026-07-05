@@ -30,6 +30,10 @@ from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
+from app.knowledge.db_index_completeness import (
+    PARTIAL_EVIDENCE_KINDS,
+    check_schema_completeness,
+)
 from app.knowledge.db_index_validator import DbIndexValidator, TableAnalysis
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
@@ -333,6 +337,36 @@ class DbIndexPipeline:
                 if not schema.tables:
                     await self._tracker.end(wf_id, "db_index", "completed", "No tables found")
                     return {"status": "completed", "tables": 0}
+
+                # DBIDX-D10: deterministic schema-completeness gate.
+                # Runs after introspection, before any sampling or LLM work.
+                # Issues are surfaced as tracker events; structural evidence gaps
+                # (no_columns, fk_target_missing) also set completeness_partial.
+                completeness_issues = check_schema_completeness(schema)
+                completeness_partial = any(
+                    i.kind in PARTIAL_EVIDENCE_KINDS for i in completeness_issues
+                )
+                if completeness_issues:
+                    issue_summary = ", ".join(f"{i.table}:{i.kind}" for i in completeness_issues)
+                    await self._tracker.emit(
+                        wf_id,
+                        "introspect_schema",
+                        "started",
+                        f"Completeness: {len(completeness_issues)} issue(s) — {issue_summary}",
+                    )
+                    logger.warning(
+                        "Schema completeness check found %d issue(s) for connection %s: %s",
+                        len(completeness_issues),
+                        connection_id,
+                        issue_summary,
+                    )
+                else:
+                    await self._tracker.emit(
+                        wf_id,
+                        "introspect_schema",
+                        "started",
+                        "Completeness: 0 issue(s)",
+                    )
 
                 # R2-3: incremental schema diff. Load the prior fingerprint +
                 # entries; any table whose column signature is unchanged can reuse
@@ -866,16 +900,27 @@ class DbIndexPipeline:
                 except Exception:
                     logger.debug("Failed to mark sync as stale after DB index", exc_info=True)
 
-                # R2-4: a run with failed sampling/distinct/embed evidence is
-                # "completed_partial", not a clean "completed". Surface it so the
-                # caller can warn and avoid treating empty-looking tables as fact.
-                partial = bool(sample_failures or distinct_failures or embed_failed)
+                # R2-4 / DBIDX-D10: a run with failed sampling/distinct/embed
+                # evidence, or structural completeness issues (no_columns /
+                # fk_target_missing), is "completed_partial", not a clean
+                # "completed". Surface it so the caller can warn and avoid
+                # treating empty-looking or structurally inconsistent tables as
+                # authoritative.
+                partial = bool(
+                    sample_failures or distinct_failures or embed_failed or completeness_partial
+                )
                 end_detail = f"{total_tables} tables indexed ({active_count} active)"
                 if partial:
+                    completeness_suffix = (
+                        f", {len(completeness_issues)} completeness issue(s)"
+                        if completeness_partial
+                        else ""
+                    )
                     end_detail += (
                         f" — PARTIAL: {len(sample_failures)} sample failure(s), "
                         f"{distinct_failures} distinct failure(s)"
                         f"{', schema_embed failed' if embed_failed else ''}"
+                        f"{completeness_suffix}"
                     )
                 await self._tracker.end(
                     wf_id,
@@ -894,6 +939,7 @@ class DbIndexPipeline:
                     "sample_failures": len(sample_failures),
                     "distinct_failures": distinct_failures,
                     "embed_failed": embed_failed,
+                    "completeness_issues": len(completeness_issues),
                 }
 
             except Exception as exc:
