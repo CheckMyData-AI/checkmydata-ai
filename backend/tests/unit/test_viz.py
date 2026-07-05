@@ -369,7 +369,8 @@ class TestChartNullHandling:
         )
         config = {"labels_column": "name", "data_columns": ["count"]}
         chart = generate_bar_chart(result, config)
-        assert chart["data"]["datasets"][0]["data"] == [10.0, 0.0, 30.0]
+        # DATA-09: NULL must render as a gap (None), not a real zero
+        assert chart["data"]["datasets"][0]["data"] == [10.0, None, 30.0]
 
     def test_scatter_skips_nulls(self):
         result = QueryResult(

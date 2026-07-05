@@ -187,6 +187,28 @@ def _safe_numeric(val: Any, default: float = 0) -> float:
     return default
 
 
+def _chart_numeric(val: Any) -> float | None:
+    """Coerce a chart data value, preserving absence as a gap.
+
+    DATA-09: NULL / unparseable / missing must render as a Chart.js gap
+    (``None``), never as a real ``0`` (which reads as "0 sales" instead of
+    "no data"). Distinct from :func:`_safe_numeric`, which defaults to 0 for
+    callers that need a concrete float.
+    """
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return float(val)
+    if isinstance(val, (int, float, Decimal)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def _resolve_col_idx(col_name: str, result: QueryResult, fallback_idx: int = 0) -> int:
     """Find column index by exact match, then case-insensitive match, then fallback."""
     if col_name in result.columns:
@@ -215,7 +237,7 @@ def _pivot_grouped(
     for row in result.rows:
         lbl = str(row[labels_idx])
         grp = str(row[group_idx])
-        val = _safe_numeric(serialize_value(row[data_idx]))
+        val = _chart_numeric(serialize_value(row[data_idx]))
         if lbl not in label_order:
             label_order[lbl] = len(label_order)
         if grp not in groups:
@@ -228,7 +250,7 @@ def _pivot_grouped(
         datasets.append(
             {
                 "label": grp_name,
-                "data": [mapping.get(lbl, 0) for lbl in labels],
+                "data": [mapping.get(lbl, None) for lbl in labels],
                 "fill": False,
             }
         )
@@ -288,7 +310,7 @@ def _build_series(
         if col_idx < 0:
             continue
         raw_data = [serialize_value(row[col_idx]) for row in result.rows]
-        numeric_data = [_safe_numeric(v) for v in raw_data]
+        numeric_data = [_chart_numeric(v) for v in raw_data]
         ds: dict[str, Any] = {
             "label": col,
             "data": numeric_data,
@@ -304,7 +326,7 @@ def _build_series(
             col_idx = _resolve_col_idx(col, result, -1)
             if col_idx < 0:
                 continue
-            numeric_data = [_safe_numeric(serialize_value(row[col_idx])) for row in result.rows]
+            numeric_data = [_chart_numeric(serialize_value(row[col_idx])) for row in result.rows]
             ds = {"label": col, "data": numeric_data}
             if chart_type == "line":
                 ds["fill"] = False
