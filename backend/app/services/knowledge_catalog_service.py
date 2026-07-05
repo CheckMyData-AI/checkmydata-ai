@@ -62,6 +62,42 @@ class KnowledgeCatalogService:
         # Optional — only needed to populate ``rag_chunks``. The health view and
         # the structured artifacts work without it.
         self._vector_store = vector_store
+        self._hybrid_retriever: Any | None = None
+
+    # ------------------------------------------------------------------
+    # Hybrid retriever (RET-R2)
+    # ------------------------------------------------------------------
+
+    def _get_hybrid_retriever(self) -> Any:
+        """Lazily build a shared HybridRetriever (BM25 + Chroma + RRF).
+
+        Mirrors :meth:`ContextLoader._get_hybrid_retriever` so ContextPack RAG
+        chunks are fused through the same path as KnowledgeAgent / orchestrator
+        context — no more split-brain between dense-only catalog and hybrid agent.
+        """
+        if self._hybrid_retriever is None:
+            from app.config import settings as _settings
+            from app.knowledge.bm25_index import BM25Index
+            from app.knowledge.hybrid_retriever import HybridRetriever
+            from app.knowledge.reranker import build_reranker
+            from app.knowledge.vector_store import VectorStore
+
+            assert isinstance(self._vector_store, VectorStore), (
+                "_get_hybrid_retriever called without a VectorStore"
+            )
+            self._hybrid_retriever = HybridRetriever(
+                bm25=BM25Index(_settings.bm25_data_dir),
+                vector_store=self._vector_store,
+                rrf_k=_settings.hybrid_rrf_k,
+                min_score=_settings.hybrid_min_score,
+                chroma_max_distance=_settings.rag_relevance_threshold,
+                reranker=build_reranker(
+                    enabled=_settings.reranker_enabled,
+                    model_name=_settings.reranker_model,
+                ),
+                rerank_candidates=_settings.reranker_candidates,
+            )
+        return self._hybrid_retriever
 
     # ------------------------------------------------------------------
     # Public API
@@ -179,7 +215,7 @@ class KnowledgeCatalogService:
                 sources.add("rules")
 
         if _wants(ContextNeed.RAG) and question and self._vector_store is not None:
-            pack.rag_chunks = self._rag_artifacts(
+            pack.rag_chunks = await self._rag_artifacts_async(
                 project_id=project_id,
                 question=question,
                 n_results=_limit(ContextNeed.RAG, rag_results),
@@ -442,6 +478,65 @@ class KnowledgeCatalogService:
             return []
         try:
             chunks = self._vector_store.query(project_id, question, n_results=n_results)
+        except Exception:
+            logger.debug("catalog: rag query failed", exc_info=True)
+            return []
+
+        artifacts: list[Artifact] = []
+        for i, chunk in enumerate(chunks or []):
+            doc = (chunk.get("document") or "").strip()
+            if not doc:
+                continue
+            meta = chunk.get("metadata") or {}
+            source = meta.get("source_path") or meta.get("source") or "doc"
+            artifacts.append(
+                Artifact(
+                    id=f"rag:{project_id}::{meta.get('chunk_id', i)}",
+                    type="rag_chunk",
+                    title=str(source),
+                    summary=doc[:400],
+                    provenance={
+                        "source": "rag",
+                        "source_ref": str(source),
+                        "produced_by": "embed_and_store",
+                        "commit_sha": meta.get("commit_sha"),
+                    },
+                    freshness={"indexed_at": meta.get("indexed_at")},
+                    confidence=0.5,
+                    payload={"file_path": meta.get("file_path") or source},
+                )
+            )
+        return artifacts
+
+    async def _rag_artifacts_async(
+        self, *, project_id: str, question: str, n_results: int
+    ) -> list[Artifact]:
+        """Async RAG leg — routes through :class:`HybridRetriever` (RET-R2).
+
+        When ``hybrid_retrieval_enabled`` is ``True`` (default), fuses BM25 +
+        dense results via RRF so exact-identifier queries aren't missed.  Falls
+        back to a direct ``vector_store.query`` call when hybrid is disabled
+        (vision invariant #5 — graceful degradation).  Returns ``[]`` on any
+        failure so a broken retrieval store never surfaces a 500.
+        """
+        if self._vector_store is None:
+            return []
+        try:
+            from app.config import settings as _settings
+
+            if _settings.hybrid_retrieval_enabled:
+                fused = await self._get_hybrid_retriever().query(
+                    project_id,
+                    question,
+                    k=max(n_results, _settings.hybrid_k),
+                )
+                # Normalise HybridResult → the dict shape _rag_artifacts expects.
+                chunks: list[Any] = [
+                    {"document": r.document, "metadata": r.metadata, "id": r.doc_id}
+                    for r in fused[:n_results]
+                ]
+            else:
+                chunks = self._vector_store.query(project_id, question, n_results=n_results)
         except Exception:
             logger.debug("catalog: rag query failed", exc_info=True)
             return []
