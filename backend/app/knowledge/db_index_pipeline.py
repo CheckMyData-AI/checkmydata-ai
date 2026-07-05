@@ -2,6 +2,17 @@
 
 Introspects a live database connection, fetches sample data from each table,
 validates against project knowledge via LLM, and persists a rich index.
+
+Implementation note — ``_sample_query`` and ``_build_distinct_query``:
+  These SQL-builder helpers are kept as public, tested utilities but are no
+  longer used by the pipeline itself (T8 / DBIDX-D1/D2 remediation).  The
+  pipeline now routes all sample and distinct-value fetches through the
+  dialect-agnostic connector methods ``connector.sample_data(table, limit)``
+  and ``connector.distinct_values(table, column, limit)``, which have native
+  overrides for MongoDB and ClickHouse.  The old SQL-string path caused
+  MongoDB's ``execute_query`` to receive a SQL string it tried to
+  ``json.loads``, silently producing empty results.  Cleanup of these
+  legacy helpers is deferred to the T15 maintenance pass.
 """
 
 from __future__ import annotations
@@ -377,9 +388,17 @@ class DbIndexPipeline:
                     async with _sample_sem:
                         sample_failed = False
                         tbl_distinct_failures = 0
+
+                        # T8 / DBIDX-D1: route through the dialect-agnostic
+                        # connector.sample_data() method instead of building a
+                        # SQL string and passing it to execute_query().  MongoDB
+                        # overrides sample_data() natively; the SQL default in
+                        # BaseConnector wraps execute_query() for SQL dialects.
+                        # ordering_col is still computed from column metadata for
+                        # the latest_record_at metadata field (best-effort).
+                        ordering_col = _find_ordering_column(table)
                         try:
-                            query, ordering_col = _sample_query(table, connection_config.db_type)
-                            result = await connector.execute_query(query)
+                            result = await connector.sample_data(table.name, limit=3)
                             if result.error:
                                 sample_failed = True
                                 logger.debug(
@@ -407,18 +426,21 @@ class DbIndexPipeline:
                         all_distinct_cols = heuristic_cols | set(sample_extra)
 
                         for col_name in all_distinct_cols:
+                            # T8 / DBIDX-D2: route through the dialect-agnostic
+                            # connector.distinct_values() method.  MongoDB
+                            # overrides it with native aggregation; SQL dialects
+                            # inherit the BaseConnector SQL default.  The old
+                            # _build_distinct_query() + execute_query() path was
+                            # sending SQL strings to Mongo's execute_query(),
+                            # which tried json.loads(sql) and returned empty.
                             try:
-                                dq = _build_distinct_query(
-                                    table, col_name, connection_config.db_type
+                                vals = await connector.distinct_values(
+                                    table.name, col_name, MAX_DISTINCT_CARDINALITY
                                 )
-                                dr = await connector.execute_query(dq)
-                                if dr.error:
-                                    tbl_distinct_failures += 1
-                                    continue
-                                if dr.rows and (dr.row_count or 0) <= MAX_DISTINCT_CARDINALITY:
-                                    vals = [str(r[0]) for r in dr.rows if r[0] is not None]
-                                    if vals:
-                                        tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
+                                if vals:
+                                    tbl_distinct[col_name] = vals[:MAX_DISTINCT_VALUES]
+                                # An empty list from distinct_values is not a failure
+                                # (the column simply has no non-NULL values in range).
                             except Exception:
                                 tbl_distinct_failures += 1
                                 logger.debug(
