@@ -71,6 +71,58 @@ def _assert_mongo_read_safe(spec: dict) -> None:
                         raise ValueError(f"Aggregation write stage '{w}' not allowed")
 
 
+def _infer_fields(
+    docs: list[dict[str, Any]],
+    max_depth: int = 2,
+) -> dict[str, str]:
+    """Infer field names and types from a list of sample documents.
+
+    Rules:
+    - Scalar values: type name via ``type(val).__name__``.
+    - List values: always recorded as ``"array"`` regardless of element types.
+    - Dict values: recursed into with a dotted prefix up to *max_depth* levels;
+      the parent key itself is NOT emitted as a column (only its leaf children are).
+    - ``None`` values are skipped — they do not contribute ``"NoneType"`` to
+      the type union.
+    - When a field has more than one type across docs, the type names are joined
+      as ``"|"``-separated sorted string (e.g. ``"int|str"``), making unions
+      deterministic.
+    - Depth is measured in dots: ``"a.b"`` has depth 1, ``"a.b.c"`` has depth 2.
+      Subtrees deeper than *max_depth* are not emitted.
+
+    Returns a ``{field_path: type_string}`` mapping.
+    """
+    # field_path -> set of type names seen
+    type_sets: dict[str, set[str]] = {}
+
+    def _walk(obj: dict[str, Any], prefix: str, current_depth: int) -> None:
+        for key, val in obj.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if val is None:
+                # Null — skip rather than polluting the union with NoneType.
+                continue
+            if isinstance(val, list):
+                existing = type_sets.setdefault(path, set())
+                existing.add("array")
+            elif isinstance(val, dict):
+                if current_depth < max_depth:
+                    # Recurse into subdocument — parent path is NOT emitted.
+                    _walk(val, path, current_depth + 1)
+                else:
+                    # At depth cap: record the subdoc as a plain "dict" column.
+                    existing = type_sets.setdefault(path, set())
+                    existing.add("dict")
+            else:
+                existing = type_sets.setdefault(path, set())
+                existing.add(type(val).__name__)
+
+    for doc in docs:
+        if isinstance(doc, dict):
+            _walk(doc, "", 0)
+
+    return {path: "|".join(sorted(types)) for path, types in type_sets.items()}
+
+
 def _to_jsonable(value: Any) -> Any:
     """Coerce Mongo-specific BSON types in a result cell to serializable forms.
 
@@ -267,25 +319,27 @@ class MongoDBConnector(BaseConnector):
         if not self._db:
             return SchemaInfo(db_type=self.db_type)
 
+        from app.config import settings
+
+        sample_size: int = getattr(settings, "mongo_schema_sample_size", 100)
+
         tables: list[TableInfo] = []
         collection_names = await self._db.list_collection_names()
 
         for cname in collection_names:
             coll = self._db[cname]
 
-            # Sample multiple docs for broader field detection
-            samples = await coll.find().limit(5).to_list(length=5)
-            all_fields: dict[str, str] = {}
-            for doc in samples:
-                for key, val in doc.items():
-                    if key not in all_fields:
-                        all_fields[key] = type(val).__name__
+            # DBIDX-D11: sample up to mongo_schema_sample_size docs (default 100)
+            # and infer field types with union detection and nested path expansion.
+            samples = await coll.find().limit(sample_size).to_list(length=sample_size)
+            all_fields = _infer_fields(samples)
 
             columns = [
                 ColumnInfo(
                     name=key,
                     data_type=dtype,
-                    is_primary_key=key == "_id",
+                    # PK detection: only the un-dotted top-level "_id" field.
+                    is_primary_key=(key == "_id"),
                 )
                 for key, dtype in all_fields.items()
             ]

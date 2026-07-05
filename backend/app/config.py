@@ -172,6 +172,11 @@ class Settings(BaseSettings):
     # Database index settings
     db_index_ttl_hours: int = 24
     db_index_batch_size: int = 5
+    # DBIDX-D11: number of documents sampled per collection during MongoDB schema
+    # inference. Larger values improve field coverage for sparse/optional fields at
+    # the cost of a slightly slower introspect_schema call. 100 is a good balance
+    # for most collections; raise for very sparse schemas.
+    mongo_schema_sample_size: int = 100
 
     # --- R5 sync remediation -------------------------------------------------
     # H6: scrub PII / secrets from DB samples + distinct values before LLM egress.

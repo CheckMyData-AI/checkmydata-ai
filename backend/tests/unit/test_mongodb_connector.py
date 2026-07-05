@@ -20,6 +20,7 @@ from app.connectors.base import ConnectionConfig
 from app.connectors.mongodb import (
     MongoDBConnector,
     _assert_mongo_read_safe,
+    _infer_fields,
     _to_jsonable,
 )
 
@@ -303,3 +304,80 @@ class TestMongoNativeCapture:
         assert await conn.distinct_values("t", "c") == []
         s = await conn.approx_stats("t", "c")
         assert s.distinct_count is None
+
+
+# ---------------------------------------------------------------------------
+# TestMongoInfer — DBIDX-D11 schema inference: type union, nested paths
+# ---------------------------------------------------------------------------
+
+
+class TestMongoInfer:
+    """Pure unit tests for the _infer_fields() helper — no network required."""
+
+    def test_type_union_across_docs(self):
+        """A field that is str in doc1 and int in doc2 → 'int|str' union."""
+        docs = [{"x": "a"}, {"x": 1}]
+        fields = _infer_fields(docs)
+        assert set(fields["x"].split("|")) == {"str", "int"}
+
+    def test_nested_paths_flattened(self):
+        """Nested subdoc fields surface as dotted paths."""
+        docs = [{"addr": {"city": "NYC", "zip": 10001}}]
+        fields = _infer_fields(docs)
+        assert "addr.city" in fields
+        assert "addr.zip" in fields
+        # The parent key itself should NOT appear as a top-level column.
+        assert "addr" not in fields
+
+    def test_depth_bounded(self):
+        """Recursion stops at max_depth — paths deeper than max_depth are not emitted."""
+        docs = [{"a": {"b": {"c": {"d": 1}}}}]
+        fields = _infer_fields(docs, max_depth=2)
+        # With max_depth=2 we allow at most 2 dots, i.e. depth-3 paths like a.b.c.
+        # The spec says: assert not any(k.count(".") > 2 for k in fields)
+        assert not any(k.count(".") > 2 for k in fields)
+
+    def test_arrays_reported_as_array(self):
+        """List values are typed 'array', not 'list'."""
+        docs = [{"tags": [1, 2, 3]}]
+        fields = _infer_fields(docs)
+        assert "array" in fields["tags"]
+
+    def test_optional_field_absent_in_first_doc_captured(self):
+        """A field absent from doc1 but present in doc3 must still appear."""
+        docs = [{"x": 1}, {"x": 2}, {"x": 3, "rare": "hello"}]
+        fields = _infer_fields(docs)
+        assert "rare" in fields
+        assert fields["rare"] == "str"
+
+    def test_top_level_types_deduplicated(self):
+        """Same type across all docs produces a single type (no duplication)."""
+        docs = [{"n": 1}, {"n": 2}, {"n": 3}]
+        fields = _infer_fields(docs)
+        assert fields["n"] == "int"
+
+    def test_union_sorted_deterministic(self):
+        """Type union string is sorted so result is deterministic regardless of order."""
+        docs_ab = [{"v": "hello"}, {"v": 42}]
+        docs_ba = [{"v": 42}, {"v": "hello"}]
+        assert _infer_fields(docs_ab)["v"] == _infer_fields(docs_ba)["v"]
+
+    def test_none_values_ignored_in_type_set(self):
+        """None values don't contribute 'NoneType' to the type union."""
+        docs = [{"f": None}, {"f": "hello"}]
+        fields = _infer_fields(docs)
+        assert "NoneType" not in fields["f"]
+        assert fields["f"] == "str"
+
+    def test_empty_docs_list_returns_empty(self):
+        """No docs → no fields."""
+        assert _infer_fields([]) == {}
+
+    def test_id_field_preserved(self):
+        """_id survives inference (used by introspect_schema PK detection)."""
+        from bson import ObjectId
+
+        docs = [{"_id": ObjectId(), "name": "Alice"}]
+        fields = _infer_fields(docs)
+        assert "_id" in fields
+        assert "name" in fields
