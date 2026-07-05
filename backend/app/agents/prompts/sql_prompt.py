@@ -7,6 +7,26 @@ hints, schema conventions, safety rules, and any pre-loaded context
 
 from __future__ import annotations
 
+SQL_CORRECTNESS_RULES = (
+    "SQL CORRECTNESS RULES (avoid confidently-wrong numbers):\n"
+    "- JOIN grain / fan-out: a one-to-many JOIN multiplies rows. Never SUM/COUNT a "
+    "parent measure after joining a child table — aggregate the child to the parent "
+    "grain first (subquery / CTE), then join. When unsure, verify the row count did "
+    "not inflate versus the base table.\n"
+    "- COUNT vs COUNT(DISTINCT): COUNT(col) counts non-NULL rows (inflated by fan-out); "
+    "use COUNT(DISTINCT key) when you mean unique entities.\n"
+    "- Integer division: dividing two integers truncates toward zero (e.g. 3/4 = 0). "
+    "For ratios multiply by 1.0 or cast: `SUM(x) * 1.0 / NULLIF(SUM(y), 0)` (Postgres: "
+    "`::numeric`).\n"
+    "- Zero / NULL denominators: always wrap the divisor in NULLIF(denominator, 0) so a "
+    "divide-by-zero yields NULL, never an error or a bogus 0.\n"
+    "- Percentage base: state WHICH total the percentage is of (share of overall vs share "
+    "within a group). Compute the base explicitly; do not assume the current filter is the "
+    "whole population.\n"
+    "- NULL in aggregates: SUM/AVG/COUNT(col) skip NULLs — AVG is over non-NULL rows only. "
+    "If NULL should count as 0, COALESCE it first; state the denominator you used.\n"
+)
+
 DIALECT_HINTS: dict[str, str] = {
     "mysql": (
         "- Use backtick quoting for identifiers: `table`.`column`\n"
@@ -103,6 +123,9 @@ def build_sql_system_prompt(
         "values from `get_query_context` / distinct-value samples or `IN (...)` — "
         "avoid ad-hoc `LIKE` patterns unless the user asked for pattern matching."
     )
+
+    sections.append("")
+    sections.append(SQL_CORRECTNESS_RULES)
 
     if has_db_index:
         stale_note = ""

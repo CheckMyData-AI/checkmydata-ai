@@ -2,6 +2,32 @@
 
 from app.agents.prompts.sql_prompt import DIALECT_HINTS, build_sql_system_prompt
 
+# ---------------------------------------------------------------------------
+# DATA-03: SQL-correctness rules
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_contains_sql_correctness_rules():
+    prompt = build_sql_system_prompt(db_type="postgres")
+    low = prompt.lower()
+    # JOIN grain / fan-out
+    assert "fan-out" in low or "aggregate before" in low
+    # COUNT vs COUNT(DISTINCT)
+    assert "count(distinct" in low
+    # integer division guard
+    assert "1.0" in prompt or "::numeric" in low or "numeric" in low
+    # NULLIF denominators
+    assert "nullif" in low
+    # % base must be stated
+    assert "base" in low
+    # NULL in aggregate
+    assert "null" in low and "avg" in low
+
+
+def test_prompt_correctness_rules_present_for_all_dialects():
+    for db in ("postgres", "mysql", "clickhouse", "mongodb"):
+        assert "SQL CORRECTNESS RULES" in build_sql_system_prompt(db_type=db)
+
 
 class TestDialectHints:
     def test_mysql_exists(self):
