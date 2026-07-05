@@ -1,4 +1,5 @@
-"""Tests for context_pack_renderer — RET-R3: greedy relevance×confidence packing.
+"""Tests for context_pack_renderer — RET-R3: greedy relevance×confidence packing
+and RET-R8: per-artifact provenance rendering.
 
 Covers:
 - Over-budget pack is trimmed to fit token_budget["total"] by priority score
@@ -8,6 +9,8 @@ Covers:
 - Section minimum reservation: tables/rules always keep ≥1 if present
 - Deterministic (no model — uses fallback WindowTokenizer)
 - Injecting custom token-size function for hermetic testing
+- render_context_block: provenance annotated per artifact
+- render_context_block: graceful omit when fields are missing
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.knowledge.context_pack import Artifact, ContextPack
-from app.knowledge.context_pack_renderer import pack_context
+from app.knowledge.context_pack_renderer import pack_context, render_context_block
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -347,3 +350,87 @@ class TestDefaultTokenizerPath:
         )
         result = pack_context(pack)
         assert result.omitted_count > 0
+
+
+# ---------------------------------------------------------------------------
+# RET-R8: render_context_block — per-artifact provenance rendering
+# ---------------------------------------------------------------------------
+
+
+class TestRenderContextBlock:
+    def test_render_includes_provenance_per_artifact(self) -> None:
+        a = Artifact(
+            id="1",
+            type="rag_chunk",
+            title="auth.py",
+            summary="does auth",
+            confidence=0.8,
+            provenance={"source": "rag", "commit_sha": "abcdef1"},
+            freshness={"indexed_at": "2026-07-01T00:00:00+00:00"},
+        )
+        block = render_context_block([a])
+        assert "@ abcdef1" in block
+        assert "conf=0.80" in block
+        assert "2026-07-01T00:00:00+00:00" in block
+        assert "does auth" in block
+
+    def test_render_missing_provenance_uses_dash(self) -> None:
+        a = Artifact(id="1", type="rule", title="r", summary="s", confidence=1.0)
+        block = render_context_block([a])
+        assert "@ —" in block
+
+    def test_render_empty_list_returns_empty_string(self) -> None:
+        assert render_context_block([]) == ""
+
+    def test_render_header_present(self) -> None:
+        a = Artifact(id="1", type="rule", title="r", summary="s", confidence=1.0)
+        block = render_context_block([a])
+        assert "RELEVANT KNOWLEDGE" in block
+
+    def test_render_missing_commit_sha_uses_dash(self) -> None:
+        """Artifact with source but no commit_sha renders '@ —'."""
+        a = Artifact(
+            id="2",
+            type="rag_chunk",
+            title="t",
+            summary="body",
+            confidence=0.5,
+            provenance={"source": "chroma"},
+            freshness={"indexed_at": "2026-01-01T00:00:00+00:00"},
+        )
+        block = render_context_block([a])
+        assert "@ —" in block
+        assert "conf=0.50" in block
+        assert "2026-01-01T00:00:00+00:00" in block
+
+    def test_render_missing_indexed_at_uses_dash(self) -> None:
+        """Artifact with no indexed_at renders '—' for that slot."""
+        a = Artifact(
+            id="3",
+            type="learning",
+            title="l",
+            summary="lesson",
+            confidence=0.9,
+            provenance={"source": "db", "commit_sha": "abc1234"},
+        )
+        block = render_context_block([a])
+        assert "abc1234" in block
+        # indexed_at slot is — when freshness is absent
+        assert "—" in block
+
+    def test_render_multiple_artifacts(self) -> None:
+        """All artifacts appear in the block, each on its own line."""
+        arts = [
+            Artifact(
+                id=str(i),
+                type="rag_chunk",
+                title=f"f{i}",
+                summary=f"sum{i}",
+                confidence=0.5,
+                provenance={"source": "rag"},
+            )
+            for i in range(3)
+        ]
+        block = render_context_block(arts)
+        for a in arts:
+            assert a.summary in block

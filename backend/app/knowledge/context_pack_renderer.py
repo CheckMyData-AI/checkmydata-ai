@@ -297,4 +297,46 @@ def _total_tokens(pack: ContextPack, sizer: Callable[[Artifact], int]) -> int:
     return sum(sizer(a) for a in pack.all_artifacts())
 
 
-__all__ = ["PackingResult", "pack_context"]
+# ---------------------------------------------------------------------------
+# RET-R8: per-artifact provenance rendering
+# ---------------------------------------------------------------------------
+
+_TRACEABLE_HEADER = "RELEVANT KNOWLEDGE (traceable):"
+
+
+def render_context_block(artifacts: list[Artifact]) -> str:
+    """Render a prompt block with per-artifact provenance annotations (RET-R8).
+
+    Returns ``""`` for an empty artifact list.  Each line follows the C-E format::
+
+        - [{source} @ {commit_sha} · {indexed_at} · conf={confidence:.2f}] {summary}
+
+    ``commit_sha`` falls back to ``"—"`` when absent; ``indexed_at`` falls
+    back to ``"—"`` when absent.  The function never raises on missing fields.
+
+    Parameters
+    ----------
+    artifacts:
+        Flat list of :class:`~app.knowledge.context_pack.Artifact` instances
+        (typically from :meth:`~app.knowledge.context_pack.ContextPack.all_artifacts`
+        or a filtered subset after packing).
+
+    Returns
+    -------
+    str
+        Multi-line prompt block starting with the traceable header, or ``""``
+        when *artifacts* is empty.
+    """
+    if not artifacts:
+        return ""
+
+    lines: list[str] = [_TRACEABLE_HEADER]
+    for a in artifacts:
+        src = a.provenance.get("source", "unknown") if a.provenance else "unknown"
+        sha = (a.provenance.get("commit_sha") or "—") if a.provenance else "—"
+        iat = (a.freshness.get("indexed_at") or "—") if a.freshness else "—"
+        lines.append(f"- [{src} @ {sha} · {iat} · conf={a.confidence:.2f}] {a.summary}")
+    return "\n".join(lines)
+
+
+__all__ = ["PackingResult", "pack_context", "render_context_block"]
