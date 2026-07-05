@@ -86,6 +86,18 @@ class ResponseBuilder:
                 if sr and sr.status == "degraded" and sr.degraded_reason:
                     degraded_reason = sr.degraded_reason
                     break
+            if (
+                last_sql_result
+                and last_sql_result.query_result
+                and last_sql_result.query_result.truncated
+            ):
+                answer = (
+                    f"{answer}\n\n"
+                    "PARTIAL DATA: the result shown was capped/truncated, so any total "
+                    "above is a lower bound over an incomplete set — not a full-population "
+                    "figure. Re-run with a tighter filter or server-side aggregation for an "
+                    "exact total."
+                )
             response_type = "pipeline_complete_degraded" if degraded_reason else "pipeline_complete"
             return AgentResponse(
                 answer=answer,

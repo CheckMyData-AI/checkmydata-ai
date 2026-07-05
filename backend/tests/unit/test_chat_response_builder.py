@@ -153,3 +153,99 @@ class TestBuildSynthesisMessagesPartialData:
         )
         joined = "\n".join(m.content for m in msgs)
         assert "PARTIAL DATA" not in joined
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for pipeline-response truncation tests (DATA-04b)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def pipeline_exec_result_truncated():
+    """Minimal completed pipeline exec-result whose shown result is truncated."""
+    from app.agents.stage_context import ExecutionPlan, PlanStage, StageContext, StageResult
+    from app.connectors.base import QueryResult
+
+    stage = PlanStage(stage_id="s1", description="revenue", tool="query_database")
+    plan = ExecutionPlan(plan_id="p1", question="What is total revenue?", stages=[stage])
+    stage_ctx = StageContext(plan=plan)
+    stage_ctx.set_result(
+        "s1",
+        StageResult(
+            stage_id="s1",
+            status="success",
+            query="SELECT SUM(amount) FROM purchases",
+            query_result=QueryResult(
+                columns=["total"], rows=[[123456]], row_count=1, truncated=True
+            ),
+        ),
+    )
+    from app.agents.stage_executor import _StageExecutorResult
+
+    return _StageExecutorResult(
+        status="completed",
+        stage_ctx=stage_ctx,
+        final_answer="Revenue is 123456.",
+    )
+
+
+@pytest.fixture
+def pipeline_exec_result_not_truncated():
+    """Minimal completed pipeline exec-result whose shown result is NOT truncated."""
+    from app.agents.stage_context import ExecutionPlan, PlanStage, StageContext, StageResult
+    from app.connectors.base import QueryResult
+
+    stage = PlanStage(stage_id="s1", description="revenue", tool="query_database")
+    plan = ExecutionPlan(plan_id="p1", question="What is total revenue?", stages=[stage])
+    stage_ctx = StageContext(plan=plan)
+    stage_ctx.set_result(
+        "s1",
+        StageResult(
+            stage_id="s1",
+            status="success",
+            query="SELECT SUM(amount) FROM purchases",
+            query_result=QueryResult(
+                columns=["total"], rows=[[123456]], row_count=1, truncated=False
+            ),
+        ),
+    )
+    from app.agents.stage_executor import _StageExecutorResult
+
+    return _StageExecutorResult(
+        status="completed",
+        stage_ctx=stage_ctx,
+        final_answer="Revenue is 123456.",
+    )
+
+
+class TestBuildPipelineResponsePartialData:
+    """DATA-04b: pipeline answer must surface truncation of the shown result."""
+
+    def test_pipeline_response_appends_partial_data_when_truncated(
+        self, pipeline_exec_result_truncated
+    ):
+        from app.agents.response_builder import ResponseBuilder
+
+        resp = ResponseBuilder.build_pipeline_response(
+            pipeline_exec_result_truncated,
+            wf_id="wf1",
+            staleness_warning=None,
+            pipeline_run_id="run1",
+        )
+        assert "PARTIAL DATA" in resp.answer
+        assert resp.results is not None and resp.results.truncated is True
+
+    def test_pipeline_response_no_partial_data_when_not_truncated(
+        self, pipeline_exec_result_not_truncated
+    ):
+        from app.agents.response_builder import ResponseBuilder
+
+        resp = ResponseBuilder.build_pipeline_response(
+            pipeline_exec_result_not_truncated,
+            wf_id="wf1",
+            staleness_warning=None,
+            pipeline_run_id="run1",
+        )
+        assert "PARTIAL DATA" not in resp.answer
