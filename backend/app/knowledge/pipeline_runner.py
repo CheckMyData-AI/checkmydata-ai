@@ -21,6 +21,7 @@ from app.knowledge.ast_parser import ASTParser, ParsedFile
 from app.knowledge.bm25_index import BM25Index
 from app.knowledge.chunker import chunk_document
 from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
+from app.knowledge.code_symbol_chunker import make_chunker as _make_symbol_chunker
 from app.knowledge.doc_generator import _is_binary_content
 from app.knowledge.indexing_pipeline import (
     generate_summary_doc,
@@ -530,6 +531,23 @@ class IndexingPipelineRunner:
             ):
                 await self._run_graph_build(state, wf_id, db, project_id, is_full=is_full_graph)
             await self._cp_svc.complete_step(db, cp_id, "graph_build")
+
+            # --- Step 5d: code_symbol_embed (CODEIDX-C3) ---
+            # Upsert raw symbol bodies into the vector store so code-Q&A
+            # retrieval can surface actual function/class source, not only the
+            # LLM-generated prose.  Gated on hybrid_retrieval_enabled (default
+            # on) because that flag governs the broader "enhanced retrieval"
+            # path; parsed_files is non-empty only when code_graph_enabled is
+            # True, so this step is implicitly gated on both flags.
+            if settings.hybrid_retrieval_enabled and state.parsed_files:
+                symbol_count = sum(len(pf.symbols) for pf in state.parsed_files.values())
+                async with tracker.step(
+                    wf_id,
+                    "code_symbol_embed",
+                    f"Embedding {symbol_count} code symbols from {len(state.parsed_files)} file(s)",
+                ):
+                    await self._run_code_symbol_embed(state, project_id, wf_id)
+                await self._cp_svc.complete_step(db, cp_id, "code_symbol_embed")
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
         async with tracker.step(
@@ -1367,6 +1385,58 @@ class IndexingPipelineRunner:
             return out
 
         return await asyncio.to_thread(_walk)
+
+    async def _run_code_symbol_embed(
+        self,
+        state: _PipelineState,
+        project_id: str,
+        wf_id: str,
+    ) -> None:
+        """CODEIDX-C3: upsert raw code-symbol chunks into the vector store.
+
+        Runs synchronously in a thread (via ``asyncio.to_thread``) to avoid
+        blocking the event loop on disk I/O and ChromaDB upserts.  Failures
+        here are non-fatal — the pipeline continues without raw-code chunks if
+        something goes wrong.
+        """
+        if state.repo_dir is None or not state.parsed_files:
+            return
+        try:
+            chunker = _make_symbol_chunker()
+            repo_dir = state.repo_dir
+            parsed_files = state.parsed_files
+            vs = self._vector_store
+            await asyncio.to_thread(
+                chunker.embed_symbols,
+                project_id,
+                parsed_files,
+                repo_dir,
+                vs,
+            )
+            symbol_count = sum(len(pf.symbols) for pf in parsed_files.values())
+            logger.info(
+                "code_symbol_embed: upserted symbols from %d file(s) (%d total symbols)",
+                len(parsed_files),
+                symbol_count,
+            )
+            await tracker.emit(
+                wf_id,
+                "code_symbol_embed",
+                "completed",
+                f"Upserted code symbols from {len(parsed_files)} file(s) ({symbol_count} symbols)",
+            )
+        except Exception:
+            logger.warning(
+                "code_symbol_embed: non-fatal failure for project %s",
+                project_id,
+                exc_info=True,
+            )
+            await tracker.emit(
+                wf_id,
+                "code_symbol_embed",
+                "warning",
+                "code_symbol_embed encountered an error — raw-code chunks skipped",
+            )
 
     async def _run_ast_parse(
         self,
