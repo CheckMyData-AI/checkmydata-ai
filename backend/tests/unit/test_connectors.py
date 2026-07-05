@@ -1,7 +1,7 @@
 import pytest
 
 from app.connectors.base import ColumnInfo, ConnectionConfig
-from app.connectors.postgres import _build_check_map, _build_enum_map
+from app.connectors.postgres import _build_check_map, _build_enum_map, _normalize_reltuples
 from app.connectors.registry import get_connector
 
 
@@ -161,3 +161,20 @@ class TestPostgresEnumAndCheck:
         assert ci.enum_labels == ["new", "paid"]
         assert ColumnInfo(name="x", data_type="int").enum_labels is None
         assert ColumnInfo(name="x", data_type="int").check_constraints == []
+
+
+class TestNormalizeReltuples:
+    def test_negative_reltuples_is_unknown(self):
+        assert _normalize_reltuples(-1) is None
+
+    def test_negative_large_is_unknown(self):
+        assert _normalize_reltuples(-999) is None
+
+    def test_none_is_unknown(self):
+        assert _normalize_reltuples(None) is None
+
+    def test_zero_stays_zero(self):
+        assert _normalize_reltuples(0) == 0
+
+    def test_positive_passes_through(self):
+        assert _normalize_reltuples(1234) == 1234

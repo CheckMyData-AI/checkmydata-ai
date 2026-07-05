@@ -56,6 +56,25 @@ def _build_check_map(
     return result
 
 
+def _normalize_reltuples(approx_rows: int | None) -> int | None:
+    """Convert a raw ``c.reltuples`` value into a usable row count.
+
+    Postgres stores ``-1`` in ``pg_class.reltuples`` for tables that have
+    never been ANALYZEd (or were just loaded).  Clamping ``-1`` to ``0``
+    falsely tells the LLM the table is empty and may cause it to skip the
+    table entirely.  We return ``None`` (unknown) for any negative value so
+    downstream callers can distinguish "empty" from "not yet analyzed".
+
+    Rules:
+    - ``None``  → ``None``   (no stats at all)
+    - ``< 0``   → ``None``   (unanalyzed / freshly loaded)
+    - ``>= 0``  → that int   (0 means genuinely empty; positive is the estimate)
+    """
+    if approx_rows is None or approx_rows < 0:
+        return None
+    return approx_rows
+
+
 class PostgresConnector(BaseConnector):
     def __init__(self):
         self._pool: asyncpg.Pool | None = None
@@ -437,7 +456,7 @@ class PostgresConnector(BaseConnector):
                         columns=columns,
                         foreign_keys=fk_map.get(key, []),
                         indexes=idx_map.get(key, []),
-                        row_count=max(0, approx_rows) if approx_rows is not None else None,
+                        row_count=_normalize_reltuples(approx_rows),
                         comment=tr["table_comment"],
                     )
                 )
