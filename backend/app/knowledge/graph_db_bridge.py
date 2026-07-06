@@ -151,9 +151,15 @@ _AMBIGUOUS_VERBS = (
     "register_",
 )
 
-# Tokens in HTTP route decorators that hint at the op kind. ``GET`` → read,
-# anything else → write.
+# Tokens in HTTP route decorators that hint at the op kind.
+# ``GET`` / ``LIST`` → read; ``POST`` / ``PUT`` / ``PATCH`` / ``DELETE`` → write.
+#
+# IMPORTANT: use ``\b`` word-boundary anchors so that decorators containing the
+# method name as a *substring* (e.g. ``@budget_gettable``, ``@postmark_send``,
+# ``@listable_resource``) do NOT match.  Only whole tokens such as ``.get(``,
+# ``@app.get``, a bare ``get`` decorator, etc. produce a hit.
 _HTTP_WRITE_METHODS = re.compile(r"\b(?:post|put|patch|delete)\b", re.IGNORECASE)
+_HTTP_READ_METHODS = re.compile(r"\b(?:get|list)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -168,6 +174,9 @@ class CallerRef:
     depth: int
     confidence: float
     decorators: tuple[str, ...] = field(default_factory=tuple)
+    # How the op_kind was inferred: "high" = HTTP decorator (strong signal),
+    # "low" = name-prefix heuristic only (weak guess).
+    op_kind_confidence: str = "low"
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -211,27 +220,60 @@ def classify_endpoint_kind(symbol: Symbol) -> str:
     return "unknown"
 
 
-def classify_op_kind(symbol: Symbol) -> str:
-    """Heuristic read/write classification using verb prefix + decorators."""
+def classify_op_kind_ex(symbol: Symbol) -> tuple[str, str]:
+    """Extended heuristic classification — returns ``(op_kind, confidence)``.
+
+    Confidence levels:
+
+    * ``"high"``  — HTTP method inferred from a decorator token (e.g.
+      ``@router.get(...)``).  The signal is unambiguous.
+    * ``"low"``   — op-kind inferred solely from the function's name prefix
+      (e.g. ``get_user`` → read).  This is a heuristic guess; the caller might
+      not actually perform a DB read.
+
+    The ``confidence`` value is intentionally a string (not a float) so it
+    serialises cleanly in JSON/prompts without precision noise, and to avoid
+    confusion with the numeric edge-confidence stored on :class:`CallerRef`.
+
+    .. note::
+        HTTP-method matching uses ``\\b`` word-boundary anchors, so decorators
+        that merely *contain* a method name as a substring (e.g.
+        ``@budget_gettable``, ``@postmark_send``) are **not** matched.
+    """
     name = (symbol.name or "").lower()
     for verb in _WRITE_VERBS:
         if name.startswith(verb):
-            return "write"
+            return "write", "low"
     for verb in _READ_VERBS:
         if name.startswith(verb):
-            return "read"
+            return "read", "low"
     for verb in _AMBIGUOUS_VERBS:
         if name.startswith(verb):
-            return "unknown"
+            return "unknown", "low"
 
     # HTTP method hint via decorator (e.g. ``@router.post('/users')``).
+    # Word-boundary regex prevents substring false-positives.
     for dec in symbol.decorators or ():
         if _HTTP_WRITE_METHODS.search(dec):
-            return "write"
-        if "get" in dec.lower() or "list" in dec.lower():
-            return "read"
+            return "write", "high"
+        if _HTTP_READ_METHODS.search(dec):
+            return "read", "high"
 
-    return "unknown"
+    return "unknown", "low"
+
+
+def classify_op_kind(symbol: Symbol) -> str:
+    """Heuristic read/write classification using verb prefix + decorators.
+
+    Returns a plain ``str`` (``"read"`` | ``"write"`` | ``"unknown"``).
+
+    .. deprecated::
+        Prefer :func:`classify_op_kind_ex` when you need the confidence level.
+        This function is kept for back-compat (existing tests assert a plain
+        ``str`` return type).
+    """
+    op_kind, _confidence = classify_op_kind_ex(symbol)
+    return op_kind
 
 
 # ---------------------------------------------------------------------------
@@ -366,15 +408,17 @@ class GraphDBBridge:
         # ``depth`` field is useful in prompts, so estimate conservatively.
         for sym, conf in caller_tuples:
             depth = self._estimate_depth(conf)
+            op_kind, op_kind_conf = classify_op_kind_ex(sym)
             ref = CallerRef(
                 caller_name=sym.name or "<anon>",
                 caller_file=sym.file_path,
                 caller_kind=sym.kind,
                 endpoint_kind=classify_endpoint_kind(sym),
-                op_kind=classify_op_kind(sym),
+                op_kind=op_kind,
                 depth=depth,
                 confidence=round(conf, 4),
                 decorators=tuple(sym.decorators or ()),
+                op_kind_confidence=op_kind_conf,
             )
             # Dedupe across multiple anchors of the same entity — keep the
             # highest-confidence ref for the same caller symbol.
@@ -400,4 +444,10 @@ class GraphDBBridge:
         return depth
 
 
-__all__ = ["CallerRef", "GraphDBBridge", "classify_endpoint_kind", "classify_op_kind"]
+__all__ = [
+    "CallerRef",
+    "GraphDBBridge",
+    "classify_endpoint_kind",
+    "classify_op_kind",
+    "classify_op_kind_ex",
+]
