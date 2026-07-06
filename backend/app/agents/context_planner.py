@@ -22,10 +22,39 @@ default set", so enabling it can only narrow, never break, context assembly.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Word-boundary cue matching (ORCH-CP01)
+# ---------------------------------------------------------------------------
+# Naive substring matching (`cue in q`) was too broad: "code" matched "country
+# code", "drop" matched "drop-off", "how is" matched "how is it going".
+# Single-word cues are matched with `\b` word boundaries so they only fire when
+# the cue appears as a standalone token.  Multi-word phrase cues keep plain
+# substring matching (no risk of false sub-token hits for multi-word sequences).
+_WORD_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _word_match(q: str, cue: str) -> bool:
+    """Return True if *cue* appears in *q* with appropriate precision.
+
+    * Single-word cues use ``\\b`` word-boundary anchors so ``"drop"`` does not
+      match ``"drop-off"`` and ``"function"`` does not match ``"functional"``.
+    * Multi-word phrase cues (contain a space) use plain substring matching —
+      there is no sub-token false-positive risk for phrases like ``"where is"``
+      or ``"how does"``.
+    """
+    if " " in cue:
+        return cue in q
+    pat = _WORD_CACHE.get(cue)
+    if pat is None:
+        pat = _WORD_CACHE[cue] = re.compile(rf"\b{re.escape(cue)}\b")
+    return bool(pat.search(q))
 
 
 class ContextNeed(StrEnum):
@@ -134,13 +163,17 @@ _CUES: dict[ContextNeed, tuple[str, ...]] = {
         "trend",
         "why did",
         "spike",
-        "drop",
+        # "drop" removed (CP01): matched "drop-off" as a false positive.
+        # Use the explicit phrase "drop-off" to stay precise.
+        "drop-off",
         "recommend",
         "alert",
         "unusual",
     ),
     ContextNeed.RAG: (
-        "code",
+        # "code" removed (CP01): "country code", "zip code", "status code" all
+        # contain the token "code" as a word, making \b insufficient to eliminate
+        # false positives.  Rely on the remaining high-precision cues instead.
         "function",
         "class",
         "module",
@@ -211,9 +244,9 @@ class ContextPlanner:
             needs.add(ContextNeed.TABLES)
             reasons.append("connection→tables")
 
-        # Keyword-cued categories.
+        # Keyword-cued categories — word-boundary matching (ORCH-CP01).
         for need, cues in _CUES.items():
-            if any(cue in q for cue in cues):
+            if any(_word_match(q, cue) for cue in cues):
                 if need is ContextNeed.RAG and not has_repo:
                     continue
                 if need in (ContextNeed.LINEAGE,) and not has_connection:
@@ -252,4 +285,9 @@ class ContextPlanner:
         )
 
 
-__all__ = ["ALL_NEEDS", "ContextNeed", "ContextPlan", "ContextPlanner"]
+# CP02 note: ContextPlanner.plan() is invoked on the hot path via
+# ContextLoader.assemble_knowledge_block (orchestrator.py ~line 912), which is
+# wired behind context_planner_enabled (W2-T8 / RET-R1).  W3 (this file)
+# delivers the cue-precision fix only; the runtime invocation is W2's concern.
+
+__all__ = ["ALL_NEEDS", "ContextNeed", "ContextPlan", "ContextPlanner", "_word_match"]
