@@ -398,7 +398,10 @@ class CodeGraphBuilder:
         for sym in symbols:
             if sym.kind not in ("class", "interface"):
                 continue
-            for base_name in _extract_base_names(sym.signature):
+            # Prefer AST-extracted bases (CODEIDX-C6); fall back to signature
+            # parsing for graphs loaded from pre-C6 DB rows where bases is ().
+            base_names = list(sym.bases) or _extract_base_names(sym.signature)
+            for base_name in base_names:
                 local_matches = file_local.get(base_name, [])
                 if len(local_matches) == 1:
                     edges.append(

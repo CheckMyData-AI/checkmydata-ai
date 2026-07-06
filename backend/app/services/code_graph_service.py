@@ -360,6 +360,7 @@ class CodeGraphService:
             decorators=decorators,
             signature=row.signature or "",
             docstring=row.docstring or "",
+            bases=(),  # not persisted; _resolve_extends falls back to signature parsing
         )
 
     @staticmethod

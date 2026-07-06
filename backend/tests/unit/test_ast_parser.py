@@ -422,3 +422,77 @@ def test_same_name_functions_collapse_to_one_uid(parser: ASTParser):
     pf = parser.parse_bytes("dup.py", src)
     uids = {s.uid for s in pf.symbols if s.name == "f"}
     assert uids == {"python:dup.py:function:f"}
+
+
+# ---------------------------------------------------------------------------
+# CODEIDX-C6: EXTENDS/heritage from AST nodes, multi-base
+# ---------------------------------------------------------------------------
+
+
+def test_python_multi_base_captured_in_bases(parser: ASTParser):
+    """Python class with multiple base classes populates Symbol.bases (CODEIDX-C6)."""
+    src = b"class A:\n    pass\nclass B:\n    pass\nclass C(A, B):\n    pass\n"
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert syms["C"].bases == ("A", "B")
+
+
+def test_python_single_base_captured(parser: ASTParser):
+    """Single-base Python class populates Symbol.bases with one entry."""
+    src = b"class Base:\n    pass\nclass Child(Base):\n    pass\n"
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert syms["Child"].bases == ("Base",)
+
+
+def test_python_no_base_empty_bases(parser: ASTParser):
+    """Python class without base classes has empty bases tuple."""
+    src = b"class Standalone:\n    pass\n"
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert syms["Standalone"].bases == ()
+
+
+def test_python_metaclass_excluded_from_bases(parser: ASTParser):
+    """metaclass= keyword argument must not appear in Symbol.bases."""
+    src = b"class M(type):\n    pass\nclass A(metaclass=M):\n    pass\n"
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert syms["A"].bases == ()
+
+
+def test_python_multiline_base_list_captured(parser: ASTParser):
+    """Multi-line base list (longer than 200 chars) is captured fully from AST."""
+    long_name = "A" * 50
+    long_name2 = "B" * 50
+    src = (
+        f"class {long_name}:\n    pass\n"
+        f"class {long_name2}:\n    pass\n"
+        f"class C(\n    {long_name},\n    {long_name2},\n):\n    pass\n"
+    ).encode()
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert set(syms["C"].bases) == {long_name, long_name2}
+
+
+def test_ts_extends_implements_captured(parser: ASTParser):
+    """TypeScript class with extends + implements captures both bases (CODEIDX-C6)."""
+    src = b"interface I {}\nclass Base {}\nclass Svc extends Base implements I {\n  run() {}\n}\n"
+    syms = {s.name: s for s in parser.parse_bytes("s.ts", src).symbols}
+    assert set(syms["Svc"].bases) == {"Base", "I"}
+
+
+def test_ts_extends_generic_base_captured(parser: ASTParser):
+    """TypeScript class extending a generic type captures the base name without type args."""
+    src = b"class Repo<T> {}\nclass UserRepo extends Repo<User> {}\n"
+    syms = {s.name: s for s in parser.parse_bytes("r.ts", src).symbols}
+    assert syms["UserRepo"].bases == ("Repo",)
+
+
+def test_ts_implements_multiple_captured(parser: ASTParser):
+    """TypeScript class implementing multiple interfaces captures all names."""
+    src = b"class S extends B implements I, J, K {}\n"
+    syms = {s.name: s for s in parser.parse_bytes("s.ts", src).symbols}
+    assert set(syms["S"].bases) == {"B", "I", "J", "K"}
+
+
+def test_function_symbol_has_no_bases(parser: ASTParser):
+    """Non-class symbols always have an empty bases tuple."""
+    src = b"def helper():\n    return 1\n"
+    syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
+    assert syms["helper"].bases == ()

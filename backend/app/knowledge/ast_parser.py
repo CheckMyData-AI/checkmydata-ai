@@ -73,6 +73,7 @@ class Symbol:
     decorators: tuple[str, ...] = ()
     signature: str = ""
     docstring: str = ""
+    bases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -425,6 +426,62 @@ def _extract_signature(node, source: bytes) -> str:
     return ""
 
 
+def _extract_bases(node, grammar: LanguageGrammar, source: bytes) -> tuple[str, ...]:
+    """Collect base-class / implemented-interface identifiers from AST heritage.
+
+    Handles Python ``argument_list`` superclasses (``class C(A, B):``), TS/JS
+    ``class_heritage`` (``extends X implements Y, Z``), and degrades gracefully
+    for grammars where no heritage child is present.
+
+    Actual tree-sitter node names used (verified by inspection against the
+    tree-sitter-language-pack grammars):
+
+    * Python ``class_definition`` → ``argument_list`` child → ``identifier``
+      direct children (``keyword_argument`` nodes are skipped to exclude
+      ``metaclass=`` and similar kwargs).
+    * TypeScript/TSX/JS ``class_declaration`` → ``class_heritage`` child →
+      ``extends_clause`` / ``implements_clause`` children → ``identifier`` and
+      ``type_identifier`` direct children (``type_arguments`` nodes like
+      ``<T>`` are skipped to yield the raw base name only).
+
+    Returns a deduplicated tuple preserving declaration order.
+    """
+    bases: list[str] = []
+
+    if grammar.slug == "python":
+        for child in node.children:
+            if child.type == "argument_list":
+                for arg in child.children:
+                    # Skip keyword arguments (e.g. metaclass=Meta) and punctuation.
+                    if arg.type == "keyword_argument" or not arg.is_named:
+                        continue
+                    if arg.type == "identifier":
+                        txt = arg.text.decode("utf-8", "replace") if arg.text else ""
+                        if txt:
+                            bases.append(txt)
+    elif grammar.slug in ("typescript", "tsx", "javascript", "jsx"):
+        for child in node.children:
+            if child.type == "class_heritage":
+                for clause in child.children:
+                    if clause.type in ("extends_clause", "implements_clause"):
+                        for item in clause.children:
+                            # identifier: plain name; type_identifier: TS type name.
+                            # Skip: keyword tokens (extends/implements), type_arguments (<T>).
+                            if item.type in ("identifier", "type_identifier"):
+                                txt = item.text.decode("utf-8", "replace") if item.text else ""
+                                if txt:
+                                    bases.append(txt)
+
+    # Deduplicate preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for b in bases:
+        if b not in seen:
+            seen.add(b)
+            out.append(b)
+    return tuple(out)
+
+
 def _extract_python_docstring(node, source: bytes) -> str:
     """Extract a Python triple-quoted docstring from the first statement."""
     body = node.child_by_field_name("body")
@@ -599,6 +656,9 @@ def _node_to_symbol(
     docstring = ""
     if grammar.slug == "python":
         docstring = _extract_python_docstring(node, source)
+    bases: tuple[str, ...] = ()
+    if kind in (_SYMBOL_KIND_CLASS, _SYMBOL_KIND_INTERFACE):
+        bases = _extract_bases(node, grammar, source)
     return Symbol(
         uid=uid,
         kind=kind,
@@ -611,6 +671,7 @@ def _node_to_symbol(
         decorators=decorators,
         signature=signature,
         docstring=docstring,
+        bases=bases,
     )
 
 

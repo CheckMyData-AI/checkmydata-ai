@@ -156,6 +156,35 @@ def test_callees_of_finds_outgoing_calls(parser: ASTParser):
 
 
 # ---------------------------------------------------------------------------
+# CODEIDX-C6: EXTENDS from AST nodes, multi-base
+# ---------------------------------------------------------------------------
+
+
+def test_extends_multi_base_emits_two_edges(parser: ASTParser):
+    """Python class with two bases produces EXTENDS edges to BOTH (CODEIDX-C6)."""
+    src = b"class A:\n    pass\nclass B:\n    pass\nclass C(A, B):\n    pass\n"
+    files = {"h.py": parser.parse_bytes("h.py", src)}
+    graph = CodeGraphBuilder().build(files)
+    ext = [e for e in graph.edges if e.edge_type == EDGE_EXTENDS]
+    dst_names = {graph.symbols[e.dst_uid].name for e in ext}
+    assert dst_names == {"A", "B"}
+
+
+def test_extends_ast_ts_multi_implement(parser: ASTParser):
+    """TypeScript class extending one class and implementing two interfaces emits 3 EXTENDS."""
+    src = (
+        b"interface I {}\ninterface J {}\nclass Base {}\n"
+        b"class Svc extends Base implements I, J {\n  run() {}\n}\n"
+    )
+    files = {"s.ts": parser.parse_bytes("s.ts", src)}
+    graph = CodeGraphBuilder().build(files)
+    svc = next(s for s in graph.symbols.values() if s.name == "Svc")
+    ext = [e for e in graph.edges if e.edge_type == EDGE_EXTENDS and e.src_uid == svc.uid]
+    dst_names = {graph.symbols[e.dst_uid].name for e in ext}
+    assert dst_names == {"Base", "I", "J"}
+
+
+# ---------------------------------------------------------------------------
 # Cycle detection
 # ---------------------------------------------------------------------------
 
