@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.knowledge.git_tracker import GitFreshness
 from app.services.knowledge_freshness_service import (
     KnowledgeFreshness,
     KnowledgeFreshnessService,
@@ -135,14 +137,15 @@ class TestEvaluate:
         assert not any("Code graph" in w for w in snap.warnings)
 
     @pytest.mark.asyncio
-    async def test_git_count_error_does_not_report_negative_behind(self, tmp_path):
-        """count_commits_ahead returning -1 must not surface a '-1 commits behind'."""
+    async def test_git_classify_error_does_not_raise(self, tmp_path):
+        """classify_freshness_async raising must not surface an error to the caller."""
         svc = KnowledgeFreshnessService()
         with patch("app.knowledge.git_tracker.GitTracker") as mock_tracker_cls:
             tracker = mock_tracker_cls.return_value
             tracker.get_last_indexed_sha = AsyncMock(return_value="oldsha")
-            tracker.get_head_sha = MagicMock(return_value="newsha")
-            tracker.count_commits_ahead = AsyncMock(return_value=-1)
+            tracker.classify_freshness_async = AsyncMock(
+                side_effect=RuntimeError("git classify failed")
+            )
             snap = await svc.evaluate(
                 session=AsyncMock(),
                 project_id="p1",
@@ -151,16 +154,18 @@ class TestEvaluate:
             )
         assert snap.git_behind_commits is None
         assert not any("-1 commit" in w for w in snap.warnings)
-        assert any("may be out of date" in w for w in snap.warnings)
+        # Error is swallowed; no git warning should appear.
+        assert isinstance(snap, KnowledgeFreshness)
 
     @pytest.mark.asyncio
-    async def test_git_positive_behind_reported(self, tmp_path):
+    async def test_git_behind_reported_via_classify(self, tmp_path):
+        """BEHIND state sets git_behind_commits and emits a 'BEHIND' warning."""
         svc = KnowledgeFreshnessService()
         with patch("app.knowledge.git_tracker.GitTracker") as mock_tracker_cls:
-            tracker = mock_tracker_cls.return_value
-            tracker.get_last_indexed_sha = AsyncMock(return_value="oldsha")
-            tracker.get_head_sha = MagicMock(return_value="newsha")
-            tracker.count_commits_ahead = AsyncMock(return_value=3)
+            mock_tracker_cls.return_value = _make_tracker_mock(
+                last_sha="oldsha",
+                freshness_result=(GitFreshness.BEHIND, 0, 3),
+            )
             snap = await svc.evaluate(
                 session=AsyncMock(),
                 project_id="p1",
@@ -168,7 +173,7 @@ class TestEvaluate:
                 repo_clone_dir=tmp_path,
             )
         assert snap.git_behind_commits == 3
-        assert any("3 commit(s) behind" in w for w in snap.warnings)
+        assert any("3 commit(s) BEHIND" in w for w in snap.warnings)
 
     @pytest.mark.asyncio
     async def test_code_graph_populated_no_warning(self, monkeypatch):
@@ -187,3 +192,154 @@ class TestEvaluate:
 
         assert snap.code_graph_symbol_count == 123
         assert snap.code_graph_stale is False
+
+
+def _make_tracker_mock(
+    last_sha: str | None,
+    freshness_result: tuple[GitFreshness, int, int] | None = None,
+) -> MagicMock:
+    """Build a GitTracker mock that uses classify_freshness_async."""
+    tracker = MagicMock()
+    tracker.get_last_indexed_sha = AsyncMock(return_value=last_sha)
+    if freshness_result is not None:
+        tracker.classify_freshness_async = AsyncMock(return_value=freshness_result)
+    return tracker
+
+
+class TestGitFreshnessPerState:
+    """T2: knowledge_freshness_service distinguishes FRESH/AHEAD/BEHIND/DIVERGED.
+
+    Each test mocks ``GitTracker.classify_freshness_async`` to return a
+    specific ``(GitFreshness, ahead, behind)`` tuple and asserts the service
+    emits the correct distinct warning text (or no warning for FRESH).
+    """
+
+    @pytest.mark.asyncio
+    async def test_fresh_emits_no_git_warning(self, tmp_path: Path) -> None:
+        """FRESH state → no git warning; snapshot is clean."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            mock_cls.return_value = _make_tracker_mock(
+                last_sha="abc123",
+                freshness_result=(GitFreshness.FRESH, 0, 0),
+            )
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        git_warnings = [
+            w
+            for w in snap.warnings
+            if "commit" in w.lower()
+            or "ahead" in w.lower()
+            or "behind" in w.lower()
+            or "diverged" in w.lower()
+        ]
+        assert git_warnings == [], f"Expected no git warning for FRESH, got: {git_warnings}"
+        assert snap.git_behind_commits is None
+
+    @pytest.mark.asyncio
+    async def test_ahead_emits_reindex_recommended_warning(self, tmp_path: Path) -> None:
+        """AHEAD n → warning mentions clone is n commits AHEAD + re-index recommended."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            mock_cls.return_value = _make_tracker_mock(
+                last_sha="abc123",
+                freshness_result=(GitFreshness.AHEAD, 5, 0),
+            )
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        git_warnings = [w for w in snap.warnings if "ahead" in w.lower()]
+        assert git_warnings, "Expected an AHEAD warning"
+        warning = git_warnings[0]
+        assert "5" in warning, f"Expected commit count 5 in warning: {warning!r}"
+        assert "ahead" in warning.lower(), f"Expected 'ahead' in warning: {warning!r}"
+        assert "re-index" in warning.lower() or "reindex" in warning.lower(), (
+            f"Expected re-index recommendation in warning: {warning!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_behind_emits_pull_warning(self, tmp_path: Path) -> None:
+        """BEHIND n → warning mentions n commits BEHIND + pull before trusting."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            mock_cls.return_value = _make_tracker_mock(
+                last_sha="abc123",
+                freshness_result=(GitFreshness.BEHIND, 0, 7),
+            )
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        git_warnings = [w for w in snap.warnings if "behind" in w.lower()]
+        assert git_warnings, "Expected a BEHIND warning"
+        warning = git_warnings[0]
+        assert "7" in warning, f"Expected commit count 7 in warning: {warning!r}"
+        assert "behind" in warning.lower(), f"Expected 'behind' in warning: {warning!r}"
+        assert "pull" in warning.lower(), f"Expected 'pull' in warning: {warning!r}"
+
+    @pytest.mark.asyncio
+    async def test_diverged_emits_explicit_diverged_warning(self, tmp_path: Path) -> None:
+        """DIVERGED → explicit warning mentioning diverged with both ahead/behind counts."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            mock_cls.return_value = _make_tracker_mock(
+                last_sha="abc123",
+                freshness_result=(GitFreshness.DIVERGED, 3, 4),
+            )
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        git_warnings = [w for w in snap.warnings if "diverged" in w.lower()]
+        assert git_warnings, "Expected a DIVERGED warning"
+        warning = git_warnings[0]
+        assert "3" in warning, f"Expected ahead count 3 in diverged warning: {warning!r}"
+        assert "4" in warning, f"Expected behind count 4 in diverged warning: {warning!r}"
+
+    @pytest.mark.asyncio
+    async def test_unindexed_repo_emits_not_indexed_warning(self, tmp_path: Path) -> None:
+        """No last_sha → 'not been indexed yet' warning (unchanged behavior)."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            mock_cls.return_value = _make_tracker_mock(last_sha=None)
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        assert any("not been indexed" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_classify_freshness_error_does_not_raise(self, tmp_path: Path) -> None:
+        """If classify_freshness_async raises, the service degrades gracefully."""
+        svc = KnowledgeFreshnessService()
+        with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
+            tracker = MagicMock()
+            tracker.get_last_indexed_sha = AsyncMock(return_value="abc123")
+            tracker.classify_freshness_async = AsyncMock(side_effect=RuntimeError("git exploded"))
+            mock_cls.return_value = tracker
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+                repo_clone_dir=tmp_path,
+            )
+
+        assert isinstance(snap, KnowledgeFreshness)  # no exception propagated

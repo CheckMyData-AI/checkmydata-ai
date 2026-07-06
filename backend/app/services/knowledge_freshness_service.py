@@ -216,8 +216,6 @@ class KnowledgeFreshnessService:
 
         if repo_clone_dir is not None:
             try:
-                import asyncio
-
                 from app.knowledge.git_tracker import GitTracker
 
                 if repo_clone_dir.exists():
@@ -232,29 +230,59 @@ class KnowledgeFreshnessService:
                             action_label="Index repository",
                         )
                     else:
-                        # get_head_sha is blocking git I/O — never call it
-                        # directly on the event loop.
-                        head_sha = await asyncio.to_thread(tracker.get_head_sha, repo_clone_dir)
-                        if head_sha and head_sha != last_sha:
-                            behind = await tracker.count_commits_ahead(repo_clone_dir, last_sha)
-                            # count_commits_ahead returns -1 on error; only a
-                            # positive count is a real "behind" signal.
-                            if behind and behind > 0:
-                                snapshot.git_behind_commits = behind
-                                _warn(
-                                    f"Knowledge base is {behind} commit(s) behind HEAD;"
-                                    " answers may reference outdated code.",
-                                    category="git",
-                                    action_kind="reindex_repo",
-                                    action_label="Re-index repository",
-                                )
-                            else:
-                                _warn(
-                                    "Knowledge base may be out of date.",
-                                    category="git",
-                                    action_kind="reindex_repo",
-                                    action_label="Re-index repository",
-                                )
+                        # Use classify_freshness_async (T1) to get accurate
+                        # ahead/behind/diverged state rather than the naive
+                        # ahead-only count_commits_ahead path.
+                        from app.knowledge.git_tracker import GitFreshness
+
+                        state, ahead, behind = await tracker.classify_freshness_async(
+                            repo_clone_dir,
+                            last_sha,
+                            "HEAD",
+                        )
+                        if state is GitFreshness.FRESH:
+                            # Everything is up to date — no warning.
+                            pass
+                        elif state is GitFreshness.AHEAD:
+                            # Clone HEAD is ahead of the indexed SHA: the
+                            # knowledge base was indexed from a more recent
+                            # commit than the current HEAD (e.g. after a
+                            # force-push / reset). Re-indexing picks up any
+                            # code deleted since then.
+                            _warn(
+                                f"Clone is {ahead} commit(s) ahead of indexed HEAD;"
+                                " re-index recommended to capture removed code.",
+                                category="git",
+                                action_kind="reindex_repo",
+                                action_label="Re-index repository",
+                            )
+                        elif state is GitFreshness.BEHIND:
+                            # Knowledge base was indexed at a commit that is
+                            # no longer in the current lineage — the local
+                            # clone needs a pull before the index reflects the
+                            # latest code.
+                            snapshot.git_behind_commits = behind
+                            _warn(
+                                f"Knowledge base is {behind} commit(s) BEHIND current HEAD;"
+                                " pull before trusting answers about recent code.",
+                                category="git",
+                                action_kind="reindex_repo",
+                                action_label="Re-index repository",
+                            )
+                        else:  # DIVERGED
+                            # Both directions have commits: the indexed SHA
+                            # and HEAD have diverged (e.g. rebase / force-push
+                            # onto a different history). Re-indexing is the
+                            # only way to reconcile.
+                            _warn(
+                                f"Knowledge base has diverged from HEAD"
+                                f" ({ahead} commit(s) ahead, {behind} commit(s) behind);"
+                                " re-index required for accurate answers.",
+                                category="git",
+                                action_kind="reindex_repo",
+                                action_label="Re-index repository",
+                                severity="critical",
+                            )
             except Exception:
                 logger.debug("freshness: git head check failed", exc_info=True)
 
