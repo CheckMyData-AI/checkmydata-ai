@@ -246,6 +246,14 @@ SQLALCHEMY_FK = re.compile(
     r"""ForeignKey\s*\(\s*['"]([\w.]+)['"]""",
     re.MULTILINE,
 )
+# SQLAlchemy 2.0 typed-annotation style: ``col: Mapped[SomeType] = mapped_column(...)``
+# Captures the column name and the inner type expression from the annotation.
+# This is the authoritative name source for 2.0-style models because SQLALCHEMY_COL
+# requires a positional type arg and misses ``mapped_column()`` / bare ``Mapped[T]``.
+SQLALCHEMY_MAPPED = re.compile(
+    r"""(\w+)\s*:\s*Mapped\[([\w.\[\], |]+)\]""",
+    re.MULTILINE,
+)
 SQLALCHEMY_TABLE = re.compile(
     r"""__tablename__\s*=\s*['"]([\w]+)['"]""",
     re.MULTILINE,
@@ -605,6 +613,19 @@ def _extract_columns(
                     col_type,
                     is_fk="ForeignKey" in content[m.start() : m.start() + 200],
                 )
+            # SQLAlchemy 2.0 typed-annotation style: ``col: Mapped[T] = mapped_column()``.
+            # SQLALCHEMY_COL misses these when mapped_column() has no positional type arg
+            # or when the attribute is a bare annotation with no mapped_column() at all.
+            # Use the annotation as the authoritative name source; ``seen`` deduplicates
+            # against any names already captured by SQLALCHEMY_COL above.
+            for m in SQLALCHEMY_MAPPED.finditer(content):
+                col_name = m.group(1)
+                col_type = m.group(2).strip()
+                _add(
+                    col_name,
+                    col_type,
+                    is_fk="ForeignKey" in content[m.start() : m.start() + 200],
+                )
 
         if _orm_match("django_orm", "django"):
             for m in DJANGO_FIELD.finditer(content):
@@ -693,6 +714,28 @@ def _extract_columns(
                 ftype = field_m.group(2).strip("[]!")
                 is_fk = ftype[0].isupper() if ftype else False
                 _add(fname, ftype, is_fk=is_fk, fk_target=ftype if is_fk else "")
+
+    # Log extraction yield so silent zero-column results are observable in logs
+    # rather than being invisibly swallowed.  Scoped to ORM-annotated files only
+    # (orms is non-empty) to avoid noise for files with no ORM expectation.
+    _orm_exts = (
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".prisma",
+        ".go",
+        ".rb",
+        ".java",
+        ".kt",
+        ".graphql",
+    )
+    if orms and file_path.endswith(_orm_exts):
+        if columns:
+            logger.info("orm_extract: file=%s columns=%d", file_path, len(columns))
+        else:
+            logger.warning("orm_extract: file=%s yielded 0 columns (regex miss?)", file_path)
 
     return columns
 

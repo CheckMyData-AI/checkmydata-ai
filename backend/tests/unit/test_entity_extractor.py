@@ -1,5 +1,8 @@
+import logging
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from app.knowledge.entity_extractor import (
     ConfigRef,
@@ -230,6 +233,32 @@ class TestExtractColumns:
         assert len(cols_seq) >= 1
         assert len(cols_all) >= 1
         assert len(cols_typeorm) == 0
+
+    def test_sqlalchemy_2_mapped_columns_are_extracted(self):
+        """SQLAlchemy 2.0 Mapped[T] annotations without a positional type arg in
+        mapped_column() must still yield column names — previously missed because
+        SQLALCHEMY_COL requires a word char right after the opening paren."""
+        content = (
+            "class Order(Base):\n"
+            "    __tablename__ = 'orders'\n"
+            "    id: Mapped[int] = mapped_column()\n"
+            "    total: Mapped[float] = mapped_column()\n"
+            "    note: Mapped[str]\n"
+        )
+        cols = _extract_columns(content, "models/order.py", detected_orms=["sqlalchemy"])
+        names = {c.name for c in cols}
+        assert {"id", "total", "note"} <= names, f"missing Mapped columns; got {names}"
+
+    def test_sqlalchemy_2_zero_yield_emits_warning(self, caplog: pytest.LogCaptureFixture):
+        """When a Python ORM file yields 0 columns a WARNING must be logged."""
+        content = "class Stub:\n    pass\n"
+        with caplog.at_level(logging.WARNING, logger="app.knowledge.entity_extractor"):
+            cols = _extract_columns(content, "models/stub.py", detected_orms=["sqlalchemy"])
+        assert cols == []
+        assert any(
+            "0 column" in r.message.lower() or "yielded 0" in r.message.lower()
+            for r in caplog.records
+        ), f"expected zero-yield WARNING; records: {caplog.records}"
 
 
 class TestBuildProjectKnowledge:
