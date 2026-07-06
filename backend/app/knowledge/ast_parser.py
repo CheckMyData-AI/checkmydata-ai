@@ -32,6 +32,7 @@ _SYMBOL_KIND_CLASS = "class"
 _SYMBOL_KIND_INTERFACE = "interface"
 _SYMBOL_KIND_ENUM = "enum"
 _SYMBOL_KIND_TYPE_ALIAS = "type_alias"
+_SYMBOL_KIND_VARIABLE = "variable"
 
 _MAX_SIGNATURE_CHARS = 200
 _MAX_DOCSTRING_CHARS = 500
@@ -171,6 +172,8 @@ class LanguageGrammar:
     # ``decorated_definition``). When set, we descend into it to find the
     # underlying definition.
     decorated_wrapper_nodes: tuple[str, ...] = ()
+    variable_nodes: tuple[str, ...] = ()
+    export_wrapper_nodes: tuple[str, ...] = ()
     name_field: str = "name"
     shebang_aliases: tuple[str, ...] = ()
 
@@ -202,6 +205,8 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         import_nodes=("import_statement",),
         decorator_nodes=("decorator",),
         call_nodes=("call_expression",),
+        variable_nodes=("variable_declarator",),
+        export_wrapper_nodes=("export_statement", "lexical_declaration", "variable_declaration"),
     ),
     LanguageGrammar(
         slug="tsx",
@@ -215,6 +220,8 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         import_nodes=("import_statement",),
         decorator_nodes=("decorator",),
         call_nodes=("call_expression",),
+        variable_nodes=("variable_declarator",),
+        export_wrapper_nodes=("export_statement", "lexical_declaration", "variable_declaration"),
     ),
     LanguageGrammar(
         slug="javascript",
@@ -225,6 +232,8 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         import_nodes=("import_statement",),
         decorator_nodes=("decorator",),
         call_nodes=("call_expression",),
+        variable_nodes=("variable_declarator",),
+        export_wrapper_nodes=("export_statement", "lexical_declaration", "variable_declaration"),
         shebang_aliases=("node", "nodejs"),
     ),
     LanguageGrammar(
@@ -235,6 +244,8 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         class_nodes=("class_declaration",),
         import_nodes=("import_statement",),
         call_nodes=("call_expression",),
+        variable_nodes=("variable_declarator",),
+        export_wrapper_nodes=("export_statement", "lexical_declaration", "variable_declaration"),
     ),
     LanguageGrammar(
         slug="java",
@@ -546,11 +557,14 @@ def _walk_definitions(
             sym = _node_to_symbol(node, kind, grammar, source, rel_path, current_parent)
             if sym is not None:
                 symbols.append(sym)
-                if kind in (_SYMBOL_KIND_CLASS, _SYMBOL_KIND_INTERFACE):
+                # Use the symbol's resolved kind (which may differ from the raw
+                # classify kind — e.g. variable_declarator promoted to function).
+                resolved_kind = sym.kind
+                if resolved_kind in (_SYMBOL_KIND_CLASS, _SYMBOL_KIND_INTERFACE):
                     new_parent = sym.uid
                 # Functions and methods become the "enclosing" scope for call
                 # resolution; classes do not (their bodies are method defs).
-                if kind in (
+                if resolved_kind in (
                     _SYMBOL_KIND_FUNCTION,
                     _SYMBOL_KIND_METHOD,
                 ):
@@ -630,6 +644,8 @@ def _classify_node(node, grammar: LanguageGrammar) -> str | None:
         return _SYMBOL_KIND_ENUM
     if t in grammar.type_alias_nodes:
         return _SYMBOL_KIND_TYPE_ALIAS
+    if t in grammar.variable_nodes:
+        return _SYMBOL_KIND_VARIABLE
     return None
 
 
@@ -648,6 +664,14 @@ def _node_to_symbol(
     # `class_definition`. Promote them to `method` so callers can distinguish.
     if kind == _SYMBOL_KIND_FUNCTION and parent_uid is not None and grammar.slug == "python":
         kind = _SYMBOL_KIND_METHOD
+    # JS/TS: a `variable_declarator` whose initializer is an arrow function or
+    # function expression is effectively a callable — promote its kind to
+    # "function" so it participates in CALLS resolution and graph traversal.
+    if kind == _SYMBOL_KIND_VARIABLE:
+        value = node.child_by_field_name("value")
+        _fn_value_types = ("arrow_function", "function", "function_expression")
+        if value is not None and value.type in _fn_value_types:
+            kind = _SYMBOL_KIND_FUNCTION
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
     uid = _make_uid(grammar.slug, rel_path, kind, name)

@@ -496,3 +496,92 @@ def test_function_symbol_has_no_bases(parser: ASTParser):
     src = b"def helper():\n    return 1\n"
     syms = {s.name: s for s in parser.parse_bytes("h.py", src).symbols}
     assert syms["helper"].bases == ()
+
+
+# ---------------------------------------------------------------------------
+# CODEIDX-C5: module-level vars/consts, arrow-function components, exports
+# ---------------------------------------------------------------------------
+
+
+def test_arrow_function_component_is_a_function_symbol(parser: ASTParser):
+    """Arrow-function-assigned const (React component style) becomes kind=function."""
+    src = b"export const Button = (props) => {\n  return null;\n};\n"
+    syms = {s.name: s for s in parser.parse_bytes("Button.tsx", src).symbols}
+    assert "Button" in syms
+    assert syms["Button"].kind == "function"
+
+
+def test_module_const_is_a_variable_symbol(parser: ASTParser):
+    """Plain module-level const (non-function value) becomes kind=variable."""
+    src = b"export const MAX_ROWS = 1000;\nconst LOCAL = 2;\n"
+    syms = {s.name: s.kind for s in parser.parse_bytes("c.ts", src).symbols}
+    assert syms.get("MAX_ROWS") == "variable"
+    assert syms.get("LOCAL") == "variable"
+
+
+def test_exported_function_declaration_is_a_function_symbol(parser: ASTParser):
+    """export function bar() {} still extracts as function (already via function_declaration)."""
+    src = b"export function bar() { return 1; }\n"
+    syms = {s.name: s for s in parser.parse_bytes("b.ts", src).symbols}
+    assert "bar" in syms
+    assert syms["bar"].kind == "function"
+
+
+def test_arrow_function_component_tsx(parser: ASTParser):
+    """Arrow-function component in .tsx file is extracted as kind=function."""
+    src = b"import React from 'react';\nexport const Card = () => <div />;\n"
+    syms = {s.name: s for s in parser.parse_bytes("Card.tsx", src).symbols}
+    assert "Card" in syms
+    assert syms["Card"].kind == "function"
+
+
+def test_function_expression_const_is_function_symbol(parser: ASTParser):
+    """const Baz = function() {} is extracted as kind=function."""
+    src = b"const Baz = function() { return 1; };\n"
+    syms = {s.name: s for s in parser.parse_bytes("b.js", src).symbols}
+    assert "Baz" in syms
+    assert syms["Baz"].kind == "function"
+
+
+def test_js_module_const_is_a_variable_symbol(parser: ASTParser):
+    """Plain const in .js file (non-function value) becomes kind=variable."""
+    src = b"export const API_URL = 'https://example.com';\nconst TIMEOUT = 30;\n"
+    syms = {s.name: s.kind for s in parser.parse_bytes("config.js", src).symbols}
+    assert syms.get("API_URL") == "variable"
+    assert syms.get("TIMEOUT") == "variable"
+
+
+def test_variable_symbol_uid_format(parser: ASTParser):
+    """Variable symbols get correct UID: lang:path:variable:name."""
+    src = b"const MY_CONST = 42;\n"
+    syms = {s.name: s for s in parser.parse_bytes("cfg.ts", src).symbols}
+    assert "MY_CONST" in syms
+    assert syms["MY_CONST"].uid == "typescript:cfg.ts:variable:MY_CONST"
+
+
+def test_arrow_fn_symbol_uid_format(parser: ASTParser):
+    """Arrow-function symbols get kind=function in their UID."""
+    src = b"const myFunc = () => {};\n"
+    syms = {s.name: s for s in parser.parse_bytes("f.ts", src).symbols}
+    assert "myFunc" in syms
+    assert syms["myFunc"].uid == "typescript:f.ts:function:myFunc"
+
+
+def test_existing_ts_symbols_unaffected_by_c5(parser: ASTParser):
+    """Adding variable_nodes must not break existing class/function/interface extraction."""
+    parsed = parser.parse_bytes("src/users/user.controller.ts", TS_SOURCE)
+    assert parsed is not None
+    kinds_by_name = {s.name: s.kind for s in parsed.symbols}
+    assert kinds_by_name.get("UserController") == "class"
+    assert kinds_by_name.get("helper") == "function"
+    assert kinds_by_name.get("Persisted") == "interface"
+    assert kinds_by_name.get("findOne") == "method"
+
+
+def test_python_consts_not_extracted_by_c5(parser: ASTParser):
+    """Python module-level constants must NOT be extracted (C5 is JS/TS only)."""
+    src = b"MAX_ROWS = 1000\nLOCAL = 2\n\ndef helper():\n    return 1\n"
+    syms = {s.name: s for s in parser.parse_bytes("c.py", src).symbols}
+    assert "MAX_ROWS" not in syms
+    assert "LOCAL" not in syms
+    assert "helper" in syms
