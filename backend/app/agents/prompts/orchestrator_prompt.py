@@ -1,7 +1,7 @@
 """System prompt builder for the OrchestratorAgent.
 
-The orchestrator prompt focuses on *routing* — deciding which sub-agent
-to invoke rather than executing tools directly.
+The orchestrator drives a unified tool-calling loop: it gathers data via
+sub-agent tools and synthesizes the final answer (it is not a pure router).
 """
 
 from __future__ import annotations
@@ -178,9 +178,6 @@ def build_orchestrator_system_prompt(
         "- The system injects budget status per iteration. When budget is running "
         "low, synthesize your answer from whatever data you have collected so far.\n"
         "- Explain your reasoning and summarize results clearly.\n"
-        "- When multiple SQL queries produce the same grand total, do NOT claim an "
-        "earlier query was wrong, missed categories, or under-counted unless you "
-        "can cite a specific numeric mismatch.\n"
         "- LANGUAGE: Reason and think internally in English, but write your FINAL "
         "answer to the user in the SAME language as the user's most recent message "
         "(e.g. a Russian question gets a Russian answer)."
