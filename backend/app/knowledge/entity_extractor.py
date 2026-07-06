@@ -1152,19 +1152,47 @@ def _model_to_table(model_name: str, knowledge: ProjectKnowledge) -> str:
 
 
 def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:
-    """Try to match enum definitions to entity columns by naming convention."""
+    """Attach enum value-sets to columns by DECLARED TYPE / FK, not fuzzy substring.
+
+    Precedence (CODEIDX-C15):
+      1. Column ``col_type`` names the enum exactly (case-insensitive) — the
+         common ``status: Mapped[OrderStatus]`` / ``@Column(enum=OrderStatus)`` case.
+      2. Column ``fk_target`` (last path component) resolves to the enum name
+         (case-insensitive).
+      3. Column NAME equals the enum name or the enum name minus a trailing
+         "Enum" / "Type" / "Status" / "Choices" suffix — conservative exact match
+         only; no substring, no plural guessing.
+
+    Columns that already have ``enum_values`` populated are left untouched.
+    """
+    enum_by_key: dict[str, list[str]] = {}
     for enum_def in knowledge.enums:
-        normalized = enum_def.name.lower().replace("_", "")
-        for entity in knowledge.entities.values():
-            for col in entity.columns:
-                col_norm = col.name.lower().replace("_", "")
-                entity_norm = entity.name.lower().replace("_", "")
-                if (
-                    col_norm in normalized
-                    or normalized.startswith(entity_norm + col_norm)
-                    or normalized.endswith(col_norm + "s")
-                ):
-                    col.enum_values = enum_def.values
+        enum_by_key[enum_def.name.lower()] = enum_def.values
+
+    for entity in knowledge.entities.values():
+        for col in entity.columns:
+            if col.enum_values:
+                continue
+
+            ctype = (col.col_type or "").lower()
+            fk = (col.fk_target or "").lower().split(".")[-1]
+            cname = col.name.lower()
+
+            match: list[str] | None = None
+            for ename, values in enum_by_key.items():
+                # Derive the stripped form (e.g. "orderstatus" → "order", "roleenum" → "role")
+                stripped = ename
+                for suffix in ("enum", "type", "status", "choices"):
+                    if stripped.endswith(suffix) and stripped != suffix:
+                        stripped = stripped[: -len(suffix)]
+                        break
+
+                if ename in ctype or fk == ename or cname == ename or cname == stripped:
+                    match = values
+                    break
+
+            if match is not None:
+                col.enum_values = match
 
 
 def _model_name_to_table(model_name: str) -> str:

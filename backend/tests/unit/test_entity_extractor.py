@@ -5,10 +5,14 @@ from pathlib import Path
 import pytest
 
 from app.knowledge.entity_extractor import (
+    ColumnInfo,
     ConfigRef,
+    EntityInfo,
+    EnumDefinition,
     ProjectKnowledge,
     ValidationRule,
     _extract_columns,
+    _resolve_enum_to_columns,
     build_project_knowledge,
 )
 from app.knowledge.repo_analyzer import ExtractedSchema
@@ -514,3 +518,92 @@ class TestBuildProjectKnowledge:
         )
         func_names = [sf["name"] for sf in knowledge.service_functions]
         assert "old_func" in func_names
+
+
+class TestResolveEnumToColumns:
+    """Tests for _resolve_enum_to_columns (CODEIDX-C15)."""
+
+    def _make_knowledge(
+        self,
+        enum_name: str,
+        enum_values: list[str],
+        columns: list[ColumnInfo],
+    ) -> tuple[ProjectKnowledge, EntityInfo]:
+        k = ProjectKnowledge()
+        k.enums.append(EnumDefinition(name=enum_name, values=enum_values, file_path="e.py"))
+        ent = EntityInfo(name="Order", table_name="orders", file_path="o.py")
+        ent.columns = columns
+        k.entities["Order"] = ent
+        return k, ent
+
+    def test_enum_binds_by_type_annotation_not_substring(self) -> None:
+        """Column typed with the exact enum class binds; substring-colliding column does not."""
+        k, ent = self._make_knowledge(
+            enum_name="OrderStatus",
+            enum_values=["new", "paid"],
+            columns=[
+                ColumnInfo(name="status", col_type="OrderStatus"),  # should bind
+                ColumnInfo(name="status_note", col_type="String"),  # must NOT bind
+            ],
+        )
+        _resolve_enum_to_columns(k)
+        by = {c.name: c.enum_values for c in ent.columns}
+        assert by["status"] == ["new", "paid"]
+        assert by["status_note"] == []
+
+    def test_enum_binds_by_fk_target(self) -> None:
+        """Column with fk_target that names the enum binds."""
+        k, ent = self._make_knowledge(
+            enum_name="PaymentMethod",
+            enum_values=["card", "wire"],
+            columns=[
+                ColumnInfo(name="method", col_type="integer", fk_target="PaymentMethod"),
+                ColumnInfo(name="other_method", col_type="text"),  # no FK, no type → no bind
+            ],
+        )
+        _resolve_enum_to_columns(k)
+        by = {c.name: c.enum_values for c in ent.columns}
+        assert by["method"] == ["card", "wire"]
+        assert by["other_method"] == []
+
+    def test_enum_binds_by_stripped_name_exact_match(self) -> None:
+        """Column name exactly matches enum name minus common suffixes (e.g. 'Enum')."""
+        k, ent = self._make_knowledge(
+            enum_name="RoleEnum",
+            enum_values=["admin", "user"],
+            columns=[
+                ColumnInfo(name="role", col_type="varchar"),
+                ColumnInfo(name="role_description", col_type="text"),  # must NOT bind
+            ],
+        )
+        _resolve_enum_to_columns(k)
+        by = {c.name: c.enum_values for c in ent.columns}
+        assert by["role"] == ["admin", "user"]
+        assert by["role_description"] == []
+
+    def test_enum_does_not_bind_partial_substring_collision(self) -> None:
+        """Old fuzzy logic would bind StatusEnum to sub_status; new logic must not."""
+        k, ent = self._make_knowledge(
+            enum_name="StatusEnum",
+            enum_values=["active", "inactive"],
+            columns=[
+                ColumnInfo(name="status", col_type="StatusEnum"),  # binds via type
+                ColumnInfo(name="sub_status", col_type="text"),  # old fuzzy → wrongly bound
+            ],
+        )
+        _resolve_enum_to_columns(k)
+        by = {c.name: c.enum_values for c in ent.columns}
+        assert by["status"] == ["active", "inactive"]
+        assert by["sub_status"] == []
+
+    def test_pre_bound_enum_values_are_not_overwritten(self) -> None:
+        """If a column already has enum_values, they must not be replaced."""
+        k = ProjectKnowledge()
+        k.enums.append(EnumDefinition(name="StateEnum", values=["on", "off"], file_path="e.py"))
+        ent = EntityInfo(name="Device", table_name="devices", file_path="d.py")
+        ent.columns = [
+            ColumnInfo(name="state", col_type="StateEnum", enum_values=["custom_val"]),
+        ]
+        k.entities["Device"] = ent
+        _resolve_enum_to_columns(k)
+        assert ent.columns[0].enum_values == ["custom_val"]
