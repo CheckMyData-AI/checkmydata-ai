@@ -41,6 +41,7 @@ class CodeDbSync(Base):
     required_filters_json: Mapped[str] = mapped_column(Text, default="{}")
     column_value_mappings_json: Mapped[str] = mapped_column(Text, default="{}")
 
+    column_mismatch_json: Mapped[str] = mapped_column(Text, default="{}")
     sync_status: Mapped[str] = mapped_column(String(50), default="unknown")
     confidence_score: Mapped[int] = mapped_column(Integer, default=3)
 

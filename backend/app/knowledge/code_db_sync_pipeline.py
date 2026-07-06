@@ -338,11 +338,48 @@ class CodeDbSyncPipeline:
                                     analysis.table_name,
                                 )
                                 continue
+
+                            # SYNC-L5: apply deterministic sync_status override.
+                            # The column_mismatch_json on the _MatchedTable was
+                            # computed in _make_matched from code entity columns vs
+                            # DB column_notes_json keys — no LLM involved.
+                            # Override the LLM sync_status only when BOTH sides
+                            # are known (non-empty column sets), so we never flip
+                            # "code_only" or "db_only" tables to "mismatch" when
+                            # one side has no column information.
+                            effective_status = analysis.sync_status
+                            try:
+                                drift = json.loads(mt.column_mismatch_json)
+                                has_code_cols = bool(
+                                    drift.get("code_only") or drift.get("matched")
+                                )
+                                has_db_cols = bool(
+                                    drift.get("db_only") or drift.get("matched")
+                                )
+                                if has_code_cols and has_db_cols:
+                                    if drift["code_only"] or drift["db_only"]:
+                                        effective_status = "mismatch"
+                                    else:
+                                        effective_status = "matched"
+                                    if effective_status != analysis.sync_status:
+                                        logger.debug(
+                                            "SYNC-L5 override: %s LLM=%s → det=%s "
+                                            "(code_only=%s db_only=%s)",
+                                            analysis.table_name,
+                                            analysis.sync_status,
+                                            effective_status,
+                                            drift["code_only"],
+                                            drift["db_only"],
+                                        )
+                            except (json.JSONDecodeError, KeyError, TypeError):
+                                pass  # leave LLM opinion intact on parse error
+
                             sync_data = {
                                 "table_name": analysis.table_name,
                                 "entity_name": mt.entity_name,
                                 "entity_file_path": mt.entity_file_path,
                                 "code_columns_json": mt.code_columns_json,
+                                "column_mismatch_json": mt.column_mismatch_json,
                                 "used_in_files_json": mt.used_in_files_json,
                                 "read_count": mt.read_count,
                                 "write_count": mt.write_count,
@@ -353,7 +390,7 @@ class CodeDbSyncPipeline:
                                 "query_recommendations": analysis.query_recommendations,
                                 "required_filters_json": analysis.required_filters_json,
                                 "column_value_mappings_json": analysis.column_value_mappings_json,
-                                "sync_status": analysis.sync_status,
+                                "sync_status": effective_status,
                                 "confidence_score": analysis.confidence_score,
                             }
                             await self._sync_svc.upsert_table_sync(
@@ -550,6 +587,31 @@ class CodeDbSyncPipeline:
         return results
 
     @staticmethod
+    def _compute_column_drift(code_cols: set[str], db_cols: set[str]) -> dict:
+        """Deterministic set-diff between code columns and DB columns.
+
+        Both inputs are case-normalised (lower-cased) before diffing so that
+        ``Id`` and ``id`` are treated as the same column.  An empty side means
+        the information is unknown — the diff is returned as-is (e.g. all cols
+        on the non-empty side appear in the appropriate ``code_only`` or
+        ``db_only`` list) but the caller is expected NOT to override the LLM
+        ``sync_status`` when one side is empty.
+
+        Returns a dict with three sorted lists::
+
+            {"code_only": sorted(code_cols - db_cols),
+             "db_only": sorted(db_cols - code_cols),
+             "matched": sorted(code_cols & db_cols)}
+        """
+        norm_code = {c.lower() for c in code_cols}
+        norm_db = {c.lower() for c in db_cols}
+        return {
+            "code_only": sorted(norm_code - norm_db),
+            "db_only": sorted(norm_db - norm_code),
+            "matched": sorted(norm_code & norm_db),
+        }
+
+    @staticmethod
     def _build_db_context(entry: DbIndex, *, scrub: bool = True, omit_samples: bool = False) -> str:
         from app.knowledge import pii_scrubber
 
@@ -622,6 +684,37 @@ class CodeDbSyncPipeline:
                     for c in entity.columns
                 ]
             )
+
+        # --- SYNC-L5: deterministic column set-diff ----------------------------
+        # Extract code column names from entity.columns (already in memory).
+        # Extract DB column names from the rendered db_context "Column notes:" block
+        # (produced by _build_db_context from column_notes_json keys).
+        # Both sets are available at this point without any LLM call.
+        import re as _re
+
+        code_col_names: set[str] = set()
+        if entity and entity.columns:
+            code_col_names = {c.name for c in entity.columns}
+
+        db_col_names: set[str] = set()
+        if db_context:
+            col_note_re = _re.compile(r"^\s{2}(\w+):\s")
+            in_col_notes = False
+            for line in db_context.splitlines():
+                if line.strip() == "Column notes:":
+                    in_col_notes = True
+                    continue
+                if in_col_notes:
+                    m = col_note_re.match(line)
+                    if m:
+                        db_col_names.add(m.group(1))
+                    elif line and not line.startswith("  "):
+                        in_col_notes = False
+
+        drift = CodeDbSyncPipeline._compute_column_drift(code_col_names, db_col_names)
+        mt.column_mismatch_json = json.dumps(drift)
+        # -----------------------------------------------------------------------
+
         if usage:
             all_files = list(set(usage.readers + usage.writers + usage.orm_refs))
             mt.used_in_files_json = json.dumps(all_files[:20])
@@ -824,6 +917,7 @@ class _MatchedTable:
         "entity_name",
         "entity_file_path",
         "code_columns_json",
+        "column_mismatch_json",
         "used_in_files_json",
         "read_count",
         "write_count",
@@ -838,6 +932,7 @@ class _MatchedTable:
         entity_name: str | None = None,
         entity_file_path: str | None = None,
         code_columns_json: str = "[]",
+        column_mismatch_json: str = "{}",
         used_in_files_json: str = "[]",
         read_count: int = 0,
         write_count: int = 0,
@@ -849,6 +944,7 @@ class _MatchedTable:
         self.entity_name = entity_name
         self.entity_file_path = entity_file_path
         self.code_columns_json = code_columns_json
+        self.column_mismatch_json = column_mismatch_json
         self.used_in_files_json = used_in_files_json
         self.read_count = read_count
         self.write_count = write_count

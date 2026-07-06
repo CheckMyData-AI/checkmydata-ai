@@ -186,6 +186,7 @@ class TableSyncAnalysis:
     query_recommendations: str = ""
     required_filters_json: str = "{}"
     column_value_mappings_json: str = "{}"
+    column_mismatch_json: str = "{}"
     sync_status: str = "unknown"
     confidence_score: int = 3
     is_fallback: bool = False
