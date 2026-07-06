@@ -830,15 +830,20 @@ class CodeDbSyncPipeline:
                 for r in refs[:5]:
                     op = r.get("op_kind", "unknown")
                     conf = float(r.get("confidence", 0.0))
-                    int(r.get("depth", 1))
                     name = r.get("caller_name", "?")
                     file_ = r.get("caller_file", "?")
                     parts.append(f"  - {name} ({op}, conf={conf:.2f}, heuristic) in {file_}")
 
+        # L13: use a word-boundary check so that a table name "order" does not
+        # spuriously match an enum named "reorder_reason".  We split the enum
+        # name on non-word characters (underscores act as boundaries in Python's
+        # \b only between \w and \W, so we tokenise explicitly).
+        _enum_tokens_re = __import__("re").compile(r"[^a-z0-9]+")
         relevant_enums = [
             e
             for e in knowledge.enums
-            if table_lower in e.name.lower() or any(table_lower in v.lower() for v in e.values[:5])
+            if table_lower in _enum_tokens_re.split(e.name.lower())
+            or any(table_lower in v.lower() for v in e.values[:5])
         ]
         if relevant_enums:
             parts.append("Related enums:")

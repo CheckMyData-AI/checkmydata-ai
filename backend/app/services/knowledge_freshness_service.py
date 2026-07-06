@@ -21,6 +21,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.config import settings
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,6 +112,9 @@ class KnowledgeFreshness:
 class KnowledgeFreshnessService:
     """Unified freshness check across DB index, code-DB sync, and git head."""
 
+    # Kept for backward compatibility with any external code that reads the
+    # class attribute.  The service itself uses settings.db_index_ttl_hours so
+    # the value is configurable without subclassing.
     DB_INDEX_TTL_HOURS = 24
 
     async def evaluate(
@@ -158,12 +163,13 @@ class KnowledgeFreshnessService:
                     )
                 else:
                     snapshot.db_index_age_hours = round(age.total_seconds() / 3600, 1)
-                    if age > timedelta(hours=self.DB_INDEX_TTL_HOURS):
+                    ttl_hours = settings.db_index_ttl_hours
+                    if age > timedelta(hours=ttl_hours):
                         snapshot.db_index_stale = True
                         _warn(
                             "Database index is "
                             f"{snapshot.db_index_age_hours:.0f}h old "
-                            f"(>{self.DB_INDEX_TTL_HOURS}h); consider re-indexing.",
+                            f"(>{ttl_hours}h); consider re-indexing.",
                             category="db_index",
                             action_kind="reindex_db",
                             action_label="Re-index database",
@@ -195,8 +201,6 @@ class KnowledgeFreshnessService:
         # only matters when a downstream consumer needs it; code_graph_enabled alone (indexing)
         # doesn't require the graph populated at query time, so warning there is a false alarm.
         try:
-            from app.config import settings
-
             if settings.lineage_enabled or settings.clustering_enabled:
                 from app.services.code_graph_service import CodeGraphService
 

@@ -27,17 +27,17 @@ def _clamp_sync_status(raw: str) -> str:
 def _coerce_confidence(raw) -> int:
     """Coerce an LLM-returned confidence value to a valid 1-5 integer.
 
-    Accepts int or numeric strings that represent whole numbers (e.g. "4").
-    Float strings (e.g. "4.5") are treated as malformed and return the safe
-    default of 3 so a single bad tool-call does not abort the entire batch.
+    Accepts int, float, or numeric strings (including float-like ``"4.5"``).
+    Float values are rounded to the nearest integer before clamping to 1-5,
+    preserving the signal instead of discarding it.  Only truly non-numeric
+    input returns the safe default of 3.
     """
     if isinstance(raw, bool):
         return 3
     if isinstance(raw, int):
         return max(1, min(5, raw))
     try:
-        int(str(raw))  # raises ValueError for "4.5"
-        return max(1, min(5, int(str(raw))))
+        return max(1, min(5, round(float(str(raw)))))
     except (TypeError, ValueError):
         return 3
 

@@ -54,7 +54,8 @@ async def test_batch_bad_confidence_only_degrades_that_table():
     analyzer = CodeDbSyncAnalyzer(_Router([bad, _tc("payments", conf=5)]))
     out = await analyzer.analyze_table_batch(tables)
     by_name = {a.table_name: a for a in out}
-    assert by_name["orders"].confidence_score == 3  # coerced, not fallback
+    # L11 fix: "4.5" rounds to 4 (not the old default-3), preserving the signal
+    assert by_name["orders"].confidence_score == 4
     assert by_name["orders"].is_fallback is False
     assert by_name["payments"].confidence_score == 5
 

@@ -171,12 +171,16 @@ class CallerRef:
     caller_kind: str  # function | method | class
     endpoint_kind: str  # http | cli | migration | service | unknown
     op_kind: str  # read | write | unknown
-    depth: int
+    depth: int  # -1 when depth is estimated (see depth_estimated)
     confidence: float
     decorators: tuple[str, ...] = field(default_factory=tuple)
     # How the op_kind was inferred: "high" = HTTP decorator (strong signal),
     # "low" = name-prefix heuristic only (weak guess).
     op_kind_confidence: str = "low"
+    # True when depth was estimated via log-inverse heuristic rather than
+    # measured by a real BFS-depth-returning traversal.  Consumers MUST NOT
+    # surface depth as a precise number when this flag is True.
+    depth_estimated: bool = True
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -402,12 +406,10 @@ class GraphDBBridge:
         if not caller_tuples:
             return
 
-        # We don't get the BFS depth back from callers_of, so reconstruct it
-        # via an approximate inverse: confidence ≈ (avg_edge_conf)^depth.
-        # We don't strictly need depth for ranking, but the analyst-facing
-        # ``depth`` field is useful in prompts, so estimate conservatively.
+        # callers_of does not return per-hop BFS depth, so we cannot report a
+        # precise depth.  Set depth=-1 (sentinel: unknown) and depth_estimated=True
+        # so consumers know not to surface the value as a precise number.
         for sym, conf in caller_tuples:
-            depth = self._estimate_depth(conf)
             op_kind, op_kind_conf = classify_op_kind_ex(sym)
             ref = CallerRef(
                 caller_name=sym.name or "<anon>",
@@ -415,10 +417,11 @@ class GraphDBBridge:
                 caller_kind=sym.kind,
                 endpoint_kind=classify_endpoint_kind(sym),
                 op_kind=op_kind,
-                depth=depth,
+                depth=-1,
                 confidence=round(conf, 4),
                 decorators=tuple(sym.decorators or ()),
                 op_kind_confidence=op_kind_conf,
+                depth_estimated=True,
             )
             # Dedupe across multiple anchors of the same entity — keep the
             # highest-confidence ref for the same caller symbol.
@@ -427,21 +430,14 @@ class GraphDBBridge:
                 collected[sym.uid] = ref
 
     @staticmethod
-    def _estimate_depth(confidence: float) -> int:
-        """Map a transitive-confidence value to an estimated BFS depth.
+    def _estimate_depth(confidence: float) -> int:  # pragma: no cover
+        """Deprecated — no longer called.
 
-        We assume ~0.7 edge confidence on average (matches the resolver's
-        scale), so ``log_0.7(c) ≈ depth``. Clamped to [1, 10].
+        ``callers_of`` does not return BFS depth, so we cannot derive a
+        reliable number.  Kept for external callers that may reference it;
+        returns -1 (unknown sentinel) instead of a fabricated log-inverse.
         """
-        import math
-
-        if confidence >= 0.99:
-            return 1
-        try:
-            depth = max(1, min(10, int(round(math.log(confidence, 0.7)))))
-        except (ValueError, ZeroDivisionError):
-            depth = 1
-        return depth
+        return -1
 
 
 __all__ = [
