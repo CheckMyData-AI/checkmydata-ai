@@ -190,13 +190,14 @@ class KnowledgeFreshnessService:
             except Exception:
                 logger.debug("freshness: sync status check failed", exc_info=True)
 
-        # M6: code-graph freshness — empty graph means M2 either never ran
-        # or was wiped. We only check when code_graph_enabled is set so
-        # disabled installs don't see a noisy warning.
+        # M6: code-graph freshness — empty graph means M2 either never ran or was wiped.
+        # Gate on *consumer* flags (lineage_enabled or clustering_enabled): an empty graph
+        # only matters when a downstream consumer needs it; code_graph_enabled alone (indexing)
+        # doesn't require the graph populated at query time, so warning there is a false alarm.
         try:
             from app.config import settings
 
-            if settings.code_graph_enabled:
+            if settings.lineage_enabled or settings.clustering_enabled:
                 from app.services.code_graph_service import CodeGraphService
 
                 cg_svc = CodeGraphService()

@@ -194,6 +194,76 @@ class TestEvaluate:
         assert snap.code_graph_stale is False
 
 
+class TestCodeGraphGate:
+    """SYNC-L8: empty-graph warning must be gated on lineage/clustering consumers."""
+
+    @pytest.mark.asyncio
+    async def test_no_codegraph_warning_when_only_code_graph_enabled(self, monkeypatch):
+        """code_graph_enabled=True but both consumers off → no warning (false alarm)."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", False)
+        monkeypatch.setattr(cfg_mod.settings, "clustering_enabled", False)
+        svc = KnowledgeFreshnessService()
+        with patch("app.services.code_graph_service.CodeGraphService") as mock_cg_cls:
+            mock_cg = mock_cg_cls.return_value
+            mock_cg.count = AsyncMock(return_value=(0, 0))
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+            )
+
+        assert snap.code_graph_stale is False
+        assert not any("code_graph" in str(getattr(d, "category", "")) for d in snap.details)
+        assert not any("Code graph is empty" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_codegraph_warning_when_lineage_enabled(self, monkeypatch):
+        """lineage_enabled=True + empty graph → warning fires."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "clustering_enabled", False)
+        svc = KnowledgeFreshnessService()
+        with patch("app.services.code_graph_service.CodeGraphService") as mock_cg_cls:
+            mock_cg = mock_cg_cls.return_value
+            mock_cg.count = AsyncMock(return_value=(0, 0))
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+            )
+
+        assert snap.code_graph_stale is True
+        assert snap.code_graph_symbol_count == 0
+        assert any("Code graph is empty" in w for w in snap.warnings)
+
+    @pytest.mark.asyncio
+    async def test_codegraph_warning_when_clustering_enabled(self, monkeypatch):
+        """clustering_enabled=True + empty graph → warning fires."""
+        from app import config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod.settings, "code_graph_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "lineage_enabled", False)
+        monkeypatch.setattr(cfg_mod.settings, "clustering_enabled", True)
+        svc = KnowledgeFreshnessService()
+        with patch("app.services.code_graph_service.CodeGraphService") as mock_cg_cls:
+            mock_cg = mock_cg_cls.return_value
+            mock_cg.count = AsyncMock(return_value=(0, 0))
+            snap = await svc.evaluate(
+                session=AsyncMock(),
+                project_id="p1",
+                connection_id=None,
+            )
+
+        assert snap.code_graph_stale is True
+        assert snap.code_graph_symbol_count == 0
+        assert any("Code graph is empty" in w for w in snap.warnings)
+
+
 def _make_tracker_mock(
     last_sha: str | None,
     freshness_result: tuple[GitFreshness, int, int] | None = None,
