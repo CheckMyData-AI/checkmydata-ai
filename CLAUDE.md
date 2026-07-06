@@ -134,10 +134,10 @@ The repo indexer (`backend/app/knowledge/pipeline_runner.py`) is a checkpointed 
 | Stage | Flag | Default | What it produces |
 |---|---|---|---|
 | `project_profile` → … → `embed_and_store` | (always on) | — | Baseline EntityInfo + ChromaDB chunks |
-| `ast_parse` → `graph_build` | `code_graph_enabled` | **off** | `code_graph_symbols`, `code_graph_edges` |
+| `ast_parse` → `graph_build` | `code_graph_enabled` | **on** | `code_graph_symbols`, `code_graph_edges` |
 | `bm25_build` | `hybrid_retrieval_enabled` | **on** | `data/bm25/{project_id}.pkl` |
 | `schema_embed` (per connection) | `schema_retrieval_enabled` | **on** | `data/bm25/schema_{connection_id}.pkl` |
-| `graph_db_bridge` | `lineage_enabled` | **off** | Code→DB lineage onto EntityInfo |
+| `graph_db_bridge` | `lineage_enabled` | **on** | Code→DB lineage onto EntityInfo |
 | `graph_clustering` | `clustering_enabled`, `cluster_llm_label_enabled` | **off** / on | `code_cluster` rows |
 
 Resume safety: on pipeline resume, `state.code_graph` is rehydrated from Postgres via `CodeGraphService.load_graph()` before M5/M6 stages run — never trust an empty in-memory graph after a restart.
@@ -244,8 +244,8 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 | `hybrid_retrieval_enabled` | on | Falls back to dense-only without BM25 snapshot |
 | `schema_retrieval_enabled` | on | Unioned with legacy relevance safety net |
 | `sql_agent_safety_net_min_relevance` | 3 | RET-R10: min `relevance_score` for safety-net tables; raise to 4 for tighter filtering, 2 to restore legacy behaviour |
-| `code_graph_enabled` | off | CPU-heavy indexing |
-| `lineage_enabled` | off | Requires code graph |
+| `code_graph_enabled` | **on** | CPU-heavy indexing; gated on `python -m app.eval.graph_benchmark` (W6) |
+| `lineage_enabled` | **on** | Requires code graph; enabled together with `code_graph_enabled` (W6) |
 | `clustering_enabled` | off | Louvain communities |
 | `cluster_llm_label_enabled` | on | Only matters when clustering on |
 | `reranker_enabled` | **on** | Cross-encoder; needs `sentence-transformers` + cross-encoder model in deploy image (default ON as of W2) |

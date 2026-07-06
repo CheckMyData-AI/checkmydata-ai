@@ -479,7 +479,7 @@ class Settings(BaseSettings):
     #     validated on production-sized repos.
     # Master flag: enables tree-sitter AST parsing + code knowledge graph.
     # When False, the legacy regex-based entity_extractor path runs.
-    code_graph_enabled: bool = False
+    code_graph_enabled: bool = True  # W6: flipped ON after graph-quality benchmark passed (spec §9)
     # Concurrency for AST parsing (CPU-bound, bounded by semaphore).
     ast_parse_concurrency: int = 4
     # Files larger than this are skipped (binary/minified/generated).
@@ -521,8 +521,8 @@ class Settings(BaseSettings):
     sql_agent_safety_net_min_relevance: int = 3
 
     # M5: graph-driven code→DB lineage (replaces regex `used_in_files`).
-    # OFF by default — requires code_graph_enabled (see F-ARCH-6 note above).
-    lineage_enabled: bool = False
+    # ON by default — requires code_graph_enabled (see F-ARCH-6 note above).
+    lineage_enabled: bool = True  # W6: flipped ON with code_graph (benchmark-gated, spec §9)
     lineage_max_depth: int = 5
 
     # M6: functional clustering (Louvain) + LLM-labeled cluster names.

@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — W6 intelligence-remediation: code-graph correctness + flag flips (2026-07-06, branch `worktree-intelligence-remediation`)
+
+Wave 6 wave-closer (T11). All code-graph correctness fixes (T1–T10) landed; graph-quality benchmark PASS; `code_graph_enabled` and `lineage_enabled` flipped to default-on.
+
+- **CODEIDX-C4 (cross-file CALLS re-resolve)** — incremental re-index correctly re-resolves cross-file CALLS edges after any file in the reverse-dependency set changes; callers are no longer orphaned after incremental updates.
+- **CODEIDX-C7 (UID line-drop)** — symbol UIDs use `{lang}:{file}:{kind}:{name}` format (no trailing line number); UIDs are stable across reformats and incremental rebuilds.
+- **CODEIDX-C6 (EXTENDS heritage)** — multi-base Python EXTENDS edges are emitted for all explicit base classes; `Worker(Base)` produces a `Worker → Base` edge even when Base is defined in another file.
+- **CODEIDX-C5 (JS/TS symbols)** — TypeScript/JavaScript arrow-function components are extracted as `kind=function`; module-level `const` exports are extracted as `kind=variable`; both produce stable UIDs.
+- **CODEIDX-C8 (ORM Mapped)** — SQLAlchemy `Mapped[T]` and `mapped_column` annotations are treated as typed columns rather than class-body CALLS; no phantom call edges from ORM model definitions.
+- **CODEIDX-C17 (checkpoint gate)** — pipeline stage `graph_build` is skipped (checkpoint-resume) when the graph has already been written to DB; avoids redundant CPU-heavy re-parse on resume.
+- **CODEIDX-C9 (shared ignore + prune-by-degree)** — `shared_ignore.py` provides a single `is_ignored_path()` function consumed by both the pipeline and the benchmark; zero-degree symbols (no edges, private-prefixed) are pruned to reduce graph noise.
+- **CODEIDX-C15 (enum-via-annotation)** — Python `StrEnum`/`IntEnum` subclass bodies are extracted as `kind=enum`; members are not emitted as spurious `variable` symbols.
+- **CODEIDX-C16 (table-name inflector / SYNC-L4)** — ORM `__tablename__` or `declared_attr` is resolved first; falls back to the pluralized snake-case class name only when absent; lineage `code→DB` mapping is no longer wrong for non-default table names.
+- **Graph-quality benchmark** — `app/eval/graph_benchmark.py` (`run_graph_benchmark() → GraphBenchmarkResult`) runs the fixture repo through the full AST→graph pipeline and asserts ≥7 symbols, ≥1 CALLS, ≥1 EXTENDS, ≥1 IMPORTS. Gate command: `python -m app.eval.graph_benchmark` (exit 0 = PASS). Benchmark PASS result: `symbols=7 CALLS=2 EXTENDS=1 IMPORTS=1`.
+- **Flag flips (benchmark-gated)** — `code_graph_enabled` and `lineage_enabled` flipped to `True` (default-on) after the benchmark passed (spec §9, F-ARCH-6). **Deploy note:** `code_graph_enabled=true` enables CPU-heavy tree-sitter AST parsing during repo indexing; allocate ≥2 CPU cores and expect indexing time to increase on large repos (≥50k LOC).
+
 ### Added — W2 intelligence-remediation: retrieval + ContextPack wave-closer flag flips (2026-07-06, branch `worktree-intelligence-remediation`)
 
 Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; eval gate green; flags flipped to default-on.
