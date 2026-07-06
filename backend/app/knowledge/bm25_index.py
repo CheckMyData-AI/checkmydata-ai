@@ -112,6 +112,13 @@ def tokenize_code(text: str) -> list[str]:
                     continue
                 out.append(lower)
                 if len(out) >= _MAX_TOKENS_PER_DOC:
+                    # RET-R17: log when a document hits the cap so operators
+                    # know schema/source docs are being silently truncated.
+                    logger.debug(
+                        "bm25_index: doc truncated at %d-token cap (text len=%d chars)",
+                        _MAX_TOKENS_PER_DOC,
+                        len(text),
+                    )
                     return out
     return out
 

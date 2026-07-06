@@ -30,7 +30,15 @@ OVERLAP_TOKENS = 40
 # call time.  See test_embedder_window_validation.py for the flipped C1 lock.
 # ---------------------------------------------------------------------------
 
-CLASS_BOUNDARY = re.compile(r"^(?:class |## |### |model |\bCREATE TABLE\b)", re.MULTILINE)
+# CODEIDX-C11: extended from Python/Markdown-only to also cover JS/TS top-level
+# declarations (export class/function/const) and Go top-level functions so
+# chunking splits at meaningful boundaries in those languages too.
+CLASS_BOUNDARY = re.compile(
+    r"^(?:class |## |### |model |\bCREATE TABLE\b"
+    r"|export class |export function |export const \w+ ="
+    r"|^func )",
+    re.MULTILINE,
+)
 
 
 @dataclass

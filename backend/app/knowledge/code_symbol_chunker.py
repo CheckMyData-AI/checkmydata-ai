@@ -98,7 +98,9 @@ def build_code_chunks(
         validate_chunk_metadata(base_meta)
         return [Chunk(content=body, metadata={**base_meta, "chunk_index": "0"})]
 
-    # Split oversized body using the existing paragraph/sentence/word splitter.
+    # CODEIDX-C12: the symbol span exceeds max_tokens — it will be split/truncated.
+    # Mark every resulting chunk with truncated=True so consumers can detect that
+    # the full symbol body was not stored in a single chunk.
     raw_pieces = _split_large_section(body, max_tokens, tokenizer)
     chunks: list[Chunk] = []
     for i, piece in enumerate(raw_pieces):
@@ -108,7 +110,7 @@ def build_code_chunks(
         # (shouldn't happen after _split_large_section, but defensive).
         if tokenizer.count_tokens(piece) > max_tokens:
             piece = tokenizer.truncate_to_tokens(piece, max_tokens)
-        meta = {**base_meta, "chunk_index": str(i)}
+        meta = {**base_meta, "chunk_index": str(i), "truncated": True}
         validate_chunk_metadata(meta)
         chunks.append(Chunk(content=piece, metadata=meta))
 
@@ -195,7 +197,12 @@ class CodeSymbolChunker:
 
                 for chunk in chunks:
                     chunk_idx = chunk.metadata.get("chunk_index", "0")
-                    doc_id = f"code:{rel_path}:{symbol.uid}:{chunk_idx}"
+                    # CODEIDX-C19: use "sym:" prefix (not "code:") so symbol
+                    # chunk ids are distinct from prose chunk ids (which use the
+                    # doc DB id as a prefix) and can be filtered/audited
+                    # independently of BM25 docs (which are built separately by
+                    # the bm25_build stage from the same underlying documents).
+                    doc_id = f"sym:{rel_path}:{symbol.uid}:{chunk_idx}"
                     batch_ids.append(doc_id)
                     batch_docs.append(chunk.content)
                     batch_metas.append(chunk.metadata)

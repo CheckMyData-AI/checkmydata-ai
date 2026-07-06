@@ -331,7 +331,14 @@ def render_context_block(artifacts: list[Artifact]) -> str:
         return ""
 
     lines: list[str] = [_TRACEABLE_HEADER]
+    # RET-R15: dedup on identical summaries so symbol chunks and prose chunks
+    # that describe the same entity don't produce duplicate lines.  First
+    # occurrence wins (earlier artifacts tend to be higher confidence).
+    seen_summaries: set[str] = set()
     for a in artifacts:
+        if a.summary in seen_summaries:
+            continue
+        seen_summaries.add(a.summary)
         src = a.provenance.get("source", "unknown") if a.provenance else "unknown"
         sha = (a.provenance.get("commit_sha") or "—") if a.provenance else "—"
         iat = (a.freshness.get("indexed_at") or "—") if a.freshness else "—"

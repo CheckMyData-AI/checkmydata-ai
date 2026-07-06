@@ -118,7 +118,14 @@ class HybridRetriever:
         """
         if not query_text or not query_text.strip():
             return []
-        per_leg = n_per_retriever if n_per_retriever is not None else max(10, 2 * k)
+        # RET-R11: floor per_leg so a small caller k doesn't starve the rerank
+        # candidate pool.  When a reranker is wired we need at least
+        # rerank_candidates hits per leg to give the cross-encoder a useful pool.
+        if n_per_retriever is not None:
+            per_leg = n_per_retriever
+        else:
+            rerank_floor = self._rerank_candidates if self._reranker is not None else 0
+            per_leg = max(10, 2 * k, rerank_floor)
 
         bm25_task = asyncio.create_task(self._run_bm25(project_id, query_text, per_leg))
         chroma_task = asyncio.create_task(self._run_chroma(project_id, query_text, per_leg, where))
@@ -211,8 +218,13 @@ class HybridRetriever:
         filtered: list[dict[str, Any]] = []
         for hit in hits:
             dist = hit.get("distance")
-            # Keep hits with unknown distance (defensive) or within threshold.
-            if dist is None or dist <= self._chroma_max_distance:
+            # RET-R13: when a distance floor is configured, a hit with
+            # distance=None is treated as **dropped** — not kept.  Keeping
+            # None-distance hits bypassed the filter entirely (the old defensive
+            # "keep unknown distance" comment was a bug; distance comes from
+            # Chroma so None means the embedder didn't return a score, which
+            # should fail the quality gate rather than silently pass it).
+            if dist is not None and dist <= self._chroma_max_distance:
                 filtered.append(hit)
         return filtered
 
@@ -229,7 +241,8 @@ class HybridRetriever:
 
         for rank, hit in enumerate(bm25_results, start=1):
             doc_id = hit.get("id")
-            if not doc_id:
+            # RET-R12: the BM25 empty-corpus sentinel must never surface as a hit.
+            if not doc_id or doc_id == "__empty__":
                 continue
             entry = merged.setdefault(
                 doc_id,
