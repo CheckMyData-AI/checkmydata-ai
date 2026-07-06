@@ -165,7 +165,7 @@ class TestExecute:
 
         sibling_completed = asyncio.Event()
 
-        async def fake_process(stage, stage_ctx, ctx):
+        async def fake_process(stage, stage_ctx, ctx, *, deadline=None):
             if stage.stage_id == "s2":
                 raise RuntimeError("boom in parallel stage")
             await asyncio.sleep(0.02)
@@ -876,7 +876,7 @@ class TestPipelineWallClockBudget:
         monkeypatch.setattr(se.time, "monotonic", lambda: clock["t"])
         monkeypatch.setattr(se.settings, "pipeline_max_wall_seconds", 5)
 
-        async def fake_process(stage, stage_ctx, ctx):
+        async def fake_process(stage, stage_ctx, ctx, *, deadline=None):
             stage_ctx.set_result(
                 stage.stage_id,
                 StageResult(stage_id=stage.stage_id, status="success", summary="ok"),

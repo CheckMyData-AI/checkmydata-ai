@@ -167,6 +167,28 @@ def _extract_json(raw: str) -> dict | None:
 _VALID_ROUTES = {"direct", "query", "knowledge", "git", "mcp", "explore"}
 _VALID_COMPLEXITY = {"simple", "moderate", "complex"}
 
+# ORCH-R03: cheap data-intent conjunction heuristic so that multi-step questions
+# that the LLM under-estimated still reach the pipeline threshold.
+_DATA_CONJUNCTIONS = (
+    " and ",
+    " then ",
+    "compare",
+    " by ",
+    " vs ",
+    "over time",
+    " each ",
+)
+_HEURISTIC_QUERIES_CAP = 5
+
+
+def _heuristic_queries(question: str) -> int:
+    """Count data-intent conjunctions and return a capped estimate."""
+    q_lower = question.lower()
+    return min(
+        sum(1 for token in _DATA_CONJUNCTIONS if token in q_lower),
+        _HEURISTIC_QUERIES_CAP,
+    )
+
 
 def _parse_route_response(
     raw: str,
@@ -275,11 +297,29 @@ async def route_request(
         has_mcp_sources=has_mcp_sources,
         has_repo=has_repo,
     )
+
+    # ORCH-R03: OR-in the cheap heuristic so under-estimated multi-step questions
+    # still reach the pipeline threshold.  Log estimated-vs-heuristic for
+    # calibration.
+    heuristic = _heuristic_queries(question)
+    calibrated = max(result.estimated_queries, heuristic)
+    if calibrated != result.estimated_queries:
+        logger.debug(
+            "Router: heuristic raised estimated_queries %d → %d (question len=%d)",
+            result.estimated_queries,
+            calibrated,
+            len(question),
+        )
+        from dataclasses import replace as _replace
+
+        result = _replace(result, estimated_queries=calibrated)
+
     logger.info(
-        "Router: route=%s complexity=%s est_queries=%d approach=%s",
+        "Router: route=%s complexity=%s est_queries=%d (heuristic=%d) approach=%s",
         result.route,
         result.complexity,
         result.estimated_queries,
+        heuristic,
         result.approach[:80],
     )
     return result

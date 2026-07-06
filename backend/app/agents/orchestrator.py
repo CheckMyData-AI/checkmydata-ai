@@ -2014,24 +2014,18 @@ class OrchestratorAgent(BaseAgent):
         ORCH-P03: used both when planning fails entirely and when the produced
         plan is trivially small (≤2 data stages) — trivial plans would lose
         flat-loop features (viz, follow-ups, result-gate) for no benefit.
+
+        ORCH-A05 + ORCH-R04: use ``dataclasses.replace`` so no field is silently
+        dropped when ``AgentContext`` gains new fields.  Preserve the original
+        ``complexity`` from ``context.extra`` so a single bad JSON does not
+        permanently downgrade a complex turn to ``moderate``/``explore``.
         """
         await self._tracker.emit(wf_id, "thinking", "in_progress", reason)
         logger.warning("Falling back to flat loop: %s", reason)
         return await self.run(
-            AgentContext(
-                project_id=context.project_id,
-                connection_config=context.connection_config,
-                user_question=context.user_question,
-                chat_history=context.chat_history,
-                llm_router=context.llm_router,
-                tracker=context.tracker,
+            replace(
+                context,
                 workflow_id=wf_id,
-                user_id=context.user_id,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                sql_provider=context.sql_provider,
-                sql_model=context.sql_model,
-                project_name=context.project_name,
                 extra={**context.extra, "_skip_complexity": True},
             ),
         )

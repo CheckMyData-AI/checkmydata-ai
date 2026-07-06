@@ -84,6 +84,39 @@ def _classify_stage_error(exc: BaseException) -> str:
     return "configuration"
 
 
+class _RetryBudget:
+    """ORCH-V02: shared retry counter + deadline guard for one pipeline stage.
+
+    Threads a single remaining-attempts counter across ``_execute_with_retries``,
+    ``_retry_failed_validation``, and ``_retry_failed_data_gate`` so the total
+    sub-agent invocation count stays bounded by ``max_retries + 1`` (one initial
+    execution + at most ``max_retries`` retries across all three loops combined).
+    The deadline check inside each loop prevents a retry from firing after the
+    pipeline wall-clock budget has been exhausted.
+    """
+
+    def __init__(self, max_retries: int, deadline: float | None) -> None:
+        # remaining includes the initial execution attempt
+        self.remaining: int = max_retries + 1
+        self.deadline: float | None = deadline
+
+    def consume(self) -> bool:
+        """Decrement counter; return True when an attempt may proceed."""
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            logger.debug("_RetryBudget: deadline exceeded, blocking retry")
+            return False
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        return True
+
+    def has_retries(self) -> bool:
+        """Return True when at least one more retry attempt is allowed."""
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            return False
+        return self.remaining > 0
+
+
 class StageExecutor:
     """Executes an ``ExecutionPlan`` stage-by-stage."""
 
@@ -248,7 +281,7 @@ class StageExecutor:
 
             if len(batch) == 1:
                 outcomes: list[_StageExecutorResult | None] = [
-                    await self._process_one_stage(batch[0], stage_ctx, context)
+                    await self._process_one_stage(batch[0], stage_ctx, context, deadline=deadline)
                 ]
             else:
                 # return_exceptions=True so one stage raising does NOT propagate
@@ -256,7 +289,10 @@ class StageExecutor:
                 # dangling sessions). Wait for all, then convert any raised
                 # exception into a graceful stage_failed outcome.
                 gathered = await _asyncio.gather(
-                    *(self._process_one_stage(s, stage_ctx, context) for s in batch),
+                    *(
+                        self._process_one_stage(s, stage_ctx, context, deadline=deadline)
+                        for s in batch
+                    ),
                     return_exceptions=True,
                 )
                 outcomes = []
@@ -309,6 +345,8 @@ class StageExecutor:
         stage: PlanStage,
         stage_ctx: StageContext,
         context: AgentContext,
+        *,
+        deadline: float | None = None,
     ) -> _StageExecutorResult | None:
         """Run a single stage end-to-end (dispatch, validate, data-gate, persist).
 
@@ -316,13 +354,23 @@ class StageExecutor:
         continue, a ``_StageExecutorResult`` with status ``"stage_failed"`` on
         failure, or status ``"checkpoint"`` when this stage paused the
         pipeline.
+
+        ORCH-V02: A single shared ``_RetryBudget`` is threaded through all three
+        retry helpers so that ``execute ×N + validation-retry ×N + data-gate-retry
+        ×N`` is bounded by ``max_retries+1`` total executions rather than
+        compounding to ``~7×``.  The deadline is also checked inside every retry
+        loop to honour the wall-clock budget without waiting for the next batch.
         """
         wf_id = context.workflow_id
         idx = next(
             (i for i, s in enumerate(stage_ctx.plan.stages) if s.stage_id == stage.stage_id), 0
         )
 
-        result = await self._execute_with_retries(stage, stage_ctx, context)
+        # ORCH-V02: one budget shared across all three retry loops for this stage.
+        max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
+        budget = _RetryBudget(max_retries=max_retries, deadline=deadline)
+
+        result = await self._execute_with_retries(stage, stage_ctx, context, budget=budget)
 
         if result.status == "error":
             await self._emit_stage_result(wf_id, stage, result)
@@ -340,7 +388,9 @@ class StageExecutor:
         await self._emit_stage_validation(wf_id, stage, validation)
 
         if not validation.passed:
-            retried = await self._retry_failed_validation(stage, stage_ctx, context, validation)
+            retried = await self._retry_failed_validation(
+                stage, stage_ctx, context, validation, budget=budget
+            )
             if retried is None:
                 await self._emit_stage_result(wf_id, stage, result)
                 return _StageExecutorResult(
@@ -363,7 +413,9 @@ class StageExecutor:
         await self._emit_data_gate(wf_id, stage, gate_outcome)
 
         if not gate_outcome.passed:
-            retried = await self._retry_failed_data_gate(stage, stage_ctx, context, gate_outcome)
+            retried = await self._retry_failed_data_gate(
+                stage, stage_ctx, context, gate_outcome, budget=budget
+            )
             if retried is None:
                 await self._emit_stage_result(wf_id, stage, result)
                 return _StageExecutorResult(
@@ -459,14 +511,25 @@ class StageExecutor:
         stage: PlanStage,
         stage_ctx: StageContext,
         context: AgentContext,
+        *,
+        budget: _RetryBudget | None = None,
     ) -> StageResult:
         """Execute a stage, retrying on retryable sub-agent errors.
 
         Uses per-stage ``max_retries`` (falls back to global setting).
+
+        ORCH-V02: when a shared ``budget`` is supplied the retry count is drawn
+        from the budget rather than a fresh per-loop counter, and each iteration
+        checks the pipeline deadline before dispatching another attempt.
         """
         wf_id = context.workflow_id
         max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        result: StageResult | None = None
+        while True:
+            # Consume one attempt from the shared budget (if provided).
+            if budget is not None and not budget.consume():
+                break
             result = await self._execute_stage(stage, stage_ctx, context)
             if result.status != "error":
                 return result
@@ -477,16 +540,29 @@ class StageExecutor:
                     result.error_category,
                 )
                 return result
-            if attempt < max_retries:
-                await self._tracker.emit(
-                    wf_id,
-                    "stage_retry",
-                    "retrying",
-                    f"Stage '{stage.stage_id}' attempt {attempt + 2}",
-                    stage_id=stage.stage_id,
-                    attempt=attempt + 2,
-                    reason=result.error or "",
-                )
+            if attempt >= max_retries:
+                break
+            if budget is not None and not budget.has_retries():
+                break
+            await self._tracker.emit(
+                wf_id,
+                "stage_retry",
+                "retrying",
+                f"Stage '{stage.stage_id}' attempt {attempt + 2}",
+                stage_id=stage.stage_id,
+                attempt=attempt + 2,
+                reason=result.error or "",
+            )
+            attempt += 1
+        # If we never executed (budget exhausted before first call), synthesise
+        # a deadline-exceeded error so the caller can surface it cleanly.
+        if result is None:
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error="Pipeline deadline exceeded before stage could execute",
+                error_category="configuration",
+            )
         return result
 
     async def _retry_failed_validation(
@@ -495,11 +571,25 @@ class StageExecutor:
         stage_ctx: StageContext,
         context: AgentContext,
         validation: StageValidationOutcome,
+        *,
+        budget: _RetryBudget | None = None,
     ) -> StageResult | None:
-        """Retry the stage with error context (uses per-stage max_retries)."""
+        """Retry the stage with error context (uses per-stage max_retries).
+
+        ORCH-V02: draws from the shared ``budget`` when provided so that
+        validation retries reduce the same pool as execution retries.  Also
+        checks the pipeline deadline before each dispatch.
+        """
         wf_id = context.workflow_id
         max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
         for retry in range(max_retries):
+            if budget is not None and not budget.consume():
+                logger.debug(
+                    "Stage '%s' validation-retry %d skipped — budget/deadline",
+                    stage.stage_id,
+                    retry + 1,
+                )
+                return None
             await self._tracker.emit(
                 wf_id,
                 "stage_retry",
@@ -526,14 +616,28 @@ class StageExecutor:
         stage_ctx: StageContext,
         context: AgentContext,
         gate_outcome: DataGateOutcome,
+        *,
+        budget: _RetryBudget | None = None,
     ) -> StageResult | None:
-        """Retry after DataGate failure, feeding suggestions as error context."""
+        """Retry after DataGate failure, feeding suggestions as error context.
+
+        ORCH-V02: draws from the shared ``budget`` when provided so that
+        data-gate retries reduce the same pool as execution and validation retries.
+        Also checks the pipeline deadline before each dispatch.
+        """
         wf_id = context.workflow_id
         max_retries = stage.max_retries if stage.max_retries >= 0 else settings.max_stage_retries
         error_ctx = gate_outcome.error_summary
         if gate_outcome.suggestions:
             error_ctx += " Suggestions: " + "; ".join(gate_outcome.suggestions)
         for retry in range(max_retries):
+            if budget is not None and not budget.consume():
+                logger.debug(
+                    "Stage '%s' data-gate-retry %d skipped — budget/deadline",
+                    stage.stage_id,
+                    retry + 1,
+                )
+                return None
             await self._tracker.emit(
                 wf_id,
                 "stage_retry",
@@ -784,7 +888,9 @@ class StageExecutor:
                 content=(
                     "You are a data analysis assistant. Analyse the data provided "
                     "from previous pipeline stages and produce the requested output. "
-                    "Reason in English; this is an intermediate analysis step."
+                    "Reason in English; this is an intermediate analysis step. "
+                    "Write any user-facing text in the same language the user used "
+                    "in their original question."
                 ),
             ),
             Message(role="user", content=question),
