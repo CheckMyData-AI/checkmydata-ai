@@ -96,3 +96,77 @@ async def test_cross_encoder_handles_dict_candidates(monkeypatch) -> None:
     out = await rr.rerank("q", items, top_k=2)
     assert out[0]["document"] == "longer-text"
     assert out[0]["metadata"]["rerank_position"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_encoder_uses_rank_when_available() -> None:
+    """When the model exposes .rank(), its pre-sorted output must be used
+    (RET-R14).  The stub .rank() returns a fixed ordering that differs from
+    what .predict() would give, so the test distinguishes the two paths."""
+    rr = CrossEncoderReranker("stub")
+
+    class _RankCapableModel:
+        """.rank() returns [{corpus_id, score}, ...] already sorted by relevance."""
+
+        def predict(self, pairs):
+            # predict() would score by doc length: "medium-doc"=10, "short"=5, "long-document"=13
+            # That gives order: long-document, medium-doc, short
+            return [float(len(doc)) for _q, doc in pairs]
+
+        def rank(self, query: str, documents: list[str], **kwargs):
+            # Return a fixed ordering that's the *reverse* of what predict() gives:
+            # short (corpus_id=0), medium-doc (corpus_id=2)... but let's be precise:
+            # items = ["short", "medium-doc", "long-document"]
+            # predict() order (high→low): [2, 1, 0]  (long-document wins)
+            # rank() deliberately returns the opposite: [0, 1, 2] (short wins)
+            # If the code uses rank(), short comes first.
+            return [
+                {"corpus_id": 0, "score": 3.0},  # "short" wins
+                {"corpus_id": 1, "score": 2.0},
+                {"corpus_id": 2, "score": 1.0},
+            ]
+
+    rr._model = _RankCapableModel()
+
+    items = [
+        _Result("short", {"k": 0}),
+        _Result("medium-doc", {"k": 1}),
+        _Result("long-document", {"k": 2}),
+    ]
+    out = await rr.rerank("q", items, top_k=3)
+    # rank() output must take precedence: short → medium-doc → long-document
+    assert [r.document for r in out] == ["short", "medium-doc", "long-document"], (
+        "CrossEncoderReranker must use .rank() ordering when the model supports it"
+    )
+    # Annotations must reflect .rank() scores and positions
+    assert out[0].metadata["rerank_position"] == 1
+    assert out[0].metadata["rerank_score"] == pytest.approx(3.0, abs=1e-5)
+    assert out[1].metadata["rerank_position"] == 2
+    assert out[2].metadata["rerank_position"] == 3
+
+
+@pytest.mark.asyncio
+async def test_cross_encoder_falls_back_to_predict_when_rank_absent() -> None:
+    """When the model has no .rank(), fall back to .predict() + manual sort."""
+    rr = CrossEncoderReranker("stub")
+
+    class _PredictOnlyModel:
+        def predict(self, pairs):
+            return [float(len(doc)) for _q, doc in pairs]
+
+    rr._model = _PredictOnlyModel()
+
+    items = [
+        _Result("short", {}),
+        _Result("the-longest-document", {}),
+        _Result("medium-doc", {}),
+    ]
+    out = await rr.rerank("q", items, top_k=3)
+    # .predict() fallback: longer doc = higher score → the-longest-document wins
+    assert [r.document for r in out] == [
+        "the-longest-document",
+        "medium-doc",
+        "short",
+    ]
+    assert out[0].metadata["rerank_position"] == 1
+    assert "rerank_score" in out[0].metadata

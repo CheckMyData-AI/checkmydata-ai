@@ -120,10 +120,30 @@ class CrossEncoderReranker:
             meta["rerank_score"] = round(score, 6)
             meta["rerank_position"] = rank
 
-    def _score_sync(self, query: str, documents: list[str]) -> list[float]:
+    def _rank_sync(self, query: str, documents: list[str]) -> list[dict]:
+        """Use ``CrossEncoder.rank(query, docs)`` when available (RET-R14).
+
+        ``CrossEncoder.rank`` returns a list of ``{"corpus_id": int, "score": float}``
+        dicts already sorted highest-relevance first — the library's contract, not a
+        local sign assumption.  Falls back to ``predict`` + manual sort for stub models
+        in tests or older sentence-transformers versions that lack ``.rank``.
+        """
+        if callable(getattr(self._model, "rank", None)):
+            ranked = self._model.rank(query, documents, return_documents=False)
+            # Normalise: sentence-transformers may return objects or dicts.
+            return [
+                {
+                    "corpus_id": int(r["corpus_id"] if isinstance(r, dict) else r.corpus_id),
+                    "score": float(r["score"] if isinstance(r, dict) else r.score),
+                }
+                for r in ranked
+            ]
+        # Fallback: predict() + manual sort for models without .rank().
         pairs = [[query, doc] for doc in documents]
-        scores = self._model.predict(pairs)
-        return [float(s) for s in scores]
+        raw_scores = self._model.predict(pairs)
+        scores = [float(s) for s in raw_scores]
+        order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        return [{"corpus_id": idx, "score": scores[idx]} for idx in order]
 
     async def rerank(self, query: str, results: Sequence, *, top_k: int) -> list:
         items = list(results)
@@ -134,16 +154,17 @@ class CrossEncoderReranker:
 
         documents = [self._doc_text(r) for r in items]
         try:
-            scores = await asyncio.to_thread(self._score_sync, query, documents)
+            ranked = await asyncio.to_thread(self._rank_sync, query, documents)
         except Exception:
             logger.warning("reranker: scoring failed — keeping fusion order", exc_info=True)
             return items[:top_k]
 
-        order = sorted(range(len(items)), key=lambda i: scores[i], reverse=True)
         reranked = []
-        for rank, idx in enumerate(order, start=1):
+        for position, entry in enumerate(ranked, start=1):
+            idx = entry["corpus_id"]
+            score = entry["score"]
             item = items[idx]
-            self._annotate(item, scores[idx], rank)
+            self._annotate(item, score, position)
             reranked.append(item)
         return reranked[:top_k]
 
