@@ -121,6 +121,20 @@ async def lifespan(app: FastAPI):
     # Shared client for AgentLimiter / WsTicketStore (T-SCALE-1 / T-SEC-7).
     await redis_client.connect(redis_url)
 
+    # Self-completing deploy: auto-reindex embeddings if the model/window changed.
+    # Runs after the task queue is up (it enqueues). Best-effort — never blocks boot.
+    try:
+        from app.ops.embedding_reconcile import reconcile_embeddings
+
+        _recon = await reconcile_embeddings()
+        logger.info(
+            "Embedding reconcile at startup: %s (reindexed=%d)",
+            _recon.status,
+            _recon.reindexed,
+        )
+    except Exception:
+        logger.warning("Embedding reconcile failed at startup", exc_info=True)
+
     from app.core.workflow_events import start_workflow_event_subscriber
 
     await start_workflow_event_subscriber()
