@@ -27,6 +27,7 @@ from typing import Any
 
 from app.knowledge.bm25_index import BM25Index
 from app.knowledge.reranker import Reranker
+from app.knowledge.retrieval_degradation import emit_retrieval_degraded
 from app.knowledge.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ class HybridRetriever:
         chroma_max_distance: float | None = None,
         reranker: Reranker | None = None,
         rerank_candidates: int = 30,
+        tracker: Any = None,
+        workflow_id: str | None = None,
     ) -> None:
         self._bm25 = bm25
         self._vector = vector_store
@@ -94,6 +97,10 @@ class HybridRetriever:
         # fusion order is returned as-is (zero added latency).
         self._reranker = reranker
         self._rerank_candidates = max(1, rerank_candidates)
+        # RET-R4: optional WorkflowTracker for emitting retrieval_degraded events.
+        # When absent (None), only the metric is incremented.
+        self._tracker = tracker
+        self._workflow_id = workflow_id or ""
 
     async def query(
         self,
@@ -120,6 +127,24 @@ class HybridRetriever:
             chroma_task,
             return_exceptions=False,
         )
+
+        # RET-R4: emit degradation signal when exactly one leg is empty.
+        bm25_empty = len(bm25_results) == 0
+        chroma_empty = len(chroma_results) == 0
+        if bm25_empty and not chroma_empty:
+            await emit_retrieval_degraded(
+                self._tracker,
+                self._workflow_id,
+                leg="bm25",
+                reason="empty_result",
+            )
+        elif chroma_empty and not bm25_empty:
+            await emit_retrieval_degraded(
+                self._tracker,
+                self._workflow_id,
+                leg="dense",
+                reason="empty_result",
+            )
 
         fused = self._fuse(bm25_results, chroma_results)
         # Apply min_score (trim to k happens after optional reranking).
