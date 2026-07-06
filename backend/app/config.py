@@ -294,7 +294,8 @@ class Settings(BaseSettings):
     mcp_call_timeout_s: float = 30.0
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
-    rag_relevance_threshold: float = 0.8
+    # cosine distance ≤ 0.45 ⟺ cosine similarity ≥ 0.55 (RET-R5)
+    rag_relevance_threshold: float = 0.45
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
     viz_timeout_seconds: int = 15
@@ -496,7 +497,8 @@ class Settings(BaseSettings):
     hybrid_retrieval_enabled: bool = True
     bm25_data_dir: str = "./data/bm25"
     hybrid_rrf_k: int = 60
-    hybrid_min_score: float = 0.01
+    # above rank-30 RRF contribution (1/90 ≈ 0.011); filters tail noise (RET-R5)
+    hybrid_min_score: float = 0.03
     hybrid_k: int = 20
 
     # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
