@@ -14,6 +14,7 @@ from app.agents.base import AgentContext, BaseAgent
 from app.agents.data_gate import DataGate, DataGateOutcome
 from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
 from app.agents.result_validation import ResultValidation
+from app.agents.sql_result_reconciliation import build_reconciliation_note
 from app.agents.stage_context import (
     ExecutionPlan,
     PlanStage,
@@ -1058,6 +1059,29 @@ class StageExecutor:
             fb_stage = fb.get("stage_id")
             fb_text = fb.get("feedback_text", "")
             parts.append(f"User feedback (stage {fb_stage}): {fb_text}")
+
+        # ORCH-P01 parity: inject a reconciliation note when multiple SQL stages
+        # produce results whose grand totals agree — prevents the synthesiser from
+        # falsely claiming "an earlier query under-counted" when the numbers are
+        # actually consistent.  Wrapped in try/except for honest degradation.
+        try:
+            import types as _types
+
+            sql_adapters = []
+            for _s in stage_ctx.plan.stages:
+                if _s.tool != "query_database":
+                    continue
+                _sr = stage_ctx.get_result(_s.stage_id)
+                if _sr is None or _sr.query_result is None:
+                    continue
+                sql_adapters.append(_types.SimpleNamespace(results=_sr.query_result))
+            reconciliation_note = build_reconciliation_note(sql_adapters)  # type: ignore[arg-type]
+            if reconciliation_note:
+                parts.append(reconciliation_note)
+        except Exception:
+            logger.debug(
+                "Reconciliation note generation failed (non-fatal); skipping", exc_info=True
+            )
 
         synthesis_system = (
             "You are a data analyst. Synthesise the stage results below into "
