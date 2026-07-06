@@ -109,7 +109,7 @@ Three operator actions are required when deploying the intelligence-remediation 
 The embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window). Existing ChromaDB collections are dimension-mismatched; dense retrieval silently degrades to BM25-only until collections are rebuilt. The system does NOT crash — degradation is graceful — but retrieval quality is reduced.
 After deploy, run for every active project:
 ```python
-from app.services.indexing_service import queue_embedding_reindex
+from app.services.embedding_reindex import queue_embedding_reindex
 import asyncio
 asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
 ```

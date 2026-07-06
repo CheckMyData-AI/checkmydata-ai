@@ -78,7 +78,7 @@ Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; e
 > **Operator action required after deploy:**
 > ```python
 > # In a management shell / Django-equivalent REPL or migration script:
-> from app.services.indexing_service import queue_embedding_reindex
+> from app.services.embedding_reindex import queue_embedding_reindex
 > import asyncio
 > # Pass all active project IDs, or trigger a full repo re-index per project via the UI/API.
 > asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
