@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 
 class CodeDbSyncService:
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def bare_suffix(name: str) -> str:
+        """Return the unqualified table name.
+
+        Examples:
+            ``'analytics.orders'`` → ``'orders'``
+            ``'a.b.orders'`` → ``'orders'``
+            ``'orders'`` → ``'orders'``
+        """
+        return name.split(".")[-1]
+
+    # ------------------------------------------------------------------
     # Per-table CRUD
     # ------------------------------------------------------------------
 
@@ -68,13 +83,37 @@ class CodeDbSyncService:
         connection_id: str,
         table_name: str,
     ) -> CodeDbSync | None:
+        """Return the sync entry for *table_name*, falling back to bare-suffix matching.
+
+        Resolution order (SYNC-L7):
+        1. Exact ``table_name`` match (e.g. ``'analytics.orders'`` or ``'orders'``).
+        2. When *table_name* contains no dot (caller asked by bare name), look for any
+           row in this connection whose unqualified suffix matches — e.g. a stored
+           ``'analytics.orders'`` is found when ``table_name='orders'``.
+        """
+        # 1. Exact match
         result = await session.execute(
             select(CodeDbSync).where(
                 CodeDbSync.connection_id == connection_id,
                 CodeDbSync.table_name == table_name,
             )
         )
-        return result.scalar_one_or_none()
+        entry = result.scalar_one_or_none()
+        if entry is not None:
+            return entry
+
+        # 2. Bare-suffix fallback: only attempt when caller used a bare name
+        bare = self.bare_suffix(table_name)
+        if bare == table_name:
+            # Caller already passed a bare name — scan for any row whose suffix matches
+            all_entries = await session.execute(
+                select(CodeDbSync).where(CodeDbSync.connection_id == connection_id)
+            )
+            for row in all_entries.scalars():
+                if self.bare_suffix(row.table_name) == bare and row.table_name != table_name:
+                    return row
+
+        return None
 
     async def delete_stale_tables(
         self,

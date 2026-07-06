@@ -1663,6 +1663,10 @@ class SQLAgent(BaseAgent):
             for e in entries:
                 if e.conversion_warnings and e.confidence_score >= 4:
                     critical.append(f"- {e.table_name}: {e.conversion_warnings}")
+                    # SYNC-L7 C6: also emit under bare suffix for schema-qualified tables
+                    bare = e.table_name.split(".")[-1]
+                    if bare != e.table_name:
+                        critical.append(f"- {bare}: {e.conversion_warnings}")
             warnings_text = "\n".join(critical)[:500] if critical else ""
 
             return conventions, warnings_text
@@ -1703,6 +1707,11 @@ class SQLAgent(BaseAgent):
                 # H4: skip low-confidence entries — omit from prompt guidance too
                 if (getattr(e, "confidence_score", 0) or 0) < min_conf:
                     continue
+
+                # SYNC-L7 C6: compute bare-suffix alias once per entry
+                bare = e.table_name.split(".")[-1]
+                emit_bare = bare != e.table_name  # only when schema-qualified
+
                 rf = getattr(e, "required_filters_json", "{}") or "{}"
                 try:
                     filters = json_mod.loads(rf)
@@ -1711,6 +1720,9 @@ class SQLAgent(BaseAgent):
                 if filters and isinstance(filters, dict):
                     for col, cond in filters.items():
                         filters_lines.append(f"- {e.table_name}: ALWAYS add WHERE {col} {cond}")
+                        # also emit under bare suffix so the agent finds it by unqualified name
+                        if emit_bare:
+                            filters_lines.append(f"- {bare}: ALWAYS add WHERE {col} {cond}")
 
                 cvm = getattr(e, "column_value_mappings_json", "{}") or "{}"
                 try:
@@ -1722,6 +1734,9 @@ class SQLAgent(BaseAgent):
                         if isinstance(vals, dict):
                             parts = ", ".join(f"{k}={v}" for k, v in vals.items())
                             mappings_lines.append(f"- {e.table_name}.{col}: {parts}")
+                            # also emit under bare suffix
+                            if emit_bare:
+                                mappings_lines.append(f"- {bare}.{col}: {parts}")
 
             return "\n".join(filters_lines), "\n".join(mappings_lines)
         except Exception:
