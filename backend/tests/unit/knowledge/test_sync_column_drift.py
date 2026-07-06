@@ -15,11 +15,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from app.knowledge.code_db_sync_analyzer import TableSyncAnalysis
 from app.knowledge.code_db_sync_pipeline import CodeDbSyncPipeline
-
 
 # ---------------------------------------------------------------------------
 # _compute_column_drift — pure deterministic set arithmetic

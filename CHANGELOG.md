@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — W5 intelligence-remediation: code↔DB trust signals (2026-07-06, branch `worktree-intelligence-remediation`)
+
+Wave 5 wave-closer (T11). All 10 prior W5 tasks committed; ruff/mypy clean; unit+integration suite green at 78% coverage (≥72% gate); retrieval-eval gate green (18/18); single alembic head `c9b8a7f6e5d4`.
+
+- **SYNC-L3 (git freshness states AHEAD/BEHIND/DIVERGED)** — `classify_freshness()` in `git_tracker.py` uses `iter_commits` to compute exact ahead/behind counts and returns `GitFreshness(FRESH|AHEAD|BEHIND|DIVERGED)`. `KnowledgeFreshnessService.evaluate()` maps each state to a distinct warning with the commit count; DIVERGED is severity `critical`. `git_freshness_fetch_origin` flag (default `false`) gates a remote fetch for cross-machine accuracy. Env key: `GIT_FRESHNESS_FETCH_ORIGIN`.
+- **SYNC-L2 (table-ref attribution)** — `EntityExtractor` tracks which SQL statement each column reference appears in; phantom cross-table attributions eliminated. Noise-only SQL tokens (literals, parameters, operators) are stripped before attribution. Confidence on attributed refs defaults to L2 rather than the weaker L1.
+- **SYNC-L5 (deterministic drift set-diff)** — `CodeDbSyncPipeline._compute_column_drift()` produces a stable sorted `{code_only, db_only, matched}` diff (case-normalised). When both sides are non-empty and drift exists, `sync_status` is set to `"mismatch"` deterministically, overriding any LLM opinion. Diff persisted to `CodeDbSync.column_mismatch_json` (migration `c9b8a7f6e5d4`).
+- **SYNC-L6 (schema-qualified ORM matching)** — sync loaders and `get_table_sync` now match on `(schema, table)` pair when the ORM model carries a qualified table name (e.g. `public.orders`); unqualified model names still work against the default schema.
+- **SYNC-L7 (bare-suffix keying)** — all sync loaders and `get_table_sync` normalise keys to bare table name (no schema prefix) before cache lookup; eliminates duplicate and missed cache hits when some code paths pass qualified names.
+- **SYNC-L8 (code-graph warning gate)** — the "code graph is empty" freshness warning is gated on `lineage_enabled OR clustering_enabled` (the actual graph consumers) rather than `code_graph_enabled` (the indexing flag); operators who index the graph but don't enable lineage/clustering no longer receive spurious empty-graph warnings.
+- **SYNC-L9 (op-kind word-boundary)** — HTTP operation-kind extraction in `graph_db_bridge.py` uses word-boundary regex (`\bget\b`, `\bpost\b`, etc.) to prevent false matches (e.g. `forget` → `get`). Low-confidence name-inference now emits a debug log rather than a noisy warning.
+- **Low-batch L11–L14** — `_coerce_confidence` rounds float strings before clamping (`"4.5"→4`, `"4.7"→5`) instead of silently defaulting to 3; `CallerRef.depth_estimated=True` sentinel replaces fabricated depth integers; enum-table link matching uses token word-boundary (not raw substring) so `reorder_reason` no longer spuriously links to table `order`; DB-index TTL is read from `settings.db_index_ttl_hours` (default 24, env key `DB_INDEX_TTL_HOURS`).
+
+**Note:** SYNC-L1 was delivered in W1; SYNC-L4 (table-name inflector) was delivered in W6; the W5 set covers L2/L3/L5/L6/L7/L8/L9 + low-batch L11–L14.
+
 ### Fixed — W3 intelligence-remediation: orchestrator termination + path unification (2026-07-06, branch `worktree-intelligence-remediation`)
 
 Wave 3 wave-closer (T14). All 13 prior W3 tasks committed; ruff/mypy clean; unit+integration suite green at 78% coverage (≥72% gate); retrieval-eval gate green (18/18).
