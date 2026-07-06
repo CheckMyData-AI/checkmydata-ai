@@ -126,7 +126,7 @@ def test_parse_python_methods_have_class_parent_uid(parser: ASTParser):
 
 
 def test_python_uid_stable(parser: ASTParser):
-    """UID format: lang:rel_path:kind:name:line."""
+    """UID format: lang:rel_path:kind:name (no line — CODEIDX-C7)."""
     parsed = parser.parse_bytes("src/user.py", PY_SOURCE)
     assert parsed is not None
     fn = next(s for s in parsed.symbols if s.name == "standalone_function")
@@ -135,7 +135,8 @@ def test_python_uid_stable(parser: ASTParser):
     assert parts[1] == "src/user.py"
     assert parts[2] == "function"
     assert parts[3] == "standalone_function"
-    assert int(parts[4]) == fn.start_line
+    assert len(parts) == 4  # no line component in UID
+    assert fn.start_line > 0  # start_line is still captured as an attribute
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +372,7 @@ async def test_parse_many_files_concurrently(parser: ASTParser):
 
 def test_symbol_is_immutable():
     s = Symbol(
-        uid="python:a.py:function:foo:1",
+        uid="python:a.py:function:foo",
         kind="function",
         name="foo",
         file_path="a.py",
@@ -387,3 +388,37 @@ def test_import_ref_defaults():
     assert ref.imported_names == ()
     assert ref.alias is None
     assert ref.line == 0
+
+
+# ---------------------------------------------------------------------------
+# CODEIDX-C7: UID must be line-independent (line is an attribute, not identity)
+# ---------------------------------------------------------------------------
+
+
+def test_uid_is_stable_across_line_shift(parser: ASTParser):
+    """Inserting a comment above a function must not change its UID (CODEIDX-C7)."""
+    src_v1 = b"def helper():\n    return 1\n"
+    src_v2 = b"# an added comment line\ndef helper():\n    return 1\n"
+    uid_v1 = parser.parse_bytes("a.py", src_v1).symbols[0].uid
+    sym_v2 = parser.parse_bytes("a.py", src_v2).symbols[0]
+    assert uid_v1 == sym_v2.uid == "python:a.py:function:helper"
+    assert sym_v2.start_line == 2  # line still captured, only as an attribute
+
+
+def test_method_uid_excludes_line_but_keeps_parent(parser: ASTParser):
+    """Method UIDs must not carry a line suffix; parent_uid linkage must still hold."""
+    src = b"class Svc:\n    def run(self):\n        return 1\n"
+    pf = parser.parse_bytes("s.py", src)
+    cls = next(s for s in pf.symbols if s.kind == "class")
+    method = next(s for s in pf.symbols if s.kind == "method")
+    assert cls.uid == "python:s.py:class:Svc"
+    assert method.uid == "python:s.py:method:run"
+    assert method.parent_uid == cls.uid
+
+
+def test_same_name_functions_collapse_to_one_uid(parser: ASTParser):
+    """Two same-named functions in one file collapse to a single UID (last wins)."""
+    src = b"def f():\n    return 1\n\ndef f():\n    return 2\n"
+    pf = parser.parse_bytes("dup.py", src)
+    uids = {s.uid for s in pf.symbols if s.name == "f"}
+    assert uids == {"python:dup.py:function:f"}

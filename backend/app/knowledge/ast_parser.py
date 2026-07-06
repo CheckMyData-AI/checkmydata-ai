@@ -11,7 +11,9 @@ Design notes:
       node types to our normalized symbol kinds.
     * Files that exceed ``ast_max_file_bytes``, look binary/minified, or have
       too many ``ERROR`` AST nodes are skipped and counted in ``ParsedFile.errors``.
-    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{name}:{line}``.
+    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{name}``.
+      The definition line is intentionally excluded (CODEIDX-C7) — a line shift
+      above an untouched symbol must not change its UID or orphan inbound edges.
     * Method symbols carry ``parent_uid`` referencing the enclosing class.
 """
 
@@ -46,7 +48,8 @@ class Symbol:
     """A code symbol extracted from an AST.
 
     Attributes:
-        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{name}:{line}``.
+        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{name}``.
+            The definition line is stored in ``start_line`` (CODEIDX-C7).
         kind: One of function/method/class/interface/enum/type_alias.
         name: Symbol name (e.g. "validate_user", "UserService").
         file_path: Repository-relative path (forward slashes).
@@ -358,9 +361,12 @@ def _looks_minified(content: bytes) -> bool:
     return longest > _MINIFIED_LINE_LEN_THRESHOLD
 
 
-def _make_uid(language: str, rel_path: str, kind: str, name: str, line: int) -> str:
-    # Normalize separators so UIDs are stable across OSes.
-    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{name}:{line}"
+def _make_uid(language: str, rel_path: str, kind: str, name: str) -> str:
+    # Normalize separators so UIDs are stable across OSes. The definition line
+    # is intentionally NOT part of identity (CODEIDX-C7): it is stored as the
+    # ``start_line`` attribute so a line shift above an untouched symbol does
+    # not orphan its inbound edges on an incremental merge.
+    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{name}"
 
 
 def _node_text(node, source: bytes) -> str:
@@ -587,7 +593,7 @@ def _node_to_symbol(
         kind = _SYMBOL_KIND_METHOD
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
-    uid = _make_uid(grammar.slug, rel_path, kind, name, start_line)
+    uid = _make_uid(grammar.slug, rel_path, kind, name)
     decorators = _extract_decorators(node, grammar, source)
     signature = _extract_signature(node, source)
     docstring = ""
