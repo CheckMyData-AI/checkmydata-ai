@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — W3 intelligence-remediation: orchestrator termination + path unification (2026-07-06, branch `worktree-intelligence-remediation`)
+
+Wave 3 wave-closer (T14). All 13 prior W3 tasks committed; ruff/mypy clean; unit+integration suite green at 78% coverage (≥72% gate); retrieval-eval gate green (18/18).
+
+- **ORCH-T01 (live step budget)** — `max_orchestrator_iterations` is now a live termination signal: the wrap-up phase is entered as soon as the counter is reached, not only after a post-loop check; no extra LLM call is wasted on an already-budget-exceeded loop body.
+- **ORCH-T02 (wrap-up gate)** — the synthesis/wrap-up phase is only entered when at least one data retrieval has been attempted; static-prompt-only turns no longer trigger a premature "composing answer" emission.
+- **ORCH-T03 (no-tool re-prompt)** — on a data route, if the model emits a planning/thinking turn with no tool calls and no data yet, the orchestrator re-prompts once to keep the loop alive; bounded to one shot (`reprompted_no_data` flag) — no infinite loop.
+- **ORCH-A03 (routing metrics)** — `route`, `complexity`, and `estimated_queries` from the unified router are now recorded into `MetricsCollector` on every turn; `complexity` is no longer `"unknown"` in metrics/Prometheus.
+- **ORCH-PR01 (prompt de-dup)** — duplicate reconciliation guidance removed from the orchestrator system prompt; stale self-description updated; net ~200-token reduction per request.
+- **ORCH-CP01 (cue precision)** — `ContextPlanner` cue matching upgraded to word-boundary regex; over-broad single-letter cues removed; false-positive cue matches on unrelated words eliminated.
+- **ORCH-P01 (validation scope)** — `StageValidator` now scopes data-quality criteria to data stages only; text/knowledge stages require a non-empty summary instead; prevents false failures on non-SQL stages.
+- **ORCH-P02/P03 (planner/replan fixes)** — trivial single-step plans are bounced back for replanning; `degraded` flag is propagated across replan so downstream stages know quality was compromised; the failed tool name is stored in learnings for root-cause analysis.
+- **ORCH-RP01/RP02 (cohort_window params)** — `cohort_window` params are unified across the planner and executor; both use the same type/default; no more implicit coercion mismatch.
+- **ORCH-R01 / ORCH-P04 (non-DB pipeline)** — complex non-DB questions (knowledge, git, MCP) are now routed through the full multi-stage pipeline when complexity warrants it (`use_complex_pipeline`), not silently dropped to the single-loop path. Source-aware quick-plan fallback avoids a DB-specific stage appearing in a knowledge-only plan.
+- **ORCH-A01 (path unification — ResultValidation on both paths)** — `ResultValidation` (DataGate + result gate + reconcile) is now wired into the pipeline SQL stage as well as the single-query path; impossible values are caught on both code paths.
+- **ORCH-A02 (path unification — AnswerQualityGate on pipeline)** — `AnswerQualityGate.evaluate` is now called on the pipeline final answer, matching the single-loop path; answer quality is enforced regardless of which execution path produced the result. Pipeline answers may now surface `response_type: "step_limit_reached"` when the pipeline exhausts its budget (see API.md).
+- **ORCH-P04 / pipeline reconciliation** — SQL reconciliation note injected into pipeline synthesis prompt so the LLM is aware of all prior SQL results when composing the final pipeline answer (parity with the single-loop path).
+- **Low-batch fixes (A05/V02/PR03/R03/R04)** — orchestrator low-batch edge cases resolved: empty-result SQL no longer silently swallows the answer; viz-stage failure degrades gracefully; prompt refs cleaned up; router/replan boundary conditions tightened.
+
 ### Changed — W6 intelligence-remediation: code-graph correctness + flag flips (2026-07-06, branch `worktree-intelligence-remediation`)
 
 Wave 6 wave-closer (T11). All code-graph correctness fixes (T1–T10) landed; graph-quality benchmark PASS; `code_graph_enabled` and `lineage_enabled` flipped to default-on.

@@ -80,6 +80,13 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 
 **Chat concurrency & limits**: `/api/chat/ask` and `/api/chat/ask/stream` first check the user's token budget (`429` when exhausted), then acquire an `agent_limiter` concurrency slot (`429` when the per-user/global slot cap is hit) and hold a per-session lock (`409` if a request for the same session is already running). The agent run is bounded by a wall-clock timeout (`stream_timeout_seconds`, default 360s): the non-streaming `/ask` returns **`504`** on timeout; `/ask/stream` reports the timeout in-band as an SSE `error` event (`error_type: "timeout"`) since the HTTP status is already committed.
 
+**Chat response types** (`response_type` field in the answer body):
+- `text` — plain conversational or knowledge answer (no SQL executed).
+- `sql_result` — at least one SQL query ran and produced rows.
+- `clarification_request` — agent needs more information before proceeding.
+- `step_limit_reached` — the orchestrator (single-loop or pipeline path) exhausted `max_orchestrator_iterations` or the wall-clock budget before completing normally; a partial/best-effort answer is still returned. Clients should surface this as a soft warning (not an error). As of W3 (ORCH-A02), pipeline answers can also return this type when the pipeline budget is exhausted.
+- `error` — an unrecoverable failure; `answer` contains a user-friendly message.
+
 ## Notes
 
 | Method | Endpoint | Description |

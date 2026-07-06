@@ -113,12 +113,21 @@ Frontend (ChatPanel)
     → ConversationalAgent.run() (wraps everything in try/except/finally — emits pipeline_end even on crash)
       → OrchestratorAgent (LLM-driven loop: gather → synthesize)
         → Unified router (single LLM call: route + complexity + approach + estimated queries)
-        → AdaptivePlanner (quick or full plan; replan up to MAX_PIPELINE_REPLANS=2)
-        → StageExecutor — topological scheduler, runs up to PIPELINE_MAX_PARALLEL_STAGES=3 stages concurrently
-          → Per-stage sub-agents: SQLAgent / KnowledgeAgent / VizAgent / GitAgent / McpSourceAgent / InvestigationAgent
-          → StageValidator + DataGate (intermediate quality checks; DATA_GATE_HARD_CHECKS_ENABLED blocks impossible numbers)
-          → Stage failures classified as transient | configuration | data_missing | fatal (non-retryable short-circuits the retry loop)
-        → AnswerValidator (LLM gate on partial answers near budget limit)
+        → Two execution paths — selected by route_result.use_complex_pipeline (complexity=complex OR
+          needs_multiple_data_sources OR estimated_queries≥3):
+          PATH A — single tool-loop: iterative gather/synthesize, up to max_orchestrator_iterations (default 20)
+            → ORCH-T01: step budget is a live termination signal (wrap-up entered when counter hit)
+            → ORCH-T02: wrap-up only when ≥1 data retrieval attempted
+            → ORCH-T03: re-prompts once on no-tool/no-data turn to keep loop alive
+          PATH B — multi-stage pipeline (ORCH-R01: now taken for complex non-DB questions too):
+            → AdaptivePlanner (quick or full plan; replan up to MAX_PIPELINE_REPLANS=2)
+            → StageExecutor — topological scheduler, runs up to PIPELINE_MAX_PARALLEL_STAGES=3 stages concurrently
+              → Per-stage sub-agents: SQLAgent / KnowledgeAgent / VizAgent / GitAgent / McpSourceAgent / InvestigationAgent
+              → StageValidator + DataGate (intermediate quality checks; DATA_GATE_HARD_CHECKS_ENABLED blocks impossible numbers)
+              → Stage failures classified as transient | configuration | data_missing | fatal (non-retryable short-circuits retry)
+        → Shared gates (both paths — ORCH-A01/A02):
+            → ResultValidation (DataGate + result gate + reconcile) on every SQL result
+            → AnswerQualityGate on final answer
       → AgentResultValidator (final check before user)
     → WorkflowTracker emits SSE events throughout; TracePersistenceService accumulates spans and batch-inserts RequestTrace + TraceSpan rows at pipeline_end
 ```
@@ -213,7 +222,7 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
 
 - `backend/app/llm/router.py` fronts OpenAI, Anthropic, and OpenRouter. All LLM calls go through `llm_call_with_retry` with exponential backoff. `LLMAllProvidersFailedError` is **non-retryable**.
 - **Usage accounting & post-call budget gate** (`app/llm/usage_sink.py`): `LLMRouter(usage_sink=…)` observes `(prompt_tokens, completion_tokens, total_tokens, provider, model)` after every successful call; `DbUsageSink` persists each call via `UsageService.record_usage` **and** re-checks the user's budget so a long agent run hard-stops at the next safe boundary instead of overshooting. `AdaptivePlanner`, `AnswerValidator`, and `QueryRepairer` carry the sink so their LLM calls are counted too. **MCP tools** build the router with `DbUsageSink` and acquire `agent_limiter` for parity with the chat path (no usage/budget bypass via MCP). Streaming responses are not yet sinked (tracked as a known gap).
-- `MetricsCollector` records per-request route, complexity, response_type, replans, retries, SQL calls, wall-clock, plus M2/M5/M6 code-graph counters. Exposed via `/api/metrics` (JSON) and `/api/metrics/prometheus`.
+- `MetricsCollector` records per-request route, complexity (no longer `"unknown"` — ORCH-A03), response_type, replans, retries, SQL calls, wall-clock, plus M2/M5/M6 code-graph counters. Exposed via `/api/metrics` (JSON) and `/api/metrics/prometheus`.
 - Sentry on backend (`sentry-sdk[fastapi]`) and frontend (`@sentry/nextjs`) with PII/secret scrubbing.
 
 ### Storage
@@ -258,6 +267,8 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 `max_orchestrator_iterations` default is **20** (was 100 before W0 intelligence-remediation; set higher only if complex multi-hop queries time out at the wall-clock limit).
 
 **Intelligence remediation W0 landmarks** (spec: `docs/superpowers/specs/2026-07-03-intelligence-remediation-design.md`): `derive_result` helper + `ResultValidation` façade + `AnswerQualityGate`; `DataGate` Decimal/truncation fixes; C-D schema-capture surface (`object_kind`, `sample_values`, `distinct_count`, `null_pct`) on `ColumnInfo`/`TableInfo`/`SchemaInfo` + `DbIndex` migration; `RequestTrace` routing columns (`approach`, `complexity`, `route_ms`) + migration; chunk metadata + `retrieval_degraded` scaffold; hotspot decomposition of `sql_agent`/`orchestrator` (`result_handler`, `_record_request_metrics`). New Prometheus counters: `retrieval_degraded_total`, `datagate_block_total`, `filter_guard_degrade_total`.
+
+**Intelligence remediation W3 landmarks** (orchestrator termination + path unification, ORCH-T01–T03/A01–A03/R01/P01–P04/PR01/CP01/RP01–RP02): live step-budget termination; wrap-up gate; no-tool re-prompt (T03); routing metrics always populated; prompt de-dup (~200 tokens/req saved); ContextPlanner word-boundary cue matching; StageValidator scoped to data stages; trivial-plan bounce + degraded propagation; cohort_window param unification; complex non-DB questions routed to pipeline (ORCH-R01); `ResultValidation` wired into pipeline SQL stage (A01); `AnswerQualityGate` wired into pipeline final answer (A02). Pipeline answers may now return `response_type: "step_limit_reached"` when budget exhausted.
 
 **Intelligence remediation W4 landmarks** (schema-capture depth, DBIDX-D1–D18): MongoDB native introspection via aggregation pipelines (`distinct_values`/`approx_stats` overrides); ClickHouse sort-key (`is_sort_key`); PostgreSQL enum labels + CHECK constraints; VIEWs/MATERIALIZED VIEWs indexed with `object_kind`; column comments + indexes rendered in schema context (D8); approx_stats persisted to `DbIndex.column_stats_json` + `column_distinct_values_json` (D9); deterministic completeness gate (D10); schema-cache bust on re-index (D12); dead `SchemaIndexer` deleted (D13); `reltuples < 0` treated as unknown (D14); LLM table/column prompt caps (D15/D16); ClickHouse + Mongo freshness timestamps (D17/D18). New config keys: `mongo_schema_sample_size` (100), `db_index_stats_enabled` (on), `db_index_stats_max_columns` (20), `db_index_stats_sample_cap` (100 000), `db_index_max_tables_analyzed` (500), `db_index_max_prompt_columns` (100). **R9/D7 handoff**: `ColumnInfo.distinct_values/distinct_count/numeric_format/enum_labels` are populated and persisted; downstream waves read from the index.
 

@@ -889,7 +889,11 @@ class TestLLMCallWithRetry:
 
         resp = await agent.run(question="test", project_id="proj-1")
         assert resp.response_type == "text"
-        assert len(calls) == 2
+        # The first call raises (router); subsequent calls succeed.  ORCH-T03 may
+        # add an extra re-prompt on a no-tool turn, so total is at least 2 and
+        # bounded (no runaway retries).
+        assert len(calls) >= 2
+        assert len(calls) <= 5
 
     @pytest.mark.asyncio
     async def test_retries_on_server_error_then_succeeds(self, agent, mock_llm):
@@ -909,7 +913,11 @@ class TestLLMCallWithRetry:
 
         resp = await agent.run(question="test", project_id="proj-1")
         assert resp.response_type == "text"
-        assert len(calls) == 2
+        # The first call raises (router); subsequent calls succeed.  ORCH-T03 may
+        # add an extra re-prompt on a no-tool turn, so total is at least 2 and
+        # bounded (no runaway retries).
+        assert len(calls) >= 2
+        assert len(calls) <= 5
 
     @pytest.mark.asyncio
     async def test_all_retries_exhausted_raises(self, agent, mock_llm):

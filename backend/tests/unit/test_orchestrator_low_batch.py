@@ -186,9 +186,7 @@ class TestStageRetryBudgetIsShared:
         await executor._retry_failed_validation(stage, stage_ctx, ctx, validation, budget=budget)
 
         # Total calls must not exceed max_retries + 1
-        assert call_count <= 3, (
-            f"Expected ≤3 total executions with shared budget, got {call_count}"
-        )
+        assert call_count <= 3, f"Expected ≤3 total executions with shared budget, got {call_count}"
 
 
 class TestDeadlineCheckedInsideRetryLoop:
@@ -228,9 +226,7 @@ class TestDeadlineCheckedInsideRetryLoop:
         )
 
         assert result is None
-        assert call_count == 0, (
-            f"Expected 0 execute calls past deadline, got {call_count}"
-        )
+        assert call_count == 0, f"Expected 0 execute calls past deadline, got {call_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +253,13 @@ class TestRouterHeuristicOrsIn:
             '{"route":"query","complexity":"simple","approach":"","estimated_queries":1,'
             '"needs_multiple_data_sources":false}'
         )
-        result = _parse_route_response(raw, has_connection=True, has_knowledge_base=False,
-                                       has_mcp_sources=False, has_repo=False)
+        result = _parse_route_response(
+            raw,
+            has_connection=True,
+            has_knowledge_base=False,
+            has_mcp_sources=False,
+            has_repo=False,
+        )
         # The parser returns the raw LLM value; heuristic is applied in route_request.
         assert result.estimated_queries == 1
 
@@ -273,7 +274,7 @@ class TestRouterHeuristicOrsIn:
         llm_mock.complete = AsyncMock(
             return_value=LLMResponse(
                 content='{"route":"query","complexity":"simple","approach":"","'
-                        'estimated_queries":1,"needs_multiple_data_sources":false}',
+                'estimated_queries":1,"needs_multiple_data_sources":false}',
                 tool_calls=[],
                 usage={},
                 model="test",
