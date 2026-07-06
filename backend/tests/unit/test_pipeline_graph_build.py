@@ -82,3 +82,55 @@ async def test_incremental_empty_graph_pure_deletion_still_merges():
     args = mock_svc.save_incremental.await_args.args
     # affected_files (4th positional) should contain the deleted file.
     assert "gone.py" in args[3]
+
+
+@pytest.mark.asyncio
+async def test_build_exception_returns_false_and_is_not_checkpointed():
+    """C17: when CodeGraphBuilder.build raises, _run_graph_build must return
+    False so the caller can skip complete_step — a crashed build must not be
+    checkpointed as done."""
+    runner = _runner()
+    state = _PipelineState()
+    state.parsed_files = {"a.py": MagicMock(symbols=[MagicMock()], imports=[], call_sites=[])}
+    state.changed_files = ["a.py"]
+
+    with (
+        patch(
+            "app.knowledge.pipeline_runner.CodeGraphBuilder.build",
+            side_effect=RuntimeError("boom"),
+        ),
+        patch("app.knowledge.pipeline_runner.tracker") as mock_tracker,
+    ):
+        mock_tracker.emit = AsyncMock()
+        ok = await runner._run_graph_build(
+            state, "wf-1", db=MagicMock(), project_id="p1", is_full=True
+        )
+
+    assert ok is False
+    statuses = [c.args[2] for c in mock_tracker.emit.await_args_list if len(c.args) >= 3]
+    assert "failed" in statuses
+
+
+@pytest.mark.asyncio
+async def test_build_success_returns_true():
+    """C17 positive: a successful build returns True so the caller checkpoints it."""
+    runner = _runner()
+    state = _PipelineState()
+    state.parsed_files = {"a.py": MagicMock(symbols=[MagicMock()], imports=[], call_sites=[])}
+    state.changed_files = ["a.py"]
+
+    mock_svc = MagicMock()
+    mock_svc.save = AsyncMock(return_value=(1, 0))
+
+    with (
+        patch("app.knowledge.pipeline_runner.CodeGraphService", return_value=mock_svc),
+        patch("app.knowledge.pipeline_runner.tracker") as mock_tracker,
+    ):
+        mock_tracker.emit = AsyncMock()
+        ok = await runner._run_graph_build(
+            state, "wf-1", db=MagicMock(), project_id="p1", is_full=True
+        )
+
+    assert ok is True
+    statuses = [c.args[2] for c in mock_tracker.emit.await_args_list if len(c.args) >= 3]
+    assert "completed" in statuses

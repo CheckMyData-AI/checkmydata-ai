@@ -529,8 +529,13 @@ class IndexingPipelineRunner:
                 "graph_build",
                 f"Building code graph from {len(state.parsed_files)} parsed file(s)",
             ):
-                await self._run_graph_build(state, wf_id, db, project_id, is_full=is_full_graph)
-            await self._cp_svc.complete_step(db, cp_id, "graph_build")
+                graph_ok = await self._run_graph_build(
+                    state, wf_id, db, project_id, is_full=is_full_graph
+                )
+            # C17: only checkpoint a build that actually succeeded — mirror the
+            # bm25/clustering gate so a resume re-runs a crashed build.
+            if graph_ok:
+                await self._cp_svc.complete_step(db, cp_id, "graph_build")
 
             # --- Step 5d: code_symbol_embed (CODEIDX-C3) ---
             # Upsert raw symbol bodies into the vector store so code-Q&A
@@ -1547,7 +1552,7 @@ class IndexingPipelineRunner:
         project_id: str,
         *,
         is_full: bool = True,
-    ) -> None:
+    ) -> bool:
         """M2: build the code knowledge graph from parsed files and persist it.
 
         On a full run the graph fully replaces the persisted one. On an
@@ -1558,10 +1563,14 @@ class IndexingPipelineRunner:
 
         Failures here are non-fatal: the graph is an additive signal, and the
         legacy regex pipeline still produces the canonical EntityInfo data.
+
+        Returns ``True`` on success (including legitimate no-op skips) and
+        ``False`` when an exception is caught, so the caller can gate
+        ``complete_step`` on a real success (C17).
         """
         if not state.parsed_files and is_full:
             logger.info("graph_build: no parsed files, skipping")
-            return
+            return True
         try:
             builder = CodeGraphBuilder(
                 max_symbols=settings.code_graph_max_symbols,
@@ -1624,7 +1633,7 @@ class IndexingPipelineRunner:
                         "Incremental graph build produced no symbols (parse failure?); "
                         "kept existing graph",
                     )
-                    return
+                    return True
                 if failed:
                     logger.info(
                         "graph_build: preserving symbols for %d changed file(s) that "
@@ -1667,6 +1676,7 @@ class IndexingPipelineRunner:
                 "completed",
                 f"Persisted {sym_count} symbols, {edge_count} edges",
             )
+            return True
         except Exception as exc:
             logger.exception("graph_build failed for project %s: %s", project_id[:8], exc)
             await tracker.emit(
@@ -1675,6 +1685,7 @@ class IndexingPipelineRunner:
                 "failed",
                 f"Graph build failed: {exc!s}",
             )
+            return False
 
     @staticmethod
     async def _git_show(repo_dir: Path, sha: str | None, file_path: str) -> str | None:
