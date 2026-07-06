@@ -1110,6 +1110,15 @@ class OrchestratorAgent(BaseAgent):
             max_iter = int(max_iter * 1.5)
 
         emergency_pct = settings.agent_emergency_synthesis_pct
+        # ORCH-T02: exclude the static system prompt tokens from the wrap-up
+        # estimate. A large schema/rules payload in the system prompt is fixed
+        # cost and should not count toward the "analysis budget spent" signal.
+        static_prompt_tokens = LLMRouter.estimate_tokens(system_prompt)
+        # Count successful data-retrieval tool calls (query_database / search_codebase /
+        # query_mcp_source) that completed without being gate-flagged.  Used to gate
+        # the soft context-fill wrap-up: we never enter synthesis_phase from a
+        # should_wrap_up() signal before at least one retrieval has happened.
+        successful_data_retrievals: int = 0
 
         # R2 / C4 (F-BILL-05): post-call budget hard-stop.
         # Once at run-start so an already-exhausted budget short-circuits before
@@ -1153,9 +1162,18 @@ class OrchestratorAgent(BaseAgent):
             time_pct = elapsed_wall / wall_clock_limit if wall_clock_limit else 1.0
             budget_pct = max(step_pct, time_pct)
 
-            if not synthesis_phase and (
-                budget_pct >= emergency_pct or should_wrap_up(messages, loop_budget)
-            ):
+            # ORCH-T02: gate the context-fill soft wrap-up.
+            # - Hard branch (budget_pct >= emergency_pct) is the honest-degradation
+            #   valve and fires unconditionally (even at iter 0 with no data).
+            # - Soft branch (should_wrap_up) is gated on data_ready: we only enter
+            #   synthesis when at least one successful data-retrieval has happened AND
+            #   the dynamic content (excluding the static system prompt) is truly large.
+            data_ready = iteration > 0 and successful_data_retrievals >= 1
+            dynamic_tokens = max(0, estimate_messages_tokens(messages) - static_prompt_tokens)
+            soft_wrap = should_wrap_up(messages, loop_budget) and dynamic_tokens > int(
+                loop_budget * 0.30
+            )
+            if not synthesis_phase and (budget_pct >= emergency_pct or (data_ready and soft_wrap)):
                 synthesis_phase = True
                 reason = (
                     "emergency budget limit" if budget_pct >= emergency_pct else "context budget"
@@ -1528,12 +1546,14 @@ class OrchestratorAgent(BaseAgent):
                 # Record successful data-retrieval questions for the per-turn
                 # dedup safety net. Skip gate-flagged / failed / deduped calls so
                 # corrective re-queries are never blocked on the next iteration.
+                # ORCH-T02: also track count for the wrap-up gate.
                 if (
                     tc.name in ToolDispatcher._DEDUP_TOOL_NAMES
                     and tc.id not in skipped_map
                     and sub_result is not None
                     and not gate_flagged
                 ):
+                    successful_data_retrievals += 1
                     recorded_q = ((tc.arguments or {}).get("question") or "").strip()
                     if recorded_q:
                         executed_questions.append((tc.name, recorded_q))
