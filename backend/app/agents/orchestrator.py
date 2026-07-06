@@ -363,11 +363,13 @@ class OrchestratorAgent(BaseAgent):
         iterations: int,
         wall_clock_seconds: float,
         error: bool,
+        estimated_queries: int = 0,
     ) -> None:
         """Record one request's metrics row. Never raises (W0 extraction of ORCH-A04).
 
-        Wave 3 will extend this helper to also persist ``estimated_queries`` and
-        any additional routing fields once ``RequestMetrics`` is updated (C-G task).
+        ``estimated_queries`` is the router's sub-query estimate written into
+        ``context.extra`` by the ORCH-A03 (C-G) fix; defaults to 0 so existing
+        callers that have not been updated are not broken.
         """
         try:
             from app.core.metrics import RequestMetrics, get_metrics_collector
@@ -381,6 +383,7 @@ class OrchestratorAgent(BaseAgent):
                     iterations=iterations,
                     wall_clock_seconds=wall_clock_seconds,
                     error=error,
+                    estimated_queries=estimated_queries,
                 )
             )
         except Exception:
@@ -586,6 +589,19 @@ class OrchestratorAgent(BaseAgent):
                     preferred_provider=context.preferred_provider,
                     model=context.model,
                 )
+            # ORCH-A03 (C-G): persist the 3 router signals into context.extra so
+            # _record_request_metrics (unified path) and the pipeline metrics block
+            # both read the REAL values instead of falling back to "unknown"/0.
+            context = replace(
+                context,
+                extra={
+                    **context.extra,
+                    "route": route_result.route,
+                    "complexity": route_result.complexity,
+                    "estimated_queries": route_result.estimated_queries,
+                },
+            )
+
             logger.info(
                 "Router: route=%s complexity=%s (wf=%s)",
                 route_result.route,
@@ -1864,6 +1880,7 @@ class OrchestratorAgent(BaseAgent):
             iterations=iteration + 1,
             wall_clock_seconds=total_wall_clock,
             error=bool(error_types),
+            estimated_queries=int(context.extra.get("estimated_queries") or 0),
         )
 
         followups: list[str] = []
@@ -2139,6 +2156,7 @@ class OrchestratorAgent(BaseAgent):
                     sql_calls=sum(1 for s in stage_ctx.plan.stages if s.tool == "query_database"),
                     iterations=len(stage_ctx.plan.stages),
                     error=bool(error_count),
+                    estimated_queries=int(context.extra.get("estimated_queries") or 0),
                 )
             )
         except Exception:

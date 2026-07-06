@@ -41,6 +41,8 @@ class RequestMetrics:
     tokens_completion: int = 0
     wall_clock_seconds: float = 0.0
     error: bool = False
+    # ORCH-A03 (C-G): router signal — number of sub-queries the router estimated.
+    estimated_queries: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
 
