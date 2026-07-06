@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1483,9 +1484,12 @@ class TestOrchestratorIntentRouting:
     @pytest.mark.asyncio
     async def test_fallback_on_router_error(self, orch, mock_llm, base_context):
         """If router fails, the orchestrator should fall back to unified agent."""
+        # ORCH-T03: when the router error fallback produces route="explore" (data route),
+        # a first no-tool answer triggers one re-prompt before the loop accepts the final answer.
         mock_llm.complete = AsyncMock(
             side_effect=[
                 RuntimeError("LLM is down"),
+                LLMResponse(content="I can help with data analysis."),
                 LLMResponse(content="I can help with data analysis."),
             ]
         )
@@ -1538,6 +1542,9 @@ class TestOrchestratorIntentRouting:
             project_name="TestProject",
         )
 
+        # ORCH-T03: on a data route (route="query"), a first no-tool answer triggers one
+        # re-prompt before the loop accepts the final answer.  Provide 3 responses:
+        # router call + re-prompted tool-loop call + final answer after re-prompt.
         mock_llm.complete = AsyncMock(
             side_effect=[
                 LLMResponse(
@@ -1547,6 +1554,7 @@ class TestOrchestratorIntentRouting:
                         '"needs_multiple_data_sources": false}'
                     )
                 ),
+                LLMResponse(content="There are 42 users in the database."),
                 LLMResponse(content="There are 42 users in the database."),
             ]
         )
@@ -1657,6 +1665,9 @@ class TestOrchestratorIntentRouting:
         collection.count = MagicMock(return_value=5)
         mock_vs.get_or_create_collection = MagicMock(return_value=collection)
 
+        # ORCH-T03: on a data route (route="knowledge"), a first no-tool answer triggers
+        # one re-prompt before the loop accepts the final answer.  Provide 3 responses:
+        # router call + re-prompted tool-loop call + final answer after re-prompt.
         mock_llm.complete = AsyncMock(
             side_effect=[
                 LLMResponse(
@@ -1666,6 +1677,7 @@ class TestOrchestratorIntentRouting:
                         '"needs_multiple_data_sources": false}'
                     )
                 ),
+                LLMResponse(content="The User model has fields id, email, name."),
                 LLMResponse(content="The User model has fields id, email, name."),
             ]
         )
@@ -2361,14 +2373,26 @@ class TestToolLoopMessageRoles:
         mock_tracker.start = AsyncMock(return_value="wf-roles")
         mock_tracker.end = AsyncMock()
 
-        # First (and only) LLM call returns a plain answer -> loop exits at once.
         final_response = LLMResponse(
             content="Here is the answer.",
             tool_calls=[],
             usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
         )
-        mock_router.complete = AsyncMock(return_value=final_response)
         mock_router.get_context_window = MagicMock(return_value=128_000)
+
+        # ORCH-T03: _skip_complexity produces route="explore" (data route). A
+        # first no-tool-call answer triggers one re-prompt, then the second
+        # call (same plain answer) terminates normally. Capture a snapshot of
+        # the messages passed to each call so mutation of the shared list after
+        # call 0 does not pollute the assertion about call 0's state.
+        captured_messages: list[list] = []
+
+        async def _side_effect(**kwargs: Any) -> LLMResponse:
+            # Store a shallow copy so each entry reflects the list at call time.
+            captured_messages.append(list(kwargs.get("messages", [])))
+            return final_response
+
+        mock_router.complete = AsyncMock(side_effect=_side_effect)
 
         agent = OrchestratorAgent(
             llm_router=mock_router,
@@ -2418,8 +2442,9 @@ class TestToolLoopMessageRoles:
             await agent.run(ctx)
 
         assert mock_router.complete.call_count >= 1
-        first_messages = mock_router.complete.call_args_list[0].kwargs["messages"]
-        # Leading message is the only system role.
+        # Use our snapshot for call 0 — not call_args_list which holds a mutable reference.
+        first_messages = captured_messages[0]
+        # Leading message is the only system role at the time of the first call.
         assert first_messages[0].role == "system"
         assert all(m.role != "system" for m in first_messages[1:])
         # The final user turn carries the folded marker + continuation summary.

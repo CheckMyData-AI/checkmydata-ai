@@ -1119,6 +1119,13 @@ class OrchestratorAgent(BaseAgent):
         # the soft context-fill wrap-up: we never enter synthesis_phase from a
         # should_wrap_up() signal before at least one retrieval has happened.
         successful_data_retrievals: int = 0
+        # ORCH-T03: guard against prematurely terminating on a "let me think…"
+        # planning turn that calls no tools and has gathered no data yet.  We
+        # re-prompt exactly once; after that we accept whatever the model returns.
+        # any_tools_called tracks whether ANY tool-call iteration has occurred so
+        # the re-prompt does not fire after tool calls that produced empty results.
+        reprompted_no_data: bool = False
+        any_tools_called: bool = False
 
         # R2 / C4 (F-BILL-05): post-call budget hard-stop.
         # Once at run-start so an already-exhausted budget short-circuits before
@@ -1303,6 +1310,43 @@ class OrchestratorAgent(BaseAgent):
             self.accum_usage(total_usage, llm_resp.usage)
 
             if not llm_resp.tool_calls:
+                # ORCH-T03: on a data route, if the model emitted a "let me think…"
+                # planning turn (no tool calls, no prior tool iterations, no data
+                # gathered) re-prompt exactly once to keep the loop alive.
+                # Guards:
+                #  - any_tools_called: tool calls happened in an earlier iteration
+                #    (even if they produced empty results) → accept the answer.
+                #  - reprompted_no_data: bounded one-shot re-prompt, no infinite loop.
+                #  - synthesis_phase: emergency valve is active — don't fight it.
+                is_data_route = route_result is None or not route_result.is_direct
+                no_data_yet = (
+                    not any_tools_called
+                    and successful_data_retrievals == 0
+                    and not all_sql_results
+                    and not knowledge_sources
+                    and not has_mcp_result
+                )
+                if is_data_route and no_data_yet and not reprompted_no_data and not synthesis_phase:
+                    reprompted_no_data = True
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "No data gathered yet — asking the agent to use a tool…",
+                    )
+                    messages.append(
+                        Message(
+                            role="system",
+                            content=(
+                                "You have not gathered any data yet, but this question needs "
+                                "data from your sources. Call the appropriate tool now (do not "
+                                "answer from prior knowledge). If the question truly needs no "
+                                "data, say so explicitly."
+                            ),
+                        )
+                    )
+                    continue
+
                 await self._tracker.emit(
                     wf_id,
                     "thinking",
@@ -1334,6 +1378,11 @@ class OrchestratorAgent(BaseAgent):
                 wall_clock_timeout_hit = True
                 await self._stream_tokens(wf_id, final_text)
                 break
+
+            # ORCH-T03: mark that at least one tool-call iteration has occurred so
+            # the zero-data re-prompt guard is not triggered after a failed or
+            # non-data-returning tool dispatch.
+            any_tools_called = True
 
             tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
             thinking_detail = f"Decided to use: {tool_names}"

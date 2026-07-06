@@ -1,5 +1,6 @@
 """ORCH-T01: step budget is a live termination signal.
 ORCH-T02: wrap-up gate — no synthesis before any data gathered; static tokens excluded.
+ORCH-T03: re-prompt once on a no-tool-call, zero-data turn on a data route.
 
 ORCH-T01 verifies that with ``max_orchestrator_iterations=20`` (W0 default):
   - a loop that never self-terminates (LLM always returns a tool call)
@@ -12,6 +13,14 @@ ORCH-T02 verifies:
     does NOT flip ``synthesis_phase`` — the loop keeps going with tools enabled.
   - The hard ``budget_pct >= emergency_pct`` branch still flips synthesis at iter 0
     (honest degradation valve is intact).
+
+ORCH-T03 verifies:
+  - A no-tool-call "planning" turn with zero data on a data route triggers one
+    re-prompt system message (not a termination), and the loop continues until
+    a real tool call or a real answer is produced.
+  - A second no-tool-call turn after the re-prompt terminates normally (bounded).
+  - A no-tool-call turn after data was already gathered terminates normally.
+  - A no-tool-call turn on a direct route terminates immediately (no re-prompt).
 
 These tests use the same fixture conventions as ``test_orchestrator_audit_fixes.py``.
 """
@@ -416,4 +425,273 @@ class TestHardEmergencyStillWrapsAtIter0:
             "Expected tools=None (synthesis phase) but got tools list. "
             f"agent_emergency_synthesis_pct=0.01, step_pct at iter0=0.20. "
             f"captured_tools[0]={first_call_tools!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ORCH-T03: re-prompt once on a no-tool-call, zero-data turn on a data route
+# ---------------------------------------------------------------------------
+
+
+_THINKING_RESP = LLMResponse(content="Let me think about this.", tool_calls=[])
+_FINAL_ANSWER_RESP = LLMResponse(content="There are 42 rows in orders.", tool_calls=[])
+
+
+def _make_data_route_result() -> Any:
+    """A RouteResult for a data (non-direct) route."""
+    from app.agents.router import RouteResult
+
+    return RouteResult(
+        route="query",
+        complexity="moderate",
+        approach="",
+        estimated_queries=1,
+        needs_multiple_data_sources=False,
+    )
+
+
+def _make_direct_route_result() -> Any:
+    """A RouteResult for a direct (conversational) route."""
+    from app.agents.router import RouteResult
+
+    return RouteResult(
+        route="direct",
+        complexity="simple",
+        approach="",
+        estimated_queries=0,
+        needs_multiple_data_sources=False,
+    )
+
+
+class TestRepromptOnceOnNoToolZeroDataDataRoute:
+    """ORCH-T03: a no-tool "thinking" turn with zero data on a data route must
+    trigger a single re-prompt system message, not terminate.  The loop then
+    continues; a subsequent query tool call gathers data and the final answer
+    is the real one, not "Let me think…".
+    """
+
+    async def test_reprompts_once_on_no_tool_zero_data(
+        self,
+        orch: OrchestratorAgent,
+        base_context: AgentContext,
+    ) -> None:
+        tools = get_orchestrator_tools(has_knowledge_base=True)
+        route_result = _make_data_route_result()
+
+        # iter 0: no tool call ("Let me think…")
+        # iter 1: query_database tool call  → dispatcher returns rows
+        # iter 2: final no-tool answer
+        call_seq = [_THINKING_RESP, _QUERY_DB_RESP, _FINAL_ANSWER_RESP]
+        call_idx = 0
+        captured_messages: list[list] = []
+
+        async def _side_effect(**kwargs: Any) -> LLMResponse:
+            nonlocal call_idx
+            captured_messages.append(list(kwargs.get("messages", [])))
+            resp = call_seq[min(call_idx, len(call_seq) - 1)]
+            call_idx += 1
+            return resp
+
+        sql_result = _make_sql_result()
+
+        with (
+            patch.object(orch, "_llm_call_with_retry", new=AsyncMock(side_effect=_side_effect)),
+            patch.object(
+                orch._dispatcher,
+                "dispatch",
+                new=AsyncMock(return_value=("42 rows", sql_result)),
+            ),
+            patch.object(orch, "_stream_tokens", new=AsyncMock()),
+            patch.object(orch, "_validate_partial_answer", new=AsyncMock(return_value=False)),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
+            _apply_mock_settings(mock_settings, max_iter=10)
+
+            resp = await orch._run_tool_loop(
+                base_context,
+                "wf-1",
+                has_connection=True,
+                db_type="postgresql",
+                has_kb=False,
+                has_mcp=False,
+                has_repo=False,
+                table_map="orders(id, amount)",
+                project_overview="",
+                recent_learnings="",
+                tools=tools,
+                route_result=route_result,
+            )
+
+        # The loop must NOT have terminated at iter 0 — at least 2 LLM calls needed.
+        assert call_idx >= 2, (
+            f"ORCH-T03 FAIL: loop terminated after only {call_idx} LLM call(s) — "
+            "re-prompt was not injected on the zero-data no-tool turn."
+        )
+        # Final answer must NOT be the thinking placeholder.
+        assert resp.answer != "Let me think about this.", (
+            "ORCH-T03 FAIL: loop returned the thinking placeholder as the final answer."
+        )
+        # A re-prompt system message must have been injected (appears in messages
+        # passed to iter-1 LLM call).
+        all_system_contents = [
+            m.content
+            for msgs in captured_messages
+            for m in msgs
+            if hasattr(m, "role") and m.role == "system"
+        ]
+        reprompt_found = any(
+            "You have not gathered any data yet" in (c or "") for c in all_system_contents
+        )
+        assert reprompt_found, (
+            "ORCH-T03 FAIL: no re-prompt system message containing "
+            "'You have not gathered any data yet' was injected. "
+            f"System messages seen: {all_system_contents!r}"
+        )
+
+
+class TestNoRepromptWhenDataAlreadyGathered:
+    """ORCH-T03: a no-tool turn AFTER a successful query terminates normally
+    (the fix must not loop forever or inject a spurious re-prompt).
+    """
+
+    async def test_no_reprompt_when_data_already_gathered(
+        self,
+        orch: OrchestratorAgent,
+        base_context: AgentContext,
+    ) -> None:
+        tools = get_orchestrator_tools(has_knowledge_base=True)
+        route_result = _make_data_route_result()
+
+        # iter 0: query_database tool call → dispatcher returns rows
+        # iter 1: final no-tool answer (data already gathered → must terminate)
+        call_seq = [_QUERY_DB_RESP, _FINAL_ANSWER_RESP]
+        call_idx = 0
+        captured_messages: list[list] = []
+
+        async def _side_effect(**kwargs: Any) -> LLMResponse:
+            nonlocal call_idx
+            captured_messages.append(list(kwargs.get("messages", [])))
+            resp = call_seq[min(call_idx, len(call_seq) - 1)]
+            call_idx += 1
+            return resp
+
+        sql_result = _make_sql_result()
+
+        with (
+            patch.object(orch, "_llm_call_with_retry", new=AsyncMock(side_effect=_side_effect)),
+            patch.object(
+                orch._dispatcher,
+                "dispatch",
+                new=AsyncMock(return_value=("42 rows", sql_result)),
+            ),
+            patch.object(orch, "_stream_tokens", new=AsyncMock()),
+            patch.object(orch, "_validate_partial_answer", new=AsyncMock(return_value=False)),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
+            _apply_mock_settings(mock_settings, max_iter=10)
+
+            resp = await orch._run_tool_loop(
+                base_context,
+                "wf-1",
+                has_connection=True,
+                db_type="postgresql",
+                has_kb=False,
+                has_mcp=False,
+                has_repo=False,
+                table_map="orders(id, amount)",
+                project_overview="",
+                recent_learnings="",
+                tools=tools,
+                route_result=route_result,
+            )
+
+        # Must terminate at iter 1 (after the data tool call + final answer).
+        # Should NOT inject another re-prompt (call_idx must be exactly 2).
+        assert call_idx == 2, (
+            f"ORCH-T03 FAIL: expected exactly 2 LLM calls (tool + final answer), "
+            f"got {call_idx}. Re-prompt was injected despite data being gathered."
+        )
+        # No spurious re-prompt in messages of the second call.
+        all_system_contents = [
+            m.content
+            for msgs in captured_messages
+            for m in msgs
+            if hasattr(m, "role") and m.role == "system"
+        ]
+        reprompt_found = any(
+            "You have not gathered any data yet" in (c or "") for c in all_system_contents
+        )
+        assert not reprompt_found, (
+            "ORCH-T03 FAIL: spurious re-prompt injected even though data was gathered. "
+            f"System messages: {all_system_contents!r}"
+        )
+        assert resp.answer == "There are 42 rows in orders."
+
+
+class TestNoRepromptOnDirectRoute:
+    """ORCH-T03: a no-tool turn on a direct (conversational) route must terminate
+    immediately even with zero data — direct is conversational, not a data route.
+    """
+
+    async def test_no_reprompt_on_direct_route(
+        self,
+        orch: OrchestratorAgent,
+        base_context: AgentContext,
+    ) -> None:
+        tools = get_orchestrator_tools(has_knowledge_base=True)
+        route_result = _make_direct_route_result()
+
+        # Only one LLM call — returns no tool call immediately.
+        call_idx = 0
+        captured_messages: list[list] = []
+
+        async def _side_effect(**kwargs: Any) -> LLMResponse:
+            nonlocal call_idx
+            captured_messages.append(list(kwargs.get("messages", [])))
+            call_idx += 1
+            return _FINAL_ANSWER_RESP
+
+        with (
+            patch.object(orch, "_llm_call_with_retry", new=AsyncMock(side_effect=_side_effect)),
+            patch.object(orch._dispatcher, "dispatch", new=AsyncMock(return_value=("ok", None))),
+            patch.object(orch, "_stream_tokens", new=AsyncMock()),
+            patch.object(orch, "_validate_partial_answer", new=AsyncMock(return_value=False)),
+            patch("app.agents.orchestrator.settings") as mock_settings,
+        ):
+            _apply_mock_settings(mock_settings, max_iter=10)
+
+            resp = await orch._run_tool_loop(
+                base_context,
+                "wf-1",
+                has_connection=False,
+                db_type=None,
+                has_kb=False,
+                has_mcp=False,
+                has_repo=False,
+                table_map="",
+                project_overview="",
+                recent_learnings="",
+                tools=tools,
+                route_result=route_result,
+            )
+
+        # Must terminate on the first no-tool call — direct route, no re-prompt.
+        assert call_idx == 1, (
+            f"ORCH-T03 FAIL: expected exactly 1 LLM call on direct route, "
+            f"got {call_idx}. Re-prompt must not fire on a direct route."
+        )
+        assert resp.answer == "There are 42 rows in orders."
+        # No re-prompt message anywhere.
+        all_system_contents = [
+            m.content
+            for msgs in captured_messages
+            for m in msgs
+            if hasattr(m, "role") and m.role == "system"
+        ]
+        reprompt_found = any(
+            "You have not gathered any data yet" in (c or "") for c in all_system_contents
+        )
+        assert not reprompt_found, (
+            "ORCH-T03 FAIL: re-prompt injected on direct route. "
+            f"System messages: {all_system_contents!r}"
         )
