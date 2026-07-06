@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 # tokens proportional to information content.
 _MAX_COLUMN_NOTES = 25
 
+# Cap how many distinct values per column we splice into the BM25 doc.
+# Enough for enums/statuses; larger value sets are truncated to avoid
+# swamping the BM25 term distribution with noise.
+_MAX_DISTINCT_VALUES_PER_COL = 20
+
 
 class SchemaRetriever:
     """Per-connection BM25 retriever over LLM-enriched schema docs.
@@ -85,6 +90,8 @@ class SchemaRetriever:
             columns: <col_1>, <col_2>, ...
             notes_for_col1: <note>
             ...
+            values_for_col1: val1, val2, ...  (DBIDX-D7: distinct values)
+            numeric_note_for_col1: <note>     (DBIDX-D7: numeric format notes)
         """
         import json
 
@@ -107,6 +114,31 @@ class SchemaRetriever:
                 note = col_notes.get(col) or ""
                 if note:
                     lines.append(f"{col}: {note}")
+
+        # DBIDX-D7: splice distinct values so value-level queries (e.g.
+        # "status = shipped") can match via BM25 term overlap.
+        try:
+            distinct_values: dict[str, Any] = json.loads(entry.column_distinct_values_json or "{}")
+        except Exception:
+            distinct_values = {}
+        if isinstance(distinct_values, dict):
+            for col, values in distinct_values.items():
+                if not isinstance(values, list) or not values:
+                    continue
+                capped = [str(v) for v in values[:_MAX_DISTINCT_VALUES_PER_COL]]
+                lines.append(f"values_{col}: {', '.join(capped)}")
+
+        # DBIDX-D7: splice numeric format notes (e.g. "stored in cents") so
+        # queries about units/conversions resolve to the right table.
+        try:
+            numeric_notes: dict[str, Any] = json.loads(entry.numeric_format_notes or "{}")
+        except Exception:
+            numeric_notes = {}
+        if isinstance(numeric_notes, dict):
+            for col, note in numeric_notes.items():
+                if note:
+                    lines.append(f"numeric_note_{col}: {note}")
+
         return "\n".join(lines)
 
     @staticmethod
@@ -213,4 +245,70 @@ class SchemaRetriever:
         return self._bm25.indexed_sha(self._project_key(connection_id)) is not None
 
 
-__all__ = ["SchemaRetriever"]
+def expand_fk_hop(
+    retrieved: list[Any],
+    fk_map: dict[str, set[str]],
+    all_entries: dict[str, Any],
+) -> list[Any]:
+    """Expand *retrieved* by one FK hop and return the combined list.
+
+    RET-R9: After BM25 retrieval, join/bridge tables that have no lexical
+    overlap with the question (e.g. ``order_items`` for "revenue per
+    customer") are invisible to BM25.  Pulling in the immediate FK
+    neighbourhood fixes under-retrieval for JOIN-heavy queries.
+
+    The expansion is **bidirectional**:
+
+    * Forward: for each retrieved table T, add every table that T references
+      (``fk_map[T]``).
+    * Reverse: for every table S in ``all_entries``, add S if S references
+      any retrieved table (``fk_map[S] ∩ retrieved_names ≠ ∅``).
+
+    Only **one hop** is performed — transitive chains are intentionally
+    excluded to bound the expansion cost.
+
+    Args:
+        retrieved: Ordered list of ``DbIndex``-like entries from BM25 (or
+            any prior selection step).  Preserved at the **front** of the
+            result so their ranking priority is maintained.
+        fk_map: ``{table_name_lower -> {referenced_table_name_lower, ...}}``.
+            Build from ``SchemaInfo.tables[*].foreign_keys`` before calling.
+        all_entries: ``{table_name_lower -> entry}`` lookup for the full set
+            of available entries.
+
+    Returns:
+        A new list: *retrieved* entries first (unchanged order), then any
+        FK-hop additions, de-duplicated.  Entries not present in
+        ``all_entries`` are silently skipped.
+    """
+    if not fk_map or not retrieved:
+        return list(retrieved)
+
+    retrieved_names: set[str] = {e.table_name.lower() for e in retrieved}
+    additions: list[Any] = []
+    seen: set[str] = set(retrieved_names)
+
+    # Forward: retrieved table T references target T2
+    for entry in retrieved:
+        tname = entry.table_name.lower()
+        for target in fk_map.get(tname, set()):
+            if target not in seen:
+                candidate = all_entries.get(target)
+                if candidate is not None:
+                    additions.append(candidate)
+                    seen.add(target)
+
+    # Reverse: table S references any retrieved table (S -> T)
+    for src, targets in fk_map.items():
+        if src in seen:
+            continue
+        if targets & retrieved_names:
+            candidate = all_entries.get(src)
+            if candidate is not None:
+                additions.append(candidate)
+                seen.add(src)
+
+    return list(retrieved) + additions
+
+
+__all__ = ["SchemaRetriever", "expand_fk_hop"]

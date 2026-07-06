@@ -1267,6 +1267,27 @@ class SQLAgent(BaseAgent):
         schema = await self._get_cached_schema(ctx.connection_config)
         schema_map = {t.name.lower(): t for t in schema.tables}
 
+        # RET-R9: FK-aware expansion — broaden the retrieved set by one FK hop
+        # so join/bridge tables with no lexical overlap (e.g. ``order_items``
+        # when asking "revenue per customer") are included BEFORE the cap.
+        # Only applies to the BM25 retrieval path (not the explicit
+        # ``table_names_raw`` path which is already fully specified).
+        if not table_names_raw and schema.tables:
+            from app.knowledge.schema_retriever import expand_fk_hop
+
+            fk_map: dict[str, set[str]] = {}
+            for tbl in schema.tables:
+                tname = tbl.name.lower()
+                for fk in tbl.foreign_keys:
+                    fk_map.setdefault(tname, set()).add(fk.references_table.lower())
+            all_entries_by_name = {e.table_name.lower(): e for e in all_entries}
+            expanded = expand_fk_hop(relevant, fk_map, all_entries_by_name)
+            # Re-apply the max_tables cap: retrieved (+ FK additions) first,
+            # preserving the BM25 rank order at the front.
+            if len(expanded) > settings.sql_agent_max_context_tables:
+                expanded = expanded[: settings.sql_agent_max_context_tables]
+            relevant = expanded
+
         knowledge = await self._load_knowledge(ctx.project_id)
 
         rules_dir = f"{settings.custom_rules_dir}/{ctx.project_id}"
