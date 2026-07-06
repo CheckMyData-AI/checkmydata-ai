@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     # Freshness: warn the agent when the local clone is this many commits (or
     # more) behind the indexed HEAD.
     git_staleness_warn_commits: int = 5
+    # When true, ``classify_freshness`` compares the indexed SHA against
+    # ``origin/<branch>`` (after an offline ``repo.remotes.origin.fetch``)
+    # instead of the local ref, catching a clone that is behind the remote.
+    # Off by default — a fetch is network I/O and can hang; enable only where
+    # the clone auto-pulls.
+    git_freshness_fetch_origin: bool = False
 
     include_sample_data: bool = False
 

@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from git import Repo
@@ -13,6 +14,77 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.commit_index import CommitIndex
 
 logger = logging.getLogger(__name__)
+
+
+class GitFreshness(Enum):
+    """Relative freshness of a local HEAD compared to an indexed SHA."""
+
+    FRESH = "fresh"
+    AHEAD = "ahead"
+    BEHIND = "behind"
+    DIVERGED = "diverged"
+
+
+def classify_freshness(
+    repo: Repo,
+    indexed_sha: str,
+    branch: str,
+) -> tuple[GitFreshness, int, int]:
+    """Return *(state, ahead, behind)* for *indexed_sha* vs the working ref.
+
+    ahead  = commits on the working ref (HEAD) not reachable from indexed_sha.
+    behind = commits reachable from indexed_sha but not on HEAD.
+
+    Partition:
+    - (0, 0) → FRESH
+    - (>0, 0) → AHEAD
+    - (0, >0) → BEHIND
+    - (>0, >0) → DIVERGED
+
+    Raises ``BadName`` / ``ValueError`` on an unresolvable *indexed_sha* or
+    *branch*; callers (the async wrapper in GitTracker) are responsible for
+    catching and degrading gracefully.  This function intentionally does NOT
+    swallow those errors to prevent false-fresh reporting.
+    """
+    # Resolve working ref: try the branch name first, fall back to HEAD.
+    try:
+        head_commit = repo.commit(branch)
+    except (BadName, ValueError):
+        head_commit = repo.head.commit
+
+    # Let BadName / ValueError propagate for an unresolvable indexed_sha.
+    indexed_commit = repo.commit(indexed_sha)
+
+    head_sha = head_commit.hexsha
+    idx_sha = indexed_commit.hexsha
+
+    # Compute both directions via iter_commits (blocking but deterministic).
+    ahead = len(list(repo.iter_commits(f"{idx_sha}..{head_sha}")))
+    behind = len(list(repo.iter_commits(f"{head_sha}..{idx_sha}")))
+
+    if ahead == 0 and behind == 0:
+        state = GitFreshness.FRESH
+    elif ahead > 0 and behind == 0:
+        state = GitFreshness.AHEAD
+    elif ahead == 0 and behind > 0:
+        state = GitFreshness.BEHIND
+    else:
+        state = GitFreshness.DIVERGED
+        # Log merge_base at debug level for diagnostic purposes only.
+        try:
+            bases = repo.merge_base(head_sha, idx_sha)
+            logger.debug(
+                "classify_freshness: DIVERGED head=%s indexed=%s ahead=%d behind=%d merge_base=%s",
+                head_sha[:8],
+                idx_sha[:8],
+                ahead,
+                behind,
+                bases[0].hexsha[:8] if bases else "none",
+            )
+        except Exception:  # noqa: BLE001 — merge_base is diagnostic only
+            pass
+
+    return state, ahead, behind
 
 
 @dataclass
@@ -212,6 +284,48 @@ class GitTracker:
                 return -1
 
         return await asyncio.to_thread(_count)
+
+    async def classify_freshness_async(
+        self,
+        repo_dir: Path,
+        indexed_sha: str,
+        branch: str,
+        *,
+        fetch_origin: bool = False,
+    ) -> tuple[GitFreshness, int, int]:
+        """Async wrapper around :func:`classify_freshness`.
+
+        Runs blocking GitPython calls in a thread pool via
+        ``asyncio.to_thread`` to avoid stalling the event loop.
+
+        When *fetch_origin* is ``True``, the function attempts an offline
+        ``repo.remotes.origin.fetch()`` before classifying, so that a clone
+        that is behind the remote is reported as ``BEHIND`` rather than
+        ``FRESH``.  Fetch failures are logged at ``WARNING`` and the
+        classification falls back to the local ref — the exception is never
+        re-raised so callers are shielded from transient network errors.
+        """
+
+        def _run() -> tuple[GitFreshness, int, int]:
+            repo = Repo(str(repo_dir))
+            effective_branch = branch
+
+            if fetch_origin:
+                try:
+                    repo.remotes.origin.fetch()
+                    effective_branch = f"origin/{branch}"
+                except Exception as exc:  # noqa: BLE001 — fetch is best-effort
+                    logger.warning(
+                        "classify_freshness_async: origin.fetch() failed for %s; "
+                        "falling back to local ref. error=%s",
+                        repo_dir,
+                        exc,
+                    )
+                    # effective_branch stays as the local branch name
+
+            return classify_freshness(repo, indexed_sha, effective_branch)
+
+        return await asyncio.to_thread(_run)
 
     async def cleanup_old_records(
         self,
