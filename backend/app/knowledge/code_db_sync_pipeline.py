@@ -350,12 +350,8 @@ class CodeDbSyncPipeline:
                             effective_status = analysis.sync_status
                             try:
                                 drift = json.loads(mt.column_mismatch_json)
-                                has_code_cols = bool(
-                                    drift.get("code_only") or drift.get("matched")
-                                )
-                                has_db_cols = bool(
-                                    drift.get("db_only") or drift.get("matched")
-                                )
+                                has_code_cols = bool(drift.get("code_only") or drift.get("matched"))
+                                has_db_cols = bool(drift.get("db_only") or drift.get("matched"))
                                 if has_code_cols and has_db_cols:
                                     if drift["code_only"] or drift["db_only"]:
                                         effective_status = "mismatch"
@@ -524,7 +520,17 @@ class CodeDbSyncPipeline:
         scrub: bool = True,
         omit_samples: bool = False,
     ) -> list[_MatchedTable]:
-        """Cross-reference code entities/table_usage with DB index entries."""
+        """Cross-reference code entities/table_usage with DB index entries.
+
+        Matching strategy (SYNC-L6):
+        - When a code entity carries a schema-qualified ``table_name``
+          (``"analytics.orders"``), it is matched against the exact
+          ``(schema, bare_name)`` DB key — no cross-schema contamination.
+        - When the code entity is unqualified (``"orders"``), it falls back to
+          bare-name match so existing single-schema setups are unaffected.
+        - If a qualified code entity's schema isn't found in the DB, it falls
+          back to bare-name match and the existing ambiguity NOTE is added.
+        """
         from collections import Counter
 
         results: list[_MatchedTable] = []
@@ -541,27 +547,58 @@ class CodeDbSyncPipeline:
                 return f"{getattr(e, 'table_schema', 'public') or 'public'}.{e.table_name}"
             return e.table_name
 
-        entity_by_table: dict[str, EntityInfo] = {}
+        # Build two separate entity indexes:
+        # 1. qualified: keyed by (schema, bare_name) — only for schema-qualified table_names.
+        # 2. bare: keyed by bare_name — only for unqualified table_names (back-compat).
+        # A qualified code entity must NOT fall into the bare index so that it cannot
+        # accidentally match a same-bare-name table in a different schema.
+        entity_by_qualified: dict[tuple[str, str], EntityInfo] = {}
+        entity_by_bare: dict[str, EntityInfo] = {}
         code_table_names: set[str] = set()
         for _, entity in knowledge.entities.items():
-            if entity.table_name:
-                entity_by_table[entity.table_name.lower()] = entity
-                code_table_names.add(entity.table_name.lower())
+            if not entity.table_name:
+                continue
+            raw = entity.table_name.lower()
+            if "." in raw:
+                parts = raw.split(".", 1)
+                entity_by_qualified[(parts[0], parts[1])] = entity
+            else:
+                entity_by_bare[raw] = entity
+            code_table_names.add(raw)
         for tbl_name in knowledge.table_usage:
             code_table_names.add(tbl_name.lower())
+
+        # Track which (schema, bare) qualified keys have been consumed by a DB match
+        # so we don't emit them again in the code-only tail.
+        consumed_qualified: set[tuple[str, str]] = set()
 
         # DB-side first (schema-qualified), then code-only tables with no DB row.
         seen_bare: set[str] = set()
         for (sch, nm), db_entry in sorted(db_by_key.items()):
             seen_bare.add(nm)
-            entity = entity_by_table.get(nm)  # type: ignore[assignment]
+
+            # Prefer exact (schema, bare) match for qualified code entities; fall
+            # back to bare-name match for unqualified ones or on qualified miss.
+            _qe = entity_by_qualified.get((sch, nm))
+            matched_entity: EntityInfo | None
+            if _qe is not None:
+                matched_entity = _qe
+                consumed_qualified.add((sch, nm))
+                # Exact schema match — suppress ambiguity NOTE for this row.
+                qualified_hit = True
+            else:
+                matched_entity = entity_by_bare.get(nm)
+                qualified_hit = False
+
             usage = knowledge.table_usage.get(nm) or knowledge.table_usage.get(
                 next((k for k in knowledge.table_usage if k.lower() == nm), "")
             )
             ambiguous = bare_counts[nm] > 1
             display = _display_name(db_entry)
-            code_context = self._build_code_context(entity, usage, knowledge, nm, rules_context)
-            if ambiguous:
+            code_context = self._build_code_context(
+                matched_entity, usage, knowledge, nm, rules_context
+            )
+            if ambiguous and not qualified_hit:
                 code_context = (
                     f"(NOTE: table name '{nm}' exists in multiple schemas; matched code by "
                     f"bare name — verify schema '{sch}')\n" + code_context
@@ -571,19 +608,39 @@ class CodeDbSyncPipeline:
                     display,
                     self._build_db_context(db_entry, scrub=scrub, omit_samples=omit_samples),
                     code_context,
-                    entity,
+                    matched_entity,
                     usage,
                     knowledge,
                 )
             )
 
-        for nm in sorted(code_table_names - seen_bare):
-            entity = entity_by_table.get(nm)  # type: ignore[assignment]
+        # Code-only tables: entities/table_usage with no matching DB row.
+        # Exclude qualified names that were already consumed by a DB match above.
+        # Also exclude bare names already seen from the DB-side loop.
+        remaining_code: set[str] = set()
+        for raw in code_table_names:
+            if "." in raw:
+                parts = raw.split(".", 1)
+                if (parts[0], parts[1]) not in consumed_qualified:
+                    remaining_code.add(raw)
+            elif raw not in seen_bare:
+                remaining_code.add(raw)
+
+        for nm in sorted(remaining_code):
+            # For the code-only tail, resolve the entity from the appropriate index.
+            tail_entity: EntityInfo | None
+            if "." in nm:
+                parts = nm.split(".", 1)
+                tail_entity = entity_by_qualified.get((parts[0], parts[1]))
+            else:
+                tail_entity = entity_by_bare.get(nm)
             usage = knowledge.table_usage.get(nm) or knowledge.table_usage.get(
                 next((k for k in knowledge.table_usage if k.lower() == nm), "")
             )
-            code_context = self._build_code_context(entity, usage, knowledge, nm, rules_context)
-            results.append(self._make_matched(nm, "", code_context, entity, usage, knowledge))
+            code_context = self._build_code_context(
+                tail_entity, usage, knowledge, nm, rules_context
+            )
+            results.append(self._make_matched(nm, "", code_context, tail_entity, usage, knowledge))
         return results
 
     @staticmethod
