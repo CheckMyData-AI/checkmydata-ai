@@ -1143,14 +1143,6 @@ def _infer_table_from_context(
     return "unknown"
 
 
-def _model_to_table(model_name: str, knowledge: ProjectKnowledge) -> str:
-    """Convert model name to table name using knowledge or heuristic."""
-    entity = knowledge.entities.get(model_name)
-    if entity and entity.table_name:
-        return entity.table_name
-    return _model_name_to_table(model_name)
-
-
 def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:
     """Attach enum value-sets to columns by DECLARED TYPE / FK, not fuzzy substring.
 
@@ -1195,7 +1187,80 @@ def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:
                 col.enum_values = match
 
 
+# Irregular English plurals used when inferring table names from model names (CODEIDX-C16).
+# Extend as needed; the map is keyed on the *lower-case singular* form.
+_IRREGULAR_PLURALS: dict[str, str] = {
+    "person": "people",
+    "child": "children",
+    "man": "men",
+    "woman": "women",
+    "foot": "feet",
+    "tooth": "teeth",
+    "mouse": "mice",
+    "goose": "geese",
+    "datum": "data",
+    "index": "indices",
+    "matrix": "matrices",
+}
+
+
+def _pluralize(word: str) -> str:
+    """Dependency-free English pluralizer for table-name inference (CODEIDX-C16).
+
+    Handles:
+    - Irregular nouns (person→people, child→children, …).
+    - Words ending in a consonant + y  → ies  (category→categories).
+    - Words ending in s/x/z/ch/sh      → es   (class→classes).
+    - Everything else                  → s    (order→orders).
+    """
+    lower = word.lower()
+    if lower in _IRREGULAR_PLURALS:
+        return _IRREGULAR_PLURALS[lower]
+    if lower.endswith("y") and len(lower) > 1 and lower[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    if lower.endswith(("s", "x", "z", "ch", "sh")):
+        return word + "es"
+    return word + "s"
+
+
 def _model_name_to_table(model_name: str) -> str:
-    """Convert CamelCase model name to snake_case table name (heuristic)."""
+    """Convert CamelCase model name to snake_case pluralized table name.
+
+    Pluralizes only the *last* segment so compound names like ``UserProfile``
+    become ``user_profiles`` (not ``user_profiles`` via the old ``+s`` path).
+    Uses :func:`_pluralize` for correct English plurals instead of a blind
+    ``+s`` (CODEIDX-C16 / SYNC-L4).
+    """
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", model_name)
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower() + "s"
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+    # Pluralize only the last underscore-delimited segment.
+    head, _, tail = snake.rpartition("_")
+    plural_tail = _pluralize(tail)
+    return f"{head}_{plural_tail}" if head else plural_tail
+
+
+def _model_to_table(
+    model_name: str,
+    knowledge: ProjectKnowledge,
+    live_tables: set[str] | None = None,
+) -> str:
+    """Convert model name to table name using knowledge cache, live-table cross-check,
+    or heuristic pluralization.
+
+    Precedence (CODEIDX-C16 / SYNC-L4):
+    1. ``entity.table_name`` from the knowledge cache (explicit mapping always wins).
+    2. If *live_tables* is provided, check each candidate (inflected plural, raw
+       snake_case, lower-case model name) and return the first that exists.
+    3. Fall back to :func:`_model_name_to_table` (pluralization heuristic).
+    """
+    entity = knowledge.entities.get(model_name)
+    if entity and entity.table_name:
+        return entity.table_name
+    plural = _model_name_to_table(model_name)
+    if live_tables:
+        s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", model_name)
+        snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+        for cand in (plural, snake, model_name.lower()):
+            if cand in live_tables:
+                return cand
+    return plural

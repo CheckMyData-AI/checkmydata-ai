@@ -12,6 +12,8 @@ from app.knowledge.entity_extractor import (
     ProjectKnowledge,
     ValidationRule,
     _extract_columns,
+    _model_name_to_table,
+    _model_to_table,
     _resolve_enum_to_columns,
     build_project_knowledge,
 )
@@ -607,3 +609,48 @@ class TestResolveEnumToColumns:
         k.entities["Device"] = ent
         _resolve_enum_to_columns(k)
         assert ent.columns[0].enum_values == ["custom_val"]
+
+
+class TestModelNameToTable:
+    """Tests for _model_name_to_table (CODEIDX-C16) — proper pluralization."""
+
+    def test_pluralization_handles_common_english_rules(self) -> None:
+        """Irregular and rule-based plurals must be correct (not blind +s)."""
+        assert _model_name_to_table("Person") == "people"
+        assert _model_name_to_table("Category") == "categories"
+        assert _model_name_to_table("Company") == "companies"
+        assert _model_name_to_table("Class") == "classes"
+        assert _model_name_to_table("UserProfile") == "user_profiles"
+
+    def test_regular_plural_still_works(self) -> None:
+        """Regular models get the normal +s pluralization."""
+        assert _model_name_to_table("Order") == "orders"
+        assert _model_name_to_table("User") == "users"
+        assert _model_name_to_table("Product") == "products"
+
+    def test_live_table_cross_check_prefers_existing_name(self) -> None:
+        """When live_tables provided, pick the candidate that actually exists."""
+        k = ProjectKnowledge()
+        # The actual DB has a singular table name; blind +s would miss it.
+        chosen = _model_to_table("Company", k, live_tables={"company"})
+        assert chosen == "company"
+
+    def test_live_table_cross_check_uses_inflected_plural_if_present(self) -> None:
+        """When the pluralized name is in live_tables, use it."""
+        k = ProjectKnowledge()
+        chosen = _model_to_table("Order", k, live_tables={"orders", "users"})
+        assert chosen == "orders"
+
+    def test_live_table_entity_cache_takes_priority_over_live_tables(self) -> None:
+        """entity.table_name in knowledge beats any live_tables candidate."""
+        k = ProjectKnowledge()
+        ent = EntityInfo(name="Order", table_name="purchase_orders", file_path="m.py")
+        k.entities["Order"] = ent
+        chosen = _model_to_table("Order", k, live_tables={"orders", "purchase_orders"})
+        assert chosen == "purchase_orders"
+
+    def test_live_table_fallback_when_no_match(self) -> None:
+        """When no live candidate matches, fall back to inflected plural."""
+        k = ProjectKnowledge()
+        chosen = _model_to_table("Category", k, live_tables={"invoices", "users"})
+        assert chosen == "categories"
