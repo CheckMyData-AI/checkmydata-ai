@@ -13,6 +13,7 @@ from typing import Any
 from app.agents.base import AgentContext, BaseAgent
 from app.agents.data_gate import DataGate, DataGateOutcome
 from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
+from app.agents.result_validation import ResultValidation
 from app.agents.stage_context import (
     ExecutionPlan,
     PlanStage,
@@ -106,6 +107,11 @@ class StageExecutor:
         self._mcp_source = mcp_source_agent
         self._git = git_agent
         self._staleness_warning: str | None = None
+        # ORCH-A01 / T10: shared result-quality gate (C-B).  Built lazily and
+        # cached so callers can inject a pre-built instance in tests.  The gate
+        # is always constructed with ``skip_data_gate=True`` at the _run_sql_stage
+        # call-site; the broader DataGate.check() still runs in _process_one_stage.
+        self._result_validation: ResultValidation | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -387,6 +393,22 @@ class StageExecutor:
         return None
 
     # ------------------------------------------------------------------
+    # Shared result-quality gate (ORCH-A01 / T10)
+    # ------------------------------------------------------------------
+
+    def _get_result_validation(self) -> ResultValidation:
+        """Return the cached :class:`ResultValidation` gate, building it on first call.
+
+        Callers in tests may pre-assign ``self._result_validation`` to inject a
+        spy or mock before calling ``_run_sql_stage``.
+        """
+        if self._result_validation is None:
+            from app.agents.validation import AgentResultValidator
+
+            self._result_validation = ResultValidation(self._data_gate, AgentResultValidator())
+        return self._result_validation
+
+    # ------------------------------------------------------------------
     # Stage dispatch
     # ------------------------------------------------------------------
 
@@ -612,7 +634,47 @@ class StageExecutor:
 
         qr: QueryResult | None = getattr(sql_result, "results", None)
         query: str | None = getattr(sql_result, "query", None)
+
+        # ORCH-A01 / T10: apply the shared result-quality gate so the pipeline
+        # SQL path gets the same error/requery/warn/accept assurance as the flat
+        # loop.  ``skip_data_gate=True`` prevents double-invocation:
+        # ``_process_one_stage`` runs ``DataGate.check()`` (comprehensive null/
+        # dup/type/range/cross-stage checks) on the StageResult afterwards.
+        _rv_warning_suffix: str = ""
+        if qr is not None and query:
+            try:
+                gate = self._get_result_validation()
+                question = getattr(context, "user_question", "") or stage.description
+                directive = gate.evaluate(
+                    qr,
+                    question=question,
+                    sql=query,
+                    truncated=qr.truncated,
+                    skip_data_gate=True,
+                )
+                if directive.action in ("block", "requery"):
+                    return StageResult(
+                        stage_id=stage.stage_id,
+                        status="error",
+                        error=directive.reason,
+                        error_category="data_missing"
+                        if directive.action == "requery"
+                        else "configuration",
+                        token_usage=sql_result.token_usage,
+                    )
+                if directive.action == "warn":
+                    _rv_warning_suffix = f"\n\n**DATA QUALITY WARNING:** {directive.reason}"
+            except Exception:
+                # Gate failure is non-critical — log and proceed so a gate bug
+                # never silently kills a valid pipeline stage.
+                logger.debug(
+                    "pipeline result-validation gate failed (non-critical)",
+                    exc_info=True,
+                )
+
         summary = self._summarize_query_result(query, qr)
+        if _rv_warning_suffix:
+            summary = (summary or "") + _rv_warning_suffix
 
         return StageResult(
             stage_id=stage.stage_id,

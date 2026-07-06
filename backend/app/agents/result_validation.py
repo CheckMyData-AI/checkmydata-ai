@@ -97,15 +97,22 @@ class ResultValidation:
         question: str,
         sql: str,
         truncated: bool | None = None,
+        skip_data_gate: bool = False,
     ) -> ResultDirective:
         """Evaluate a single ``QueryResult`` and return a :class:`ResultDirective`.
 
         Parameters:
-            qr:         The ``QueryResult`` returned by a connector.
-            question:   The original user question (for future context).
-            sql:        The SQL that produced *qr* (passed to the result gate).
-            truncated:  Caller-supplied truncation flag; OR-ed with
-                        ``qr.truncated`` so either source suffices.
+            qr:             The ``QueryResult`` returned by a connector.
+            question:       The original user question (for future context).
+            sql:            The SQL that produced *qr* (passed to the result gate).
+            truncated:      Caller-supplied truncation flag; OR-ed with
+                            ``qr.truncated`` so either source suffices.
+            skip_data_gate: When ``True``, branch 5 (:class:`DataGate`
+                            hard-checks) is skipped.  Set by the pipeline SQL
+                            stage (``StageExecutor._run_sql_stage``) to avoid
+                            double-invocation: ``_process_one_stage`` already
+                            calls ``DataGate.check()`` on the full
+                            ``StageResult`` after this gate returns.
 
         Returns:
             A :class:`ResultDirective` with ``action`` in
@@ -155,6 +162,12 @@ class ResultValidation:
         #    (150% conversion, negative counts) that the structural gate above
         #    doesn't cover.  Runs only when hard checks are enabled (config
         #    data_gate_hard_checks_enabled=True, the default).
+        #    Skipped when ``skip_data_gate=True`` (pipeline path) because
+        #    ``_process_one_stage`` already runs ``DataGate.check()`` on the
+        #    full ``StageResult`` — invoking it here too would double-fire.
+        if skip_data_gate:
+            return ResultDirective(action="accept", reason="ok", hints=[])
+
         dg_outcome = self._data_gate.check_query_result(qr, question=question)
         if not dg_outcome.passed:
             try:
