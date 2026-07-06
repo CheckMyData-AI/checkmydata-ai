@@ -259,11 +259,26 @@ class CodeGraphBuilder:
         for pf in parsed_files.values():
             all_symbols.extend(pf.symbols)
         if len(all_symbols) > self._max_symbols:
-            kept = [s for s in all_symbols if not s.name.startswith("_")]
-            if len(kept) > self._max_symbols:
-                kept = kept[: self._max_symbols]
+            # C9: prune by connectivity (degree), not slice order, so
+            # well-connected real symbols survive and isolated / generated
+            # symbols are dropped first.  Private (_underscore) names break
+            # ties toward removal.
+            degree: dict[str, int] = defaultdict(int)
+            for pf in parsed_files.values():
+                for call in pf.call_sites:
+                    degree[call.caller_uid] += 1
+                    degree[call.callee_name] += 1  # name-level fan-in hint
+
+            def _score(s: Symbol) -> tuple[int, int]:
+                by_name = degree.get(s.name, 0)
+                by_uid = degree.get(s.uid, 0)
+                public = 0 if s.name.startswith("_") else 1
+                return (by_uid + by_name + public, public)
+
+            ranked = sorted(all_symbols, key=_score, reverse=True)
+            kept = ranked[: self._max_symbols]
             logger.warning(
-                "code_graph: symbol cap %d exceeded (%d), pruned to %d",
+                "code_graph: symbol cap %d exceeded (%d), pruned by degree to %d",
                 self._max_symbols,
                 len(all_symbols),
                 len(kept),

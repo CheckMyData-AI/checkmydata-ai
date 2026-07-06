@@ -1363,12 +1363,16 @@ class IndexingPipelineRunner:
         documented in the M2 plan.
         """
         from app.knowledge.ast_parser import detect_language
+        from app.knowledge.shared_ignore import is_ignored_path
 
         if not force_full:
             return [
                 f
                 for f in changed_files
-                if f and not f.endswith("/") and not is_binary_file(repo_dir / f)
+                if f
+                and not f.endswith("/")
+                and not is_ignored_path(f)
+                and not is_binary_file(repo_dir / f)
             ]
 
         def _walk() -> list[str]:
@@ -1376,16 +1380,16 @@ class IndexingPipelineRunner:
             for path in repo_dir.rglob("*"):
                 if not path.is_file():
                     continue
+                rel = str(path.relative_to(repo_dir)).replace("\\", "/")
+                if is_ignored_path(rel):
+                    continue
                 if any(
                     part.startswith(".") and part not in (".",)
                     for part in path.relative_to(repo_dir).parts
                 ):
                     continue
-                if any(p == "node_modules" for p in path.parts):
-                    continue
                 if detect_language(path) is None:
                     continue
-                rel = str(path.relative_to(repo_dir)).replace("\\", "/")
                 out.append(rel)
             return out
 

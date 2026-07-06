@@ -12,6 +12,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from app.knowledge.shared_ignore import SKIP_DIRS
+
 logger = logging.getLogger(__name__)
 
 FRAMEWORK_MARKERS: list[tuple[str, str, list[str]]] = [
@@ -125,20 +127,6 @@ MODEL_DIR_PATTERNS = re.compile(
     r"(?:models?|entities|schemas?|domain)",
     re.IGNORECASE,
 )
-
-SKIP_DIRS = {
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-    ".next",
-    ".nuxt",
-    "vendor",
-    "target",
-}
 
 
 def detect_project_profile(repo_dir: Path) -> ProjectProfile:

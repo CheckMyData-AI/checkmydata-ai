@@ -386,3 +386,46 @@ def test_merge_graphs_prunes_edges_to_renamed_symbol():
     assert set(merged.symbols.keys()) == {a.uid, b_new.uid}
     # the stale edge a->old must have been pruned
     assert merged.edges == []
+
+
+def test_symbol_cap_prunes_low_degree_not_slice_order() -> None:
+    """CODEIDX-C9: when the symbol cap is hit, high-degree symbols survive.
+
+    hub is called by 5 leaf symbols — it has high connectivity.
+    Cap=2 must keep hub and one high-degree leaf rather than an arbitrary head-slice.
+    """
+    from app.knowledge.ast_parser import CallSite, ParsedFile, Symbol
+    from app.knowledge.code_graph import CodeGraphBuilder
+
+    hub = Symbol(
+        uid="python:m.py:function:hub",
+        kind="function",
+        name="hub",
+        file_path="m.py",
+        start_line=1,
+        end_line=2,
+        language="python",
+    )
+    leaves = [
+        Symbol(
+            uid=f"python:m.py:function:leaf{i}",
+            kind="function",
+            name=f"leaf{i}",
+            file_path="m.py",
+            start_line=10 + i,
+            end_line=11 + i,
+            language="python",
+        )
+        for i in range(5)
+    ]
+    calls = [
+        CallSite(caller_uid=lf.uid, callee_name="hub", line=10 + i) for i, lf in enumerate(leaves)
+    ]
+    pf = ParsedFile(
+        file_path="m.py",
+        language="python",
+        symbols=[*leaves, hub],
+        call_sites=calls,
+    )
+    graph = CodeGraphBuilder(max_symbols=2).build({"m.py": pf})
+    assert "python:m.py:function:hub" in graph.symbols
