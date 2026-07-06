@@ -186,6 +186,55 @@ TABLE_REF_SQL = re.compile(
     re.IGNORECASE,
 )
 
+# Regex used by _strip_sql_noise to locate noise spans.
+# Group 1: comment kinds.   Group 2: string literal kinds (may contain SQL).
+_NOISE_RE = re.compile(
+    r"(--[^\n]*|//[^\n]*|#[^\n]*|/\*.*?\*/)"
+    r"|(`[^`]*`|'[^'\\]*(?:\\.[^'\\]*)*'|\"[^\"\\]*(?:\\.[^\"\\]*)*\")",
+    re.DOTALL,
+)
+
+# Quick probe: does a string literal look like it contains SQL we should keep?
+_SQL_IN_LITERAL = re.compile(
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|JOIN|WHERE|WITH|MERGE|UPSERT)\b",
+    re.IGNORECASE,
+)
+
+# Statement-boundary detector: a DML/DQL keyword that begins a new SQL statement.
+_STMT_BOUNDARY = re.compile(
+    r"\b(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|UPSERT)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_sql_noise(content: str) -> str:
+    """Blank out SQL noise in *content* while preserving byte offsets.
+
+    Removed spans (replaced with spaces of equal length):
+    * All line comments: ``-- …``, ``// …``, ``# …`` (up to end of line).
+    * All block comments: ``/* … */`` (may span multiple lines).
+    * String literals **that do not contain SQL keywords** — e.g. config
+      values, error messages, CTE alias strings.  String literals that look
+      like embedded SQL (contain SELECT/FROM/INSERT/…) are left intact so
+      that `db.execute(text('SELECT * FROM users'))` still yields a table ref.
+
+    The output is always the same length as the input so that character
+    offsets computed on the clean text remain valid against the original.
+    """
+
+    def _blank(m: re.Match[str]) -> str:
+        span = m.group(0)
+        if m.group(1) is not None:
+            # It's a comment — always blank out.
+            return "".join("\n" if c == "\n" else " " for c in span)
+        # It's a string literal (group 2).  Only blank if it has no SQL inside.
+        if _SQL_IN_LITERAL.search(span):
+            return span  # keep — contains SQL we want to scan
+        return "".join("\n" if c == "\n" else " " for c in span)
+
+    return _NOISE_RE.sub(_blank, content)
+
+
 PY_ENUM_CLASS = re.compile(
     r"class\s+(\w+)\(.*(?:Enum|StrEnum|IntEnum|TextChoices|IntegerChoices).*\):",
     re.MULTILINE,
@@ -745,20 +794,70 @@ def _scan_table_usage(
     content: str,
     knowledge: ProjectKnowledge,
 ) -> None:
+    """Scan *content* for SQL table references and attribute read/write per statement.
+
+    Improvements over the original ±100-char window approach:
+    1. Strip comments and string literals first so ``FROM`` inside a comment
+       or a Python/JS string literal does not register as a real table ref.
+    2. Split the cleaned text into *statement-scoped* segments so that an
+       INSERT near a SELECT cannot flip the classification of the other
+       statement's tables.  Statement boundaries are detected by DML/DQL
+       opener keywords (SELECT, INSERT, UPDATE, DELETE, WITH, MERGE, UPSERT)
+       as well as the semicolon terminator.
+    """
     sql_kw = {"select", "from", "where", "set", "values", "into"}
-    for m in TABLE_REF_SQL.finditer(content):
-        tbl = m.group(1)
-        if tbl.lower() in sql_kw:
-            continue
-        usage = knowledge.table_usage.setdefault(tbl, TableUsage(table_name=tbl))
-        start = max(0, m.start() - 100)
-        end = min(len(content), m.end() + 100)
-        snippet = content[start:end]
-        if WRITE_SQL.search(snippet):
-            if rel_path not in usage.writers:
+
+    # Step 1: blank out comments and string literals while preserving offsets.
+    clean = _strip_sql_noise(content)
+
+    # Step 2: split into statement-scoped segments.
+    # Strategy: find the start of each SQL statement (a DML/DQL keyword that
+    # follows either the beginning of the text or a semicolon / prior
+    # statement boundary) then collect from that boundary to the next `;` or
+    # the next statement opener, whichever comes first.
+    #
+    # This is intentionally heuristic — the goal is to stop cross-statement
+    # pollution, not to build a full SQL parser.  Each segment is a short
+    # slice of the cleaned text that contains at most one logical statement.
+
+    segments: list[str] = []
+    # Collect positions of `;` and statement openers to slice by.
+    boundary_positions: list[int] = [0]
+    for sc in re.finditer(r";", clean):
+        boundary_positions.append(sc.end())
+    boundary_positions.append(len(clean))
+
+    for i in range(len(boundary_positions) - 1):
+        seg = clean[boundary_positions[i] : boundary_positions[i + 1]]
+        if seg.strip():
+            segments.append(seg)
+
+    # If no semicolons at all, treat each DML/DQL opener as a new segment
+    # boundary so that multiple statements in the same non-terminated block
+    # (common in source-code files) are split correctly.
+    if len(segments) <= 1:
+        segments = []
+        stmt_starts = [m.start() for m in _STMT_BOUNDARY.finditer(clean)]
+        if not stmt_starts:
+            # No SQL openers found — one large segment is fine.
+            segments = [clean]
+        else:
+            for idx, start in enumerate(stmt_starts):
+                end = stmt_starts[idx + 1] if idx + 1 < len(stmt_starts) else len(clean)
+                segments.append(clean[start:end])
+
+    for segment in segments:
+        is_write = bool(WRITE_SQL.search(segment))
+        is_read = bool(READ_SQL.search(segment))
+
+        for m in TABLE_REF_SQL.finditer(segment):
+            tbl = m.group(1)
+            if tbl.lower() in sql_kw:
+                continue
+            usage = knowledge.table_usage.setdefault(tbl, TableUsage(table_name=tbl))
+            if is_write and rel_path not in usage.writers:
                 usage.writers.append(rel_path)
-        if READ_SQL.search(snippet):
-            if rel_path not in usage.readers:
+            if is_read and rel_path not in usage.readers:
                 usage.readers.append(rel_path)
 
     has_orm = any(p.search(content) for p in ORM_PATTERNS.values())
