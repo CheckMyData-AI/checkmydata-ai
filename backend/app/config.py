@@ -513,6 +513,11 @@ class Settings(BaseSettings):
     # safety net and any retriever failure degrades to the old behaviour.
     schema_retrieval_enabled: bool = True
     sql_agent_max_context_tables: int = 15
+    # RET-R10: minimum relevance_score for safety-net tables to be included in
+    # context.  Tables below this floor are omitted so retrieved/FK-expanded
+    # tables are not crowded out by low-signal entries.  Raise to 4 to be more
+    # aggressive; lower to 2 to restore legacy behaviour.
+    sql_agent_safety_net_min_relevance: int = 3
 
     # M5: graph-driven code→DB lineage (replaces regex `used_in_files`).
     # OFF by default — requires code_graph_enabled (see F-ARCH-6 note above).

@@ -1193,6 +1193,66 @@ class SQLAgent(BaseAgent):
             return ""
 
     # ------------------------------------------------------------------
+    # Safety-net union helper (RET-R10)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _union_context_tables(
+        retrieved_names: list[str],
+        safety_entries: list[tuple[str, int]],
+        *,
+        max_tables: int,
+        safety_floor: int,
+    ) -> list[str]:
+        """Merge retrieved table names with safety-net entries respecting a relevance floor.
+
+        Strategy (RET-R10):
+        1. Deduplicate and preserve *retrieved_names* order — these are the most
+           question-specific tables and always get priority.
+        2. Backfill remaining slots from *safety_entries*, sorted by relevance
+           descending, but only entries with ``relevance >= safety_floor``.
+        3. Never exceed *max_tables*.
+
+        Args:
+            retrieved_names: Table names from BM25/embedding retrieval (order-stable).
+            safety_entries: ``(table_name, relevance_score)`` pairs from the DB index
+                safety net (any order — will be sorted by relevance desc internally).
+            max_tables: Hard cap on the output list length.
+            safety_floor: Minimum ``relevance_score`` for a safety-net entry to qualify.
+
+        Returns:
+            Ordered list of table names (lower-cased): retrieved first, then
+            highest-relevance safety-net additions up to *max_tables*.
+        """
+        seen: set[str] = set()
+        result: list[str] = []
+
+        # Phase 1: add all retrieved tables (deduped, order-stable).
+        for name in retrieved_names:
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+                if len(result) >= max_tables:
+                    return result
+
+        # Phase 2: backfill with above-floor safety-net entries sorted best-first.
+        qualified = sorted(
+            [(n.lower(), rel) for n, rel in safety_entries if rel >= safety_floor],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        for name, _rel in qualified:
+            if name in seen:
+                continue
+            seen.add(name)
+            result.append(name)
+            if len(result) >= max_tables:
+                break
+
+        return result
+
+    # ------------------------------------------------------------------
     # Query context builder (mirrors ToolExecutor._build_query_context)
     # ------------------------------------------------------------------
 
@@ -1235,7 +1295,7 @@ class SQLAgent(BaseAgent):
             # stable: retrieved tables first (most question-specific),
             # safety-net tables after.
             max_tables = settings.sql_agent_max_context_tables
-            safety_net = [e for e in all_entries if e.is_active and e.relevance_score >= 2]
+            safety_floor = settings.sql_agent_safety_net_min_relevance
             entries_by_name = {e.table_name.lower(): e for e in all_entries}
 
             retrieved: list[Any] = []
@@ -1247,18 +1307,22 @@ class SQLAgent(BaseAgent):
                     k=max_tables,
                 )
 
-            seen: set[str] = set()
-            relevant = []
-            for entry in retrieved + safety_net:
-                key = entry.table_name.lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                relevant.append(entry)
-                if len(relevant) >= max_tables:
-                    break
+            # RET-R10: use the floor-gated union helper so retrieved tables
+            # always occupy their slots first and safety-net tables only
+            # backfill remaining budget above the relevance floor.
+            retrieved_names = [e.table_name.lower() for e in retrieved]
+            safety_pairs = [
+                (e.table_name.lower(), e.relevance_score) for e in all_entries if e.is_active
+            ]
+            ordered_names = self._union_context_tables(
+                retrieved_names,
+                safety_pairs,
+                max_tables=max_tables,
+                safety_floor=safety_floor,
+            )
+            relevant = [entries_by_name[n] for n in ordered_names if n in entries_by_name]
             # Hard fallback: if both retriever and safety net miss (e.g. no
-            # active tables with relevance_score >= 2), keep prior behaviour.
+            # active tables above the floor), keep prior behaviour.
             if not relevant:
                 relevant = all_entries[:max_tables]
 
@@ -1276,9 +1340,9 @@ class SQLAgent(BaseAgent):
             from app.knowledge.schema_retriever import expand_fk_hop
 
             fk_map: dict[str, set[str]] = {}
-            for tbl in schema.tables:
-                tname = tbl.name.lower()
-                for fk in tbl.foreign_keys:
+            for schema_tbl in schema.tables:
+                tname = schema_tbl.name.lower()
+                for fk in schema_tbl.foreign_keys:
                     fk_map.setdefault(tname, set()).add(fk.references_table.lower())
             all_entries_by_name = {e.table_name.lower(): e for e in all_entries}
             expanded = expand_fk_hop(relevant, fk_map, all_entries_by_name)
@@ -1319,7 +1383,7 @@ class SQLAgent(BaseAgent):
             parts.append("")
 
         for entry in relevant:
-            tbl = schema_map.get(entry.table_name.lower())
+            tbl: Any = schema_map.get(entry.table_name.lower())
             sync_entry = sync_map.get(entry.table_name.lower())
             parts.append(self._format_table_context(entry, tbl, sync_entry, knowledge))
 

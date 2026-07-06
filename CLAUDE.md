@@ -243,6 +243,7 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 |---|---|---|
 | `hybrid_retrieval_enabled` | on | Falls back to dense-only without BM25 snapshot |
 | `schema_retrieval_enabled` | on | Unioned with legacy relevance safety net |
+| `sql_agent_safety_net_min_relevance` | 3 | RET-R10: min `relevance_score` for safety-net tables; raise to 4 for tighter filtering, 2 to restore legacy behaviour |
 | `code_graph_enabled` | off | CPU-heavy indexing |
 | `lineage_enabled` | off | Requires code graph |
 | `clustering_enabled` | off | Louvain communities |
