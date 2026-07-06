@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Tools whose stages produce free-text summaries rather than structured
+# QueryResult data.  For these tools, validation is based on a non-empty
+# summary; data-shape criteria (expected_columns / min_rows / max_rows) are
+# not applicable and must be silently ignored so the planner cannot
+# accidentally trip a false-positive row-count failure on a text stage.
+_TEXT_STAGE_TOOLS: frozenset[str] = frozenset(
+    {"analyze_results", "search_codebase", "analyze_git", "synthesize"}
+)
 
 _BUSINESS_RULE_PROMPT = """You are a strict data-quality validator. Given a
 business rule and a sample of query result rows, return a JSON object:
@@ -105,6 +113,24 @@ class StageValidator:
 
         if result.status == "error":
             outcome.fail(f"Stage returned error: {result.error or 'unknown'}")
+            return outcome
+
+        # ------------------------------------------------------------------
+        # Text-producing stages: validate on non-empty summary only.
+        # Data-shape criteria (expected_columns / min_rows / max_rows) are
+        # semantically meaningless for these tools and must be ignored so a
+        # planner-injected min_rows does not cause a spurious failure.
+        # Cross-stage consistency checks are still evaluated when present.
+        # ------------------------------------------------------------------
+        if stage.tool in _TEXT_STAGE_TOOLS:
+            summary = (result.summary or "").strip()
+            if not summary:
+                outcome.fail("Text stage produced an empty summary")
+            # Data criteria do not apply to text stages — skip them entirely.
+            v = stage.validation
+            if v.cross_stage_checks:
+                for check in v.cross_stage_checks:
+                    self._evaluate_cross_check(check, result, stage_ctx, outcome)
             return outcome
 
         qr = result.query_result
