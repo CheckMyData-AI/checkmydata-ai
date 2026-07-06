@@ -635,8 +635,14 @@ class OrchestratorAgent(BaseAgent):
                 )
 
             # --- Complex pipeline for multi-stage analysis ---
-            if route_result.use_complex_pipeline and has_connection:
-                table_map = await self._load_table_map(context, wf_id)
+            # ORCH-R01: allow the pipeline whenever ANY data source is present,
+            # not only when a DB connection exists.  The planner LLM already
+            # knows how to emit search_codebase / analyze_git / query_mcp_source
+            # stages for non-DB projects — the old `and has_connection` guard
+            # silently dropped those complex questions to the flat loop.
+            has_any_data_source = has_connection or has_kb or has_mcp or has_repo
+            if route_result.use_complex_pipeline and has_any_data_source:
+                table_map = await self._load_table_map(context, wf_id) if has_connection else ""
                 # Even on the complex (multi-stage planner) path we owe the
                 # planner the same freshness signal as the unified loop —
                 # otherwise the planner stages can confidently run against a
@@ -659,6 +665,8 @@ class OrchestratorAgent(BaseAgent):
                     db_type,
                     staleness_warning=staleness_complex,
                     has_repo=has_repo,
+                    has_kb=has_kb,
+                    has_mcp=has_mcp,
                 )
 
             # --- Unified tool loop for everything else ---
@@ -2019,12 +2027,18 @@ class OrchestratorAgent(BaseAgent):
         db_type: str | None,
         staleness_warning: str | None,
         has_repo: bool = False,
+        has_kb: bool = False,
+        has_mcp: bool = False,
     ) -> AgentResponse:
         """Plan and execute a multi-stage pipeline for complex queries.
 
         Includes a replan loop: when a stage fails and is replan-eligible,
         the ``AdaptivePlanner`` generates a new plan that avoids the failed
         approach and reuses completed results.
+
+        ``has_kb`` / ``has_mcp`` (ORCH-P04) — passed down so the planner's
+        last-resort quick-plan fallback picks a tool that can actually execute
+        against the available data sources.
         """
         await self._tracker.emit(
             wf_id,
@@ -2033,6 +2047,18 @@ class OrchestratorAgent(BaseAgent):
             "Complex query detected, creating execution plan…",
         )
         adaptive = AdaptivePlanner(self._llm, usage_sink=self._llm_sink())
+
+        # ORCH-P04: derive a fallback tool that matches the available data
+        # source so that the last-resort quick-plan can actually execute.
+        has_connection = context.connection_config is not None
+        if has_connection:
+            _fallback_tool = "query_database"
+        elif has_kb:
+            _fallback_tool = "search_codebase"
+        elif has_repo:
+            _fallback_tool = "analyze_git"
+        else:
+            _fallback_tool = "query_mcp_source"
 
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
         active_insights = await self._ctx_loader.load_relevant_insights(context.project_id)
@@ -2066,6 +2092,7 @@ class OrchestratorAgent(BaseAgent):
                 current_datetime=get_current_datetime_str(),
                 recent_learnings=recent_learnings,
                 staleness_warning=staleness_warning,
+                fallback_tool=_fallback_tool,
             )
             if plan:
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"

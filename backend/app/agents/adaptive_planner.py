@@ -51,12 +51,19 @@ class AdaptivePlanner:
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
         staleness_warning: str | None = None,
+        fallback_tool: str = "query_database",
     ) -> ExecutionPlan:
         """Generate an LLM-based execution plan for the question.
 
         ``staleness_warning`` (V3, vision §7 #7) — when non-empty, prepended to
         the planner's system prompt so the LLM is aware that some context is
         stale before producing a plan.
+
+        ``fallback_tool`` (ORCH-P04) — the tool name used by the last-resort
+        quick plan when LLM planning fails entirely.  Callers should pass a
+        tool that matches the available data source (``search_codebase`` for a
+        KB-only project, ``analyze_git`` for a repo-only project, etc.).
+        Defaults to ``query_database`` for backward compatibility.
         """
         plan = await self._llm_plan(
             question,
@@ -70,8 +77,10 @@ class AdaptivePlanner:
             staleness_warning=staleness_warning,
         )
         if plan is None:
-            logger.warning("LLM planning failed, falling back to quick data plan")
-            return self._quick_data_plan(question)
+            logger.warning(
+                "LLM planning failed, falling back to quick data plan (tool=%s)", fallback_tool
+            )
+            return self._quick_data_plan(question, fallback_tool=fallback_tool)
 
         plan = self._ensure_validation_criteria(plan)
         return plan
@@ -195,8 +204,17 @@ class AdaptivePlanner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _quick_data_plan(question: str) -> ExecutionPlan:
-        """Last-resort single-stage plan when LLM planning fails entirely."""
+    def _quick_data_plan(
+        question: str,
+        fallback_tool: str = "query_database",
+    ) -> ExecutionPlan:
+        """Last-resort single-stage plan when LLM planning fails entirely.
+
+        ``fallback_tool`` (ORCH-P04) — the tool for the single stage.  Callers
+        should choose a tool that matches the available data source so the
+        fallback plan can actually execute (e.g. ``search_codebase`` for a
+        KB-only project).  Defaults to ``query_database`` for back-compat.
+        """
         return ExecutionPlan(
             plan_id=str(uuid.uuid4()),
             question=question,
@@ -205,7 +223,7 @@ class AdaptivePlanner:
                 PlanStage(
                     stage_id="fetch",
                     description=question,
-                    tool="query_database",
+                    tool=fallback_tool,
                     validation=StageValidation(min_rows=0),
                 ),
             ],
