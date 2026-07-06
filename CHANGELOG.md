@@ -56,6 +56,10 @@ Wave 6 wave-closer (T11). All code-graph correctness fixes (T1–T10) landed; gr
 - **Graph-quality benchmark** — `app/eval/graph_benchmark.py` (`run_graph_benchmark() → GraphBenchmarkResult`) runs the fixture repo through the full AST→graph pipeline and asserts ≥7 symbols, ≥1 CALLS, ≥1 EXTENDS, ≥1 IMPORTS. Gate command: `python -m app.eval.graph_benchmark` (exit 0 = PASS). Benchmark PASS result: `symbols=7 CALLS=2 EXTENDS=1 IMPORTS=1`.
 - **Flag flips (benchmark-gated)** — `code_graph_enabled` and `lineage_enabled` flipped to `True` (default-on) after the benchmark passed (spec §9, F-ARCH-6). **Deploy note:** `code_graph_enabled=true` enables CPU-heavy tree-sitter AST parsing during repo indexing; allocate ≥2 CPU cores and expect indexing time to increase on large repos (≥50k LOC).
 
+### Added — Self-completing embedding reconcile (2026-07-06, branch `feat/embedding-self-reconcile`)
+
+- **Automatic post-deploy reindex.** On startup, `app/ops/embedding_reconcile.reconcile_embeddings` (wired into the FastAPI `lifespan`) compares the current embedding fingerprint (`chroma_embedding_model` + `embedder_max_tokens`) against a new single-row `deploy_state` marker table and enqueues a one-shot full reindex of all projects when it changed. Idempotent (marker advanced only after a successful enqueue), multi-dyno-safe (Postgres `pg_try_advisory_xact_lock`), and graceful (never raises, never blocks boot; SQLite dev skips the lock). Migration `d5e6f7a8b9c0` seeds the OLD fingerprint on databases that already have projects so the feature's own deploy closes the existing stale-embedding backlog. **Removes the previous manual post-deploy reindex step.**
+
 ### Added — W2 intelligence-remediation: retrieval + ContextPack wave-closer flag flips (2026-07-06, branch `worktree-intelligence-remediation`)
 
 Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; eval gate green; flags flipped to default-on.
@@ -73,17 +77,8 @@ Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; e
 
 > ⚠️ **Deploy notes (intelligence remediation — all three apply to this release)**
 >
-> **1. ChromaDB full reindex required (breaking until completed)**
-> The default embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window) and code chunks now use a dedicated `sym:` prefix path. Existing ChromaDB collections were built with the old model and are **dimension-mismatched**; dense retrieval degrades to BM25-only (or returns empty) until the collections are rebuilt. This is graceful — the system will not crash — but retrieval quality will be degraded.
-> **Operator action required after deploy:**
-> ```python
-> # In a management shell / Django-equivalent REPL or migration script:
-> from app.services.embedding_reindex import queue_embedding_reindex
-> import asyncio
-> # Pass all active project IDs, or trigger a full repo re-index per project via the UI/API.
-> asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
-> ```
-> Alternatively: trigger "Re-index repository" for each project from the project settings UI. Until reindex completes, hybrid retrieval falls back to BM25-only (functional but lower quality).
+> **1. ChromaDB reindex — now AUTOMATIC (self-completing deploy)**
+> The default embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window) and code chunks now use a dedicated `sym:` prefix path. This reindex is now handled automatically at startup by `app/ops/embedding_reconcile` (see the **Added** entry below) — **no operator action required.** Migration `d5e6f7a8b9c0` seeds the OLD fingerprint on databases that already have projects, so the first deploy carrying this feature reindexes the existing backlog once. Until the enqueued reindex completes, hybrid retrieval falls back to BM25-only (functional, lower quality). Manual override remains: `from app.services.embedding_reindex import queue_embedding_reindex`, or "Re-index repository" per project in the UI.
 >
 > **2. `code_graph_enabled` + `lineage_enabled` now default-on (CPU-heavy)**
 > Both flags flip to `True` in this release (W6). Code-graph indexing is CPU-intensive; recommend ≥2 cores on the worker dyno. Operators who want to defer the CPU cost can set `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false` in env until ready.

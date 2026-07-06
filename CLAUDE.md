@@ -103,17 +103,10 @@ Frontend: `cd frontend && npx vitest run path/to/foo.test.tsx` (watch: `npm run 
 
 ### ⚠️ Deploy notes (intelligence remediation release)
 
-Three operator actions are required when deploying the intelligence-remediation branch to production:
+Two operator actions are required when deploying the intelligence-remediation branch to production:
 
-**1. ChromaDB full reindex — MANDATORY (breaking until completed)**
-The embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window). Existing ChromaDB collections are dimension-mismatched; dense retrieval silently degrades to BM25-only until collections are rebuilt. The system does NOT crash — degradation is graceful — but retrieval quality is reduced.
-After deploy, run for every active project:
-```python
-from app.services.embedding_reindex import queue_embedding_reindex
-import asyncio
-asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
-```
-Or use the "Re-index repository" action in project settings UI per project.
+**1. ChromaDB reindex — AUTOMATIC (self-completing deploy)**
+Embedding-config changes (`CHROMA_EMBEDDING_MODEL` / `EMBEDDER_MAX_TOKENS`) are reconciled automatically at startup: `app/ops/embedding_reconcile.reconcile_embeddings` runs in the FastAPI `lifespan`, compares the current fingerprint against the `deploy_state.embedding_fingerprint` marker, and enqueues a one-shot full reindex of all projects when it changed — idempotent, multi-dyno-safe (Postgres advisory lock), degrades gracefully, never blocks boot. Migration `d5e6f7a8b9c0` seeds the OLD fingerprint on databases that already have projects so the first deploy of this feature reindexes the existing backlog once. **No manual step required.** Manual override (rarely needed): `from app.services.embedding_reindex import queue_embedding_reindex`, or the "Re-index repository" UI action per project.
 
 **2. `code_graph_enabled` + `lineage_enabled` now default-on — ensure ≥2 worker cores**
 Both flags flip to `True` in this release. Code-graph indexing is CPU-intensive. To defer: set env `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false`.
