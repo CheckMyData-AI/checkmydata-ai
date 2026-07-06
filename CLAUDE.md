@@ -101,6 +101,26 @@ Frontend: `cd frontend && npx vitest run path/to/foo.test.tsx` (watch: `npm run 
 - `Procfile`: `web` runs Alembic then uvicorn; `worker` runs `arq app.worker.WorkerSettings`.
 - **Deploy targets**: Heroku (primary, auto-deploy via GitHub Actions), Docker Compose (`docker-compose.yml`), DigitalOcean App Platform (`.do/app.yaml`). See `INSTALLATION.md`, `docs/DEPLOYMENT.md`, `scripts/deploy-heroku.sh`.
 
+### ⚠️ Deploy notes (intelligence remediation release)
+
+Three operator actions are required when deploying the intelligence-remediation branch to production:
+
+**1. ChromaDB full reindex — MANDATORY (breaking until completed)**
+The embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window). Existing ChromaDB collections are dimension-mismatched; dense retrieval silently degrades to BM25-only until collections are rebuilt. The system does NOT crash — degradation is graceful — but retrieval quality is reduced.
+After deploy, run for every active project:
+```python
+from app.services.indexing_service import queue_embedding_reindex
+import asyncio
+asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
+```
+Or use the "Re-index repository" action in project settings UI per project.
+
+**2. `code_graph_enabled` + `lineage_enabled` now default-on — ensure ≥2 worker cores**
+Both flags flip to `True` in this release. Code-graph indexing is CPU-intensive. To defer: set env `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false`.
+
+**3. `reranker_enabled` now default-on — update production image**
+Requires `sentence-transformers` + a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) in the image. Degrades gracefully (no-op reranker) if absent — retrieval still works without reranking.
+
 ## High-level architecture
 
 The system is an "intelligence layer between humans and their databases" (see `vision.md`). Treat that vision as load-bearing — invariants in `vision.md` §7 (read-only by default, credentials never exposed, every answer traceable, learning per-connection, graceful degradation, user feedback is highest authority, freshness tracked) are enforced in code.

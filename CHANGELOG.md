@@ -69,7 +69,27 @@ Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; e
 - **R10 (safety-net floor)** — `sql_agent_safety_net_min_relevance` (default 3) filters low-signal safety-net tables so retrieved + FK-expanded entries are not crowded out.
 - **R14 (reranker `.rank`)** — `CrossEncoderReranker` calls `.rank()` when available (sentence-transformers ≥ 3.x) and falls back to `.predict()` for older model versions; both paths produce a sorted `List[Candidate]`.
 - **Low batch** — BM25 retrieval batch size tuned to avoid memory spikes on large corpora.
-- **Flag flips (gated)** — `reranker_enabled` and `context_planner_enabled` flipped to `True` (default-on) after the retrieval-eval + reranker gate passed (18/18 tests, including `test_harness_oracle_passes_thresholds` at `hit_at_k==1.0` and `test_cross_encoder_uses_rank_when_available`). Wave-gate assertion test `test_w2_flag_flips.py` added. **Deploy note:** `reranker_enabled=true` requires `sentence-transformers` + a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) in the production image; the flag degrades gracefully to a no-op when the library or model is unavailable.
+- **Flag flips (gated)** — `reranker_enabled` and `context_planner_enabled` flipped to `True` (default-on) after the retrieval-eval + reranker gate passed (18/18 tests, including `test_harness_oracle_passes_thresholds` at `hit_at_k==1.0` and `test_cross_encoder_uses_rank_when_available`). Wave-gate assertion test `test_w2_flag_flips.py` added.
+
+> ⚠️ **Deploy notes (intelligence remediation — all three apply to this release)**
+>
+> **1. ChromaDB full reindex required (breaking until completed)**
+> The default embedding model changed from `all-MiniLM-L6-v2` (384-dim) to `BAAI/bge-base-en-v1.5` (768-dim, 512-token window) and code chunks now use a dedicated `sym:` prefix path. Existing ChromaDB collections were built with the old model and are **dimension-mismatched**; dense retrieval degrades to BM25-only (or returns empty) until the collections are rebuilt. This is graceful — the system will not crash — but retrieval quality will be degraded.
+> **Operator action required after deploy:**
+> ```python
+> # In a management shell / Django-equivalent REPL or migration script:
+> from app.services.indexing_service import queue_embedding_reindex
+> import asyncio
+> # Pass all active project IDs, or trigger a full repo re-index per project via the UI/API.
+> asyncio.run(queue_embedding_reindex(<list_of_all_project_ids>))
+> ```
+> Alternatively: trigger "Re-index repository" for each project from the project settings UI. Until reindex completes, hybrid retrieval falls back to BM25-only (functional but lower quality).
+>
+> **2. `code_graph_enabled` + `lineage_enabled` now default-on (CPU-heavy)**
+> Both flags flip to `True` in this release (W6). Code-graph indexing is CPU-intensive; recommend ≥2 cores on the worker dyno. Operators who want to defer the CPU cost can set `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false` in env until ready.
+>
+> **3. `reranker_enabled` now default-on — requires image update**
+> `reranker_enabled=true` requires `sentence-transformers` + a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) in the production image. The flag degrades gracefully to a no-op when the library or model is absent — retrieval still works, just without reranking.
 
 ### Fixed — W1 intelligence-remediation: data-quality hardening (2026-07-05, branch `worktree-intelligence-remediation`)
 
