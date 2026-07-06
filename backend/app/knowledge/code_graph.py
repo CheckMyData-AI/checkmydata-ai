@@ -481,6 +481,36 @@ class CodeGraphBuilder:
         return results
 
     @staticmethod
+    def reverse_dependents(existing: CodeGraph, changed_files: set[str]) -> set[str]:
+        """Files that import a symbol defined in any ``changed_files`` path.
+
+        Used on incremental runs so an *unchanged* caller whose imported symbols
+        changed (rename / new symbol) is re-parsed against the callee's current
+        symbols — fixing CODEIDX-C4 cross-file CALLS/IMPORTS drift.
+
+        Only IMPORTS edges are examined because they are the static dependency
+        declarations that drive CALLS resolution.  Excludes the changed files
+        themselves; they will already be in the parse set.
+        """
+        if not changed_files:
+            return set()
+        sym_file: dict[str, str] = {uid: sym.file_path for uid, sym in existing.symbols.items()}
+        dependents: set[str] = set()
+        for edge in existing.edges:
+            if edge.edge_type != EDGE_IMPORTS:
+                continue
+            dst_file = sym_file.get(edge.dst_uid)
+            if dst_file is None or dst_file not in changed_files:
+                continue
+            if edge.src_uid.startswith("file:"):
+                src_file: str | None = edge.src_uid[len("file:") :]
+            else:
+                src_file = sym_file.get(edge.src_uid)
+            if src_file and src_file not in changed_files:
+                dependents.add(src_file)
+        return dependents
+
+    @staticmethod
     def _break_inheritance_cycles(edges: list[GraphEdge]) -> list[GraphEdge]:
         """Detect cycles in EXTENDS edges; drop the lowest-confidence edge per cycle."""
         ext_graph = nx.DiGraph()

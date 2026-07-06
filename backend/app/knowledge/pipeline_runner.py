@@ -1575,6 +1575,30 @@ class IndexingPipelineRunner:
             else:
                 changed = set(state.changed_files)
                 deleted = set(state.deleted_files)
+                # C4: expand the parse set to the reverse-dependency closure of
+                # the changed files so unchanged callers re-resolve their
+                # CALLS/IMPORTS edges against the callee's current symbols.
+                # We load the pre-merge graph once here (cheap: symbols already
+                # in DB) and compute which files import anything from `changed`.
+                # Those files are added to state.parsed_files if not already
+                # present, and included in affected_files so their stale edges
+                # are pruned before the fresh re-parsed edges splice in.
+                existing_for_rdeps = await svc.load_graph(db, project_id)
+                extra_files: set[str] = set()
+                if existing_for_rdeps is not None:
+                    extra_files = CodeGraphBuilder.reverse_dependents(existing_for_rdeps, changed)
+                    extra_files -= changed | deleted
+                    missing_from_parse = [f for f in extra_files if f not in state.parsed_files]
+                    if missing_from_parse and state.repo_dir is not None:
+                        logger.info(
+                            "graph_build: re-parsing %d reverse-dependent file(s) "
+                            "for C4 cross-file edge resolution: %s",
+                            len(missing_from_parse),
+                            sorted(missing_from_parse)[:10],
+                        )
+                        await self._run_ast_parse(state, wf_id, missing_from_parse)
+                        # Rebuild the graph now that the reverse-deps are parsed.
+                        graph = await asyncio.to_thread(builder.build, state.parsed_files)
                 # R3-3: a changed file whose AST parse failed this run produced
                 # no (or partial) symbols. Purging it on merge would wrongly
                 # drop its last-good symbols, so exclude it from the affected
@@ -1608,7 +1632,10 @@ class IndexingPipelineRunner:
                         len(failed),
                         sorted(failed)[:5],
                     )
-                affected_files = reconciled_changed | deleted
+                # C4: include reverse-dependents so their stale edges are
+                # pruned from the existing graph before the re-parsed fresh
+                # edges splice in.
+                affected_files = reconciled_changed | deleted | extra_files
                 sym_count, edge_count = await svc.save_incremental(
                     db, project_id, graph, affected_files
                 )

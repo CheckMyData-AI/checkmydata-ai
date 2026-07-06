@@ -378,6 +378,10 @@ class TestGraphBuildPreservesFailedParseSymbols:
             patch("app.core.workflow_tracker.tracker") as mock_tracker,
         ):
             mock_builder.return_value = MagicMock()
+            # C4: reverse_dependents is a staticmethod; configure mock so it
+            # returns an empty set (no importers of the changed files in this
+            # fixture), keeping extra_files out of the affected set.
+            mock_builder.reverse_dependents.return_value = set()
             mock_tracker.emit = AsyncMock()
             await runner._run_graph_build(state, "wf-1", AsyncMock(), "proj-1", is_full=False)
 
@@ -418,6 +422,9 @@ class TestGraphBuildPreservesFailedParseSymbols:
             patch("app.core.workflow_tracker.tracker") as mock_tracker,
         ):
             mock_builder.return_value = MagicMock()
+            # C4: configure reverse_dependents mock to return empty set so extra_files
+            # doesn't interfere with the broken-file exclusion assertion.
+            mock_builder.reverse_dependents.return_value = set()
             mock_tracker.emit = AsyncMock()
             await runner._run_graph_build(state, "wf-1", AsyncMock(), "proj-1", is_full=False)
 
