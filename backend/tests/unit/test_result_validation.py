@@ -297,6 +297,8 @@ async def test_answer_quality_gate_passes_kwargs():
         question="q",
         answer="a",
         sql_summaries=["SELECT 1"],
+        row_count=None,
+        truncated=False,
         preferred_provider="anthropic",
         model="claude-3-5-haiku-latest",
     )

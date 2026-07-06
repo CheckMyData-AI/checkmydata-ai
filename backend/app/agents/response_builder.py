@@ -16,6 +16,7 @@ from app.agents.sql_result_reconciliation import build_reconciliation_note
 
 if TYPE_CHECKING:
     from app.agents.orchestrator import AgentResponse
+from app.agents.result_validation import ResultDirective
 from app.agents.stage_executor import _StageExecutorResult
 from app.connectors.base import QueryResult
 from app.core.types import RAGSource
@@ -45,6 +46,8 @@ class ResponseBuilder:
         wf_id: str,
         staleness_warning: str | None,
         pipeline_run_id: str,
+        *,
+        answer_directive: ResultDirective | None = None,
     ) -> AgentResponse:
         from app.agents.orchestrator import AgentResponse
 
@@ -98,7 +101,16 @@ class ResponseBuilder:
                     "figure. Re-run with a tighter filter or server-side aggregation for an "
                     "exact total."
                 )
-            response_type = "pipeline_complete_degraded" if degraded_reason else "pipeline_complete"
+            if answer_directive is not None and answer_directive.action != "accept":
+                # ORCH-A02: AnswerQualityGate rejected the final answer — downgrade
+                # so the UI offers the "Continue analysis" CTA instead of a green
+                # check on a vague / partial answer.  Mirrors the flat-loop downgrade
+                # at orchestrator.py:1722-1723.  The answer text is preserved.
+                response_type = "step_limit_reached"
+            elif degraded_reason:
+                response_type = "pipeline_complete_degraded"
+            else:
+                response_type = "pipeline_complete"
             return AgentResponse(
                 answer=answer,
                 query=last_sql_result.query if last_sql_result else None,

@@ -204,6 +204,8 @@ class AnswerQualityGate:
         question: str,
         answer: str,
         sql_summaries: list[str] | None = None,
+        row_count: int | None = None,
+        truncated: bool = False,
         preferred_provider: str | None = None,
         model: str | None = None,
     ) -> ResultDirective:
@@ -211,11 +213,20 @@ class AnswerQualityGate:
 
         All keyword arguments are forwarded verbatim to
         :meth:`~app.agents.answer_validator.AnswerValidator.validate`.
+
+        Parameters:
+            row_count:   Row count from the pipeline's last SQL result.  Forwarded
+                         to ``AnswerValidator.validate`` so the LLM prompt can flag
+                         answers that present truncated data as a complete total.
+            truncated:   Truncation flag from the pipeline's last SQL result.
+                         OR-ed with ``qr.truncated`` inside the validator prompt.
         """
         verdict = await self._validator.validate(
             question=question,
             answer=answer,
             sql_summaries=sql_summaries,
+            row_count=row_count,
+            truncated=truncated,
             preferred_provider=preferred_provider,
             model=model,
         )

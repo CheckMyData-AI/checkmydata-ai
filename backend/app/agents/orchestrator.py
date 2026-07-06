@@ -1707,6 +1707,16 @@ class OrchestratorAgent(BaseAgent):
                 and last_sql_result.results is not None
                 and last_sql_result.results.rows
             )
+            _step_row_count = (
+                last_sql_result.results.row_count
+                if last_sql_result is not None and last_sql_result.results is not None
+                else None
+            )
+            _step_truncated = bool(
+                last_sql_result is not None
+                and last_sql_result.results is not None
+                and last_sql_result.results.truncated
+            )
             answer_addresses_question = await self._validate_partial_answer(
                 final_text,
                 question=question,
@@ -1714,6 +1724,8 @@ class OrchestratorAgent(BaseAgent):
                 preferred_provider=context.preferred_provider,
                 model=context.model,
                 wf_id=wf_id,
+                row_count=_step_row_count,
+                truncated=_step_truncated,
             )
             if has_meaningful_data and answer_addresses_question:
                 response_type = ResponseBuilder.determine_response_type(
@@ -1738,6 +1750,9 @@ class OrchestratorAgent(BaseAgent):
                     bool(vr_norm.warnings) or row_count == 0 or wf_id in self._wf_suspicious
                 )
                 if suspicious:
+                    _susp_truncated = bool(
+                        last_sql_result.results is not None and last_sql_result.results.truncated
+                    )
                     addresses = await self._validate_partial_answer(
                         final_text,
                         question=question,
@@ -1745,6 +1760,8 @@ class OrchestratorAgent(BaseAgent):
                         preferred_provider=context.preferred_provider,
                         model=context.model,
                         wf_id=wf_id,
+                        row_count=row_count,
+                        truncated=_susp_truncated,
                     )
                     if not addresses:
                         response_type = "step_limit_reached"
@@ -2218,11 +2235,23 @@ class OrchestratorAgent(BaseAgent):
             )
         except Exception:
             logger.debug("metrics collector failed (non-critical)", exc_info=True)
+
+        # ORCH-A02: run the AnswerQualityGate on the pipeline's final answer so
+        # that a completed pipeline with a vague / partial synthesis still gets
+        # downgraded to step_limit_reached.  Only runs on the "completed" path
+        # (exec_result.status == "completed") and only when the validator is
+        # enabled — mirrors the flat-loop gate at orchestrator.py:1741-1750.
+        answer_directive = await self._evaluate_pipeline_answer(
+            exec_result=exec_result,
+            context=context,
+            wf_id=wf_id,
+        )
         return ResponseBuilder.build_pipeline_response(
             exec_result,
             wf_id,
             staleness_warning,
             pipeline_run.id,
+            answer_directive=answer_directive,
         )
 
     @staticmethod
@@ -2813,6 +2842,98 @@ class OrchestratorAgent(BaseAgent):
             raise last_exc
         raise RuntimeError("LLM call failed without exception")
 
+    async def _evaluate_pipeline_answer(
+        self,
+        *,
+        exec_result: _StageExecutorResult,
+        context: AgentContext,
+        wf_id: str,
+    ) -> Any:  # ResultDirective | None — imported lazily inside the body to avoid circular deps
+        """Run :class:`AnswerQualityGate` on the pipeline's synthesised answer.
+
+        Returns ``None`` when the gate is disabled, when the pipeline did not
+        reach ``completed`` status, or when the gate encounters an error
+        (non-critical; fail-open to avoid blocking a successful pipeline).
+
+        When ``answer_validator_enabled`` is *off* the gate is skipped and
+        ``None`` is returned — mirroring the flat-loop behaviour where the
+        validator is bypassed by the same flag.
+
+        Extracts ``row_count`` and ``truncated`` from the last SQL stage result
+        and forwards them to ``AnswerQualityGate.evaluate`` so the underlying
+        ``AnswerValidator`` can flag answers that present truncated data as a
+        complete total (W1 T14 carry-forward).
+        """
+        if exec_result.status != "completed":
+            return None
+        if not exec_result.final_answer or not exec_result.final_answer.strip():
+            return None
+        if not settings.answer_validator_enabled:
+            return None
+
+        try:
+            from app.agents.answer_validator import AnswerValidator
+            from app.agents.result_validation import AnswerQualityGate, ResultDirective
+
+            validator = AnswerValidator(self._llm, usage_sink=self._llm_sink())
+            gate = AnswerQualityGate(validator)
+
+            # Collect SQL summaries from all completed stages (mirrors flat loop)
+            sql_summaries: list[str] = []
+            last_row_count: int | None = None
+            last_truncated: bool = False
+            for stage in exec_result.stage_ctx.plan.stages:
+                sr = exec_result.stage_ctx.get_result(stage.stage_id)
+                if sr is None:
+                    continue
+                if sr.summary:
+                    sql_summaries.append(sr.summary[:200])
+                if sr.query_result is not None:
+                    last_row_count = sr.query_result.row_count
+                    last_truncated = bool(sr.query_result.truncated)
+
+            directive: ResultDirective = await gate.evaluate(
+                question=context.user_question,
+                answer=exec_result.final_answer,
+                sql_summaries=sql_summaries or None,
+                row_count=last_row_count,
+                truncated=last_truncated,
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+            )
+            await self._tracker.emit(
+                wf_id,
+                "orchestrator:pipeline_answer_gate",
+                "completed",
+                f"pipeline answer gate: action={directive.action}",
+                span_type="validation",
+                action=directive.action,
+                reason=directive.reason,
+            )
+            if directive.action != "accept":
+                try:
+                    from app.models.base import async_session_factory
+                    from app.services.error_log_service import ErrorLogService
+
+                    owner = self._tracker.get_owner(wf_id)
+                    async with async_session_factory() as db:
+                        await ErrorLogService().upsert_validation_failure(
+                            db,
+                            project_id=owner.get("project_id") or None,
+                            kind="answer",
+                            message=(
+                                "pipeline final answer did not address the question "
+                                f"(gate: {directive.action}, {directive.reason})"
+                            ),
+                            sample_ref=wf_id,
+                        )
+                except Exception:  # noqa: BLE001 — observability must never break the response
+                    logger.debug("pipeline answer gate error_log upsert failed", exc_info=True)
+            return directive
+        except Exception:
+            logger.debug("Pipeline answer gate failed (non-critical)", exc_info=True)
+            return None
+
     async def _validate_partial_answer(
         self,
         final_text: str,
@@ -2822,6 +2943,8 @@ class OrchestratorAgent(BaseAgent):
         preferred_provider: str | None,
         model: str | None,
         wf_id: str,
+        row_count: int | None = None,
+        truncated: bool = False,
     ) -> bool:
         """Return ``True`` when the partial answer addresses the question.
 
@@ -2835,6 +2958,10 @@ class OrchestratorAgent(BaseAgent):
         still shown to the user — just honestly labelled. Set
         ``answer_validator_fail_closed=False`` to restore the prior lenient
         length-heuristic fallback.
+
+        W1 T14 carry-forward: ``row_count`` and ``truncated`` are forwarded to
+        ``AnswerValidator.validate`` so the LLM prompt can flag answers that
+        present truncated data as a complete total.
         """
         if not final_text or not final_text.strip():
             return False
@@ -2854,6 +2981,8 @@ class OrchestratorAgent(BaseAgent):
                 question=question,
                 answer=final_text,
                 sql_summaries=sql_summaries,
+                row_count=row_count,
+                truncated=truncated,
                 preferred_provider=preferred_provider,
                 model=model,
             )
