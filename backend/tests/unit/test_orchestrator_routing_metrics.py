@@ -217,16 +217,36 @@ class TestRouteSignalSurvivesIntoPipelineMetrics:
             needs_multiple_data_sources=False,
         )
 
+        # Use 3 data stages so the P03 trivial-plan bounce does not trigger
+        # (<=2 data stages would bounce to the unified loop instead).
         plan = ExecutionPlan(
             plan_id="plan-1",
             question="Compare MAUs",
             stages=[
                 PlanStage(
                     stage_id="s1",
-                    description="Get MAU per product",
+                    description="Get MAU per product A",
                     tool="query_database",
                     depends_on=[],
-                )
+                ),
+                PlanStage(
+                    stage_id="s2",
+                    description="Get MAU per product B",
+                    tool="query_database",
+                    depends_on=[],
+                ),
+                PlanStage(
+                    stage_id="s3",
+                    description="Get MAU per product C",
+                    tool="query_database",
+                    depends_on=[],
+                ),
+                PlanStage(
+                    stage_id="synth",
+                    description="Synthesize comparison",
+                    tool="synthesize",
+                    depends_on=["s1", "s2", "s3"],
+                ),
             ],
         )
         stage_ctx = StageContext(plan=plan)

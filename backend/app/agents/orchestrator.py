@@ -1973,6 +1973,44 @@ class OrchestratorAgent(BaseAgent):
     # Multi-stage pipeline
     # ------------------------------------------------------------------
 
+    # ORCH-P03: tools that count as "data stages" for the trivial-plan guard.
+    _DATA_STAGE_TOOLS: frozenset[str] = frozenset(
+        {"query_database", "search_codebase", "query_mcp_source", "analyze_git"}
+    )
+
+    async def _fallback_to_unified(
+        self,
+        context: AgentContext,
+        wf_id: str,
+        reason: str,
+    ) -> AgentResponse:
+        """Bounce to the unified flat-loop (reuse existing fallback path).
+
+        ORCH-P03: used both when planning fails entirely and when the produced
+        plan is trivially small (≤2 data stages) — trivial plans would lose
+        flat-loop features (viz, follow-ups, result-gate) for no benefit.
+        """
+        await self._tracker.emit(wf_id, "thinking", "in_progress", reason)
+        logger.warning("Falling back to flat loop: %s", reason)
+        return await self.run(
+            AgentContext(
+                project_id=context.project_id,
+                connection_config=context.connection_config,
+                user_question=context.user_question,
+                chat_history=context.chat_history,
+                llm_router=context.llm_router,
+                tracker=context.tracker,
+                workflow_id=wf_id,
+                user_id=context.user_id,
+                preferred_provider=context.preferred_provider,
+                model=context.model,
+                sql_provider=context.sql_provider,
+                sql_model=context.sql_model,
+                project_name=context.project_name,
+                extra={**context.extra, "_skip_complexity": True},
+            ),
+        )
+
     async def _run_complex_pipeline(
         self,
         context: AgentContext,
@@ -2033,30 +2071,22 @@ class OrchestratorAgent(BaseAgent):
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
 
         if not plan:
-            await self._tracker.emit(
-                wf_id,
-                "thinking",
-                "in_progress",
-                "Planning failed, falling back to standard approach…",
+            return await self._fallback_to_unified(
+                context, wf_id, "Planning failed, falling back to standard approach…"
             )
-            logger.warning("Planner failed — falling back to flat loop")
-            return await self.run(
-                AgentContext(
-                    project_id=context.project_id,
-                    connection_config=context.connection_config,
-                    user_question=context.user_question,
-                    chat_history=context.chat_history,
-                    llm_router=context.llm_router,
-                    tracker=context.tracker,
-                    workflow_id=wf_id,
-                    user_id=context.user_id,
-                    preferred_provider=context.preferred_provider,
-                    model=context.model,
-                    sql_provider=context.sql_provider,
-                    sql_model=context.sql_model,
-                    project_name=context.project_name,
-                    extra={**context.extra, "_skip_complexity": True},
-                ),
+
+        # ORCH-P03: bounce trivially-small plans back to the unified loop.
+        # A plan with ≤2 data stages provides no multi-stage benefit over the
+        # flat loop but loses viz, follow-up suggestions, and the result-gate.
+        data_stage_count = sum(1 for s in plan.stages if s.tool in self._DATA_STAGE_TOOLS)
+        has_checkpoint = any(getattr(s, "checkpoint", False) for s in plan.stages)
+        has_process_data_fanout = any(s.tool == "process_data" for s in plan.stages)
+        if data_stage_count <= 2 and not has_checkpoint and not has_process_data_fanout:
+            return await self._fallback_to_unified(
+                context,
+                wf_id,
+                f"Trivial plan ({data_stage_count} data stage(s)) — "
+                "falling back to standard approach…",
             )
 
         n_stages = len(plan.stages)
@@ -2316,6 +2346,11 @@ class OrchestratorAgent(BaseAgent):
                 {
                     "attempt": replan_count,
                     "failed_stage": failed.stage_id,
+                    # ORCH-RP02: store the tool name so pipeline learnings get a
+                    # tool identifier (e.g. "query_database"), not a stage_id
+                    # (e.g. "fetch_rev") which has no semantic meaning for the
+                    # learning memory.
+                    "failed_stage_tool": failed.tool,
                     "error": error_msg,
                 }
             )
@@ -2358,16 +2393,17 @@ class OrchestratorAgent(BaseAgent):
                 f"New plan: {len(new_plan.stages)} stages",
             )
 
-            # R5-6 (structural-soundness guard): the new context is seeded only
-            # with stages that completed *successfully* (carried over below).
-            # If the replanned plan has a stage whose ``depends_on`` references an
-            # id that is neither in the new plan nor a carried-over success
-            # stage, the executor will deadlock that stage and report the
-            # pipeline "stuck" — burning a replan on a structurally-doomed plan.
-            # Detect that up front and stop replanning, surfacing the prior
-            # (stage_failed) result as honest partial results instead.
+            # R5-6 (structural-soundness guard): the new context is seeded with
+            # stages that completed successfully or in a degraded state (both
+            # have usable query_result / summary — ORCH-RP01). If the replanned
+            # plan has a stage whose ``depends_on`` references an id that is
+            # neither in the new plan nor a carried-over seedable stage, the
+            # executor will deadlock that stage and report the pipeline "stuck"
+            # — burning a replan on a structurally-doomed plan.  Detect that up
+            # front and stop replanning, surfacing the prior (stage_failed)
+            # result as honest partial results instead.
             seedable_ids = {s.stage_id for s in new_plan.stages} | {
-                sid for sid, sr in completed.items() if sr.status == "success"
+                sid for sid, sr in completed.items() if sr.status in ("success", "degraded")
             }
             dangling = {
                 dep
@@ -2413,7 +2449,10 @@ class OrchestratorAgent(BaseAgent):
                 pipeline_run_id=run_id,
             )
             for sid, sr in completed.items():
-                if sr.status == "success":
+                # ORCH-RP01: carry over both success and degraded results —
+                # degraded stages have usable query_result / summary and
+                # re-running them just wastes budget.
+                if sr.status in ("success", "degraded"):
                     new_stage_ctx.set_result(sid, sr)
 
             exec_result = await executor.execute(
@@ -2666,7 +2705,10 @@ class OrchestratorAgent(BaseAgent):
                         connection_id,
                         question="",
                         failed_stage_id=rh.get("failed_stage", ""),
-                        failed_stage_tool=rh.get("failed_stage", ""),
+                        # ORCH-RP02: use the dedicated tool field; fall back to
+                        # failed_stage (stage_id) only if the entry predates
+                        # this fix (empty string is safer than a stage_id).
+                        failed_stage_tool=rh.get("failed_stage_tool", ""),
                         error=rh.get("error", ""),
                         replan_succeeded=(exec_result.status == "completed"),
                     )

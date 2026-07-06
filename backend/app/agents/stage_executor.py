@@ -906,6 +906,11 @@ class StageExecutor:
 
         The planner must specify the operation explicitly. No keyword-based
         inference is performed.
+
+        ORCH-P02: accepts both the canonical top-level key convention and the
+        legacy ``params_json`` wrapper for back-compat. When ``params_json``
+        is present and is a dict, its keys are merged in (top-level keys win
+        on overlap) and the ``params_json`` key itself is removed.
         """
         params: dict[str, Any] = {}
         if stage.input_context:
@@ -915,6 +920,15 @@ class StageExecutor:
                     params = parsed
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        # Unwrap params_json wrapper if present (back-compat with orchestrator
+        # prompt convention that placed cohort_window params inside params_json).
+        if "params_json" in params and isinstance(params["params_json"], dict):
+            inner = params.pop("params_json")
+            # Top-level keys win; inner fills anything not already present.
+            for k, v in inner.items():
+                if k not in params:
+                    params[k] = v
 
         if "operation" not in params:
             # R5-8: don't guess a concrete transform (the old default,

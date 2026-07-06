@@ -413,6 +413,8 @@ class TestPipelineScopedContext:
             workflow_id="wf-1",
         )
 
+        # Use 3 data stages so the P03 trivial-plan bounce does not trigger
+        # (≤2 data stages would bounce to the unified loop instead of the pipeline).
         plan = ExecutionPlan(
             plan_id="p1",
             question="complex question",
@@ -421,6 +423,22 @@ class TestPipelineScopedContext:
                     stage_id="s1",
                     description="fetch data",
                     tool="query_database",
+                ),
+                PlanStage(
+                    stage_id="s2",
+                    description="search code",
+                    tool="search_codebase",
+                ),
+                PlanStage(
+                    stage_id="s3",
+                    description="analyze git",
+                    tool="analyze_git",
+                ),
+                PlanStage(
+                    stage_id="synth",
+                    description="synthesize",
+                    tool="synthesize",
+                    depends_on=["s1", "s2", "s3"],
                 ),
             ],
         )

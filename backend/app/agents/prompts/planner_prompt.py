@@ -34,12 +34,13 @@ question into a sequence of discrete stages that can be executed one at a time.
      {"operation": "filter_data", "column": "country_code", \
      "op": "neq", "value": "", "exclude_empty": true}. \
      cohort_window (correlate release dates with post-release metrics; \
-     requires "release_dates", "event_date_column", and either \
-     "value_column" (for revenue) or "id_column" (for retention)), e.g.: \
+     requires top-level keys release_dates, event_date_column, and either \
+     value_column (for revenue) or id_column (for retention)), e.g.: \
      {"operation": "cohort_window", \
      "release_dates": [{"tag": "v1.2.0", "date": "2026-01-15"}], \
      "event_date_column": "created_at", "value_column": "amount", \
-     "windows": [7, 14], "metric": "revenue"}.
+     "windows": [7, 14], "metric": "revenue"}. \
+     (A params_json wrapper object is also accepted for back-compat.)
    - "analyze_results" — perform analysis or computation on data from \
      previous stages (no new DB query)
    - "query_mcp_source" — query an external data source connected via MCP \
@@ -62,9 +63,13 @@ question into a sequence of discrete stages that can be executed one at a time.
    intermediate data BEFORE the pipeline continues. Typically this is after \
    the first major data retrieval. Do NOT checkpoint analysis-only or \
    synthesis stages.
-6. Define validation criteria so the system knows what "success" looks like:
-   - `expected_columns` — column names that MUST appear in the result
-   - `min_rows` / `max_rows` — sanity bounds on row count
+6. Define validation criteria so the system knows what "success" looks like. \
+   `expected_columns` and `min_rows`/`max_rows` apply only to DATA stages \
+   (query_database, process_data, query_mcp_source, analyze_git) — do NOT \
+   set them on synthesize or analyze_results stages:
+   - `expected_columns` — column names that MUST appear in the result \
+     (data stages only)
+   - `min_rows` / `max_rows` — sanity bounds on row count (data stages only)
    - `business_rules` — free-text rules, e.g. "no negative amounts"
    - `cross_stage_checks` — constraints referencing previous stages, \
      e.g. "row_count <= find_renewals.row_count * 2"

@@ -106,11 +106,12 @@ class AdaptivePlanner:
             completed_summaries.append("\n".join(summary_parts))
 
         # P2: a replanned stage may legitimately depend on a carried-over
-        # SUCCESSFUL stage that is not re-included in the new plan. Tell the
-        # planner which ids are available and accept them in validation, so a
-        # valid carried-over dependency is not rejected as "unknown stage".
+        # SUCCESSFUL or DEGRADED stage that is not re-included in the new plan.
+        # Tell the planner which ids are available and accept them in
+        # validation, so a valid carried-over dependency is not rejected as
+        # "unknown stage" (ORCH-RP01: degraded results are also seedable).
         allowed_dep_ids = frozenset(
-            sid for sid, r in completed_stages.items() if r.status == "success"
+            sid for sid, r in completed_stages.items() if r.status in ("success", "degraded")
         )
 
         prompt = build_replan_prompt(
