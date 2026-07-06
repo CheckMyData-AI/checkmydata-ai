@@ -502,9 +502,10 @@ class Settings(BaseSettings):
     hybrid_k: int = 20
 
     # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
-    # OFF by default — requires `sentence-transformers` + a model download.
+    # ON by default as of W2 (gated on retrieval-eval + reranker tests).
     # Degrades to a no-op when the library/model is unavailable at runtime.
-    reranker_enabled: bool = False
+    # Requires `sentence-transformers` + cross-encoder model in the deploy image.
+    reranker_enabled: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_candidates: int = 30
 
@@ -531,8 +532,9 @@ class Settings(BaseSettings):
     # Phase 4: orchestrator Context Planner. When enabled, the orchestrator
     # plans which knowledge categories to load (query-aware lazy loading) and
     # assembles a single traceable ContextPack instead of 6+ eager loads.
-    # OFF by default — opt-in. mode: "heuristic" (zero-cost) or "llm".
-    context_planner_enabled: bool = False
+    # ON by default as of W2 (gated on retrieval-eval + reranker tests).
+    # mode: "heuristic" (zero-cost) or "llm".
+    context_planner_enabled: bool = True
     context_planner_mode: str = "heuristic"
     context_planner_budget_tokens: int = 8000
 

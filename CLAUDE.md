@@ -248,11 +248,12 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 | `lineage_enabled` | off | Requires code graph |
 | `clustering_enabled` | off | Louvain communities |
 | `cluster_llm_label_enabled` | on | Only matters when clustering on |
-| `reranker_enabled` | off | Cross-encoder; needs `sentence-transformers` |
+| `reranker_enabled` | **on** | Cross-encoder; needs `sentence-transformers` + cross-encoder model in deploy image (default ON as of W2) |
+| `context_planner_enabled` | **on** | Query-aware ContextPack lazy loading; mode `heuristic` (zero-cost) or `llm` (default ON as of W2) |
 
 **Agent / quality:**
 
-`answer_validator_enabled`, `answer_validator_fail_closed`, `learning_analyzer_mode` (`heuristic | hybrid | llm_first`, default `llm_first`), `query_empty_result_retry`, `orchestrator_result_gate_enabled`, `orchestrator_auto_investigate_enabled`, `data_gate_hard_checks_enabled`, `data_gate_llm_semantics`, `cross_connection_learnings_enabled`, `context_planner_enabled`, `context_planner_mode`, `generate_docs_max_failure_ratio`, `db_index_incremental_enabled`.
+`answer_validator_enabled`, `answer_validator_fail_closed`, `learning_analyzer_mode` (`heuristic | hybrid | llm_first`, default `llm_first`), `query_empty_result_retry`, `orchestrator_result_gate_enabled`, `orchestrator_auto_investigate_enabled`, `data_gate_hard_checks_enabled`, `data_gate_llm_semantics`, `cross_connection_learnings_enabled`, `context_planner_mode`, `generate_docs_max_failure_ratio`, `db_index_incremental_enabled`.
 
 `max_orchestrator_iterations` default is **20** (was 100 before W0 intelligence-remediation; set higher only if complex multi-hop queries time out at the wall-clock limit).
 

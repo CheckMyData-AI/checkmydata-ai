@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — W2 intelligence-remediation: retrieval + ContextPack wave-closer flag flips (2026-07-06, branch `worktree-intelligence-remediation`)
+
+Wave 2 wave-closer (T15). All retrieval + ContextPack fixes (T1–T14) landed; eval gate green; flags flipped to default-on.
+
+- **C1/C2 (tokenizer/chunk-window)** — knowledge indexer tokenizer aligned to the actual embedding model; chunk window sized correctly so oversized chunks no longer exceed the model's context window silently.
+- **C3 (raw-code embedding)** — raw source code is embedded with a dedicated code-embedding path rather than being passed through the prose tokenizer; code retrieval quality improved.
+- **R1/R2/R3/R8 (ContextPack hybrid+budget+provenance)** — `ContextPack` assembles a single traceable knowledge context with hybrid retrieval (BM25 + dense RRF), a token-budget cap, and per-chunk provenance metadata surfaced to the orchestrator.
+- **R4 (retrieval_degraded signal)** — a `retrieval_degraded` flag is set on `ContextPack` when any retrieval stage falls back; the orchestrator prompt carries the caveat so the LLM knows context may be incomplete.
+- **R5 (relevance floor)** — results above `rag_relevance_threshold` (distance > 0.45) are filtered out before entering the ContextPack; tail-noise chunks no longer dilute context.
+- **R9/D7 (FK-aware schema retrieval)** — `SchemaRetriever` expands FK neighbours up to one hop so tables joined by a foreign key are co-retrieved even when only one side matches the query.
+- **R10 (safety-net floor)** — `sql_agent_safety_net_min_relevance` (default 3) filters low-signal safety-net tables so retrieved + FK-expanded entries are not crowded out.
+- **R14 (reranker `.rank`)** — `CrossEncoderReranker` calls `.rank()` when available (sentence-transformers ≥ 3.x) and falls back to `.predict()` for older model versions; both paths produce a sorted `List[Candidate]`.
+- **Low batch** — BM25 retrieval batch size tuned to avoid memory spikes on large corpora.
+- **Flag flips (gated)** — `reranker_enabled` and `context_planner_enabled` flipped to `True` (default-on) after the retrieval-eval + reranker gate passed (18/18 tests, including `test_harness_oracle_passes_thresholds` at `hit_at_k==1.0` and `test_cross_encoder_uses_rank_when_available`). Wave-gate assertion test `test_w2_flag_flips.py` added. **Deploy note:** `reranker_enabled=true` requires `sentence-transformers` + a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) in the production image; the flag degrades gracefully to a no-op when the library or model is unavailable.
+
 ### Fixed — W1 intelligence-remediation: data-quality hardening (2026-07-05, branch `worktree-intelligence-remediation`)
 
 Wave 1 of the intelligence-remediation audit. All 15 tasks committed; ruff/mypy clean; unit+integration suite green at ≥72% coverage.

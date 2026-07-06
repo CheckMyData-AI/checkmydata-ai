@@ -12,11 +12,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-import pytest
-
 from app.knowledge.schema_retriever import SchemaRetriever, expand_fk_hop
 from app.models.db_index import DbIndex
-
 
 # ---------------------------------------------------------------------------
 # Helpers

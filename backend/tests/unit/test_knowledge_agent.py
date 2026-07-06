@@ -167,6 +167,8 @@ class TestKnowledgeAgent:
         mock_vector_store,
         context,
     ):
+        # Both documents must have distance <= rag_relevance_threshold (0.45) so
+        # the W2 relevance floor (R5) does not filter either of them out.
         mock_vector_store.query = MagicMock(
             return_value=[
                 {
@@ -177,7 +179,7 @@ class TestKnowledgeAgent:
                 {
                     "document": "DB migrations via Alembic.",
                     "metadata": {"source_path": "docs/migrations.md"},
-                    "distance": 0.5,
+                    "distance": 0.4,
                 },
             ]
         )
