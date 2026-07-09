@@ -302,16 +302,16 @@
 
 ## Sprint 8 — M1–M6 rollout completion (queued)
 
-**Status:** P0, blocked by 2-week per-flag soak (see [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md) §3 for canary criteria and §4 for the cleanup-PR inventory).
+**Status:** P0. `code_graph_enabled` + `lineage_enabled` were flipped default-on in **1.15.0 (W6)** via the `python -m app.eval.graph_benchmark` quality gate (spec §9, F-ARCH-6) rather than a time-boxed soak. Remaining: `clustering_enabled` flip (8.5) + the two cleanup PRs (8.6/8.7). See [docs/ROLLOUT_M1_M6.md](docs/ROLLOUT_M1_M6.md) §4 for the cleanup-PR inventory.
 
 | #  | Task | Status | Priority | Dependencies | Est. Complexity |
 |----|------|--------|----------|--------------|-----------------|
-| 8.1 | Flip `code_graph_enabled` default `False → True` after 2-week soak | `pending` | P0 | Soak v129+ on canary project | Low |
+| 8.1 | Flip `code_graph_enabled` default `False → True` | `done` (default `True` as of 1.15.0 W6, benchmark-gated: `graph_benchmark` PASS `symbols=7 CALLS=2 EXTENDS=1 IMPORTS=1`) | P0 | Graph-quality benchmark | Low |
 | 8.2 | Flip `hybrid_retrieval_enabled` default `False → True` after 2-week soak | `done` (default `True` as of 1.14.0, with dense-only fallback) | P0 | 8.1 soak passes | Low |
 | 8.3 | Flip `schema_retrieval_enabled` default `False → True` after 2-week soak | `done` (default `True` as of 1.14.0, unioned with legacy relevance net) | P0 | 8.2 soak passes | Low |
-| 8.4 | Flip `lineage_enabled` default `False → True` after 2-week soak | `pending` | P0 | `code_graph_enabled` (8.1) soak passes | Low |
+| 8.4 | Flip `lineage_enabled` default `False → True` | `done` (default `True` as of 1.15.0 W6, gated together with `code_graph_enabled`) | P0 | 8.1 | Low |
 | 8.5 | Flip `clustering_enabled` default `False → True` after 2-week soak | `pending` | P0 | 8.4 soak passes | Low |
-| 8.6 | Cleanup PR: remove `if settings.<flag>:` gates per [docs/ROLLOUT_M1_M6.md §4.2](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | All five soaks passed | Medium |
+| 8.6 | Cleanup PR: remove `if settings.<flag>:` gates per [docs/ROLLOUT_M1_M6.md §4.2](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | 8.5 + soak of default-on flags | Medium |
 | 8.7 | Cleanup PR: remove prompt-builder kwargs (`hybrid_retrieval_enabled`, `lineage_enabled`, `schema_retrieval_enabled`, `has_code_clusters`) per [§4.3](docs/ROLLOUT_M1_M6.md) | `pending` | P0 | 8.6 | Low |
 
 **Explicit non-removal list** (preserve these even after defaults flip):
@@ -320,7 +320,7 @@
 - `LLM.stream()` and other `@abstractmethod` ABCs in `backend/app/llm/base.py` — standard ABC pattern, not stubs.
 - Per-request override of every flag via `extra` (operator escape hatch for projects that need different behavior).
 
-**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md). As of 1.14.0: `hybrid_retrieval_enabled` and `schema_retrieval_enabled` default `True`; `code_graph_enabled`, `lineage_enabled`, and `clustering_enabled` remain `pending` soak.
+**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md). As of 1.15.0: `hybrid_retrieval_enabled`, `schema_retrieval_enabled`, `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, and `context_planner_enabled` default `True` (last four flipped in 1.15.0 W2/W6 via benchmark gates); `clustering_enabled` remains the only `pending` flag.
 
 ---
 
