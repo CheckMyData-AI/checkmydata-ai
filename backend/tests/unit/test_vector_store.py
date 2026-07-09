@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.knowledge.vector_store import VectorStore, _get_embedding_function
+from app.knowledge.vector_store import (
+    VectorStore,
+    _get_embedding_function,
+    _sentence_transformers_available,
+)
 
 
 @pytest.fixture
@@ -235,6 +240,29 @@ class TestDeleteCollection:
         store.delete_collection("proj_x")
 
 
+class TestSentenceTransformersAvailability:
+    def test_available_true_when_importable(self):
+        with patch(
+            "app.knowledge.vector_store.importlib.util.find_spec",
+            return_value=object(),
+        ):
+            assert _sentence_transformers_available() is True
+
+    def test_available_false_when_missing(self):
+        with patch(
+            "app.knowledge.vector_store.importlib.util.find_spec",
+            return_value=None,
+        ):
+            assert _sentence_transformers_available() is False
+
+    def test_available_false_on_find_spec_error(self):
+        with patch(
+            "app.knowledge.vector_store.importlib.util.find_spec",
+            side_effect=ValueError("bad module"),
+        ):
+            assert _sentence_transformers_available() is False
+
+
 class TestGetEmbeddingFunction:
     def test_returns_none_when_no_model(self):
         with patch("app.knowledge.vector_store.settings") as m:
@@ -251,6 +279,10 @@ class TestGetEmbeddingFunction:
         with (
             patch("app.knowledge.vector_store.settings") as m,
             patch(
+                "app.knowledge.vector_store._sentence_transformers_available",
+                return_value=True,
+            ),
+            patch(
                 "app.knowledge.vector_store.SentenceTransformerEmbeddingFunction",
                 return_value=mock_fn,
             ),
@@ -260,9 +292,44 @@ class TestGetEmbeddingFunction:
             result = _get_embedding_function()
         assert result is mock_fn
 
-    def test_falls_back_on_import_error(self):
-        with patch("app.knowledge.vector_store.settings") as m:
-            m.chroma_embedding_model = "bad-model"
-            with patch.dict("sys.modules", {"chromadb.utils.embedding_functions": None}):
+    def test_clean_fallback_without_sentence_transformers(self, caplog):
+        """Known 'sentence-transformers missing' condition: single concise
+        WARNING, no exception traceback attached (not an alarming stack dump)."""
+        with (
+            patch("app.knowledge.vector_store.settings") as m,
+            patch(
+                "app.knowledge.vector_store._sentence_transformers_available",
+                return_value=False,
+            ),
+        ):
+            m.chroma_embedding_model = "BAAI/bge-base-en-v1.5"
+            with caplog.at_level(logging.WARNING, logger="app.knowledge.vector_store"):
                 result = _get_embedding_function()
         assert result is None
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert warnings[0].exc_info is None  # no traceback dumped
+        assert "sentence-transformers" in warnings[0].getMessage()
+
+    def test_falls_back_with_traceback_on_unexpected_error(self, caplog):
+        """A genuine unexpected load failure (st available but model broken)
+        keeps the diagnostic traceback."""
+        with (
+            patch("app.knowledge.vector_store.settings") as m,
+            patch(
+                "app.knowledge.vector_store._sentence_transformers_available",
+                return_value=True,
+            ),
+            patch(
+                "app.knowledge.vector_store.SentenceTransformerEmbeddingFunction",
+                side_effect=RuntimeError("model download failed"),
+            ),
+        ):
+            m.chroma_embedding_model = "some-model"
+            m.embedder_max_tokens = 512
+            with caplog.at_level(logging.WARNING, logger="app.knowledge.vector_store"):
+                result = _get_embedding_function()
+        assert result is None
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert warnings[0].exc_info is not None  # traceback retained

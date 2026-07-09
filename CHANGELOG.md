@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-07-09 - Embedding-loader log hygiene + infra guidance
+
+Post-release hardening from a production log review of the 1.15.0 deploy (v194).
+
+### Fixed
+
+- **Embedding-loader startup noise (observability).** When the configured `chroma_embedding_model` (default `BAAI/bge-base-en-v1.5`) cannot be loaded because the optional `sentence-transformers` package is absent, `app/knowledge/vector_store._get_embedding_function` now logs a **single concise WARNING** and degrades to ChromaDB's built-in default ONNX model (`all-MiniLM-L6-v2`, 384-dim). Previously this known, handled condition dumped a full exception **traceback twice at every boot**, which read like a crash in the logs. A new `_sentence_transformers_available()` helper (cheap `importlib.util.find_spec`, never raises) pre-empts the failing instantiation; genuine unexpected load failures still retain their diagnostic traceback. No behavioural change to retrieval — index and query both use the same effective model, so dense retrieval stays self-consistent.
+
+### Deploy notes
+
+- **bge embeddings + reranker require ≥1GB-RAM dynos (infra decision).** Production currently runs on Heroku **Standard-1X** (512 MB) web+worker dynos. `BAAI/bge-base-en-v1.5` (768-dim) and the cross-encoder reranker both need `sentence-transformers` + `torch`, which will not fit in 512 MB (OOM at model load). Until the dynos are upgraded to ≥1 GB (Standard-2X / Performance-M) **and** `sentence-transformers` is added to `Dockerfile.backend` / `Dockerfile.worker`, the system runs on the ONNX `all-MiniLM-L6-v2` default (fully functional, lower retrieval ceiling) and the reranker is a no-op. **To enable bge + reranker:** (1) scale web+worker to ≥1 GB, (2) add `sentence-transformers` to the images, (3) run a full reindex (`queue_embedding_reindex`) so the 768-dim vectors replace the 384-dim ones — the embedding fingerprint marker must then be advanced (or the reconcile re-run) so index and query dimensions match.
+
 ## [1.15.0] - 2026-07-09 - Intelligence remediation (W0–W6), self-completing embedding reconcile, sync & orchestrator hardening
 
 **Release summary.** This release cuts the full intelligence-remediation program (Waves 0–6) plus the June sync/orchestrator audit remediation and the self-completing embedding reconcile. All code was merged and auto-deployed to production incrementally between 2026-06-25 and 2026-07-06; this entry formalises the version boundary (1.14.0 → 1.15.0). Highlights: data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack with provenance and reranking, orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals with exact git-freshness states, code-graph correctness, and a zero-touch embedding reindex on deploy. Default-on flag flips (benchmark-gated): `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. See the per-wave sections below and the **Deploy notes** block for operator prerequisites.

@@ -53,6 +53,10 @@ class TestEmbeddingWindowMismatchWarning:
         with (
             patch("app.knowledge.vector_store.settings") as mock_settings,
             patch(
+                "app.knowledge.vector_store._sentence_transformers_available",
+                return_value=True,
+            ),
+            patch(
                 "app.knowledge.vector_store.SentenceTransformerEmbeddingFunction",
                 return_value=ef_mock,
             ),
@@ -117,6 +121,10 @@ class TestEmbeddingWindowMismatchWarning:
 
         with (
             patch("app.knowledge.vector_store.settings") as mock_settings,
+            patch(
+                "app.knowledge.vector_store._sentence_transformers_available",
+                return_value=True,
+            ),
             patch(
                 "app.knowledge.vector_store.SentenceTransformerEmbeddingFunction",
                 return_value=ef_mock,

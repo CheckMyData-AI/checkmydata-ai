@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 import threading
 from pathlib import Path
@@ -42,8 +43,29 @@ def _check_window_mismatch(ef: object, configured_max: int, model_name: str) -> 
         pass
 
 
+def _sentence_transformers_available() -> bool:
+    """True when the optional ``sentence-transformers`` package is importable.
+
+    Cheap check (``find_spec`` only — no import, no model download). A custom
+    ``chroma_embedding_model`` can only be loaded when this is True; otherwise
+    ChromaDB's built-in default ONNX model (``all-MiniLM-L6-v2``, 384-dim) is
+    used. Never raises — any lookup error is treated as "unavailable".
+    """
+    try:
+        return importlib.util.find_spec("sentence_transformers") is not None
+    except Exception:
+        return False
+
+
 def _get_embedding_function() -> EmbeddingFunction | None:
-    """Return a custom embedding function if configured, else None (ChromaDB default).
+    """Return a custom embedding function if configured & loadable, else None.
+
+    Returning None makes ChromaDB use its bundled default ONNX embedding model
+    (``all-MiniLM-L6-v2``, 384-dim), which needs no extra packages. When a
+    custom model is configured but ``sentence-transformers`` is not installed
+    we log a single concise WARNING (no alarming traceback) and degrade to the
+    default — a known, handled condition, not a crash. Genuine unexpected load
+    failures keep the diagnostic traceback.
 
     Also runs a best-effort startup check: if the loaded model's
     ``max_seq_length`` disagrees with ``settings.embedder_max_tokens`` a
@@ -53,9 +75,13 @@ def _get_embedding_function() -> EmbeddingFunction | None:
     model_name = settings.chroma_embedding_model
     if not model_name:
         return None
-    if SentenceTransformerEmbeddingFunction is None:
+    if SentenceTransformerEmbeddingFunction is None or not _sentence_transformers_available():
         logger.warning(
-            "Failed to load embedding model %s, falling back to default",
+            "Embedding model %s requires the optional 'sentence-transformers' "
+            "package, which is not installed; using ChromaDB's built-in default "
+            "(all-MiniLM-L6-v2, 384-dim). Install sentence-transformers "
+            "(needs ~1GB RAM) to enable %s.",
+            model_name,
             model_name,
         )
         return None
