@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-09 - Intelligence remediation (W0–W6), self-completing embedding reconcile, sync & orchestrator hardening
+
+**Release summary.** This release cuts the full intelligence-remediation program (Waves 0–6) plus the June sync/orchestrator audit remediation and the self-completing embedding reconcile. All code was merged and auto-deployed to production incrementally between 2026-06-25 and 2026-07-06; this entry formalises the version boundary (1.14.0 → 1.15.0). Highlights: data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack with provenance and reranking, orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals with exact git-freshness states, code-graph correctness, and a zero-touch embedding reindex on deploy. Default-on flag flips (benchmark-gated): `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. See the per-wave sections below and the **Deploy notes** block for operator prerequisites.
+
 ### Fixed — W5 intelligence-remediation: code↔DB trust signals (2026-07-06, branch `worktree-intelligence-remediation`)
 
 Wave 5 wave-closer (T11). All 10 prior W5 tasks committed; ruff/mypy clean; unit+integration suite green at 78% coverage (≥72% gate); retrieval-eval gate green (18/18); single alembic head `c9b8a7f6e5d4`.
