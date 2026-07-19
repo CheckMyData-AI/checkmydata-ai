@@ -1455,17 +1455,18 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-086: Delete a dashboard
 - **Persona:** editor
 - **Feature:** dashboards
-- **Entry point:** dashboard list / viewer (would-be delete control)
-- **Preconditions:** owner/editor of the dashboard
+- **Entry point:** sidebar Dashboards list → per-row trash button (hover-revealed)
+- **Preconditions:** owner/editor of the project (`canEdit`)
 - **Steps:**
-  1. User deletes a dashboard they no longer need
-- **Expected result:** dashboard removed after confirmation
-- **UI elements:** (none)
-- **States covered:** none
-- **Errors & recovery:** n/a
+  1. User hovers a dashboard row and clicks the trash button (aria-label "Delete dashboard")
+  2. Confirm "Delete this dashboard?" (destructive) appears
+  3. User confirms
+- **Expected result:** `api.dashboards.delete` called; row removed from the list; toast "Dashboard deleted"; the row's navigate-to-dashboard click is not triggered (stopPropagation)
+- **UI elements:** per-row trash button (Tooltip "Delete dashboard", gated to `canEdit`), ConfirmModal (destructive)
+- **States covered:** success (row removed + toast), cancelled (no-op), permission (button hidden for viewers)
+- **Errors & recovery:** delete fails → toast "Failed to delete dashboard"; row stays; cancel on confirm → no-op
 - **Status:** draft
-- **Coverage:** none yet — GAP: no delete-dashboard UI exists anywhere (`dashboards.delete` unused). Dashboards can be created and edited but never deleted from the UI
-- **Decision (2026-07-19):** confirmed bug — add a delete-dashboard action (list + viewer, owner/editor, with confirm); task spawned
+- **Coverage:** components/dashboards/DashboardList.tsx:66-76 (handleDelete), 122-135 (trash button, `canEdit`-gated); tests `__tests__/components/DashboardList.test.tsx`
 
 ## batch
 
@@ -1503,17 +1504,17 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-089: View batch results
 - **Persona:** analyst
 - **Feature:** batch
-- **Entry point:** after a batch completes
-- **Preconditions:** a batch ran to completion
+- **Entry point:** BatchRunner auto-opens BatchResults when the batch reaches a terminal status (`BatchRunner.tsx:172-174`)
 - **Steps:**
-  1. User expects to see per-query results/detail
-- **Expected result:** a results view with each query's output, errors, and export
-- **UI elements:** (placeholder only)
-- **States covered:** none
-- **Errors & recovery:** n/a
+  1. On mount, `api.batch.get(batchId)` is fetched and `results_json` parsed
+  2. Each per-query record renders as a titled block — success → result table (DataTable) with total_rows + duration; failed/blocked → the honest error text (+ SQL)
+  3. User can Export the whole batch (xlsx blob download), go Back to the runner, or Close
+- **Expected result:** per-query outputs/errors shown; export downloads `api.batch.export` blob; Back/Close wired to `onBack`/`onClose`
+- **UI elements:** header (Back button, title, Export button, Close button), per-query success tables + error blocks, spinner, Retry button
+- **States covered:** loading (spinner), loaded (per-query success/failed blocks), empty ("Batch is still running…" / "No results"), error (fetch failed → message + Retry)
+- **Errors & recovery:** fetch fails → "Couldn't load batch results" + Retry; per-query failure/blocked → error text shown inline; export fails → toast
 - **Status:** draft
-- **Coverage:** none yet — GAP: BatchResults is a stub rendering "Batch results for {id} (coming soon)"; there is no batch results/history screen (`components/batch/BatchResults.tsx:9-15`)
-- **Decision (2026-07-19):** confirmed bug — build the batch results view (per-query output, errors, export); task spawned
+- **Coverage:** components/batch/BatchResults.tsx:49-236 (fetch/parse, success table + error block, states, export); handoff components/batch/BatchRunner.tsx:172-174; tests `__tests__/components/BatchResults.test.tsx`
 
 ## schedules
 

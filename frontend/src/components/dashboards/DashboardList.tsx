@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import type { Dashboard } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { usePermission } from "@/hooks/usePermission";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { confirmAction } from "@/components/ui/ConfirmModal";
 import { FormModal } from "@/components/ui/FormModal";
 import { DashboardBuilder } from "./DashboardBuilder";
 
@@ -17,6 +20,7 @@ interface DashboardListProps {
 
 export function DashboardList({ createRequested, onCreateHandled }: DashboardListProps) {
   const activeProject = useAppStore((s) => s.activeProject);
+  const { canEdit } = usePermission();
   const router = useRouter();
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [loading, setLoading] = useState(false);
@@ -59,6 +63,18 @@ export function DashboardList({ createRequested, onCreateHandled }: DashboardLis
     router.push(`/dashboard/${d.id}`);
   };
 
+  const handleDelete = useCallback(async (dashboard: Dashboard) => {
+    const ok = await confirmAction("Delete this dashboard?", { destructive: true });
+    if (!ok) return;
+    try {
+      await api.dashboards.delete(dashboard.id);
+      setDashboards((prev) => prev.filter((x) => x.id !== dashboard.id));
+      toast("Dashboard deleted", "success");
+    } catch {
+      toast("Failed to delete dashboard", "error");
+    }
+  }, []);
+
   return (
     <div className="px-1 space-y-1">
       <FormModal
@@ -87,19 +103,37 @@ export function DashboardList({ createRequested, onCreateHandled }: DashboardLis
         <p className="text-[10px] text-text-muted px-2 py-2">No dashboards yet</p>
       ) : (
         dashboards.map((d) => (
-          <button
+          <div
             key={d.id}
-            onClick={() => router.push(`/dashboard/${d.id}`)}
-            className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-surface-1 transition-colors group"
+            className="group w-full flex items-center rounded hover:bg-surface-1 transition-colors"
           >
-            <Icon name="layout" size={12} className="text-text-tertiary shrink-0" />
-            <span className="text-[11px] text-text-secondary group-hover:text-text-primary truncate flex-1">
-              {d.title}
-            </span>
-            {d.is_shared && (
-              <Icon name="users" size={10} className="text-text-muted shrink-0" />
+            <button
+              onClick={() => router.push(`/dashboard/${d.id}`)}
+              className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
+            >
+              <Icon name="layout" size={12} className="text-text-tertiary shrink-0" />
+              <span className="text-[11px] text-text-secondary group-hover:text-text-primary truncate flex-1">
+                {d.title}
+              </span>
+              {d.is_shared && (
+                <Icon name="users" size={10} className="text-text-muted shrink-0" />
+              )}
+            </button>
+            {canEdit && (
+              <Tooltip label="Delete dashboard">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(d);
+                  }}
+                  aria-label="Delete dashboard"
+                  className="shrink-0 p-1 mr-1 rounded text-text-muted hover:text-error hover:bg-error-muted transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                >
+                  <Icon name="trash" size={11} />
+                </button>
+              </Tooltip>
             )}
-          </button>
+          </div>
         ))
       )}
     </div>
