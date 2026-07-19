@@ -103,7 +103,10 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
               )}
               <button
                 type="button"
-                onClick={logout}
+                onClick={() => {
+                  logout();
+                  toast("Signed out", "success");
+                }}
                 className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-text-secondary hover:bg-surface-2 transition-colors text-left"
               >
                 <Icon name="log-out" size={14} className="text-text-tertiary" />

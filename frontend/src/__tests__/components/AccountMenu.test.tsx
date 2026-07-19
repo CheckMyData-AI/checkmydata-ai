@@ -81,11 +81,13 @@ describe("AccountMenu", () => {
     expect(screen.getByText("Sign Out")).toBeInTheDocument();
   });
 
-  it("Sign Out calls logout", async () => {
+  it("Sign Out calls logout and confirms with a toast", async () => {
     const user = userEvent.setup();
+    const { toast } = await import("@/stores/toast-store");
     await renderMenu();
     await user.click(screen.getByRole("button", { name: "Account settings" }));
     await user.click(screen.getByText("Sign Out"));
     expect(logout).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("Signed out", "success");
   });
 });

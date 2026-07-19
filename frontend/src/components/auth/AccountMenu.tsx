@@ -78,7 +78,10 @@ export function AccountMenu() {
                   </button>
                 )}
                 <button
-                  onClick={logout}
+                  onClick={() => {
+                    logout();
+                    toast("Signed out", "success");
+                  }}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary hover:bg-surface-2 transition-colors"
                 >
                   <Icon name="log-out" size={12} />

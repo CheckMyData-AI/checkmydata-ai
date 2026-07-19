@@ -20,14 +20,14 @@ human review moves them to `validated`.
 | SCN-005 | Register with email + password | auth | new-user | implemented | 2026-07-19 PASS |
 | SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-008 | Log out | auth | analyst | draft | 2026-07-19 PARTIAL |
+| SCN-008 | Log out | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-009 | Change password | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-010 | Delete account | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-012 | Email verification after registration | auth | new-user | draft | 2026-07-19 FAIL |
-| SCN-013 | Forgot / reset password | auth | analyst | draft | 2026-07-19 FAIL |
+| SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-07-19 PASS |
+| SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-014 | Accept a pending project invite | invites | analyst | implemented | 2026-07-19 PASS |
-| SCN-015 | Decline / reject an invite | invites | analyst | draft | 2026-07-19 FAIL |
+| SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-07-19 PASS |
 | SCN-016 | Create a project | projects | owner | implemented | 2026-07-19 PASS |
 | SCN-017 | Switch between projects (multi-entity) | projects | analyst | implemented | 2026-07-19 PASS |
 | SCN-018 | Edit a project | projects | owner | implemented | 2026-07-19 PASS |
@@ -74,12 +74,12 @@ human review moves them to `validated`.
 | SCN-059 | Compound multi-query results | viz | analyst | implemented | 2026-07-19 PASS |
 | SCN-060 | Chart render failure → table fallback | viz | analyst | implemented | 2026-07-19 PASS |
 | SCN-061 | Browse indexed docs | knowledge | analyst | implemented | 2026-07-19 PASS |
-| SCN-062 | Knowledge health & re-index actions | knowledge | editor | validated | 2026-07-19 PARTIAL |
+| SCN-062 | Knowledge health & re-index actions | knowledge | editor | implemented | 2026-07-19 PASS |
 | SCN-063 | Knowledge freshness warnings | knowledge | analyst | implemented | 2026-07-19 PASS |
 | SCN-064 | Nightly sync history | knowledge | owner | implemented | 2026-07-19 PASS |
 | SCN-065 | View & filter the insights feed | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-066 | Confirm / dismiss / resolve an insight | insights | analyst | implemented | 2026-07-19 PASS |
-| SCN-067 | Browse the metric catalog | insights | analyst | validated | 2026-07-19 PARTIAL |
+| SCN-067 | Browse the metric catalog | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-068 | Saved-queries panel (scopes & empty) | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-069 | Run a saved query | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-070 | Share / unshare a saved query | notes | analyst | implemented | 2026-07-19 PASS |
@@ -96,12 +96,12 @@ human review moves them to `validated`.
 | SCN-081 | Dashboard list & empty state | dashboards | analyst | implemented | 2026-07-19 PASS |
 | SCN-082 | Create a dashboard from saved queries | dashboards | editor | implemented | 2026-07-19 PASS |
 | SCN-083 | Edit a dashboard / refresh all | dashboards | editor | implemented | 2026-07-19 PASS |
-| SCN-084 | View a shared dashboard | dashboards | viewer | validated | 2026-07-19 PARTIAL |
+| SCN-084 | View a shared dashboard | dashboards | viewer | implemented | 2026-07-19 PASS |
 | SCN-085 | Shared dashboard link invalid / expired | dashboards | viewer | implemented | 2026-07-19 PASS |
-| SCN-086 | Delete a dashboard | dashboards | editor | draft | 2026-07-19 FAIL |
+| SCN-086 | Delete a dashboard | dashboards | editor | implemented | 2026-07-19 PASS |
 | SCN-087 | Run a batch of queries | batch | analyst | implemented | 2026-07-19 PASS |
 | SCN-088 | Build a batch from saved notes | batch | analyst | implemented | 2026-07-19 PASS |
-| SCN-089 | View batch results | batch | analyst | draft | 2026-07-19 FAIL |
+| SCN-089 | View batch results | batch | analyst | implemented | 2026-07-19 PASS |
 | SCN-090 | Create a scheduled query + alerts | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-091 | Edit / pause / run-now a schedule | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-092 | Delete a schedule | schedules | owner | implemented | 2026-07-19 PASS |
@@ -110,19 +110,19 @@ human review moves them to `validated`.
 | SCN-095 | Open settings & navigate | settings | analyst | implemented | 2026-07-19 PASS |
 | SCN-096 | Change theme (light / system / dark) | settings | analyst | implemented | 2026-07-19 PASS |
 | SCN-097 | Reduced-motion honored | settings | analyst | implemented | 2026-07-19 PASS |
-| SCN-098 | Upgrade via pricing → Stripe checkout | billing | owner | validated | 2026-07-19 PARTIAL |
+| SCN-098 | Upgrade via pricing → Stripe checkout | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-099 | Manage billing (Stripe portal) | billing | owner | implemented | 2026-07-19 PASS |
-| SCN-100 | Hit token / quota limit (HTTP 402) | billing | analyst | validated | 2026-07-19 PARTIAL |
+| SCN-100 | Hit token / quota limit (HTTP 402) | billing | analyst | implemented | 2026-07-19 PASS |
 | SCN-101 | Billing disabled (self-hosted) degradation | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-102 | View usage stats | usage | owner | implemented | 2026-07-19 PASS |
 | SCN-103 | Mint & copy an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
-| SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | validated | 2026-07-19 PARTIAL |
+| SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-07-19 PASS |
 | SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-07-19 PASS |
-| SCN-107 | Runs & Errors log tabs | logs | owner | validated | 2026-07-19 PARTIAL |
+| SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-07-19 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
 | SCN-109 | Landing page → Get Started | marketing | visitor | implemented | 2026-07-19 PASS |
-| SCN-110 | Pricing CTA (logged out) | marketing | visitor | validated | 2026-07-19 PARTIAL |
+| SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-111 | Support / Contact / Legal pages | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | implemented | 2026-07-19 PASS |
 
@@ -279,13 +279,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** authenticated
 - **Steps:**
   1. User clicks "Sign Out"
-- **Expected result:** stores/storage cleared, `user=null`, AuthGate redirects to `/login`
-- **UI elements:** "Sign Out" button
+- **Expected result:** stores/storage cleared, `user=null`, a "Signed out" success toast shown, AuthGate redirects to `/login`
+- **UI elements:** "Sign Out" button, success toast
 - **States covered:** success
-- **Errors & recovery:** none surfaced — server logout is best-effort and swallowed (`auth-store.ts:147`). GAP: no confirm and no loading/success feedback on logout
-- **Status:** draft
-- **Coverage:** components/auth/AccountMenu.tsx:80-86; stores/auth-store.ts:138-172
-- **Decision (2026-07-19):** rework approved — add success feedback (and/or confirm) on logout; stays draft until built (task spawned)
+- **Errors & recovery:** server logout is best-effort and swallowed by design (`auth-store.ts:147`); the user-initiated Sign Out now confirms with a "Signed out" success toast. No confirm dialog (immediate, non-destructive) — intentional. Session-expiry (SCN-011) and account-deletion paths keep their own distinct toasts (no double-toast)
+- **Status:** implemented
+- **Coverage:** components/auth/AccountMenu.tsx:80-89; components/settings/SettingsPanel.tsx:104-113; stores/auth-store.ts:138-172
 
 ### SCN-009: Change password
 - **Persona:** analyst
@@ -346,7 +345,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** `EmailVerifyBanner` (app shell) with a "Resend email" button; `/verify-email` page with loading / "Email verified" (→ "Continue to app") / "Verification failed" (+ resend when logged in) states
 - **States covered:** loading (verifying), success (verified + continue link), error (invalid/expired token, missing token), resend (success/failure toast, "Email sent")
 - **Errors & recovery:** invalid / expired / missing token → error state; logged-in users resend from the page or the banner ("Verification email sent" / failure toast); `email_verified` is surfaced in register/login/refresh/`/me` responses so the banner shows only for unverified non-Google accounts; resend is an idempotent no-op for already-verified / Google accounts (`already_verified: true`) and rate-limited (3/min)
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** backend `backend/app/api/routes/auth.py` (`_auth_response`/`UserResponse` expose `email_verified`; `POST /api/auth/resend-verification`; `POST /api/auth/verify-email`) → `AuthService.issue_email_verification`/`verify_email`, `EmailService.send_verification_email`; frontend `frontend/src/app/verify-email/page.tsx`, `frontend/src/components/auth/EmailVerifyBanner.tsx` (wired into `frontend/src/app/app/page.tsx`), `frontend/src/lib/api/auth.ts` (`verifyEmail`/`resendVerification`), `AuthUser.email_verified` in `frontend/src/lib/api/types.ts`; tests `backend/tests/integration/test_auth_email_verification.py`, `frontend/src/__tests__/components/VerifyEmailPage.test.tsx`, `frontend/src/__tests__/components/EmailVerifyBanner.test.tsx`
 
 ### SCN-013: Forgot / reset password
@@ -363,7 +362,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** login "Forgot password?" link; `/forgot-password` page (email input + inline validation, "Send reset link" button, generic "Check your email" confirmation); `/reset-password` page (new-password + confirm inputs with inline validation, "Reset password" button, invalid/expired-link error with a "Request a new reset link" recovery link, missing-token "Invalid reset link" state)
 - **States covered:** forgot: idle (form), loading ("Sending…"), success (generic confirmation), error (rate-limit/network message), inline invalid-email; reset: loading ("Resetting…"), success (toast + redirect to `/login`), error (invalid/expired token + recovery link), inline password-too-short (<8) / password-mismatch, missing-token
 - **Errors & recovery:** unknown / passwordless (Google-only) email → still a generic `{"ok": true}` with no email sent (no account-enumeration leak); invalid / expired / already-used token → 400 surfaced as an error with a link to request a fresh reset; `new_password` < 8 → 422 (also blocked client-side inline); both endpoints are public + rate-limited (5/min)
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** backend model `backend/app/models/user.py:42-45` (`password_reset_token`/`password_reset_expires_at`), migration `backend/alembic/versions/e7f8a9b0c1d2_add_password_reset_to_users.py` (revision `e7f8a9b0c1d2`, down_revision `d5e6f7a8b9c0`), config `backend/app/config.py:122` (`password_reset_expiry_hours=1`); service `backend/app/services/auth_service.py:162` (`issue_password_reset`), `:188` (`reset_password`); email `backend/app/services/email_service.py:205` (`send_password_reset_email` → `{app_url}/reset-password?token=…`); routes `backend/app/api/routes/auth.py:183-201` (`POST /api/auth/forgot-password`), `:204-224` (`POST /api/auth/reset-password`); frontend `frontend/src/app/forgot-password/page.tsx`, `frontend/src/app/reset-password/page.tsx`, login link `frontend/src/app/login/page.tsx:261`, api `frontend/src/lib/api/auth.ts:75` (`forgotPassword`), `:80` (`resetPassword`); tests `backend/tests/unit/test_password_reset.py`, `backend/tests/integration/test_password_reset.py`, `frontend/src/__tests__/components/ForgotPasswordPage.test.tsx`, `frontend/src/__tests__/components/ResetPasswordPage.test.tsx`, `frontend/src/__tests__/components/LoginPage.test.tsx` (forgot-password link)
 
 ## invites
@@ -393,7 +392,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-row secondary/text "Decline" button (`aria-label="Decline invitation to {project}"`) beside "Accept"; both buttons disabled while either action is in flight (label shows "…")
 - **States covered:** loading (button "…"), success (row removed + toast), error (toast, row retained)
 - **Errors & recovery:** decline fails → toast "Failed to decline invite" (or the API error message) and the row is kept; a non-invitee is rejected 403 and a non-pending/unknown invite 400/404 server-side, surfaced as an error toast
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** backend route `POST /api/invites/decline/{invite_id}` (`backend/app/api/routes/invites.py:212-227`) → `InviteService.decline_invite` (`backend/app/services/invite_service.py:122-158`; deletes the row for constraint-safe re-invite — email-owner + pending checks mirror accept with 404/400/403); frontend `frontend/src/components/invites/PendingInvites.tsx:50-61,85-93` + `frontend/src/lib/api/workspace.ts:106-107`; tests `backend/tests/unit/test_invite_service.py::TestDeclineInvite`, `backend/tests/integration/test_invites.py::TestInviteRoutes::test_invitee_can_decline_invite`, `frontend/src/__tests__/components/PendingInvites.test.tsx`
 
 ## projects
@@ -1104,7 +1103,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** refresh button, artifact-count chips, RunCard (trigger / Cancel / Retry / History), freshness action buttons
 - **States covered:** loading, error, success
 - **Errors & recovery:** health fetch fails → "Could not load knowledge health"; trigger fails → toast "Action failed"; run failed → inline red text; RunCard Cancel/Retry failures toast "Failed to cancel run" / "Failed to retry run" (`KnowledgeHealthPanel.tsx:129-164`, `RunCard.tsx:82,91`)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/knowledge/KnowledgeHealthPanel.tsx:138-253; components/knowledge/RunCard.tsx:58-139
 
 ### SCN-063: Knowledge freshness warnings
@@ -1177,7 +1176,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** search input, category filter buttons, metric rows
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** catalog fetch failure propagates a distinct error state + Retry, rendered separately from the "No metrics found" empty state (`KnowledgeHub.tsx:43-62`, `MetricCatalogPanel.tsx:118-145`)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/insights/MetricCatalogPanel.tsx:75-169
 
 ## notes
@@ -1436,7 +1435,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** "Back to app", "Refresh All", card grid, ResultTable (cap 50 rows)
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". Refresh-All tracks per-card success/failure and toasts the real counts — "Refreshed: N succeeded, M failed" (error toast when M>0, info when all pass)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** app/dashboard/[id]/page.tsx:198-325
 
 ### SCN-085: Shared dashboard link invalid / expired
@@ -1466,7 +1465,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-row trash button (Tooltip "Delete dashboard", gated to `canEdit`), ConfirmModal (destructive)
 - **States covered:** success (row removed + toast), cancelled (no-op), permission (button hidden for viewers)
 - **Errors & recovery:** delete fails → toast "Failed to delete dashboard"; row stays; cancel on confirm → no-op
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** components/dashboards/DashboardList.tsx:66-76 (handleDelete), 122-135 (trash button, `canEdit`-gated); tests `__tests__/components/DashboardList.test.tsx`
 
 ## batch
@@ -1514,7 +1513,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** header (Back button, title, Export button, Close button), per-query success tables + error blocks, spinner, Retry button
 - **States covered:** loading (spinner), loaded (per-query success/failed blocks), empty ("Batch is still running…" / "No results"), error (fetch failed → message + Retry)
 - **Errors & recovery:** fetch fails → "Couldn't load batch results" + Retry; per-query failure/blocked → error text shown inline; export fails → toast
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** components/batch/BatchResults.tsx:49-236 (fetch/parse, success table + error block, states, export); handoff components/batch/BatchRunner.tsx:172-174; tests `__tests__/components/BatchResults.test.tsx`
 
 ## schedules
@@ -1654,7 +1653,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-plan CTA button ("Redirecting…"), FAQ
 - **States covered:** loading, error, success (external)
 - **Errors & recovery:** billing not live → toast "Billing is not enabled on this deployment"; checkout fails → toast "Checkout failed" (`PricingTable.tsx:101,109`). The logged-out paid CTA routes to `/login?next=/pricing` and `/login` now honors a safe same-origin `next` after auth (returning the visitor to `/pricing`; protocol-relative / absolute-URL values are rejected — open-redirect guard)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/marketing/PricingTable.tsx:91-166
 
 ### SCN-099: Manage billing (Stripe portal)
@@ -1682,7 +1681,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** toast / chat error message
 - **States covered:** error
 - **Errors & recovery:** the 402 message keeps its "/pricing" hint, and the toast surface renders any "/pricing" mention as a clickable upgrade link to the pricing page (`lib/api/_client.ts:127-135`, `components/ui/ToastContainer.tsx:20-40`)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** lib/api/_client.ts:127-135
 
 ### SCN-101: Billing disabled (self-hosted) degradation
@@ -1763,7 +1762,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** toggle pill (count), per-task Cancel / Retry / Dismiss, progress bars, elapsed timer
 - **States covered:** empty (renders null), loading, error, success
 - **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`ActiveTasksWidget.tsx:119-149`). Cancel has no confirm (the run is reversible by re-triggering)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/tasks/ActiveTasksWidget.tsx:105-278
 
 ## logs
@@ -1795,7 +1794,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** kind select + Refresh (Runs), source/status selects + Refresh + status-cycle button (Errors)
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** Runs/Errors fetch failures render an inline error message + Retry (matching the Queries tab), distinct from the empty state; Errors status-cycle failure toasts the error (`RunsTab.tsx:19-33`, `ErrorsTab.tsx:31-51`)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/logs/RunsTab.tsx:34-59; components/logs/ErrorsTab.tsx:55-128
 
 ### SCN-108: Live activity log stream
@@ -1840,7 +1839,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-plan CTA, static FAQ
 - **States covered:** loading, success
 - **Errors & recovery:** the `next=/pricing` intent is now honored — after login/register `/login` redirects to a safe same-origin `next` (`/pricing`), with an open-redirect guard rejecting `//host` / absolute-URL values (`login/page.tsx` `resolveRedirect`; test `frontend/src/__tests__/components/LoginPage.test.tsx`)
-- **Status:** validated
+- **Status:** implemented
 - **Coverage:** components/marketing/PricingTable.tsx:91-99; redirect honored in frontend/src/app/login/page.tsx
 
 ### SCN-111: Support / Contact / Legal pages
