@@ -39,6 +39,9 @@ def _auth_response(user, token: str) -> "AuthResponse":  # noqa: ANN001
             "auth_provider": user.auth_provider,
             "is_onboarded": user.is_onboarded,
             "can_create_projects": user.can_create_projects,
+            # F-PROJ-01: the SPA surfaces a "verify your email" prompt when this is
+            # False for a non-Google account (Google logins are pre-verified).
+            "email_verified": user.email_verified,
         },
     )
 
@@ -86,6 +89,7 @@ class UserResponse(BaseModel):
     auth_provider: str = "email"
     is_onboarded: bool = False
     can_create_projects: bool = False
+    email_verified: bool = False
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -137,6 +141,34 @@ async def verify_email(
     members = await _invite_svc.auto_accept_for_user(db, user.id, user.email)
     audit_log("auth.verify_email", user_id=user.id, detail=user.email)
     return {"ok": True, "invites_accepted": len(members)}
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-issue and re-send the email-verification link for the current user (F-PROJ-01).
+
+    Idempotent no-op when there is nothing to verify: Google accounts prove their
+    address through Google, and an already-verified email account has no pending
+    verification. In both cases we return ``already_verified: True`` without minting
+    a new token or sending mail (so the endpoint can't be used as an email-spam relay).
+    """
+    user = await _auth.get_by_id(db, current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    if user.auth_provider == "google" or user.email_verified:
+        return {"ok": True, "already_verified": True}
+
+    verify_token = await _auth.issue_email_verification(db, user)
+    await _email_svc.send_verification_email(
+        user_id=user.id, email=user.email, token=verify_token, display_name=user.display_name
+    )
+    audit_log("auth.resend_verification", user_id=user.id, detail=user.email)
+    return {"ok": True, "already_verified": False}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -296,6 +328,7 @@ async def me(
         auth_provider=user.auth_provider,
         is_onboarded=user.is_onboarded,
         can_create_projects=user.can_create_projects,
+        email_verified=user.email_verified,
     )
 
 

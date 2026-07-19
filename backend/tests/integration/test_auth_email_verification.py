@@ -74,6 +74,107 @@ async def test_verify_email_invalid_token_rejected(client):
 
 
 @pytest.mark.asyncio
+async def test_email_verified_exposed_in_register_and_me(client, db_session):
+    """email_verified must be surfaced in the register response and /me (SCN-012)."""
+    email = f"ev-{uuid.uuid4().hex[:8]}@test.com"
+    reg = await client.post("/api/auth/register", json={"email": email, "password": "testpass123"})
+    assert reg.status_code == 200, reg.text
+    assert reg.json()["user"]["email_verified"] is False, "fresh email account starts unverified"
+
+    token = reg.json()["token"]
+    me = await client.get("/api/auth/me", headers=auth_headers(token))
+    assert me.status_code == 200, me.text
+    assert me.json()["email_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_resend_verification_sends_email_for_unverified(client, monkeypatch):
+    """Resend re-issues a token and sends the verification email for an unverified user."""
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+
+    # Swallow the registration-time send so only the resend send is captured.
+    async def _noop(**kwargs):
+        return None
+
+    monkeypatch.setattr(auth_routes._email_svc, "send_verification_email", _noop)
+    email = f"resend-{uuid.uuid4().hex[:8]}@test.com"
+    reg = await client.post("/api/auth/register", json={"email": email, "password": "testpass123"})
+    assert reg.status_code == 200
+    token = reg.json()["token"]
+
+    monkeypatch.setattr(auth_routes._email_svc, "send_verification_email", _capture)
+    resp = await client.post("/api/auth/resend-verification", headers=auth_headers(token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["already_verified"] is False
+    assert captured.get("token"), "a fresh verification token should have been emailed"
+    assert captured.get("email") == email
+
+
+@pytest.mark.asyncio
+async def test_resend_verification_noop_when_already_verified(client, monkeypatch):
+    """Once verified, resend is a no-op that neither mints a token nor sends mail."""
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(auth_routes._email_svc, "send_verification_email", _capture)
+    email = f"verified-{uuid.uuid4().hex[:8]}@test.com"
+    reg = await client.post("/api/auth/register", json={"email": email, "password": "testpass123"})
+    assert reg.status_code == 200
+    token = reg.json()["token"]
+
+    # Verify first via the emailed token.
+    ver = await client.post("/api/auth/verify-email", json={"token": captured["token"]})
+    assert ver.status_code == 200
+
+    captured.clear()
+    resp = await client.post("/api/auth/resend-verification", headers=auth_headers(token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "already_verified": True}
+    assert captured == {}, "no verification email should be sent for an already-verified user"
+
+
+@pytest.mark.asyncio
+async def test_resend_verification_noop_for_google_user(client, db_session, monkeypatch):
+    """Google accounts are pre-verified; resend is a no-op and sends no email."""
+    from sqlalchemy import update
+
+    from app.models.user import User
+
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(auth_routes._email_svc, "send_verification_email", _capture)
+    email = f"google-{uuid.uuid4().hex[:8]}@test.com"
+    reg = await client.post("/api/auth/register", json={"email": email, "password": "testpass123"})
+    assert reg.status_code == 200
+    user_id = reg.json()["user"]["id"]
+    token = reg.json()["token"]
+
+    # Simulate a Google-provisioned account (pre-verified, no password).
+    await db_session.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(auth_provider="google", email_verified=True, email_verify_token=None)
+    )
+    await db_session.commit()
+
+    captured.clear()
+    resp = await client.post("/api/auth/resend-verification", headers=auth_headers(token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "already_verified": True}
+    assert captured == {}, "no verification email should be sent for a Google account"
+
+
+@pytest.mark.asyncio
 async def test_audit_log_persists_row(client, db_session, caplog):
     # Registration emits auth.register → a durable audit row should land.
     email = f"audit-{uuid.uuid4().hex[:8]}@test.com"

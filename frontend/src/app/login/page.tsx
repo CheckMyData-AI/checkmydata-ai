@@ -1,14 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { Icon } from "@/components/ui/Icon";
 import { LogoMark } from "@/components/ui/Logo";
 import { Spinner } from "@/components/ui/Spinner";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
+
+/**
+ * Resolve the post-auth redirect target from the `next` query param (SCN-098/110).
+ * Only same-origin absolute paths are honoured — the value must start with a single
+ * "/" and not "//" or "/\" — so a crafted `next=//evil.com` / `next=https://evil.com`
+ * can't turn login into an open redirect. Everything else falls back to "/app".
+ */
+function resolveRedirect(next: string | null): string {
+  if (
+    next &&
+    next.startsWith("/") &&
+    !next.startsWith("//") &&
+    !next.startsWith("/\\")
+  ) {
+    return next;
+  }
+  return "/app";
+}
 
 function generateRandomToken(length = 32): string {
   const array = new Uint8Array(length);
@@ -27,8 +45,10 @@ function getCookie(name: string): string | undefined {
     ?.split("=")[1];
 }
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextParam = searchParams.get("next");
   const { user, restore, login, register, googleLogin, isLoading, error } =
     useAuthStore();
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -48,9 +68,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!restoring && user) {
-      router.replace("/app");
+      router.replace(resolveRedirect(nextParam));
     }
-  }, [restoring, user, router]);
+  }, [restoring, user, router, nextParam]);
 
   const handleGoogleResponse = useCallback(
     async (response: { credential: string }) => {
@@ -325,5 +345,19 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+          <Spinner />
+        </div>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
   );
 }

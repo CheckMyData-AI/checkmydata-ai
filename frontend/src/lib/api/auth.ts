@@ -57,6 +57,18 @@ export const auth = {
       }),
     }),
   refresh: () => request<AuthResponse>("/auth/refresh", { method: "POST" }),
+  // F-PROJ-01: public endpoint — confirms an email address from the emailed link.
+  verifyEmail: (token: string) =>
+    request<{ ok: boolean; invites_accepted: number }>("/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  // Re-sends the verification email for the signed-in user. No-op (already_verified:
+  // true) for Google or already-verified accounts.
+  resendVerification: () =>
+    request<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {
+      method: "POST",
+    }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () => request<AuthUser>("/auth/me"),
   deleteAccount: () => request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),

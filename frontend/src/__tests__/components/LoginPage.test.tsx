@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 
 const mockReplace = vi.fn();
+// Mutable so each test can drive the ?next= query the page reads. Must be
+// `mock`-prefixed to be referenceable inside the hoisted vi.mock factory.
+let mockSearchString = "";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -12,6 +15,7 @@ vi.mock("next/navigation", () => ({
     refresh: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(mockSearchString),
 }));
 
 const initialize = vi.fn();
@@ -54,10 +58,12 @@ async function setupAndRender(opts: SetupOptions) {
   await act(async () => {
     render(<LoginPage />);
   });
+  return { useAuthStore };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSearchString = "";
 });
 
 afterEach(() => {
@@ -116,5 +122,59 @@ describe("LoginPage Google sign-in", () => {
     expect(screen.queryByText("or")).not.toBeInTheDocument();
     expect(renderButton).not.toHaveBeenCalled();
     expect(initialize).not.toHaveBeenCalled();
+  });
+});
+
+describe("LoginPage post-auth redirect (SCN-098/110)", () => {
+  const LOGGED_IN = { id: "u1", email: "a@b.com", display_name: "A" };
+
+  async function renderThenAuthenticate(next: string) {
+    mockSearchString = next;
+    const { useAuthStore } = await setupAndRender({
+      clientId: "",
+      restore: async () => {},
+    });
+    // Simulate a successful login/register: the store sets `user`, which
+    // triggers the page's redirect effect.
+    await act(async () => {
+      useAuthStore.setState({ user: LOGGED_IN });
+    });
+  }
+
+  it("honors a safe same-origin `next` path", async () => {
+    await renderThenAuthenticate("next=/pricing");
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/pricing");
+    });
+  });
+
+  it("rejects a protocol-relative `next` (open-redirect guard) and falls back to /app", async () => {
+    await renderThenAuthenticate("next=//evil.com");
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/app");
+    });
+    expect(mockReplace).not.toHaveBeenCalledWith("//evil.com");
+  });
+
+  it("rejects an absolute-URL `next` and falls back to /app", async () => {
+    await renderThenAuthenticate("next=https://evil.com");
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/app");
+    });
+    expect(mockReplace).not.toHaveBeenCalledWith("https://evil.com");
+  });
+
+  it("rejects a backslash protocol-relative `next` and falls back to /app", async () => {
+    await renderThenAuthenticate("next=/\\evil.com");
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/app");
+    });
+  });
+
+  it("defaults to /app when no `next` is present", async () => {
+    await renderThenAuthenticate("");
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/app");
+    });
   });
 });

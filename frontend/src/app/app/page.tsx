@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AuthGate } from "@/components/auth/AuthGate";
+import { EmailVerifyBanner } from "@/components/auth/EmailVerifyBanner";
 import { ProjectOverview } from "@/components/projects/ProjectOverview";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ConnectionsPanel } from "@/components/connections/ConnectionsPanel";
@@ -319,6 +320,7 @@ function AppPageContent() {
                   )}
                 </div>
               </header>
+              <EmailVerifyBanner />
               <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 {renderCenterPanel()}
               </div>

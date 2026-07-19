@@ -550,6 +550,9 @@ export interface AuthUser {
   auth_provider?: string;
   is_onboarded?: boolean;
   can_create_projects?: boolean;
+  // F-PROJ-01: false for an unverified email/password account. Google logins are
+  // pre-verified. Optional so cached profiles from before this field still parse.
+  email_verified?: boolean;
 }
 
 export interface AuthResponse {

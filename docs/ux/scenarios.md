@@ -336,17 +336,18 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-012: Email verification after registration
 - **Persona:** new-user
 - **Feature:** auth
-- **Entry point:** post-registration (backend `POST /api/auth/verify-email`, F-PROJ-01)
+- **Entry point:** post-registration prompt in the app shell + the emailed `/verify-email?token=…` link (backend `POST /api/auth/verify-email`, F-PROJ-01)
 - **Preconditions:** email/password registration with `email_verified=False`
 - **Steps:**
-  1. User registers and should be prompted to verify their email before email-invite auto-accept
-- **Expected result:** a visible verification prompt / status and a way to resend
-- **UI elements:** (none in frontend)
-- **States covered:** none
-- **Errors & recovery:** n/a
+  1. After registering, the app shell shows an unobtrusive "Verify your email" banner (hidden for verified and Google accounts)
+  2. User opens the link in the verification email → lands on `/verify-email?token=…`, which auto-confirms the address (and auto-accepts any pending email invites)
+  3. If the link is invalid/expired — or from the banner — the user can resend a fresh link
+- **Expected result:** the address is verified, the banner disappears, and pending email invites are auto-accepted; a lost/expired link can be re-requested
+- **UI elements:** `EmailVerifyBanner` (app shell) with a "Resend email" button; `/verify-email` page with loading / "Email verified" (→ "Continue to app") / "Verification failed" (+ resend when logged in) states
+- **States covered:** loading (verifying), success (verified + continue link), error (invalid/expired token, missing token), resend (success/failure toast, "Email sent")
+- **Errors & recovery:** invalid / expired / missing token → error state; logged-in users resend from the page or the banner ("Verification email sent" / failure toast); `email_verified` is surfaced in register/login/refresh/`/me` responses so the banner shows only for unverified non-Google accounts; resend is an idempotent no-op for already-verified / Google accounts (`already_verified: true`) and rate-limited (3/min)
 - **Status:** draft
-- **Coverage:** none yet — GAP: backend enforces email verification (CLAUDE.md F-PROJ-01) but no frontend UI exists (`lib/api/auth.ts` has no verify endpoint; no verification screen)
-- **Decision (2026-07-19):** confirmed bug — build email-verification UI (prompt + resend + `POST /api/auth/verify-email`); task spawned
+- **Coverage:** backend `backend/app/api/routes/auth.py` (`_auth_response`/`UserResponse` expose `email_verified`; `POST /api/auth/resend-verification`; `POST /api/auth/verify-email`) → `AuthService.issue_email_verification`/`verify_email`, `EmailService.send_verification_email`; frontend `frontend/src/app/verify-email/page.tsx`, `frontend/src/components/auth/EmailVerifyBanner.tsx` (wired into `frontend/src/app/app/page.tsx`), `frontend/src/lib/api/auth.ts` (`verifyEmail`/`resendVerification`), `AuthUser.email_verified` in `frontend/src/lib/api/types.ts`; tests `backend/tests/integration/test_auth_email_verification.py`, `frontend/src/__tests__/components/VerifyEmailPage.test.tsx`, `frontend/src/__tests__/components/EmailVerifyBanner.test.tsx`
 
 ### SCN-013: Forgot / reset password
 - **Persona:** analyst
@@ -1651,7 +1652,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** browser navigates to Stripe to complete payment
 - **UI elements:** per-plan CTA button ("Redirecting…"), FAQ
 - **States covered:** loading, error, success (external)
-- **Errors & recovery:** billing not live → toast "Billing is not enabled on this deployment"; checkout fails → toast "Checkout failed" (`PricingTable.tsx:101,109`). GAP: logged-out paid CTA routes to `/login?next=/pricing` but `/login` ignores `next`
+- **Errors & recovery:** billing not live → toast "Billing is not enabled on this deployment"; checkout fails → toast "Checkout failed" (`PricingTable.tsx:101,109`). The logged-out paid CTA routes to `/login?next=/pricing` and `/login` now honors a safe same-origin `next` after auth (returning the visitor to `/pricing`; protocol-relative / absolute-URL values are rejected — open-redirect guard)
 - **Status:** validated
 - **Coverage:** components/marketing/PricingTable.tsx:91-166
 
@@ -1837,9 +1838,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** free → `/login`; paid → `/login?next=/pricing`
 - **UI elements:** per-plan CTA, static FAQ
 - **States covered:** loading, success
-- **Errors & recovery:** GAP — the `next=/pricing` intent is dropped by `/login` (see SCN-098)
+- **Errors & recovery:** the `next=/pricing` intent is now honored — after login/register `/login` redirects to a safe same-origin `next` (`/pricing`), with an open-redirect guard rejecting `//host` / absolute-URL values (`login/page.tsx` `resolveRedirect`; test `frontend/src/__tests__/components/LoginPage.test.tsx`)
 - **Status:** validated
-- **Coverage:** components/marketing/PricingTable.tsx:91-99
+- **Coverage:** components/marketing/PricingTable.tsx:91-99; redirect honored in frontend/src/app/login/page.tsx
 
 ### SCN-111: Support / Contact / Legal pages
 - **Persona:** visitor
