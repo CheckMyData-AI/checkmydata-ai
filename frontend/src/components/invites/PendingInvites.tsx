@@ -9,6 +9,7 @@ import { Spinner } from "@/components/ui/Spinner";
 export function PendingInvites() {
   const [invites, setInvites] = useState<ProjectInvite[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [declining, setDeclining] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const setProjects = useAppStore((s) => s.setProjects);
   const mountedRef = useRef(true);
@@ -46,6 +47,19 @@ export function PendingInvites() {
     }
   };
 
+  const handleDecline = async (inviteId: string) => {
+    setDeclining(inviteId);
+    try {
+      await api.invites.decline(inviteId);
+      setInvites((prev) => prev.filter((i) => i.id !== inviteId));
+      toast("Invite declined", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to decline invite", "error");
+    } finally {
+      setDeclining(null);
+    }
+  };
+
   if (listLoading) return <Spinner />;
   if (invites.length === 0) return null;
 
@@ -54,25 +68,40 @@ export function PendingInvites() {
       <p className="text-[10px] text-accent uppercase tracking-wider font-medium">
         Pending Invitations ({invites.length})
       </p>
-      {invites.map((inv) => (
-        <div
-          key={inv.id}
-          className="flex items-center justify-between py-1.5 px-2 bg-surface-1 rounded text-xs"
-        >
-          <div className="flex-1 min-w-0">
-            <span className="text-text-primary truncate block">
-              {inv.project_name ?? "Project"} ({inv.role})
-            </span>
-          </div>
-          <button
-            onClick={() => handleAccept(inv.id)}
-            disabled={accepting === inv.id}
-            className="ml-2 px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+      {invites.map((inv) => {
+        const projectLabel = inv.project_name ?? "Project";
+        const busy = accepting === inv.id || declining === inv.id;
+        return (
+          <div
+            key={inv.id}
+            className="flex items-center justify-between py-1.5 px-2 bg-surface-1 rounded text-xs"
           >
-            {accepting === inv.id ? "..." : "Accept"}
-          </button>
-        </div>
-      ))}
+            <div className="flex-1 min-w-0">
+              <span className="text-text-primary truncate block">
+                {projectLabel} ({inv.role})
+              </span>
+            </div>
+            <div className="ml-2 flex items-center gap-1">
+              <button
+                onClick={() => handleDecline(inv.id)}
+                disabled={busy}
+                aria-label={`Decline invitation to ${projectLabel}`}
+                className="px-2 py-1 text-text-secondary text-[10px] rounded hover:text-text-primary hover:bg-surface-2 disabled:opacity-50 transition-colors"
+              >
+                {declining === inv.id ? "..." : "Decline"}
+              </button>
+              <button
+                onClick={() => handleAccept(inv.id)}
+                disabled={busy}
+                aria-label={`Accept invitation to ${projectLabel}`}
+                className="px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+              >
+                {accepting === inv.id ? "..." : "Accept"}
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

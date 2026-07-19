@@ -5,6 +5,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -20,6 +21,7 @@ import app.models.ssh_key  # noqa: F401
 import app.models.user  # noqa: F401
 from app.models.base import Base
 from app.models.project import Project
+from app.models.project_invite import ProjectInvite
 from app.models.user import User
 from app.services.invite_service import InviteService
 from app.services.membership_service import MembershipService
@@ -119,6 +121,73 @@ class TestRevokeInvite:
         with pytest.raises(HTTPException) as exc_info:
             await inv_svc.revoke_invite(db, invite.id, owner.id)
         assert exc_info.value.status_code == 400
+
+
+class TestDeclineInvite:
+    @pytest.mark.asyncio
+    async def test_removes_pending_invite_for_invitee(self, db):
+        owner = await _make_user(db)
+        email = f"decline-{uuid.uuid4().hex[:6]}@test.com"
+        user = await _make_user(db, email=email)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+
+        result = await inv_svc.decline_invite(
+            db, invite.id, {"email": user.email, "user_id": user.id}
+        )
+
+        assert result == {"ok": True}
+        # Row is deleted (not status-flipped) so re-invite stays constraint-safe.
+        remaining = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite.id))
+        assert remaining.scalar_one_or_none() is None
+        assert await inv_svc.list_pending_for_email(db, email) == []
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_email_match(self, db):
+        owner = await _make_user(db)
+        email = f"mixed-{uuid.uuid4().hex[:6]}@test.com"
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+
+        result = await inv_svc.decline_invite(
+            db, invite.id, {"email": email.upper(), "user_id": "u"}
+        )
+
+        assert result == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_forbidden_for_wrong_user(self, db):
+        owner = await _make_user(db)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, "target@test.com", "editor", owner.id)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await inv_svc.decline_invite(
+                db, invite.id, {"email": "intruder@test.com", "user_id": "x"}
+            )
+        assert exc_info.value.status_code == 403
+        # The invite is left untouched for its rightful owner.
+        assert await inv_svc.get_pending_invite(db, invite.id, proj.id) is not None
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_pending_invite(self, db):
+        owner = await _make_user(db)
+        email = f"nonp-{uuid.uuid4().hex[:6]}@test.com"
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+        await inv_svc.revoke_invite(db, invite.id, owner.id)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await inv_svc.decline_invite(db, invite.id, {"email": email, "user_id": "x"})
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_not_found_for_unknown_invite(self, db):
+        with pytest.raises(HTTPException) as exc_info:
+            await inv_svc.decline_invite(
+                db, "nonexistent-id", {"email": "a@test.com", "user_id": "x"}
+            )
+        assert exc_info.value.status_code == 404
 
 
 class TestAcceptInvite:

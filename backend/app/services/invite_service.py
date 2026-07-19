@@ -119,6 +119,44 @@ class InviteService:
         await db.commit()
         return True
 
+    async def decline_invite(
+        self,
+        db: AsyncSession,
+        invite_id: str,
+        user: dict,
+    ) -> dict[str, bool]:
+        """Decline (remove) a pending invite addressed to the authenticated user.
+
+        Mirrors :meth:`accept_invite`'s security checks and error contract:
+        ``404`` when the invite does not exist, ``400`` when it is no longer
+        pending, and ``403`` when the caller's email does not match the
+        invitee's (case-insensitive).
+
+        The invite row is **deleted** rather than status-flipped: the
+        ``uq_invite_project_email_status`` unique constraint on
+        ``(project_id, email, status)`` means a persisted ``declined`` marker
+        would collide the moment the owner re-invites the same address and the
+        user declines again. Deleting keeps the invitee's pending list clean
+        and re-invite safe.
+        """
+        result = await db.execute(select(ProjectInvite).where(ProjectInvite.id == invite_id))
+        invite = result.scalar_one_or_none()
+        if not invite:
+            raise HTTPException(status_code=404, detail="Invite not found")
+        if invite.status != "pending":
+            raise HTTPException(status_code=400, detail="Invite is no longer pending")
+
+        user_email = (user.get("email") or "").lower().strip()
+        if not user_email or user_email != invite.email.lower().strip():
+            raise HTTPException(
+                status_code=403,
+                detail="This invite is for a different email address",
+            )
+
+        await db.delete(invite)
+        await db.commit()
+        return {"ok": True}
+
     async def accept_invite(
         self,
         db: AsyncSession,

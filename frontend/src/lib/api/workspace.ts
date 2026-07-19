@@ -103,6 +103,8 @@ export const invites = {
       `/invites/accept/${inviteId}`,
       { method: "POST" },
     ),
+  decline: (inviteId: string) =>
+    request<{ ok: boolean }>(`/invites/decline/${inviteId}`, { method: "POST" }),
   listMembers: (projectId: string) =>
     request<ProjectMember[]>(`/invites/${projectId}/members`),
   updateMemberRole: (projectId: string, userId: string, role: string) =>

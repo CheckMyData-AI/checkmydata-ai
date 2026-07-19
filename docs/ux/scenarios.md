@@ -383,17 +383,16 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-015: Decline / reject an invite
 - **Persona:** analyst
 - **Feature:** invites
-- **Entry point:** Pending Invitations banner
-- **Preconditions:** ≥1 pending invite
+- **Entry point:** Pending Invitations banner → per-invite "Decline" button
+- **Preconditions:** ≥1 pending invite addressed to the signed-in user's email
 - **Steps:**
-  1. User declines an unwanted invite
-- **Expected result:** invite removed from the user's pending list without joining
-- **UI elements:** (none)
-- **States covered:** none
-- **Errors & recovery:** n/a
+  1. User clicks "Decline" on an unwanted invite
+- **Expected result:** the invite row is removed from the pending list, the invite is deleted server-side (the user never joins the project), and an "Invite declined" success toast is shown
+- **UI elements:** per-row secondary/text "Decline" button (`aria-label="Decline invitation to {project}"`) beside "Accept"; both buttons disabled while either action is in flight (label shows "…")
+- **States covered:** loading (button "…"), success (row removed + toast), error (toast, row retained)
+- **Errors & recovery:** decline fails → toast "Failed to decline invite" (or the API error message) and the row is kept; a non-invitee is rejected 403 and a non-pending/unknown invite 400/404 server-side, surfaced as an error toast
 - **Status:** draft
-- **Coverage:** none yet — GAP: only "Accept" exists; there is no decline/reject affordance (`PendingInvites.tsx:67-73`)
-- **Decision (2026-07-19):** confirmed bug — add Decline/Reject action in PendingInvites; task spawned
+- **Coverage:** backend route `POST /api/invites/decline/{invite_id}` (`backend/app/api/routes/invites.py:212-227`) → `InviteService.decline_invite` (`backend/app/services/invite_service.py:122-158`; deletes the row for constraint-safe re-invite — email-owner + pending checks mirror accept with 404/400/403); frontend `frontend/src/components/invites/PendingInvites.tsx:50-61,85-93` + `frontend/src/lib/api/workspace.ts:106-107`; tests `backend/tests/unit/test_invite_service.py::TestDeclineInvite`, `backend/tests/integration/test_invites.py::TestInviteRoutes::test_invitee_can_decline_invite`, `frontend/src/__tests__/components/PendingInvites.test.tsx`
 
 ## projects
 

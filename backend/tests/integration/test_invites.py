@@ -118,6 +118,67 @@ class TestInviteRoutes:
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
 
+    async def test_invitee_can_decline_invite(self, client):
+        owner, pid = await self._owner_project(client)
+        invited = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": invited["email"], "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/invites/decline/{invite_id}",
+            headers=auth_headers(invited["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        # The declined invite disappears from the invitee's pending list.
+        resp = await client.get(
+            "/api/invites/pending",
+            headers=auth_headers(invited["token"]),
+        )
+        assert resp.status_code == 200
+        assert all(inv["id"] != invite_id for inv in resp.json())
+
+        # Declining never joins the project.
+        resp = await client.get("/api/projects", headers=auth_headers(invited["token"]))
+        assert pid not in [p["id"] for p in resp.json()]
+
+    async def test_non_invitee_cannot_decline_invite(self, client):
+        owner, pid = await self._owner_project(client)
+        invited = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/{pid}/invites",
+            json={"email": invited["email"], "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        invite_id = resp.json()["id"]
+
+        intruder = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/decline/{invite_id}",
+            headers=auth_headers(intruder["token"]),
+        )
+        assert resp.status_code == 403
+
+        # The invite is still pending for its rightful owner.
+        resp = await client.get(
+            "/api/invites/pending",
+            headers=auth_headers(invited["token"]),
+        )
+        assert any(inv["id"] == invite_id for inv in resp.json())
+
+    async def test_decline_unknown_invite_returns_404(self, client):
+        invited = await register_user(client)
+        resp = await client.post(
+            f"/api/invites/decline/{uuid.uuid4()}",
+            headers=auth_headers(invited["token"]),
+        )
+        assert resp.status_code == 404
+
     async def test_members_list(self, client):
         owner, pid = await self._owner_project(client)
         resp = await client.get(

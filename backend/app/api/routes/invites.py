@@ -209,6 +209,24 @@ async def accept_invite(
     }
 
 
+@router.post("/decline/{invite_id}")
+@limiter.limit("10/minute")
+async def decline_invite(
+    request: Request,
+    invite_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _invite_svc.decline_invite(db, invite_id, user)
+    audit_log(
+        "invite.decline",
+        user_id=user["user_id"],
+        resource_type="invite",
+        resource_id=invite_id,
+    )
+    return {"ok": True}
+
+
 @router.get("/pending", response_model=list[InviteResponse])
 async def list_pending_invites(
     db: AsyncSession = Depends(get_db),
