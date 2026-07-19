@@ -174,19 +174,29 @@ function DashboardPageContent() {
   const handleRefreshAll = useCallback(async () => {
     if (!dashboard || refreshing) return;
     const cards = parseCards(dashboard.cards_json);
+    if (cards.length === 0) return;
     setRefreshing(true);
+    let ok = 0;
+    let fail = 0;
     try {
       for (const card of cards) {
         try {
-          await api.notes.execute(card.note_id);
+          const res = await api.notes.execute(card.note_id);
+          if (res.error) {
+            fail++;
+            continue;
+          }
+          ok++;
           const n = await api.notes.get(card.note_id);
           setNotes((prev) => new Map(prev).set(card.note_id, n));
-        } catch { /* */ }
+        } catch {
+          fail++;
+        }
       }
-      toast("All cards refreshed", "info");
     } finally {
       setRefreshing(false);
     }
+    toast(`Refreshed: ${ok} succeeded${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "info");
   }, [dashboard, refreshing]);
 
   const handleSaveEdit = (updated: Dashboard) => {

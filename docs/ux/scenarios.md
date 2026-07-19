@@ -1102,7 +1102,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the chosen pipeline starts (toast "… started"); RunCard shows live progress
 - **UI elements:** refresh button, artifact-count chips, RunCard (trigger / Cancel / Retry / History), freshness action buttons
 - **States covered:** loading, error, success
-- **Errors & recovery:** health fetch fails → "Could not load knowledge health"; trigger fails → toast "Action failed"; run failed → inline red text. Known gap: Cancel/Retry errors are swallowed silently (`KnowledgeHealthPanel.tsx:129-164`, `RunCard.tsx:82,91`)
+- **Errors & recovery:** health fetch fails → "Could not load knowledge health"; trigger fails → toast "Action failed"; run failed → inline red text; RunCard Cancel/Retry failures toast "Failed to cancel run" / "Failed to retry run" (`KnowledgeHealthPanel.tsx:129-164`, `RunCard.tsx:82,91`)
 - **Status:** validated
 - **Coverage:** components/knowledge/KnowledgeHealthPanel.tsx:138-253; components/knowledge/RunCard.tsx:58-139
 
@@ -1174,8 +1174,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User searches / filters by category
 - **Expected result:** matching metrics list
 - **UI elements:** search input, category filter buttons, metric rows
-- **States covered:** loading, empty, success
-- **Errors & recovery:** GAP — catalog fetch failure is swallowed to an empty list, so an error is indistinguishable from "No metrics found" (no error UI) (`KnowledgeHub.tsx:52-54`)
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** catalog fetch failure propagates a distinct error state + Retry, rendered separately from the "No metrics found" empty state (`KnowledgeHub.tsx:43-62`, `MetricCatalogPanel.tsx:118-145`)
 - **Status:** validated
 - **Coverage:** components/insights/MetricCatalogPanel.tsx:75-169
 
@@ -1433,8 +1433,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User opens the dashboard link
 - **Expected result:** header + card grid render; auto-refresh per card interval; viewers see no Edit/Add
 - **UI elements:** "Back to app", "Refresh All", card grid, ResultTable (cap 50 rows)
-- **States covered:** loading, empty, success
-- **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". Note: Refresh-All swallows per-card errors and still toasts success
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". Refresh-All tracks per-card success/failure and toasts the real counts — "Refreshed: N succeeded, M failed" (error toast when M>0, info when all pass)
 - **Status:** validated
 - **Coverage:** app/dashboard/[id]/page.tsx:198-325
 
@@ -1679,7 +1679,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the caller surfaces "Plan limit reached. Upgrade at /pricing to continue." (typically a toast / chat error bubble)
 - **UI elements:** toast / chat error message
 - **States covered:** error
-- **Errors & recovery:** GAP — the 402 message is plain text with no clickable upgrade CTA; upgrade lives only in BillingPanel/PricingTable (`lib/api/_client.ts:127-135`)
+- **Errors & recovery:** the 402 message keeps its "/pricing" hint, and the toast surface renders any "/pricing" mention as a clickable upgrade link to the pricing page (`lib/api/_client.ts:127-135`, `components/ui/ToastContainer.tsx:20-40`)
 - **Status:** validated
 - **Coverage:** lib/api/_client.ts:127-135
 
@@ -1760,7 +1760,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** task list with live progress; the chosen action applies
 - **UI elements:** toggle pill (count), per-task Cancel / Retry / Dismiss, progress bars, elapsed timer
 - **States covered:** empty (renders null), loading, error, success
-- **Errors & recovery:** GAP — Cancel/Retry failures are swallowed silently with no toast/inline feedback; Cancel has no confirm (`ActiveTasksWidget.tsx:119-149`)
+- **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`ActiveTasksWidget.tsx:119-149`). Cancel has no confirm (the run is reversible by re-triggering)
 - **Status:** validated
 - **Coverage:** components/tasks/ActiveTasksWidget.tsx:105-278
 
@@ -1791,8 +1791,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   2. In Errors, user cycles a row's status open → ack → resolved
 - **Expected result:** runs / error rows listed; error status cycles
 - **UI elements:** kind select + Refresh (Runs), source/status selects + Refresh + status-cycle button (Errors)
-- **States covered:** loading, empty, error(silent), success
-- **Errors & recovery:** GAP — Runs/Errors fetch failures silently show the empty state with no error message; status-cycle failure ignored (`RunsTab.tsx:19-21`, `ErrorsTab.tsx:31-49`)
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** Runs/Errors fetch failures render an inline error message + Retry (matching the Queries tab), distinct from the empty state; Errors status-cycle failure toasts the error (`RunsTab.tsx:19-33`, `ErrorsTab.tsx:31-51`)
 - **Status:** validated
 - **Coverage:** components/logs/RunsTab.tsx:34-59; components/logs/ErrorsTab.tsx:55-128
 

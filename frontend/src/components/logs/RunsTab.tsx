@@ -11,14 +11,17 @@ export function RunsTab({ projectId }: { projectId: string }) {
   const [rows, setRows] = useState<RunHistoryItem[]>([]);
   const [kind, setKind] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await api.logs.runs(projectId, { kind: kind || undefined, limit: 100 });
       setRows(data);
-    } catch {
+    } catch (e) {
       setRows([]);
+      setError(e instanceof Error ? e.message : "Failed to load runs");
     } finally {
       setLoading(false);
     }
@@ -55,6 +58,13 @@ export function RunsTab({ projectId }: { projectId: string }) {
       <div className="flex-1 overflow-y-auto">
         {loading && rows.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary animate-pulse">Loading runs…</div>
+        ) : error ? (
+          <div className="p-6 text-center text-xs text-error flex flex-col items-center gap-2">
+            <span>{error}</span>
+            <button onClick={() => void load()} className="underline hover:no-underline">
+              Retry
+            </button>
+          </div>
         ) : rows.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary">No runs recorded</div>
         ) : (

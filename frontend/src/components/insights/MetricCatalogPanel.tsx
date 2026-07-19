@@ -23,6 +23,10 @@ export interface CatalogMetric {
 interface MetricCatalogPanelProps {
   metrics: CatalogMetric[];
   onMetricClick?: (metric: CatalogMetric) => void;
+  /** Non-null when the catalog fetch failed — rendered distinctly from the empty state. */
+  error?: string | null;
+  /** Retry callback shown alongside the error state. */
+  onRetry?: () => void;
 }
 
 const CATEGORY_CONFIG: Record<string, { icon: string; color: string }> = {
@@ -39,6 +43,8 @@ const CATEGORY_CONFIG: Record<string, { icon: string; color: string }> = {
 export function MetricCatalogPanel({
   metrics,
   onMetricClick,
+  error,
+  onRetry,
 }: MetricCatalogPanelProps) {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -115,12 +121,25 @@ export function MetricCatalogPanel({
 
       {/* Metric list */}
       <div className="flex-1 overflow-y-auto space-y-1">
-        {filtered.length === 0 && (
+        {error ? (
+          <div className="text-[11px] text-error py-4 text-center flex flex-col items-center gap-2">
+            <span>{error}</span>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="text-error underline hover:no-underline"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="text-[11px] text-text-muted py-4 text-center">
             No metrics found
           </div>
-        )}
-        {filtered.map((m) => {
+        ) : null}
+        {!error &&
+          filtered.map((m) => {
           const cfg =
             CATEGORY_CONFIG[m.category] || CATEGORY_CONFIG.general;
           return (

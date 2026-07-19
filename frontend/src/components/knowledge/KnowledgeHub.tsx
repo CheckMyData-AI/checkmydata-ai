@@ -39,18 +39,24 @@ export function KnowledgeHub() {
   const [tab, setTab] = useState<KnowledgeTab>("docs");
   const [metrics, setMetrics] = useState<CatalogMetric[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     if (!activeProject || tab !== "metrics") return;
     let cancelled = false;
     setMetricsLoading(true);
+    setMetricsError(null);
     api.semanticLayer
       .getCatalog(activeProject.id, activeConnection?.id)
       .then((res) => {
         if (!cancelled) setMetrics(res.metrics.map(toCatalogMetric));
       })
-      .catch(() => {
-        if (!cancelled) setMetrics([]);
+      .catch((e) => {
+        if (!cancelled) {
+          setMetrics([]);
+          setMetricsError(e instanceof Error ? e.message : "Failed to load metrics");
+        }
       })
       .finally(() => {
         if (!cancelled) setMetricsLoading(false);
@@ -58,7 +64,7 @@ export function KnowledgeHub() {
     return () => {
       cancelled = true;
     };
-  }, [activeProject, activeConnection?.id, tab]);
+  }, [activeProject, activeConnection?.id, tab, reloadNonce]);
 
   if (!activeProject) return null;
 
@@ -100,7 +106,11 @@ export function KnowledgeHub() {
                 Loading metrics...
               </p>
             ) : (
-              <MetricCatalogPanel metrics={metrics} />
+              <MetricCatalogPanel
+                metrics={metrics}
+                error={metricsError}
+                onRetry={() => setReloadNonce((n) => n + 1)}
+              />
             )}
           </div>
         )}

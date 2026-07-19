@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { ErrorLogItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
+import { toast } from "@/stores/toast-store";
 
 const SOURCES = ["", "run", "query", "span", "system"];
 const STATUSES = ["", "open", "acknowledged", "resolved"];
@@ -18,9 +19,11 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
   const [source, setSource] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.logs.errors(projectId, {
         source: source || undefined,
@@ -28,8 +31,9 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
         page_size: 100,
       });
       setItems(res.items);
-    } catch {
+    } catch (e) {
       setItems([]);
+      setError(e instanceof Error ? e.message : "Failed to load errors");
     } finally {
       setLoading(false);
     }
@@ -44,8 +48,8 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
     try {
       await api.logs.updateError(projectId, e.id, next);
       setItems((prev) => prev.map((x) => (x.id === e.id ? { ...x, status: next as ErrorLogItem["status"] } : x)));
-    } catch {
-      /* ignore */
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update error status", "error");
     }
   };
 
@@ -88,6 +92,13 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
       <div className="flex-1 overflow-y-auto">
         {loading && items.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary animate-pulse">Loading errors…</div>
+        ) : error ? (
+          <div className="p-6 text-center text-xs text-error flex flex-col items-center gap-2">
+            <span>{error}</span>
+            <button onClick={() => void load()} className="underline hover:no-underline">
+              Retry
+            </button>
+          </div>
         ) : items.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary">No errors recorded</div>
         ) : (

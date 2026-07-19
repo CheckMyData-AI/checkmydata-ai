@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import type { IconName } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { toast } from "@/stores/toast-store";
 import { STEP_LABELS } from "@/components/tasks/stepLabels";
 
 const PIPELINE_META: Record<string, { label: string; icon: IconName }> = {
@@ -119,7 +120,11 @@ function TaskItem({ task }: { task: BgTask }) {
           {task.status === "running" && (
             <Tooltip label="Cancel">
               <button
-                onClick={() => void api.runs.cancel(task.runId).catch(() => {})}
+                onClick={() =>
+                  void api.runs
+                    .cancel(task.runId)
+                    .catch(() => toast("Failed to cancel task", "error"))
+                }
                 className="text-text-muted hover:text-error p-0.5 rounded"
                 aria-label="Cancel run"
               >
@@ -130,7 +135,11 @@ function TaskItem({ task }: { task: BgTask }) {
           {task.status === "failed" && (
             <Tooltip label="Retry">
               <button
-                onClick={() => void api.runs.retry(task.runId).catch(() => {})}
+                onClick={() =>
+                  void api.runs
+                    .retry(task.runId)
+                    .catch(() => toast("Failed to retry task", "error"))
+                }
                 className="text-text-muted hover:text-accent p-0.5 rounded"
                 aria-label="Retry run"
               >

@@ -6,6 +6,7 @@ import { useBackgroundTasks, type BgTask } from "@/stores/background-tasks-store
 import type { RunHistoryItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { toast } from "@/stores/toast-store";
 import { stepLabel } from "@/components/tasks/stepLabels";
 
 interface RunCardProps {
@@ -79,7 +80,12 @@ export function RunCard({
           <Tooltip label="Cancel">
             <button
               aria-label={`Cancel ${title}`}
-              onClick={() => task && void api.runs.cancel(task.runId).catch(() => {})}
+              onClick={() =>
+                task &&
+                void api.runs
+                  .cancel(task.runId)
+                  .catch(() => toast("Failed to cancel run", "error"))
+              }
               className="text-[10px] px-2 py-1 rounded text-text-secondary hover:text-error border border-border-subtle"
             >
               Cancel
@@ -88,7 +94,12 @@ export function RunCard({
         ) : failed ? (
           <button
             aria-label={`Retry ${title}`}
-            onClick={() => task && void api.runs.retry(task.runId).catch(() => {})}
+            onClick={() =>
+              task &&
+              void api.runs
+                .retry(task.runId)
+                .catch(() => toast("Failed to retry run", "error"))
+            }
             className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover"
           >
             Retry

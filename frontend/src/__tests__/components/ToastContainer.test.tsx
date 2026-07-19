@@ -51,8 +51,24 @@ describe("ToastContainer", () => {
     const user = userEvent.setup();
     mockToasts = [{ id: "42", type: "info", message: "Dismiss me" }];
     render(<ToastContainer />);
-    const dismissBtn = screen.getByRole("button");
+    const dismissBtn = screen.getByRole("button", { name: /dismiss notification/i });
     await user.click(dismissBtn);
     expect(mockRemoveToast).toHaveBeenCalledWith("42");
+  });
+
+  it("renders the 402 upgrade hint's /pricing as a clickable link (SCN-100)", () => {
+    mockToasts = [
+      {
+        id: "402",
+        type: "error",
+        message: "Plan limit reached. Upgrade at /pricing to continue.",
+      },
+    ];
+    render(<ToastContainer />);
+    const link = screen.getByRole("link", { name: "/pricing" });
+    expect(link).toHaveAttribute("href", "/pricing");
+    // Surrounding copy is preserved.
+    expect(screen.getByText(/Plan limit reached\./)).toBeInTheDocument();
+    expect(screen.getByText(/to continue\./)).toBeInTheDocument();
   });
 });
