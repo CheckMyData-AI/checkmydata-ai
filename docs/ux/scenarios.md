@@ -352,18 +352,19 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-013: Forgot / reset password
 - **Persona:** analyst
 - **Feature:** auth
-- **Entry point:** `/login` (would-be "Forgot password?" link)
+- **Entry point:** `/login` → "Forgot password?" link (sign-in mode only) → `/forgot-password`; reset link in the email lands on `/reset-password?token=…`
 - **Preconditions:** password-based account, user cannot log in
 - **Steps:**
-  1. User requests a reset from the login screen
-  2. User sets a new password via a reset link
-- **Expected result:** user regains access without contacting support
-- **UI elements:** (none)
-- **States covered:** none
-- **Errors & recovery:** n/a
+  1. From the login screen the user clicks "Forgot password?" and enters their email on `/forgot-password`
+  2. The backend mints a single-use token (SHA-256 hash + 1-hour expiry persisted, raw token emailed) and emails a `/reset-password?token=…` link; the page always shows a generic confirmation so account existence is never revealed
+  3. The user opens the link, enters a new password (+ confirm) on `/reset-password`, and submits
+  4. On success the password is updated, the token is cleared (single-use), all prior sessions are revoked (`token_version` bump), and the user is redirected to `/login` to sign in with the new password
+- **Expected result:** user regains access without contacting support; every previously issued session/token is invalidated
+- **UI elements:** login "Forgot password?" link; `/forgot-password` page (email input + inline validation, "Send reset link" button, generic "Check your email" confirmation); `/reset-password` page (new-password + confirm inputs with inline validation, "Reset password" button, invalid/expired-link error with a "Request a new reset link" recovery link, missing-token "Invalid reset link" state)
+- **States covered:** forgot: idle (form), loading ("Sending…"), success (generic confirmation), error (rate-limit/network message), inline invalid-email; reset: loading ("Resetting…"), success (toast + redirect to `/login`), error (invalid/expired token + recovery link), inline password-too-short (<8) / password-mismatch, missing-token
+- **Errors & recovery:** unknown / passwordless (Google-only) email → still a generic `{"ok": true}` with no email sent (no account-enumeration leak); invalid / expired / already-used token → 400 surfaced as an error with a link to request a fresh reset; `new_password` < 8 → 422 (also blocked client-side inline); both endpoints are public + rate-limited (5/min)
 - **Status:** draft
-- **Coverage:** none yet — GAP: no forgot/reset-password flow anywhere; only authenticated "Change Password" (requires current password) exists
-- **Decision (2026-07-19):** confirmed bug — build forgot/reset-password flow (request + reset-via-link); task spawned
+- **Coverage:** backend model `backend/app/models/user.py:42-45` (`password_reset_token`/`password_reset_expires_at`), migration `backend/alembic/versions/e7f8a9b0c1d2_add_password_reset_to_users.py` (revision `e7f8a9b0c1d2`, down_revision `d5e6f7a8b9c0`), config `backend/app/config.py:122` (`password_reset_expiry_hours=1`); service `backend/app/services/auth_service.py:162` (`issue_password_reset`), `:188` (`reset_password`); email `backend/app/services/email_service.py:205` (`send_password_reset_email` → `{app_url}/reset-password?token=…`); routes `backend/app/api/routes/auth.py:183-201` (`POST /api/auth/forgot-password`), `:204-224` (`POST /api/auth/reset-password`); frontend `frontend/src/app/forgot-password/page.tsx`, `frontend/src/app/reset-password/page.tsx`, login link `frontend/src/app/login/page.tsx:261`, api `frontend/src/lib/api/auth.ts:75` (`forgotPassword`), `:80` (`resetPassword`); tests `backend/tests/unit/test_password_reset.py`, `backend/tests/integration/test_password_reset.py`, `frontend/src/__tests__/components/ForgotPasswordPage.test.tsx`, `frontend/src/__tests__/components/ResetPasswordPage.test.tsx`, `frontend/src/__tests__/components/LoginPage.test.tsx` (forgot-password link)
 
 ## invites
 

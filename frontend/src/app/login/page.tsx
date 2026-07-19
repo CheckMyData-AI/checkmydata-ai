@@ -252,6 +252,17 @@ function LoginPageContent() {
             ) : null}
           </div>
 
+          {mode === "login" && (
+            <p className="text-right -mt-1">
+              <Link
+                href="/forgot-password"
+                className="text-xs text-accent hover:text-accent-hover transition-colors"
+              >
+                Forgot password?
+              </Link>
+            </p>
+          )}
+
           {error && (
             <p className="text-error text-xs flex items-center gap-1">
               <Icon name="x" size={12} />

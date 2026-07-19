@@ -178,3 +178,26 @@ describe("LoginPage post-auth redirect (SCN-098/110)", () => {
     });
   });
 });
+
+describe("LoginPage forgot-password link (SCN-013)", () => {
+  it("shows a 'Forgot password?' link to /forgot-password in sign-in mode", async () => {
+    await setupAndRender({ clientId: "", restore: async () => {} });
+
+    const link = await screen.findByRole("link", { name: "Forgot password?" });
+    expect(link).toHaveAttribute("href", "/forgot-password");
+  });
+
+  it("hides the 'Forgot password?' link in register mode", async () => {
+    await setupAndRender({ clientId: "", restore: async () => {} });
+
+    await screen.findByRole("link", { name: "Forgot password?" });
+    // Switch to the Create Account (register) mode.
+    await act(async () => {
+      screen.getByRole("button", { name: "Register" }).click();
+    });
+
+    expect(
+      screen.queryByRole("link", { name: "Forgot password?" }),
+    ).not.toBeInTheDocument();
+  });
+});

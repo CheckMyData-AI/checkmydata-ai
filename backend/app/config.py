@@ -117,6 +117,10 @@ class Settings(BaseSettings):
 
     google_client_id: str = ""
 
+    # Password reset (SCN-013): how long an emailed reset link stays valid, in hours.
+    # Kept short so a leaked link has a small window; the token is single-use anyway.
+    password_reset_expiry_hours: int = 1
+
     # Resend transactional email
     resend_api_key: str = ""
     resend_from_email: str = "CheckMyData <noreply@checkmydata.ai>"

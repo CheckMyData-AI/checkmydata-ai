@@ -72,6 +72,15 @@ class VerifyEmailRequest(BaseModel):
     token: str = Field(min_length=1, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr = Field(max_length=255)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class AuthResponse(BaseModel):
     token: str
     user: dict
@@ -169,6 +178,52 @@ async def resend_verification(
     )
     audit_log("auth.resend_verification", user_id=user.id, detail=user.email)
     return {"ok": True, "already_verified": False}
+
+
+@router.post("/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Request a password-reset link (SCN-013). Public + rate-limited.
+
+    ALWAYS returns a generic ``{"ok": True}`` regardless of whether the email maps to a
+    real password-based account, so the response can't be used to probe which addresses
+    exist (account-enumeration guard). When a reset is actually issued the link is
+    emailed out-of-band.
+    """
+    token = await _auth.issue_password_reset(db, body.email)
+    if token:
+        await _email_svc.send_password_reset_email(email=body.email.lower().strip(), token=token)
+        audit_log("auth.forgot_password", detail=body.email.lower().strip())
+    return {"ok": True}
+
+
+@router.post("/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set a new password from a reset link (SCN-013). Public + rate-limited.
+
+    Consumes the single-use token, sets the new password, and revokes all existing
+    sessions (token_version bump inside the service). An invalid / expired / already-used
+    token yields a 400 with a clear message.
+    """
+    try:
+        await _auth.reset_password(db, body.token, body.new_password)
+    except ValueError as exc:
+        logger.info("Password reset rejected: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail="This password reset link is invalid or has expired.",
+        ) from exc
+    audit_log("auth.reset_password")
+    return {"ok": True}
 
 
 @router.post("/login", response_model=AuthResponse)

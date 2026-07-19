@@ -202,6 +202,40 @@ class EmailService:
             tags=[{"name": "category", "value": "verify"}],
         )
 
+    async def send_password_reset_email(self, *, email: str, token: str) -> None:
+        """Send the password-reset link (SCN-013).
+
+        Mirrors :meth:`send_verification_email`. The recipient's display name is not
+        looked up here (the caller keeps account existence opaque), so the greeting is
+        neutral. No-ops silently when Resend is not configured.
+        """
+        reset_link = f"{settings.app_url.rstrip('/')}/reset-password?token={token}"
+
+        body = f"""\
+<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">Reset your password</h2>
+<p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 16px">
+  We received a request to reset the password for your <strong>CheckMyData.ai</strong>
+  account. Click the button below to choose a new password.
+</p>
+<p style="margin:0 0 24px">
+  <a href="{reset_link}" style="display:inline-block;background:{_BRAND_COLOR};color:#fff;
+     padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
+    Reset password
+  </a>
+</p>
+<p style="color:#94a3b8;font-size:13px;margin:0">
+  If you did not request a password reset you can safely ignore this email; your
+  password will remain unchanged.
+</p>"""
+
+        await self._send(
+            to=email,
+            subject="Reset your CheckMyData.ai password",
+            html=_base_html("Reset your password", body),
+            idempotency_key=f"password-reset/{token[:8]}",
+            tags=[{"name": "category", "value": "password-reset"}],
+        )
+
     async def send_invite_email(
         self,
         *,

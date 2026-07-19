@@ -69,6 +69,19 @@ export const auth = {
     request<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {
       method: "POST",
     }),
+  // SCN-013: public endpoints. forgot-password always resolves to {ok:true} (the
+  // backend never reveals whether the address exists); reset-password rejects an
+  // invalid/expired token with a 4xx surfaced as a thrown Error.
+  forgotPassword: (email: string) =>
+    request<{ ok: boolean }>("/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, newPassword: string) =>
+    request<{ ok: boolean }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () => request<AuthUser>("/auth/me"),
   deleteAccount: () => request<{ ok: boolean }>("/auth/account", { method: "DELETE" }),

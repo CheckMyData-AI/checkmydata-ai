@@ -156,6 +156,71 @@ class AuthService:
         return user
 
     # ------------------------------------------------------------------
+    # Password reset (SCN-013)
+    # ------------------------------------------------------------------
+
+    async def issue_password_reset(self, session: AsyncSession, email: str) -> str | None:
+        """Mint a one-time password-reset token for a password-based account.
+
+        Returns the RAW token (to be emailed) when a reset was issued, or ``None``
+        when there is nothing to reset — the email is unknown, or the account has no
+        password (Google-only). Only the SHA-256 hash + expiry are persisted, so a DB
+        read can't reveal a usable token. The caller (route) must not leak which case
+        occurred (account-enumeration guard).
+        """
+        email = email.lower().strip()
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if not user or not user.password_hash:
+            # No password-based account to reset. Return None; the route still
+            # responds with a generic success so existence isn't leaked.
+            return None
+
+        token = secrets.token_urlsafe(32)
+        user.password_reset_token = _hash_token(token)
+        user.password_reset_expires_at = datetime.now(UTC) + timedelta(
+            hours=settings.password_reset_expiry_hours
+        )
+        await session.commit()
+        logger.info("Password reset issued for user: %s", user.email)
+        return token
+
+    async def reset_password(self, session: AsyncSession, token: str, new_password: str) -> bool:
+        """Consume *token* and set *new_password*. Returns True on success.
+
+        Finds the account whose stored hash matches *token* AND whose expiry has not
+        passed, sets the new password, clears the token+expiry (single-use), and bumps
+        ``token_version`` to revoke every previously issued session (the "reset my
+        password" action must lock out any stolen/leaked token). Raises ``ValueError``
+        for a missing / invalid / expired token — mirroring the bad-token handling
+        elsewhere in this service.
+        """
+        if not token:
+            raise ValueError("Invalid or expired password reset token")
+        token_hash = _hash_token(token)
+        result = await session.execute(select(User).where(User.password_reset_token == token_hash))
+        user = result.scalar_one_or_none()
+        if not user or not user.password_reset_expires_at:
+            raise ValueError("Invalid or expired password reset token")
+
+        expires_at = user.password_reset_expires_at
+        # Rows written by SQLite come back naive; treat them as UTC for comparison.
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at < datetime.now(UTC):
+            raise ValueError("Invalid or expired password reset token")
+
+        user.password_hash = await self.hash_password_async(new_password)
+        user.password_reset_token = None
+        user.password_reset_expires_at = None
+        # Revoke all previously issued tokens (parity with change_password): a reset
+        # is the canonical "I lost access / was compromised" action.
+        user.token_version = (user.token_version or 0) + 1
+        await session.commit()
+        logger.info("Password reset completed for user: %s (token_version bumped)", user.email)
+        return True
+
+    # ------------------------------------------------------------------
     # Google OAuth
     # ------------------------------------------------------------------
 

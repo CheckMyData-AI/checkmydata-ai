@@ -35,4 +35,12 @@ class User(Base):
     # a SHA-256 hash of the one-time verification token (never the plaintext).
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     email_verify_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Password reset (SCN-013): a one-time reset flow for password-based accounts.
+    # ``password_reset_token`` stores a SHA-256 hash of the emailed token (never the
+    # plaintext); ``password_reset_expires_at`` bounds its validity. Both are cleared
+    # on a successful reset (single-use). Google-only accounts never get a token.
+    password_reset_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
