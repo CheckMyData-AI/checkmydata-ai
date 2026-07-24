@@ -14,8 +14,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from git import Repo
+from sqlalchemy import update
 
 from app.config import settings
+from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import tracker
 from app.knowledge.ast_parser import ASTParser, ParsedFile
 from app.knowledge.bm25_index import BM25Index
@@ -30,6 +32,8 @@ from app.knowledge.indexing_pipeline import (
     run_pass4_enrich,
 )
 from app.knowledge.repo_analyzer import is_binary_file
+from app.models.base import async_session_factory
+from app.models.indexing_run import IndexingRun
 from app.services.checkpoint_service import CheckpointService
 from app.services.code_graph_service import CodeGraphService
 
@@ -146,21 +150,36 @@ class IndexingPipelineRunner:
                 f"{len(already_processed)} docs processed)",
             )
 
+        async def _hb() -> None:
+            # RES-2: tick the IndexingRun projection while long emit-less steps
+            # (clone_or_pull, ast_parse, code_symbol_embed, bm25_build) run, so
+            # a live run is never reaped as stale. Targeted UPDATE — mirrors
+            # daily_knowledge_sync_service and avoids racing the _on_event
+            # projection on ``IndexingRun.version``.
+            async with async_session_factory() as s:
+                await s.execute(
+                    update(IndexingRun)
+                    .where(IndexingRun.workflow_id == wf_id, IndexingRun.status == "running")
+                    .values(heartbeat_at=datetime.now(UTC))
+                )
+                await s.commit()
+
         try:
-            return await self._run_steps(
-                project_id=project_id,
-                project=project,
-                force_full=force_full,
-                db=db,
-                wf_id=wf_id,
-                checkpoint=checkpoint,
-                cp_id=cp_id,
-                done=done,
-                resuming=resuming,
-                result=result,
-                state=state,
-                live_table_names=live_table_names,
-            )
+            async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
+                return await self._run_steps(
+                    project_id=project_id,
+                    project=project,
+                    force_full=force_full,
+                    db=db,
+                    wf_id=wf_id,
+                    checkpoint=checkpoint,
+                    cp_id=cp_id,
+                    done=done,
+                    resuming=resuming,
+                    result=result,
+                    state=state,
+                    live_table_names=live_table_names,
+                )
         except Exception as exc:
             logger.exception("Indexing pipeline failed for project %s", project_id[:8])
             result.status = "failed"

@@ -146,6 +146,25 @@ class TestConnectionRoutes:
             resp = client.patch("/api/connections/nonexistent", json={"name": "X"})
             assert resp.status_code == 404
 
+    def test_update_connection_missing_target_returns_400(self, client):
+        """Business validation (neither connection string nor host+db) is a 400,
+        not a 422 — 422 is reserved for request-schema errors."""
+        mock_conn = MagicMock()
+        mock_conn.project_id = "proj-1"
+        mock_conn.connection_string_encrypted = None
+        mock_conn.db_host = None
+        mock_conn.db_name = None
+
+        with (
+            patch("app.api.routes.connections._svc") as mock_svc,
+            patch("app.api.routes.connections._membership_svc") as mock_msvc,
+        ):
+            mock_svc.get = AsyncMock(return_value=mock_conn)
+            mock_msvc.require_role = AsyncMock(return_value="owner")
+            resp = client.patch("/api/connections/conn-1", json={"name": "X"})
+            assert resp.status_code == 400
+            assert "connection string or db_host + db_name" in resp.json()["detail"]
+
 
 class TestIndexDbStatusStaleReset:
     """Tests for auto-resetting stale 'running' indexing status."""

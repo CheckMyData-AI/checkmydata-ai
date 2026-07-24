@@ -1,6 +1,7 @@
 """Unit tests for worker run_code_db_sync logging."""
 
-from unittest.mock import AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,6 +12,17 @@ async def test_run_code_db_sync_logs_matched_from_synced_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that run_code_db_sync logs 'matched' from the 'synced' key (not 'synced_tables')."""
+    # arq is not installed in the unit-test venv; stub it so importing
+    # app.worker (whose WorkerSettings builds RedisSettings at class definition)
+    # works regardless of which tests ran before this one.
+    arq_stub = MagicMock()
+    arq_stub.connections.RedisSettings = MagicMock(return_value=MagicMock())
+    monkeypatch.setitem(sys.modules, "arq", arq_stub)
+    monkeypatch.setitem(sys.modules, "arq.connections", arq_stub.connections)
+    redis_tls_stub = MagicMock()
+    redis_tls_stub.arq_redis_settings = MagicMock(return_value=MagicMock())
+    monkeypatch.setitem(sys.modules, "app.core.redis_tls", redis_tls_stub)
+
     # Arrange: patch dependencies before importing worker
     mock_pipeline = AsyncMock()
     mock_pipeline.run.return_value = {

@@ -111,9 +111,24 @@ async def run_db_index(  # noqa: ARG001
                     _regenerate_overview,
                     _run_data_probes,
                 )
+                from app.core.heartbeat import heartbeat
 
-                await _regenerate_overview(project_id, connection_id)
-                await _run_data_probes(connection_id, config, project_id)
+                async def _hb() -> None:
+                    # RES-3: post-index steps run at status "running" outside the
+                    # pipeline's own heartbeat — keep the summary row ticking so
+                    # a slow overview/probe pass is never reaped (a reap here
+                    # lets the start-guards dispatch a duplicate index).
+                    async with async_session_factory() as hb_s:
+                        await idx_svc.touch_heartbeat(hb_s, connection_id)
+                        await hb_s.commit()
+
+                async with heartbeat(
+                    # int(): unit tests patch settings wholesale with MagicMock
+                    _hb,
+                    interval_seconds=int(app_settings.heartbeat_interval_seconds),
+                ):
+                    await _regenerate_overview(project_id, connection_id)
+                    await _run_data_probes(connection_id, config, project_id)
             except Exception:
                 logger.debug(
                     "run_db_index post-index steps failed for %s",
@@ -171,8 +186,21 @@ async def run_code_db_sync(  # noqa: ARG001
             final_status = "completed"
             try:
                 from app.api.routes.connections import _regenerate_overview
+                from app.config import settings as app_settings
+                from app.core.heartbeat import heartbeat
 
-                await _regenerate_overview(project_id, connection_id)
+                async def _hb() -> None:
+                    # RES-3: same post-index reap window as run_db_index —
+                    # the overview LLM call runs at status "running".
+                    async with async_session_factory() as hb_s:
+                        await sync_svc.touch_heartbeat(hb_s, connection_id)
+                        await hb_s.commit()
+
+                async with heartbeat(
+                    _hb,
+                    interval_seconds=int(app_settings.heartbeat_interval_seconds),
+                ):
+                    await _regenerate_overview(project_id, connection_id)
             except Exception:
                 logger.debug(
                     "run_code_db_sync post-sync overview failed for %s",

@@ -33,6 +33,7 @@ from app.knowledge.run_manifests import (
 from app.models.base import async_session_factory
 from app.models.indexing_run import IndexingRun, IndexingRunEvent
 from app.services.error_log_service import ErrorLogService
+from app.services.stale_run_reaper import REAP_ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -368,10 +369,77 @@ class RunCoordinator:
             if run is None:
                 stmt = select(IndexingRun).where(IndexingRun.workflow_id == event.workflow_id)
                 run = (await db.execute(stmt)).scalar_one_or_none()
-            if run is None or run.status in _TERMINAL_STATUSES:
+            if run is None:
+                return
+            if run.status in _TERMINAL_STATUSES:
+                # FA-007: a run the reaper flipped to ``failed`` may still be
+                # alive in the worker. Let its terminal ``pipeline_end``
+                # reconcile the projection to the true outcome instead of
+                # dropping it; every other event stays ignored.
+                if (
+                    event.step == "pipeline_end"
+                    and run.status == "failed"
+                    and run.error == REAP_ERROR
+                ):
+                    await self._reconcile_reaped_run(db, run, event)
                 return
             RunCoordinator._wf_to_run[event.workflow_id] = run.id
             await self._apply_event(db, run, event)
+
+    async def _reconcile_reaped_run(
+        self, db: AsyncSession, run: IndexingRun, event: WorkflowEvent
+    ) -> None:
+        """Fold a late ``pipeline_end`` into a run the reaper flipped to failed.
+
+        The reap verdict was provisional (heartbeat went stale while the worker
+        kept going); the pipeline's own terminal event is the truth. The reap
+        fact is preserved in ``meta_json["reaped"]`` so the UI can show both
+        the reap and the final outcome.
+        """
+        terminal = (
+            "cancelled"
+            if run.cancel_requested
+            else ("failed" if event.status == "failed" else "completed")
+        )
+        try:
+            meta = json.loads(run.meta_json or "{}")
+        except ValueError:
+            meta = {}
+        meta["reaped"] = {
+            "error": run.error or REAP_ERROR,
+            "reaped_at": _aware(run.finished_at).isoformat() if run.finished_at else None,
+        }
+        run.meta_json = json.dumps(meta)
+        run.status = terminal
+        run.finished_at = _now()
+        run.heartbeat_at = _now()
+        run.version += 1
+        if terminal == "completed":
+            run.progress_pct = 100
+            run.error = None
+            run.failure_kind = None
+        else:
+            run.error = event.detail or run.error
+            run.failure_kind = run.failure_kind or "fatal"
+        await db.commit()
+        await self._journal(
+            db,
+            run,
+            event.step,
+            terminal,
+            event.detail or "",
+            level="error" if terminal == "failed" else "info",
+        )
+        logger.info(
+            "Reconciled reaped run %s: reaper said failed, pipeline ended %s",
+            run.id,
+            terminal,
+        )
+        if terminal == "failed":
+            await self._error_log.upsert_from_run(db, run)
+        RunCoordinator._wf_to_run.pop(run.workflow_id, None)
+        self._manifests.pop(run.id, None)
+        _emit_terminal_metrics(run)
 
     async def _apply_event(self, db: AsyncSession, run: IndexingRun, event: WorkflowEvent) -> None:
         manifest = self._manifest_for(run)

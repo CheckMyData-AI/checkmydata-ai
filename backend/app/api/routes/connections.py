@@ -503,7 +503,7 @@ async def update_connection(
     merged_db_name = updates.get("db_name", conn.db_name)
     if not merged_conn_string and not (merged_db_host and merged_db_name):
         raise HTTPException(
-            status_code=422,
+            status_code=400,
             detail="Provide either a connection string or db_host + db_name",
         )
 
@@ -957,12 +957,28 @@ async def _run_db_index_background(
                     connection_id[:8],
                     exc_info=True,
                 )
-            await _regenerate_overview(project_id, connection_id)
-            await _run_data_probes(
-                connection_id,
-                connection_config,
-                project_id,
-            )
+            from app.core.heartbeat import heartbeat
+
+            async def _hb() -> None:
+                # RES-3: post-index steps run at status "running" outside the
+                # pipeline's own heartbeat — keep the summary row ticking so a
+                # slow overview/probe pass is never reaped (a reap here lets
+                # the start-guards dispatch a duplicate index).
+                async with async_session_factory() as hb_s:
+                    await _db_index_svc.touch_heartbeat(hb_s, connection_id)
+                    await hb_s.commit()
+
+            async with heartbeat(
+                # int(): unit tests patch settings wholesale with MagicMock
+                _hb,
+                interval_seconds=int(app_settings.heartbeat_interval_seconds),
+            ):
+                await _regenerate_overview(project_id, connection_id)
+                await _run_data_probes(
+                    connection_id,
+                    connection_config,
+                    project_id,
+                )
     except Exception:
         logger.exception("DB index background task failed: connection=%s", connection_id[:8])
     finally:
@@ -1210,7 +1226,22 @@ async def _run_sync_background(
                 connection_id[:8],
             )
             final_status = "completed"
-            await _regenerate_overview(project_id, connection_id)
+            from app.config import settings as app_settings
+            from app.core.heartbeat import heartbeat
+
+            async def _hb() -> None:
+                # RES-3: the post-sync overview runs at status "running" outside
+                # the pipeline's heartbeat — keep the summary row ticking.
+                async with async_session_factory() as hb_s:
+                    await _sync_svc.touch_heartbeat(hb_s, connection_id)
+                    await hb_s.commit()
+
+            async with heartbeat(
+                # int(): unit tests patch settings wholesale with MagicMock
+                _hb,
+                interval_seconds=int(app_settings.heartbeat_interval_seconds),
+            ):
+                await _regenerate_overview(project_id, connection_id)
     except Exception:
         logger.exception("Code-DB sync background task failed: connection=%s", connection_id[:8])
     finally:

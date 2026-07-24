@@ -21,6 +21,11 @@ from app.models.indexing_run import IndexingRun
 
 logger = logging.getLogger(__name__)
 
+#: Marker written into ``IndexingRun.error`` when the reaper flips a live run.
+#: RunCoordinator recognises a *reaped* failure by this marker and reconciles
+#: the run when the still-alive pipeline later emits its terminal event.
+REAP_ERROR = "stale run reaped"
+
 
 class StaleRunReaper:
     @staticmethod
@@ -66,7 +71,7 @@ class StaleRunReaper:
             .where(IndexingRun.status == "running", self._stale_run(IndexingRun, cutoff))
             .values(
                 status="failed",
-                error="stale run reaped",
+                error=REAP_ERROR,
                 failure_kind="fatal",
                 finished_at=datetime.now(UTC),
             )
