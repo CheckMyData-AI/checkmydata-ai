@@ -1372,7 +1372,9 @@ class WsTicketResponse(BaseModel):
 
 
 @router.post("/ws-ticket", response_model=WsTicketResponse)
+@limiter.limit("30/minute")
 async def issue_ws_ticket(
+    request: Request,
     body: WsTicketRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),

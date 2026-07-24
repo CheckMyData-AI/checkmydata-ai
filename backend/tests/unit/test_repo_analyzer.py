@@ -1,3 +1,5 @@
+import ipaddress
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
@@ -6,6 +8,32 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.knowledge.repo_analyzer import RepoAnalyzer
+
+# The FA-004 SSRF guard in validate_repo_url DNS-resolves the repo host; keep
+# these tests hermetic by faking getaddrinfo for the fake hosts they use.
+_FAKE_DNS = {
+    "github.com": "140.82.112.3",
+    "slow.host": "8.8.8.8",
+}
+
+
+def _fake_getaddrinfo(host, port=None, *args, **kwargs):
+    try:
+        ip = ipaddress.ip_address(str(host))
+    except ValueError:
+        ip = None
+    if ip is not None:
+        family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (str(ip), port or 0))]
+    name = str(host).lower()
+    if name in _FAKE_DNS:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_FAKE_DNS[name], port or 0))]
+    raise socket.gaierror(f"name or service not known: {host}")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dns(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
 
 
 class TestListRemoteRefs:

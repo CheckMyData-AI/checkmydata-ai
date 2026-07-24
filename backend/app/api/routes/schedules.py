@@ -164,7 +164,9 @@ async def get_schedule(
 
 
 @router.patch("/{schedule_id}", response_model=ScheduleResponse)
+@limiter.limit("10/minute")
 async def update_schedule(
+    request: Request,
     schedule_id: str,
     body: ScheduleUpdate,
     db: AsyncSession = Depends(get_db),

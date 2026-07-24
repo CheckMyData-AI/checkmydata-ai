@@ -23,6 +23,9 @@ services:
       dockerfile: Dockerfile.backend
     ports:
       - "8000:8000"
+    # backend/.env must set ENVIRONMENT (defaults to production, fail-closed)
+    # and a non-default JWT_SECRET when ENVIRONMENT is not a dev/test name —
+    # otherwise the container refuses to boot.
     env_file:
       - backend/.env
     environment:

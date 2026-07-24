@@ -76,6 +76,15 @@ GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
 JWT_SECRET=<random-secret>
 ```
 
+> **Warning:** do not load `backend/.env` with `set -a; source .env` — bash
+> mangles the JSON quoting in values like `CORS_ORIGINS` and the backend then
+> fails at startup with a pydantic `SettingsError`. The application reads
+> `.env` itself via pydantic-settings; no manual sourcing is needed.
+>
+> Also note: `ENVIRONMENT` defaults to `production` (fail-closed). Keep
+> `ENVIRONMENT=development` in `backend/.env` for local development — the
+> copied `.env.example` already sets it.
+
 ### 4. Database Migrations
 
 ```bash
@@ -135,7 +144,7 @@ Copy `backend/.env.example` to `backend/.env`. All available variables:
 | `RESEND_FROM_EMAIL` | No | Sender address for emails (default: `CheckMyData <noreply@checkmydata.ai>`). Must match a verified domain in Resend. |
 | `APP_URL` | No | Frontend URL for email links (default: `http://localhost:3000`). Set to production URL in prod. |
 | `CORS_ORIGINS` | No | JSON array of allowed origins |
-| `ENVIRONMENT` | No | Set to `production` for strict secret validation |
+| `ENVIRONMENT` | No | Defaults to `production` (fail-closed: strict secret guards). Set `development` for local dev. |
 | `REDIS_URL` | No | Enables shared cache + ARQ task queue. Empty = in-process fallback. |
 | `JWT_EXPIRE_MINUTES` | No | Token expiry (default: 1440 = 24h) |
 | `CHROMA_SERVER_URL` | No | Remote ChromaDB server URL. If empty, uses embedded PersistentClient. |

@@ -7,6 +7,10 @@ from cryptography.fernet import Fernet
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("MASTER_ENCRYPTION_KEY", Fernet.generate_key().decode())
+# Settings defaults ENVIRONMENT to "production" (fail-closed, S-04); the suite
+# must opt into a safe test environment or every app.config import would trip
+# the production secret guard.
+os.environ.setdefault("ENVIRONMENT", "test")
 # The harness authenticates via Bearer tokens read from the register/login response
 # body. Under cookie auth the JWT is omitted from the body (F-AUTH-04), so the suite
 # runs in Bearer mode by default; cookie-specific tests opt into cookie auth explicitly.

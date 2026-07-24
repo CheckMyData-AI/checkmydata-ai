@@ -234,7 +234,9 @@ class ConfirmFixRequest(BaseModel):
     "/investigate/{investigation_id}/confirm-fix",
     response_model=ConfirmFixResponse,
 )
+@limiter.limit("10/minute")
 async def confirm_investigation_fix(
+    request: Request,
     investigation_id: str,
     body: ConfirmFixRequest,
     db: AsyncSession = Depends(get_db),

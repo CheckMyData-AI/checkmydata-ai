@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings
+from app.core.rate_limit import limiter
 from app.models.user import User
 from app.services.billing_service import BillingError, BillingService
 from app.services.entitlement_service import EntitlementService
@@ -88,7 +89,9 @@ async def get_subscription(
 
 
 @router.post("/checkout")
+@limiter.limit("10/minute")
 async def create_checkout(
+    request: Request,
     body: CheckoutRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -108,7 +111,9 @@ async def create_checkout(
 
 
 @router.post("/portal")
+@limiter.limit("10/minute")
 async def create_portal(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> dict:

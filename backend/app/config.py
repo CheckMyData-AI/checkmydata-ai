@@ -59,7 +59,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "CheckMyData.ai"
-    environment: str = "development"
+    # Fail closed (F-AUTH-11 / S-04): the default is "production" so an unset,
+    # empty, or mistyped ENVIRONMENT keeps the production secret guards active
+    # (see _validate_production_secrets). Local dev/test must opt in explicitly
+    # (ENVIRONMENT=development — set in .env.example, copied by `make setup`).
+    environment: str = "production"
     debug: bool = False
     sql_echo: bool = False
 
@@ -129,6 +133,14 @@ class Settings(BaseSettings):
     custom_rules_dir: str = "./rules"
 
     repo_clone_base_dir: str = "./data/repos"
+
+    # FA-004 SSRF guard for user-supplied git repository URLs. By default
+    # ``validate_repo_url`` DNS-resolves the repo host and rejects
+    # loopback/private/link-local/reserved targets so `git ls-remote`/`clone`
+    # can't be turned into an internal network probe or a cloud-metadata
+    # (169.254.169.254) fetch. Set True ONLY for self-hosted deployments whose
+    # git server lives inside a trusted private network (e.g. GitLab on RFC1918).
+    repo_allow_private_hosts: bool = False
 
     # Live Git access (GitInspector / GitAgent). All operations are read-only.
     # ``git_agent_auto_pull`` lets the GitAgent refresh the local clone before

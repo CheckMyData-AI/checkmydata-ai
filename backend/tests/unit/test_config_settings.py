@@ -63,6 +63,25 @@ class TestProductionValidation:
                     master_encryption_key="dGVzdC1rZXktMTIzNDU2Nzg5MDEyMzQ1Ng==",
                 )
 
+    def test_unset_environment_fails_closed(self):
+        # S-04: with ENVIRONMENT unset, the field default must behave as
+        # production — the guard rejects the default JWT secret instead of
+        # silently relaxing into development.
+        env = {k: v for k, v in os.environ.items() if k != "ENVIRONMENT"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(Exception, match="JWT_SECRET"):
+                Settings(_env_file=None)
+
+    def test_unset_environment_defaults_to_production(self):
+        env = {k: v for k, v in os.environ.items() if k != "ENVIRONMENT"}
+        with patch.dict(os.environ, env, clear=True):
+            s = Settings(
+                _env_file=None,
+                jwt_secret="a-secure-jwt-secret-32-characters-long-or-more",
+                master_encryption_key="dGVzdC1rZXktMTIzNDU2Nzg5MDEyMzQ1Ng==",
+            )
+        assert s.environment == "production"
+
     def test_explicit_dev_envs_allow_defaults(self):
         for env in ("development", "dev", "test", "testing", "local", "ci"):
             s = Settings(environment=env, jwt_secret="change-me-in-production")
