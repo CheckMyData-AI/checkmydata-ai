@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB (via `backend/app/connectors/`).
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: ~5,970 total (5,445 backend + 526 frontend Vitest); backend coverage ~78% combined (77.74% on the 2026-07-24 full run; the CI gate `fail_under` is **72%**).
+- **Tests**: ~6,125 total (5,580 backend + 546 frontend Vitest); backend coverage ~78% (78.03% on the 2026-07-24 remediation run; the CI gate `fail_under` is **72%**).
 - **Recent work**: current release **`[1.15.1]`** (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
 
 ## Prerequisites

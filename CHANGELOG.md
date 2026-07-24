@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Audit remediation (2026-07-24)
+
+Remediation of the 2026-07-24 full repository audit (`docs/qa-audit/full-audit-2026-07-24/` — 144 findings; per-finding status and commit mapping in `11-findings-registry.md`). Branch `fix/audit-remediation-2026-07-24`, 8 commits. Post-remediation run: backend 5580 passed / 5 skipped / 1 xfailed / 0 failed, coverage **78.03%** (gate 72%); frontend 546 passed (79 files); ruff check/format + mypy clean.
+
+**Security**
+
+- **FA-004 — git-SSRF guard** — `validate_repo_url` DNS-resolves the repo host and rejects loopback/private/link-local/reserved targets (incl. cloud metadata `169.254.169.254`) on both add-repo and `check-access`; opt-out `REPO_ALLOW_PRIVATE_HOSTS` for trusted internal git servers (commit `97616b7`).
+- **FA-033 — fail-closed `ENVIRONMENT`** — now defaults to `production`, so unset/empty/unknown values keep the strict secret guards (non-default `JWT_SECRET` ≥32 chars, `DEBUG=false`, no CORS `*`) instead of silently passing as development (commit `97616b7`).
+- **Missing rate limits (FA-017/054/055/056)** — `/api/billing/checkout` + `/api/billing/portal` (10/min), `/api/chat/ws-ticket` (30/min), `confirm-fix` and `PATCH /api/schedules/{id}` (10/min) (commit `97616b7`).
+- **Dependency CVEs (FA-034/FA-005)** — `gitpython>=3.1.51`, `mcp==1.28.1`, `pyasn1>=0.6.4` (commits `97616b7`, `fee7b49`); `next` 15.5.12→15.5.21 closes the request-smuggling GHSA-ggv3-7p47-pfv8 (commit `f3aff7d`). Residual (deferred): `chromadb` and `ecdsa` have no upstream fix (ecdsa not exploitable under the HS256 whitelist); `postcss`/`sharp` remain transitive inside next 15.x — clearing them needs a next major.
+
+**Fixed**
+
+- **FA-001 (Critical) — MongoDB connector** — `if not self._db` → `is None` ×5: motor forbids truthiness, so every operation against a real MongoDB raised `NotImplementedError` (commit `0567e21`).
+- **Connector correctness** — ClickHouse client recovery after a client-side timeout (session-lock wedge, FA-011); CH `EXPLAIN indexes = 1` ends false "full MergeTree scan" warnings (FA-026); SafetyGuard `validate_mongo` parity with the connector guard — `$out`/`$merge`/server-side JS blocked (FA-081); note-decay `func.greatest` now works on SQLite (FA-025) (commit `0567e21`).
+- **Learnings & feedback** — idempotent downvote (AQ-1/FA-002, closes F-LEARN-08); per-user vote dedup via a new `LearningVote` table + migration `f8a9b0c1d2e3` (AQ-7/FA-031, closes F-LEARN-03); prompt-injection guards — untrusted framing on tool results + validation on `record_learning` (AQ-2/FA-003); DataGate `datetime` and string-number coercion for hard checks (AQ-4/5, FA-028/029); AnswerValidator verdict parsing (AQ-9/FA-084); reconcile float tolerance (AQ-10/FA-085 — un-xfails DATA-15) (commit `2c1a835`).
+- **Resilience** — reaped runs reconcile on a late `pipeline_end` instead of staying phantom-`failed` (FA-007); intra-step heartbeats on long pipeline stages (FA-008); post-index heartbeat closes the duplicate-dispatch window (FA-009/RES-3); `update_connection` business validation 422→400 (FA-061) (commit `453df6f`).
+- **Frontend** — session-expired flash survives the `/login` redirect (FA-010); one-shot 401 guard re-arms on re-authentication (FA-020); single shared session-expired message (FA-021); inline list errors + Retry for connections/schedules/learnings and all LogsScreen tabs (FA-024, FA-069); SCN-041 auto-growing textarea, SCN-054 per-step elapsed, SCN-077 Cancel in the create-rule modal (FA-064/065/066); lazy `remark-gfm` import (FA-042); dead `msw` devDependency removed (FA-103) (commit `f3aff7d`).
+
+**Performance**
+
+- **Hot-path indexes** — migration `eff7aad70326`: `chat_messages(session_id, created_at)`, `agent_learnings(connection_id, is_active, confidence)`, `notifications(user_id, is_read, created_at)`, `request_traces(session_id)` and `(message_id)` (FA-046/047/048/107/109, commit `3db2c72`).
+- **Pagination bounds + logs 404** — `limit`/`offset` caps on notes, dashboards, data-graph metrics/relationships, and repo docs (FA-062, partial); `logs.py update_error` returns 404 for unknown error ids and 400 for invalid status (FA-060) (commit `3db2c72`).
+
+Deferred per the registry (marked «deferred» in `11-findings-registry.md`): the AQ-3/AQ-6/AQ-8 DataGate enforcement cluster (→ R12), gsap+lenis→motion consolidation (FA-012), API.md regeneration (FA-014–016), multi-dyno/Redis rate-limit parity (FA-036), and the remaining UX Low items.
+
 ### Added — UX audit remediation (2026-07-19)
 
 Remediation of the findings from the UX scenario audit (`docs/ux/`, super-ux scenario base installed in `5011885`). Closes the last open High finding (F-PROJ-01) outside the R3 release. Verified by the 2026-07-24 full audit: 112/112 UX scenarios verified against code (109 PASS / 3 PARTIAL — SCN-041, SCN-054, SCN-077).

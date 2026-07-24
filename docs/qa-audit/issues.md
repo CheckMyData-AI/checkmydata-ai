@@ -13,6 +13,14 @@ git (see "Already fixed" below). This document tracks only what is **still open*
 > F-LEARN-07) and F-PROJ-01 by the email-verification work (2026-07-19, commit `1701b46`,
 > covered by `backend/tests/integration/test_auth_email_verification.py`). The tally, module
 > tables, and release roadmap below have been updated to reflect this.
+>
+> **Remediation 2026-07-24:** the full audit's findings were remediated on branch
+> `fix/audit-remediation-2026-07-24` (8 commits) — 40 FIXED / 5 PARTIAL / 99 deferred of 144.
+> Per-finding status and commit mapping:
+> [`full-audit-2026-07-24/11-findings-registry.md`](full-audit-2026-07-24/11-findings-registry.md).
+> Notably closed: the MongoDB-connector Critical (FA-001), the git-SSRF High (FA-004), the
+> AQ-1 downvote-bomb (closes **F-LEARN-08**) and AQ-7 vote-pumping (closes **F-LEARN-03**),
+> plus the gitpython/mcp/pyasn1/next CVEs.
 
 ## Already fixed (not tracked here — for reference)
 
@@ -85,12 +93,12 @@ frontend **A** (563 smells, 7 SOLID).
 remediation closed the last High (F-PROJ-01) + 1 Medium (F-AUTH-13). Includes the 2026-06-23
 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
 
-**All open High findings are closed.** Highest-leverage remaining items per the 2026-07-24 full
-audit ([`full-audit-2026-07-24/`](full-audit-2026-07-24/)): the MongoDB connector motor-truthiness
-bug (`05-cross-db.md` B1, Critical) and SSRF host filtering in `validate_repo_url`
-(`07-security.md` S-01, High). Within this document's own scope, the top remaining clusters are
-§3 items 4–7 (credential redaction F-CONN-08, prompt-injection gate, durable AuditLog,
-idempotency).
+**All open High findings are closed.** The two highest-leverage items from the 2026-07-24 full
+audit — the MongoDB connector motor-truthiness bug (`05-cross-db.md` B1, Critical) and SSRF
+host filtering in `validate_repo_url` (`07-security.md` S-01, High) — were **FIXED** by the
+2026-07-24 remediation (commits `0567e21`, `97616b7`). Within this document's own scope, the
+top remaining clusters are §3 items 4–7 (credential redaction F-CONN-08, prompt-injection
+gate, durable AuditLog, idempotency).
 
 ---
 
