@@ -166,6 +166,36 @@ def _parse_failure_result(reason: str, *, fail_closed: bool) -> AnswerValidation
     )
 
 
+_VERDICT_TRUE = frozenset({"true", "yes", "1"})
+_VERDICT_FALSE = frozenset({"false", "no", "0"})
+
+
+def _parse_verdict_bool(value: object) -> bool | None:
+    """Parse a verdict field explicitly; ``None`` when not recognizably boolean.
+
+    AQ-9: ``bool("false") is True`` — an LLM that returns its verdict as a
+    *string* would have a ``"false"`` verdict counted as a pass. Strings are
+    matched case-insensitively against true/false/yes/no/1/0; anything else
+    (including ``None`` and arbitrary strings like ``"maybe"``) is not a
+    verdict and must route to the failure path by the caller.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _VERDICT_TRUE:
+            return True
+        if normalized in _VERDICT_FALSE:
+            return False
+    return None
+
+
 def _parse_validator_output(text: str, *, fail_closed: bool = False) -> AnswerValidationResult:
     """Parse the validator JSON output, tolerating preamble/code-fence noise.
 
@@ -194,9 +224,15 @@ def _parse_validator_output(text: str, *, fail_closed: bool = False) -> AnswerVa
         # A successful-looking JSON object that omits the verdict field is just
         # as unverifiable as malformed JSON — treat it the same.
         return _parse_failure_result("validator verdict missing", fail_closed=fail_closed)
+    addresses = _parse_verdict_bool(payload.get("addresses_question"))
+    if addresses is None:
+        # AQ-9: a verdict we cannot interpret (e.g. the string "maybe", null,
+        # or a number other than 0/1) is unverifiable — failure path, not pass.
+        return _parse_failure_result("validator verdict not boolean", fail_closed=fail_closed)
+    is_partial = _parse_verdict_bool(payload.get("is_partial", False))
     return AnswerValidationResult(
-        addresses_question=bool(payload.get("addresses_question", True)),
+        addresses_question=addresses,
         confidence=float(payload.get("confidence", 0.5) or 0.0),
         reason=str(payload.get("reason", ""))[:300],
-        is_partial=bool(payload.get("is_partial", False)),
+        is_partial=is_partial if is_partial is not None else False,
     )

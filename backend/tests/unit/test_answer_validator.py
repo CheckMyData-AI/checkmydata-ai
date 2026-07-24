@@ -84,6 +84,67 @@ class TestParseValidatorOutput:
         assert result.confidence == 0.9
 
 
+class TestStringVerdictParsing:
+    """AQ-9: bool("false") is True — string verdicts must be parsed explicitly."""
+
+    @pytest.mark.parametrize(
+        "verdict, expected",
+        [
+            ("false", False),
+            ("False", False),
+            ("FALSE", False),
+            ("no", False),
+            ("0", False),
+            ("true", True),
+            ("True", True),
+            ("yes", True),
+            ("1", True),
+        ],
+    )
+    def test_string_verdict_parsed_explicitly(self, verdict, expected):
+        result = _parse_validator_output(
+            f'{{"addresses_question": "{verdict}", "confidence": 0.9, "reason": "x"}}'
+        )
+        assert result.addresses_question is expected
+        assert result.confidence == 0.9
+
+    def test_numeric_0_1_verdicts(self):
+        assert (
+            _parse_validator_output('{"addresses_question": 0, "reason": "x"}').addresses_question
+            is False
+        )
+        assert (
+            _parse_validator_output('{"addresses_question": 1, "reason": "x"}').addresses_question
+            is True
+        )
+
+    def test_uninterpretable_verdict_fails_closed_when_configured(self):
+        """A verdict we cannot parse ("maybe", null) is unverifiable — it must
+        route to the failure path, not be waved through as a pass."""
+        for bad in ('"maybe"', "null", "2"):
+            result = _parse_validator_output(
+                f'{{"addresses_question": {bad}, "reason": "x"}}', fail_closed=True
+            )
+            assert result.addresses_question is False, bad
+            assert result.is_partial is True, bad
+            assert result.confidence == 0.0, bad
+
+    def test_uninterpretable_verdict_stays_lenient_when_fail_open(self):
+        for bad in ('"maybe"', "null"):
+            result = _parse_validator_output(
+                f'{{"addresses_question": {bad}, "reason": "x"}}', fail_closed=False
+            )
+            assert result.addresses_question is True, bad
+            assert result.confidence == 0.0, bad
+
+    def test_string_is_partial_parsed(self):
+        result = _parse_validator_output(
+            '{"addresses_question": false, "is_partial": "true", "reason": "cut"}'
+        )
+        assert result.addresses_question is False
+        assert result.is_partial is True
+
+
 class TestAnswerValidator:
     @pytest.mark.asyncio
     async def test_empty_answer_is_partial(self):

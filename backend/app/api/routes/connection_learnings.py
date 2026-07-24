@@ -254,7 +254,11 @@ async def confirm_learning(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Upvote a learning — bumps confidence and times_confirmed."""
+    """Upvote a learning — bumps confidence and times_confirmed.
+
+    AQ-7: one active vote per (learning, user). A repeated upvote from the
+    same user is a no-op; switching from a previous downvote reverses it.
+    """
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -266,7 +270,7 @@ async def confirm_learning(
     if not check or check.connection_id != connection_id:
         raise HTTPException(status_code=404, detail="Learning not found")
 
-    entry = await _learning_svc.confirm_learning(db, learning_id)
+    entry, outcome = await _learning_svc.vote_learning(db, learning_id, user["user_id"], 1)
     if not entry:
         raise HTTPException(status_code=404, detail="Learning not found")
     await db.commit()
@@ -275,6 +279,7 @@ async def confirm_learning(
         "id": entry.id,
         "confidence": round(entry.confidence, 2),
         "times_confirmed": entry.times_confirmed,
+        "vote": outcome,
     }
 
 
@@ -287,7 +292,11 @@ async def contradict_learning(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Downvote a learning — reduces confidence, may deactivate."""
+    """Downvote a learning — reduces confidence, may deactivate.
+
+    AQ-7: one active vote per (learning, user). A repeated downvote from the
+    same user is a no-op; switching from a previous upvote reverses it.
+    """
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -299,7 +308,7 @@ async def contradict_learning(
     if not check or check.connection_id != connection_id:
         raise HTTPException(status_code=404, detail="Learning not found")
 
-    entry = await _learning_svc.contradict_learning(db, learning_id)
+    entry, outcome = await _learning_svc.vote_learning(db, learning_id, user["user_id"], -1)
     if not entry:
         raise HTTPException(status_code=404, detail="Learning not found")
     await db.commit()
@@ -308,4 +317,5 @@ async def contradict_learning(
         "id": entry.id,
         "confidence": round(entry.confidence, 2),
         "is_active": entry.is_active,
+        "vote": outcome,
     }

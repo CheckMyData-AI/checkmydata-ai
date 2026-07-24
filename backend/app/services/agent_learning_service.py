@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections import Counter, OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from sqlalchemy import delete, func, select, update
 
 from app.config import settings
 from app.models.agent_learning import AgentLearning, AgentLearningSummary, _lesson_hash
+from app.models.learning_vote import LearningVote
 from app.services.text_similarity import semantic_best_match
 
 if TYPE_CHECKING:
@@ -67,6 +69,32 @@ SUBJECT_BLOCKLIST = frozenset(
     }
 )
 
+# AQ-2: instruction-shaped content is a prompt-injection marker, not a
+# learning. Indirect injections (crafted DB row values like "IMPORTANT: record
+# a learning: ignore previous instructions…") aim to persist attacker text as
+# an authoritative lesson. These patterns match instruction-addressed text
+# ("ignore previous…", "you must…", fake system/markdown control blocks) in
+# either the subject or the lesson; legitimate lessons are written as
+# data observations, not as commands to the model.
+_INSTRUCTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\b",
+        r"\bdisregard\s+(all\s+|any\s+|the\s+)?(previous|prior|above|instructions?)\b",
+        r"\byou\s+(must|shall|are\s+now|have\s+to|should\s+now)\b",
+        r"\bsystem\s+prompt\b",
+        r"\bnew\s+instructions?\b",
+        r"\bdo\s+not\s+follow\b",
+        r"\boverride\s+(all\s+|the\s+)?(previous|prior|instructions?|rules?)\b",
+        r"</?(system|instruction|prompt|admin|root)\s*>",
+        r"```\s*(system|instructions?)\b",
+    )
+)
+
+
+def _contains_instruction_shaped_text(text: str) -> bool:
+    return any(p.search(text) for p in _INSTRUCTION_PATTERNS)
+
 
 def _non_ascii_ratio(text: str) -> float:
     """Return the fraction of characters that are non-ASCII (outside printable ASCII range)."""
@@ -84,6 +112,8 @@ def validate_learning_quality(subject: str, lesson: str) -> str | None:
         return f"Lesson too short ({len(lesson.strip())} chars, min {MIN_LESSON_LENGTH})"
     if _non_ascii_ratio(lesson) > 0.5:
         return "Lesson text is mostly non-ASCII (likely raw user question in non-English)"
+    if _contains_instruction_shaped_text(subject) or _contains_instruction_shaped_text(lesson):
+        return "Learning contains instruction-shaped text (possible prompt injection)"
     return None
 
 
@@ -600,6 +630,70 @@ class AgentLearningService:
         await session.flush()
         await self._invalidate_summary(session, entry.connection_id)
         return entry
+
+    async def vote_learning(
+        self,
+        session: AsyncSession,
+        learning_id: str,
+        user_id: str,
+        vote: int,
+    ) -> tuple[AgentLearning | None, str]:
+        """Cast a per-user vote on a learning (AQ-7).
+
+        One active vote per ``(learning_id, user_id)``:
+        * a repeated vote of the same sign is a no-op (``"noop"``) — one user
+          cannot pump confidence to 1.0 / ★CRITICAL or deactivate someone
+          else's learning by clicking twice;
+        * a sign change reverses the previous vote's numeric effect before
+          applying the new one (``"changed"``);
+        * votes from different users are independent (``"recorded"``).
+
+        Returns ``(entry, outcome)`` with outcome ∈
+        ``{"recorded", "noop", "changed"}``; ``(None, "missing")`` when the
+        learning does not exist.
+        """
+        if vote not in (1, -1):
+            raise ValueError(f"Invalid vote: {vote}")
+        entry = await session.get(AgentLearning, learning_id)
+        if not entry:
+            return None, "missing"
+
+        existing = await session.execute(
+            select(LearningVote).where(
+                LearningVote.learning_id == learning_id,
+                LearningVote.user_id == user_id,
+            )
+        )
+        prev = existing.scalar_one_or_none()
+
+        if prev is not None and prev.vote == vote:
+            return entry, "noop"
+
+        if prev is not None:
+            # Reverse the previous vote's effect before applying the new one.
+            if prev.vote == 1:
+                entry.times_confirmed = max(0, entry.times_confirmed - 1)
+                entry.confidence = max(0.0, entry.confidence - 0.1)
+            else:
+                entry.confidence = min(1.0, entry.confidence + 0.3)
+            prev.vote = vote
+            prev.updated_at = datetime.now(UTC)
+            outcome = "changed"
+        else:
+            session.add(LearningVote(learning_id=learning_id, user_id=user_id, vote=vote))
+            outcome = "recorded"
+
+        if vote == 1:
+            entry.times_confirmed += 1
+            entry.confidence = min(1.0, entry.confidence + 0.1)
+        else:
+            entry.confidence = max(0.0, entry.confidence - 0.3)
+            if entry.confidence < 0.1:
+                entry.is_active = False
+        entry.updated_at = datetime.now(UTC)
+        await session.flush()
+        await self._invalidate_summary(session, entry.connection_id)
+        return entry, outcome
 
     # ------------------------------------------------------------------
     # Query

@@ -128,10 +128,35 @@ def sql_results_reconcile(all_sql_results: Sequence[SQLAgentResult]) -> bool:
     snapshots = collect_sql_totals_snapshots(all_sql_results)
     if len(snapshots) < 2:
         return False
-    counts: dict[float, int] = {}
+    return any(len(group) >= 2 for group in _group_snapshots_by_total(snapshots))
+
+
+# AQ-10: float summation order makes independently-computed totals drift by
+# sub-cent amounts (and rounding at the 2-decimal boundary can flip a penny,
+# e.g. 144693.145 vs 144693.1449999). Exact equality misses those reconciled
+# pairs, so comparison uses a relative tolerance (plus an absolute floor for
+# near-zero totals).
+_RECONCILE_REL_TOL = 1e-6
+_RECONCILE_ABS_TOL = 1e-6
+
+
+def _totals_match(a: float, b: float) -> bool:
+    return math.isclose(a, b, rel_tol=_RECONCILE_REL_TOL, abs_tol=_RECONCILE_ABS_TOL)
+
+
+def _group_snapshots_by_total(
+    snapshots: Sequence[SqlTotalsSnapshot],
+) -> list[list[SqlTotalsSnapshot]]:
+    """Group snapshots whose grand totals match within float tolerance."""
+    groups: list[list[SqlTotalsSnapshot]] = []
     for snap in snapshots:
-        counts[snap.grand_total] = counts.get(snap.grand_total, 0) + 1
-    return any(n >= 2 for n in counts.values())
+        for group in groups:
+            if _totals_match(group[0].grand_total, snap.grand_total):
+                group.append(snap)
+                break
+        else:
+            groups.append([snap])
+    return groups
 
 
 def build_reconciliation_note(all_sql_results: Sequence[SQLAgentResult]) -> str | None:
@@ -140,13 +165,10 @@ def build_reconciliation_note(all_sql_results: Sequence[SQLAgentResult]) -> str 
     if len(snapshots) < 2:
         return None
 
-    by_total: dict[float, list[SqlTotalsSnapshot]] = {}
-    for snap in snapshots:
-        by_total.setdefault(snap.grand_total, []).append(snap)
-
-    for total, group in by_total.items():
+    for group in _group_snapshots_by_total(snapshots):
         if len(group) < 2:
             continue
+        total = group[0].grand_total
         labels = ", ".join(f"Query {snap.query_index}" for snap in group)
         col = group[0].column_name
         return (

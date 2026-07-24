@@ -21,7 +21,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -85,6 +85,24 @@ _NON_WORD_RE = re.compile(r"[^a-z0-9]+")
 def _column_tokens(name: str) -> set[str]:
     snake = _CAMEL_BOUNDARY_RE.sub("_", name)
     return {t for t in _NON_WORD_RE.split(snake.lower()) if t}
+
+
+def _parse_numeric_string(text: str) -> float | None:
+    """Parse a numeric-looking string; ``None`` for anything non-numeric.
+
+    AQ-5: connectors that return numbers as text (some drivers, CSV exports,
+    MongoDB) previously bypassed every value-range hard check — ``"150"`` in a
+    bounded-percent column passed silently. Non-finite results (``"nan"``,
+    ``"inf"``) are not usable measures and also yield ``None``.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        value = float(stripped)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
 
 
 @dataclass
@@ -365,6 +383,12 @@ class DataGate:
                     continue
                 numeric = isinstance(val, (int, float, Decimal)) and not isinstance(val, bool)
                 fval: float | None = float(val) if numeric else None
+                if fval is None and isinstance(val, str) and kind != "date":
+                    # AQ-5: coerce numeric strings so text-returning drivers
+                    # cannot bypass the value-range hard checks. Date strings
+                    # are handled by the ISO/epoch branches below instead.
+                    fval = _parse_numeric_string(val)
+                    numeric = fval is not None
                 if kind == "percent" and numeric and fval is not None:
                     # Bounded percent (conversion/completion/ctr/occupancy/…) is
                     # a 0..100 share, so values outside [pct_min, bounded_max]
@@ -446,6 +470,28 @@ class DataGate:
                             break
                     except (ValueError, TypeError):
                         pass
+                elif kind == "date" and isinstance(val, (datetime, date)):
+                    # AQ-4: asyncpg/pymysql return native datetime/date objects,
+                    # which previously matched NO branch — the year-range hard
+                    # check was dead code on PostgreSQL/MySQL. (pandas Timestamp
+                    # subclasses datetime, so it is covered here too.)
+                    if val.year < year_min or val.year > year_max:
+                        if settings.data_gate_hard_checks_enabled:
+                            outcome.fail(
+                                f"Column '{col_name}' has suspicious "
+                                f"date {val.isoformat()}: year {val.year} outside "
+                                f"[{year_min}, {year_max}].",
+                                suggestion=(
+                                    "Confirm the column is actually a "
+                                    "date and not epoch seconds/ms. "
+                                    "Adjust the SELECT cast accordingly."
+                                ),
+                            )
+                        else:
+                            outcome.warn(
+                                f"Column '{col_name}' has suspicious date: {val.isoformat()}",
+                            )
+                        break
                 elif kind == "date" and isinstance(val, (int, float)) and not isinstance(val, bool):
                     # I7: epoch timestamps arriving as numbers are the exact
                     # unit error (seconds vs ms) the string branch above can't

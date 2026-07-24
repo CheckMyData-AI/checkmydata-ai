@@ -68,7 +68,6 @@ async def submit_feedback(
         try:
             import json as _json
 
-            from app.knowledge.learning_analyzer import LearningAnalyzer
             from app.models.base import async_session_factory
 
             meta = _json.loads(msg.metadata_json)
@@ -79,23 +78,15 @@ async def submit_feedback(
             session_row = msg.session
             connection_id = getattr(session_row, "connection_id", None) if session_row else None
 
-            if exposed_ids and connection_id:
+            if connection_id:
                 async with async_session_factory() as learn_session:
-                    await contradict_exposed_learnings_on_negative_feedback(
+                    await process_negative_feedback_learning_effects(
                         learn_session,
-                        connection_id=connection_id,
-                        exposed_learning_ids=exposed_ids,
-                    )
-
-            if connection_id and query:
-                analyzer = LearningAnalyzer()
-                async with async_session_factory() as learn_session:
-                    await analyzer.analyze_negative_feedback(
-                        session=learn_session,
+                        message_id=body.message_id,
                         connection_id=connection_id,
                         query=query,
                         question=question,
-                        error_detail="User rated this result as incorrect (thumbs down)",
+                        exposed_learning_ids=exposed_ids,
                     )
         except Exception:
             logger.debug("Feedback-triggered learning extraction failed", exc_info=True)
@@ -178,8 +169,8 @@ async def apply_exposed_learnings_on_positive_feedback(
         return 0
 
 
-async def _message_learning_credited(session: AsyncSession, message_id: str) -> bool:
-    """True if *message_id* was already credited for its exposed learnings."""
+async def _message_meta_flag(session: AsyncSession, message_id: str, flag: str) -> bool:
+    """True if *message_id*'s metadata already carries the boolean *flag*."""
     import json as _json
 
     from sqlalchemy import select as _select
@@ -196,11 +187,11 @@ async def _message_learning_credited(session: AsyncSession, message_id: str) -> 
         meta = _json.loads(raw)
     except (TypeError, ValueError):
         return False
-    return bool(isinstance(meta, dict) and meta.get("learning_credited_at_validation"))
+    return bool(isinstance(meta, dict) and meta.get(flag))
 
 
-async def _mark_message_learning_credited(session: AsyncSession, message_id: str) -> None:
-    """Persist the idempotency flag so the thumbs-up path won't re-credit."""
+async def _set_message_meta_flag(session: AsyncSession, message_id: str, flag: str) -> None:
+    """Persist a boolean idempotency *flag* on the message metadata."""
     import json as _json
 
     from sqlalchemy import select as _select
@@ -217,9 +208,73 @@ async def _mark_message_learning_credited(session: AsyncSession, message_id: str
             meta = {}
     except (TypeError, ValueError):
         meta = {}
-    meta["learning_credited_at_validation"] = True
+    meta[flag] = True
     msg.metadata_json = _json.dumps(meta, default=str)
     await session.commit()
+
+
+async def _message_learning_credited(session: AsyncSession, message_id: str) -> bool:
+    """True if *message_id* was already credited for its exposed learnings."""
+    return await _message_meta_flag(session, message_id, "learning_credited_at_validation")
+
+
+async def _mark_message_learning_credited(session: AsyncSession, message_id: str) -> None:
+    """Persist the idempotency flag so the thumbs-up path won't re-credit."""
+    await _set_message_meta_flag(session, message_id, "learning_credited_at_validation")
+
+
+async def process_negative_feedback_learning_effects(
+    session: AsyncSession,
+    *,
+    message_id: str,
+    connection_id: str | None,
+    query: str | None,
+    question: str,
+    exposed_learning_ids: list[str],
+) -> bool:
+    """Apply the thumbs-down learning rollback exactly ONCE per message (AQ-1).
+
+    The positive-feedback path is idempotent via ``learning_credited_at_validation``;
+    the negative path previously was not — every repeated downvote on the same
+    message re-applied −0.3 to the top-3 exposed learnings (deactivating the
+    most influential lessons after a few clicks, e.g. a double-click) and
+    re-created/pumped the "User flagged incorrect results…" lesson via exact
+    dedup (+0.1 confidence per repeat, up to ★CRITICAL).
+
+    Symmetric guard: a ``learning_contradicted_at_feedback`` flag persisted on
+    the message metadata makes repeated downvotes a no-op. The rollback is
+    per *message*; a downvote on a different message of the same connection
+    still applies normally.
+
+    Returns True when the rollback was applied, False when skipped (already
+    applied for this message or missing connection).
+    """
+    if not connection_id:
+        return False
+    if await _message_meta_flag(session, message_id, "learning_contradicted_at_feedback"):
+        return False
+
+    if exposed_learning_ids:
+        await contradict_exposed_learnings_on_negative_feedback(
+            session,
+            connection_id=connection_id,
+            exposed_learning_ids=exposed_learning_ids,
+        )
+
+    if query:
+        from app.knowledge.learning_analyzer import LearningAnalyzer
+
+        analyzer = LearningAnalyzer()
+        await analyzer.analyze_negative_feedback(
+            session=session,
+            connection_id=connection_id,
+            query=query,
+            question=question,
+            error_detail="User rated this result as incorrect (thumbs down)",
+        )
+
+    await _set_message_meta_flag(session, message_id, "learning_contradicted_at_feedback")
+    return True
 
 
 async def credit_validated_learnings(

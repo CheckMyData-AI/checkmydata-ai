@@ -289,6 +289,102 @@ class TestEpochIntDates:
         assert not outcome.errors and not outcome.warnings
 
 
+class TestNativeDatetimeDates:
+    """AQ-4: native datetime/date values must hit the year-range hard check.
+
+    asyncpg / pymysql return ``datetime`` objects, which previously matched no
+    branch — the date hard check was dead code on PostgreSQL/MySQL.
+    """
+
+    def _run(self, value) -> DataGateOutcome:
+        gate = DataGate()
+        qr = QueryResult(columns=["created_date"], rows=[[value]], row_count=1)
+        stage = PlanStage(stage_id="s1", description="x", tool="query_database")
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        return gate.check(
+            stage,
+            StageResult(stage_id="s1", status="success", query_result=qr),
+            StageContext(plan=plan),
+        )
+
+    def test_datetime_year_1500_hard_fails(self):
+        from datetime import datetime
+
+        out = self._run(datetime(1500, 1, 1))
+        assert out.passed is False
+        assert out.errors
+
+    def test_date_year_1500_hard_fails(self):
+        from datetime import date
+
+        out = self._run(date(1500, 1, 1))
+        assert out.passed is False
+        assert out.errors
+
+    def test_datetime_year_2300_hard_fails(self):
+        from datetime import datetime
+
+        out = self._run(datetime(2300, 1, 1))
+        assert out.passed is False
+
+    def test_valid_datetime_passes(self):
+        from datetime import datetime
+
+        out = self._run(datetime(2024, 6, 15, 12, 30))
+        assert out.passed is True
+
+    def test_pandas_timestamp_year_1500_hard_fails(self):
+        pd = pytest.importorskip("pandas")
+
+        # pandas Timestamp subclasses datetime — the asyncpg-style branch
+        # must cover driver/ORM stacks that hand back Timestamps.
+        out = self._run(pd.Timestamp("1500-01-01"))
+        assert out.passed is False
+
+
+class TestNumericStringCoercion:
+    """AQ-5: numeric strings must not bypass value-range hard checks."""
+
+    def _run(self, col_name: str, value) -> DataGateOutcome:
+        gate = DataGate()
+        qr = QueryResult(columns=[col_name], rows=[[value]], row_count=1)
+        stage = PlanStage(stage_id="s1", description="x", tool="query_database")
+        plan = ExecutionPlan(plan_id="p", question="q", stages=[stage])
+        return gate.check(
+            stage,
+            StageResult(stage_id="s1", status="success", query_result=qr),
+            StageContext(plan=plan),
+        )
+
+    def test_string_150_in_percent_column_fails(self):
+        out = self._run("conversion", "150")
+        assert out.passed is False
+        assert out.errors
+
+    def test_string_negative_count_fails(self):
+        out = self._run("order_count", "-3")
+        assert out.passed is False
+        assert out.errors
+
+    def test_valid_string_percent_passes(self):
+        out = self._run("conversion", "42.5")
+        assert out.passed is True
+
+    def test_non_numeric_string_still_passes(self):
+        # Not a number — nothing to range-check (null/type checks own that).
+        out = self._run("conversion", "N/A")
+        assert out.passed is True
+
+    def test_nan_inf_strings_not_treated_as_numbers(self):
+        assert self._run("conversion", "nan").passed is True
+        assert self._run("conversion", "inf").passed is True
+
+    def test_date_column_iso_string_unaffected(self):
+        # Date strings keep going through the ISO branch, not numeric coercion.
+        assert self._run("created_date", "1800-01-01").passed is False
+        assert self._run("created_date", "2024-06-15").passed is True
+
+
 class TestDecimalAndTruncationAware:
     def test_decimal_percent_out_of_range_hard_fails(self):
         from decimal import Decimal
@@ -409,29 +505,57 @@ class TestLowBatchData14:
 
 
 class TestLowBatchData15:
-    """DATA-15: reconciliation rounding tolerance.
+    """DATA-15 / AQ-10: reconciliation rounding tolerance.
 
-    The reconciliation bucketing lives in app.core.insight_memory (not a W1
-    file). This test is xfail-deferred to the wave that owns that file.
+    Float summation order makes independently-computed totals drift by sub-cent
+    amounts (and 2-decimal rounding can flip a penny at the boundary, e.g.
+    144693.145 vs 144693.1449999). Exact-equality bucketing missed those
+    reconciled pairs; ``sql_results_reconcile`` now groups totals with
+    ``math.isclose(rel_tol=1e-6, abs_tol=1e-6)``.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "DATA-15 fix belongs to insight_memory.py (W3/W0-owned); "
-            "implementing here would edit a non-W1 file. "
-            "Deferred to that wave."
-        ),
-        strict=False,
-    )
-    def test_rounding_tolerance_in_reconcile(self):
-        """Values that differ only by float rounding should NOT be mismatches."""
-        # This would test sql_results_reconcile() in insight_memory.py
-        # which is not owned by Wave 1. xfail here documents the gap.
-        from app.core.insight_memory import InsightMemory  # noqa: F401
+    @staticmethod
+    def _result(total: float, query_index_marker: str):
+        from app.agents.sql_agent import SQLAgentResult
 
-        # If the reconcile method exists and handles epsilon, this passes.
-        # Otherwise it xfails as expected.
-        raise AssertionError("DATA-15 not yet fixed in insight_memory — see W3")
+        return SQLAgentResult(
+            status="success",
+            query=f"SELECT SUM(amount) AS total_usd ... -- {query_index_marker}",
+            results=QueryResult(
+                columns=["total_usd"],
+                rows=[[total]],
+                row_count=1,
+            ),
+        )
+
+    def test_rounding_tolerance_in_reconcile(self):
+        """Values that differ only by float rounding must NOT be mismatches."""
+        from app.agents.sql_result_reconciliation import sql_results_reconcile
+
+        # 144693.14 vs 144693.15 — a penny apart at the rounding boundary on a
+        # ~145k total (rel diff ~7e-8): same total computed in different scan
+        # orders. Exact equality used to miss this pair.
+        assert sql_results_reconcile(
+            [self._result(144693.14, "q1"), self._result(144693.15, "q2")]
+        ) is True
+
+    def test_genuinely_different_totals_still_do_not_reconcile(self):
+        """Guard: the tolerance must not paper over real discrepancies."""
+        from app.agents.sql_result_reconciliation import sql_results_reconcile
+
+        # ~0.7% apart — a real mismatch, not float noise.
+        assert sql_results_reconcile(
+            [self._result(144693.14, "q1"), self._result(143700.00, "q2")]
+        ) is False
+
+    def test_reconciliation_note_built_for_tolerant_match(self):
+        from app.agents.sql_result_reconciliation import build_reconciliation_note
+
+        note = build_reconciliation_note(
+            [self._result(144693.14, "q1"), self._result(144693.15, "q2")]
+        )
+        assert note is not None
+        assert "SQL RECONCILIATION (verified)" in note
 
 
 class TestLowBatchData18:
