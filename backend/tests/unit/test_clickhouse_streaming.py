@@ -143,3 +143,43 @@ class TestConnectorPoolRegistry:
             agent = SQLAgent()
             agent._connectors["k1"] = "conn"
             assert connector_pools.all_connectors() == {"k1": "conn"}
+
+
+class TestClickHouseTimeoutRecovery:
+    """B2 (audit 05-cross-db): a client-side timeout cancels the coroutine but
+    the worker thread keeps the HTTP stream open, so the driver session stays
+    busy and every subsequent query fails with ``Attempt to execute concurrent
+    queries within the same session``. The connector must drop the poisoned
+    client and recreate a fresh session on the next query."""
+
+    @pytest.mark.asyncio
+    async def test_connector_recovers_after_timeout(self, monkeypatch):
+        import time as _time
+
+        class _SlowStream(_FakeStream):
+            def __enter__(self):
+                _time.sleep(5)  # server-side query still running
+                return super().__enter__()
+
+        conn = ClickHouseConnector()
+        slow_client = MagicMock()
+        slow_client.query_row_block_stream = lambda query, parameters=None: _SlowStream([], ["x"])
+        conn._client = slow_client
+        conn._client_kwargs = {"host": "fake"}
+
+        good_stream = _FakeStream([[(1,)]], ["x"])
+        good_client = MagicMock()
+        good_client.query_row_block_stream = lambda query, parameters=None: good_stream
+        monkeypatch.setattr(
+            "app.connectors.clickhouse.clickhouse_connect.get_client",
+            lambda **kwargs: good_client,
+        )
+
+        result = await conn.execute_query("SELECT sleep(3)", timeout_seconds=0.05)
+        assert result.error is not None
+        assert "timed out" in result.error
+
+        recovered = await conn.execute_query("SELECT 1", timeout_seconds=2)
+        assert recovered.error is None
+        assert recovered.rows == [[1]]
+        assert conn._client is good_client

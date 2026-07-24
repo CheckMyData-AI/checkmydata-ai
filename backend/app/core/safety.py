@@ -125,22 +125,69 @@ class SafetyGuard:
         return SafetyResult(is_safe=True, query=query)
 
     def validate_mongo(self, query: str) -> SafetyResult:
-        """For MongoDB JSON queries, block write operations."""
+        """For MongoDB JSON queries, block write operations.
+
+        B4 (audit): mirrors the connector-level guard
+        (``_assert_mongo_read_safe`` in ``app.connectors.mongodb``) so paths
+        validated only through SafetyGuard get the same protection —
+        aggregation write stages (``$out`` / ``$merge``) and server-side JS
+        operators (``$where`` / ``$function`` / ``$accumulator``) are rejected
+        here too, not just top-level write operations.
+        """
         try:
             spec = json.loads(query)
         except json.JSONDecodeError:
             return SafetyResult(is_safe=False, reason="Invalid JSON query", query=query)
 
         operation = spec.get("operation", "find")
-        write_ops = {"insert", "update", "delete", "drop", "rename", "create_index", "drop_index"}
+        write_ops = {
+            "insert",
+            "update",
+            "delete",
+            "drop",
+            "rename",
+            "create_index",
+            "drop_index",
+            "replace",
+        }
 
-        if self.level == SafetyLevel.READ_ONLY and operation in write_ops:
-            logger.warning("Blocked MongoDB write operation in read-only mode: %s", operation)
-            return SafetyResult(
-                is_safe=False,
-                reason=f"Write operation '{operation}' not allowed in read-only mode",
-                query=query,
-            )
+        if self.level == SafetyLevel.READ_ONLY:
+            if operation in write_ops:
+                logger.warning("Blocked MongoDB write operation in read-only mode: %s", operation)
+                return SafetyResult(
+                    is_safe=False,
+                    reason=f"Write operation '{operation}' not allowed in read-only mode",
+                    query=query,
+                )
+
+            # Serialize the whole spec so JS operators are caught no matter how
+            # deeply they are nested (e.g. inside ``$and`` / ``$expr``).
+            blob = json.dumps(spec, default=str)
+            for js in ("$where", "$function", "$accumulator"):
+                if js in blob:
+                    logger.warning("Blocked MongoDB server-side JS operator: %s", js)
+                    return SafetyResult(
+                        is_safe=False,
+                        reason=(f"Server-side JS operator '{js}' not allowed in read-only mode"),
+                        query=query,
+                    )
+
+            if operation == "aggregate":
+                for stage in spec.get("pipeline", []):
+                    if isinstance(stage, dict):
+                        for write_stage in ("$out", "$merge"):
+                            if write_stage in stage:
+                                logger.warning(
+                                    "Blocked MongoDB aggregation write stage: %s", write_stage
+                                )
+                                return SafetyResult(
+                                    is_safe=False,
+                                    reason=(
+                                        f"Aggregation write stage '{write_stage}' "
+                                        "not allowed in read-only mode"
+                                    ),
+                                    query=query,
+                                )
 
         return SafetyResult(is_safe=True, query=query)
 

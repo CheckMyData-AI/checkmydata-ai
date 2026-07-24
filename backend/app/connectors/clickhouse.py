@@ -76,6 +76,7 @@ def _ch_engine_to_kind(engine: str) -> Literal["table", "view", "matview"]:
 class ClickHouseConnector(BaseConnector):
     def __init__(self):
         self._client = None
+        self._client_kwargs: dict[str, Any] | None = None
         self._config: ConnectionConfig | None = None
 
     @property
@@ -119,10 +120,41 @@ class ClickHouseConnector(BaseConnector):
             # authoritative backstop behind the app-layer SafetyGuard.
             client_kwargs["settings"] = {"readonly": 1}
 
+        # Kept so a poisoned session (client-side timeout, see execute_query)
+        # can be recreated lazily on the next query without a full reconnect.
+        self._client_kwargs = client_kwargs
         self._client = await asyncio.to_thread(
             clickhouse_connect.get_client,
             **client_kwargs,
         )
+
+    async def _get_client(self):
+        """Return the live client, recreating it if a previous query dropped it.
+
+        After a client-side timeout the driver session is poisoned (the worker
+        thread still holds the HTTP stream, so any further query on it fails
+        with "concurrent queries within the same session"). The timed-out path
+        resets ``self._client`` to None; the next query recreates a fresh
+        session here from the stored connect kwargs.
+        """
+        if self._client is None and self._client_kwargs is not None:
+            try:
+                self._client = await asyncio.to_thread(
+                    clickhouse_connect.get_client,
+                    **self._client_kwargs,
+                )
+            except Exception:
+                logger.debug("ClickHouse: lazy client recreation failed", exc_info=True)
+        return self._client
+
+    async def _reset_client(self) -> None:
+        """Close the current client and drop it so the next query recreates it."""
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                await asyncio.to_thread(client.close)
+            except Exception:
+                logger.debug("ClickHouse: error closing timed-out client", exc_info=True)
 
     async def disconnect(self) -> None:
         if self._client:
@@ -138,10 +170,10 @@ class ClickHouseConnector(BaseConnector):
         *,
         timeout_seconds: float | None = None,
     ) -> QueryResult:
-        if not self._client:
+        client = await self._get_client()
+        if client is None:
             return QueryResult(error="Not connected")
 
-        client = self._client
         start = time.monotonic()
 
         from app.connectors.base import MAX_RESULT_ROWS, cap_rows_by_bytes, resolve_query_timeout
@@ -189,6 +221,13 @@ class ClickHouseConnector(BaseConnector):
                 truncated=truncated,
             )
         except TimeoutError:
+            # B2 (audit): cancelling the coroutine does NOT stop the worker
+            # thread — its HTTP stream keeps the driver session busy, so every
+            # later query on this client fails with "Attempt to execute
+            # concurrent queries within the same session" until the server-side
+            # query finishes. Drop the poisoned client; the next query lazily
+            # recreates a fresh session via _get_client().
+            await self._reset_client()
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(
                 error=f"Query timed out after {effective_timeout:g}s",

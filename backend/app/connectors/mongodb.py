@@ -209,7 +209,7 @@ class MongoDBConnector(BaseConnector):
         For MongoDB, 'query' is expected to be a JSON string with:
         {"collection": "name", "operation": "find", "filter": {}, ...}
         """
-        if not self._db:
+        if self._db is None:
             return QueryResult(error="Not connected")
 
         from app.connectors.base import resolve_query_timeout
@@ -316,7 +316,7 @@ class MongoDBConnector(BaseConnector):
             return QueryResult(error=str(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
-        if not self._db:
+        if self._db is None:
             return SchemaInfo(db_type=self.db_type)
 
         from app.config import settings
@@ -384,7 +384,7 @@ class MongoDBConnector(BaseConnector):
         table_name: str,
         limit: int = 3,
     ) -> QueryResult:
-        if not self._db:
+        if self._db is None:
             return QueryResult(error="Not connected")
         query = json.dumps(
             {
@@ -410,7 +410,7 @@ class MongoDBConnector(BaseConnector):
         be passed to ``execute_query`` where ``json.loads`` would fail). Degrades to
         ``[]`` on any error so callers never receive an exception.
         """
-        if not self._db:
+        if self._db is None:
             return []
         if not self._COLL_NAME_RE.match(table):
             logger.debug("distinct_values: invalid collection name %r — returning []", table)
@@ -433,7 +433,7 @@ class MongoDBConnector(BaseConnector):
         large collections. Never builds a SQL string. Degrades to ``ColumnStats()``
         on any error.
         """
-        if not self._db:
+        if self._db is None:
             return ColumnStats()
         if not self._COLL_NAME_RE.match(table):
             logger.debug("approx_stats: invalid collection name %r — returning empty", table)

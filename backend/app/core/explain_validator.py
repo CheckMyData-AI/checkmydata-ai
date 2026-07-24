@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from app.connectors.base import BaseConnector
 from app.core.error_classifier import ErrorClassifier
@@ -56,7 +57,10 @@ class ExplainValidator:
         if dt == "mysql":
             return f"EXPLAIN {stripped}"
         if dt == "clickhouse":
-            return f"EXPLAIN {stripped}"
+            # B3 (audit): plain EXPLAIN never mentions where/prewhere — a key
+            # predicate hides inside ReadFromMergeTree — so index usage is only
+            # visible via ``indexes = 1`` (Condition / Granules annotations).
+            return f"EXPLAIN indexes = 1 {stripped}"
         return None
 
     def _analyze_plan(self, result, db_type: str) -> list[str]:
@@ -107,10 +111,11 @@ class ExplainValidator:
     def _analyze_clickhouse(self, result) -> list[str]:
         """Look for full-table-scan / large-read patterns in ClickHouse plan text.
 
-        ClickHouse ``EXPLAIN`` returns a tree of pipeline node descriptions in
-        text form (one row per node). We parse the joined text for known
-        red-flag tokens — ``ReadFromMergeTree`` without a ``PREWHERE``/``WHERE``,
-        ``Filter`` over the entire table, etc.
+        The query is explained with ``EXPLAIN indexes = 1``, which annotates
+        each ``ReadFromMergeTree`` node with an ``Indexes:`` section describing
+        how primary/skipping indexes prune the read. A *bounded* read (real
+        ``Condition`` or fewer granules read than the table holds) raises no
+        warning; ``Condition: true`` means no pruning — a genuine full scan.
         """
         warnings: list[str] = []
         if not result.rows:
@@ -131,21 +136,35 @@ class ExplainValidator:
             return warnings
 
         plan_lower = plan_text.lower()
-        if (
-            "readfrommergetree" in plan_lower
-            and "prewhere" not in plan_lower
-            and "where" not in plan_lower
-        ):
+        has_merge_read = "readfrommergetree" in plan_lower
+        bounded_read = has_merge_read and self._ch_plan_read_is_bounded(plan_text)
+        if has_merge_read and not bounded_read:
             warnings.append(
-                "ClickHouse plan does a full MergeTree scan with no PREWHERE/WHERE; "
+                "ClickHouse plan does a full MergeTree scan with no index pruning; "
                 "consider filtering on the primary-key prefix to reduce data read."
             )
-        if "limit" not in plan_lower and "aggregating" not in plan_lower:
+        if not bounded_read and "limit" not in plan_lower and "aggregating" not in plan_lower:
             warnings.append(
                 "ClickHouse plan has no LIMIT and no aggregation; large result set may be returned."
             )
 
         return warnings
+
+    @staticmethod
+    def _ch_plan_read_is_bounded(plan_text: str) -> bool:
+        """True when ``EXPLAIN indexes = 1`` shows the MergeTree read is pruned.
+
+        A usable index appears as a ``Condition:`` line with a real predicate
+        (``Condition: true`` means the index could not prune anything) and/or
+        as a ``Granules: read/total`` line with ``read < total``.
+        """
+        for match in re.finditer(r"(?im)^\s*condition:\s*(.+?)\s*$", plan_text):
+            if match.group(1).lower() != "true":
+                return True
+        for match in re.finditer(r"(?im)^\s*granules:\s*(\d+)\s*/\s*(\d+)", plan_text):
+            if int(match.group(1)) < int(match.group(2)):
+                return True
+        return False
 
     def _analyze_mysql(self, result) -> list[str]:
         warnings: list[str] = []

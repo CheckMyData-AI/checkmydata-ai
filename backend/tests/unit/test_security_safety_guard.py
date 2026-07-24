@@ -217,6 +217,64 @@ class TestMongoSecurityPatterns:
         )
         assert result.is_safe
 
+    def test_aggregate_out_stage_blocked(self):
+        """B4 (audit): parity with the connector guard — $out writes."""
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "aggregate", "pipeline": [{"$out": "x"}]}'
+        )
+        assert not result.is_safe
+        assert "$out" in result.reason
+
+    def test_aggregate_merge_stage_blocked(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "aggregate", "pipeline": [{"$merge": {}}]}'
+        )
+        assert not result.is_safe
+        assert "$merge" in result.reason
+
+    def test_where_js_operator_blocked(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "find", "filter": {"$where": "this.x > 1"}}'
+        )
+        assert not result.is_safe
+        assert "$where" in result.reason
+
+    def test_function_js_operator_blocked(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "find", "filter": {"$function": {}}}'
+        )
+        assert not result.is_safe
+        assert "$function" in result.reason
+
+    def test_accumulator_js_operator_blocked(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "aggregate",'
+            ' "pipeline": [{"$group": {"x": {"$accumulator": {}}}}]}'
+        )
+        assert not result.is_safe
+        assert "$accumulator" in result.reason
+
+    def test_nested_js_operator_blocked(self):
+        """JS operators buried in a sub-document are caught too."""
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "find", "filter": {"$and": [{"$where": "true"}]}}'
+        )
+        assert not result.is_safe
+
+    def test_read_aggregate_allowed(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "aggregate",'
+            ' "pipeline": [{"$match": {"status": "active"}},'
+            ' {"$group": {"_id": "$kind", "n": {"$sum": 1}}}]}'
+        )
+        assert result.is_safe
+
+    def test_find_allowed(self):
+        result = self.guard.validate_mongo(
+            '{"collection": "users", "operation": "find", "filter": {"status": "active"}}'
+        )
+        assert result.is_safe
+
 
 class TestValidateDispatch:
     """Test the validate() dispatcher picks correct handler."""

@@ -480,6 +480,78 @@ class TestDecayStaleNotes:
         count = await svc.decay_stale_notes(session)
         assert count == 0
 
+    @pytest.mark.asyncio
+    async def test_decay_executes_on_sqlite(self, db):
+        """B1 (e2e audit): ``func.greatest()`` does not exist on SQLite, so the
+        periodic decay UPDATE failed every cycle on SQLite deploys. The decay
+        expression must be dialect-portable (real in-memory SQLite here)."""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import update
+
+        from app.models.session_note import SessionNote
+
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        note = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="orders",
+            note="Stale observation that should decay",
+            confidence=0.35,
+        )
+        # Age the note beyond the decay threshold.
+        await db.execute(
+            update(SessionNote)
+            .where(SessionNote.id == note.id)
+            .values(updated_at=datetime.now(UTC) - timedelta(days=90))
+        )
+        await db.commit()
+
+        count = await svc.decay_stale_notes(db, days_threshold=60, decay_amount=0.1)
+        assert count == 1
+        await db.refresh(note)
+        assert note.confidence == pytest.approx(0.25)
+        assert note.is_active is True  # 0.25 >= deactivate_below (0.2)
+
+    @pytest.mark.asyncio
+    async def test_decay_floor_and_deactivation_on_sqlite(self, db):
+        """Confidence decays to the 0.1 floor (greatest-equivalent), never below,
+        and a note that lands under deactivate_below is deactivated."""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import update
+
+        from app.models.session_note import SessionNote
+
+        proj = await _make_project(db)
+        conn = await _make_connection(db, proj.id)
+        note = await svc.create_note(
+            db,
+            connection_id=conn.id,
+            project_id=proj.id,
+            category="data_observation",
+            subject="orders",
+            note="Borderline note heading for deactivation",
+            confidence=0.15,
+        )
+        await db.execute(
+            update(SessionNote)
+            .where(SessionNote.id == note.id)
+            .values(updated_at=datetime.now(UTC) - timedelta(days=90))
+        )
+        await db.commit()
+
+        count = await svc.decay_stale_notes(db, days_threshold=60, decay_amount=0.1)
+        assert count == 1
+        await db.refresh(note)
+        # greatest(0.1, 0.15 - 0.1) == 0.1 — clamped at the floor, not 0.05.
+        assert note.confidence == pytest.approx(0.1)
+        assert note.is_active is False
+        assert note.deactivated_at is not None
+
 
 class TestNoteMentionsTable:
     """R4-6: word-boundary table match, not naive substring."""

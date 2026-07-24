@@ -381,3 +381,133 @@ class TestMongoInfer:
         fields = _infer_fields(docs)
         assert "_id" in fields
         assert "name" in fields
+
+
+# ---------------------------------------------------------------------------
+# TestMotorTruthiness — FA-001: real motor Database raises NotImplementedError
+# on bool(); every public method must compare ``self._db`` with None instead.
+# ---------------------------------------------------------------------------
+
+
+class _AsyncIter:
+    def __init__(self, items):
+        self._it = iter(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._it)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+class _MotorStyleCollection:
+    """Fake collection covering every method the connector calls."""
+
+    def __init__(self, docs, stats_row=None):
+        self._docs = docs
+        self._stats_row = stats_row
+
+    def find(self, filter=None, projection=None) -> _FakeCursor:
+        return _FakeCursor(self._docs)
+
+    def aggregate(self, pipeline) -> _FakeCursor:
+        return _FakeCursor([self._stats_row] if self._stats_row else [])
+
+    async def distinct(self, key, filter=None):
+        return ["a", "b"]
+
+    async def estimated_document_count(self):
+        return len(self._docs)
+
+    def list_indexes(self):
+        return _AsyncIter([{"name": "_id_", "key": {"_id": 1}, "unique": True}])
+
+    async def count_documents(self, filter):
+        return len(self._docs)
+
+
+class _MotorStyleDB:
+    """Mimics motor's AsyncIOMotorDatabase: truth-value testing raises.
+
+    ``pymongo.Database.__bool__`` (inherited by motor) raises
+    ``NotImplementedError`` — a plain ``if not self._db`` in the connector
+    blows up on every real connection even though the fake DBs elsewhere in
+    this file are truthy and hide the bug.
+    """
+
+    def __init__(self, docs, stats_row=None):
+        self._docs = docs
+        self._stats_row = stats_row
+
+    def __bool__(self):
+        raise NotImplementedError(
+            "Database objects do not implement truth value testing or bool(). "
+            "Please compare with None instead"
+        )
+
+    def __getitem__(self, name: str) -> _MotorStyleCollection:
+        return _MotorStyleCollection(self._docs, self._stats_row)
+
+    async def list_collection_names(self):
+        return ["orders"]
+
+
+class TestMotorTruthiness:
+    @pytest.mark.asyncio
+    async def test_execute_query_works_with_motor_style_db(self):
+        conn = MongoDBConnector()
+        conn._db = _MotorStyleDB([{"_id": ObjectId(), "ok": 1}])
+        result = await conn.execute_query(json.dumps({"collection": "orders", "operation": "find"}))
+        assert result.error is None
+        assert result.row_count == 1
+
+    @pytest.mark.asyncio
+    async def test_sample_data_works_with_motor_style_db(self):
+        conn = MongoDBConnector()
+        conn._db = _MotorStyleDB([{"_id": ObjectId(), "ok": 1}])
+        result = await conn.sample_data("orders", limit=3)
+        assert result.error is None
+        assert result.row_count == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_values_works_with_motor_style_db(self):
+        conn = MongoDBConnector()
+        conn._db = _MotorStyleDB([])
+        vals = await conn.distinct_values("orders", "status", limit=50)
+        assert vals == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_approx_stats_works_with_motor_style_db(self):
+        conn = MongoDBConnector()
+        conn._db = _MotorStyleDB(
+            [],
+            stats_row={"_id": None, "distinct": 2, "nulls": 0, "total": 2, "min": 1, "max": 3},
+        )
+        stats = await conn.approx_stats("orders", "amount")
+        assert stats.distinct_count == 2
+        assert stats.min_value == 1 and stats.max_value == 3
+
+    @pytest.mark.asyncio
+    async def test_introspect_schema_works_with_motor_style_db(self):
+        conn = MongoDBConnector()
+        conn._db = _MotorStyleDB([{"_id": ObjectId(), "name": "Alice"}])
+        conn._config = ConnectionConfig(db_type="mongodb", db_name="e2e")
+        schema = await conn.introspect_schema()
+        assert [t.name for t in schema.tables] == ["orders"]
+        assert schema.tables[0].row_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_connection_still_reports_not_connected(self):
+        """The None check must keep working — ``self._db is None`` paths."""
+        conn = MongoDBConnector()
+        result = await conn.execute_query(json.dumps({"collection": "orders", "operation": "find"}))
+        assert result.error == "Not connected"
+        assert (await conn.sample_data("orders")).error == "Not connected"
+        assert await conn.distinct_values("orders", "c") == []
+        stats = await conn.approx_stats("orders", "c")
+        assert stats.distinct_count is None
+        schema = await conn.introspect_schema()
+        assert schema.tables == []

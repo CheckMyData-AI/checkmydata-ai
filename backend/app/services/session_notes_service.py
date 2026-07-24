@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 
 from app.models.session_note import VALID_NOTE_CATEGORIES, SessionNote, _note_hash
 from app.services.text_similarity import semantic_best_match
@@ -428,6 +428,10 @@ class SessionNotesService:
         from sqlalchemy import update
 
         cutoff = datetime.now(UTC) - timedelta(days=days_threshold)
+        # Dialect-portable greatest(0.1, confidence - decay): SQLite has no
+        # GREATEST function (B1, e2e audit), so clamp via CASE — valid on both
+        # SQLite and PostgreSQL.
+        decayed_confidence = SessionNote.confidence - decay_amount
         decay_result = await session.execute(
             update(SessionNote)
             .where(
@@ -436,7 +440,12 @@ class SessionNotesService:
                 SessionNote.updated_at < cutoff,
                 SessionNote.confidence > 0.1,
             )
-            .values(confidence=func.greatest(0.1, SessionNote.confidence - decay_amount))
+            .values(
+                confidence=case(
+                    (decayed_confidence > 0.1, decayed_confidence),
+                    else_=0.1,
+                )
+            )
         )
         decayed = decay_result.rowcount or 0  # type: ignore[attr-defined]
 
