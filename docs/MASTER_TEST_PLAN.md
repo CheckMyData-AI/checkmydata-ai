@@ -2,12 +2,18 @@
 
 Comprehensive testing plan covering every module, expected behavior, and verification criteria.
 
-**Last Updated:** 2026-03-29
-**Backend Tests:** 2487 unit + 410 integration = 2897 total
-**Frontend Tests:** 346 total
-**Backend Coverage:** 72.03% (target: 80%)
+**Last Updated:** 2026-07-24 (header metrics; per-module tables below date from 2026-03-29)
+**Backend Tests:** 5439 passed + 4 skipped + 2 xfailed (~5445 collected, unit + integration)
+**Frontend Tests:** 526 total (75 files)
+**Backend Coverage:** 77.74% combined (CI gate: 72%; target: 80%)
 
 > Live metrics are tracked in [docs/agent-status.md](agent-status.md).
+
+> **Freshness note (2026-07-24):** the header metrics above are current. The per-module tables
+> below were written 2026-03-29 and their test counts/coverage figures are stale; the module
+> structure and expected-behavior descriptions remain the reference. For the verified
+> current state see the full audit: [docs/qa-audit/full-audit-2026-07-24/](qa-audit/full-audit-2026-07-24/)
+> (baseline, traceability matrix, API contract, UX verification, E2E, cross-DB, security).
 
 ---
 

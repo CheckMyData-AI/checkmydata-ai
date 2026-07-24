@@ -9,33 +9,25 @@ AI-powered database query agent that analyzes Git repositories, understands data
 **LLM providers**: OpenAI, Anthropic, OpenRouter
 **Project tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990) (single source of truth for tasks, backlog, and bugs)
 
-### What's new in v1.13.0 — Vision Invariants & Correctness Restoration
+### What's new in v1.15.1
 
-Closes four vision invariant violations and six correctness bugs from the
-post-1.12.x audit. Test count climbs from 3,599 → 3,648 backend (400
-frontend unchanged). See [`CHANGELOG.md`](CHANGELOG.md#1130---2026-05-19)
-for the full list.
+Intelligence remediation (W0–W6), self-completing embedding reconcile, and
+sync/orchestrator hardening, followed by a full UX-audit remediation
+(email verification, password reset, invite decline, dashboard/batch fixes)
+and the R3 cross-tenant isolation release. See
+[`CHANGELOG.md`](CHANGELOG.md) for the full list.
 
-- **Learnings are per-connection by default** — cross-connection transfer
-  and global-pattern promotion are now opt-in via
-  `CROSS_CONNECTION_LEARNINGS_ENABLED` (default `False`).
-- **The system learns from every outcome**, not just from retries —
-  first-shot successes and first-shot failures now produce lessons.
-- **Knowledge-freshness banners thread through the whole pipeline** —
-  the planner, every stage sub-agent, and final synthesis all see the
-  staleness warning when the index is behind code.
-- **Negative feedback contradicts the exact learnings that produced it**
-  — assistant messages now record `exposed_learning_ids` and a
-  thumbs-down rolls those lessons back.
-- **`times_exposed` separates "the LLM saw it" from "the LLM used it"**
-  (new column, Alembic `f0a1b2c3d4e5`).
-- **Insight TTL + decay actually run** on a 24 h cron tick.
-- **Indexing pipeline survives partial failures**: per-doc retry +
-  failure-ratio threshold (`GENERATE_DOCS_MAX_FAILURE_RATIO=0.3`); Chroma
-  empty ≠ Chroma unreachable; Git renames are tracked correctly.
-- **`DataGate` blocks impossible numbers** (out-of-range percentages and
-  dates) instead of merely warning, gated by `DATA_GATE_HARD_CHECKS_ENABLED`
-  (default `True`).
+- **Data-quality honesty** — truncation/partial-data caveats everywhere;
+  `DataGate` blocks impossible numbers on both the single-query and
+  pipeline paths.
+- **Hybrid retrieval + ContextPack** — BM25 ⊕ dense RRF with per-chunk
+  provenance and a cross-encoder reranker (benchmark-gated, default-on).
+- **Orchestrator hardening** — live step-budget termination and
+  single-loop/pipeline path unification (same validation gates on both).
+- **Self-completing embedding reconcile** — post-deploy reindex is
+  automatic; no operator action required.
+- **Account lifecycle complete** — email verification, forgot/reset
+  password, and invite decline shipped after the 2026-07-19 UX audit.
 
 ## Quick Start
 
@@ -226,9 +218,9 @@ The project supports multiple deployment targets:
 
 ## Testing
 
-- **5,107 total tests** (4,093 backend unit + 536 backend integration + 6 backend smoke + 472 frontend)
-- **~75% backend coverage** (CI-enforced minimum is 72%; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
-- Zero flaky tests, zero skipped tests
+- **~5,970 total tests** (5,445 backend + 526 frontend)
+- **~78% backend coverage** (combined; CI-enforced minimum is 72%; target 80%, tracked in [BACKLOG.md](BACKLOG.md) Sprint 9)
+- Zero flaky tests; 4 justified skips + 2 documented xfails
 
 ```bash
 make check           # Backend lint + all tests

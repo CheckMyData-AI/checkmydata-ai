@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — UX audit remediation (2026-07-19)
+
+Remediation of the findings from the UX scenario audit (`docs/ux/`, super-ux scenario base installed in `5011885`). Closes the last open High finding (F-PROJ-01) outside the R3 release. Verified by the 2026-07-24 full audit: 112/112 UX scenarios verified against code (109 PASS / 3 PARTIAL — SCN-041, SCN-054, SCN-077).
+
+- **Email verification (F-PROJ-01)** — registration now issues a verification email; unverified accounts can no longer be auto-accepted into projects via email-based invite matching, closing the invite/access-harvesting vector. Backend token flow (single-use, SHA-256 hash at rest) + verification UI; the login `next` param is honored post-verify (commit `1701b46`). Covered by `backend/tests/integration/test_auth_email_verification.py`.
+- **Forgot / reset password (SCN-012/013, F-AUTH-13)** — full self-service password-reset flow: `POST /api/auth/forgot-password` + `POST /api/auth/reset-password` (single-use token, 1 h expiry, `token_version` bump revokes all sessions) plus the frontend reset pages (commit `5ead515`). Forgotten password is no longer a permanent lockout.
+- **Decline invite (SCN-015)** — invitees can decline a pending invite (`POST /api/invites/decline/{id}`) instead of only ignoring it (commit `b100e44`).
+- **Dashboard delete + batch results view** — dashboards can be deleted from the UI, and batch executions got a proper results view instead of a dead end (commit `27104ef`).
+- **Honesty sweep** — silent failures and dishonest success states surfaced across the app (empty states, error toasts, partial-result caveats) per the UX-audit honesty findings (commit `68f47e4`).
+- **Logout confirmation toast (SCN-008)** — logout now confirms with a toast, closing out the UX audit (commit `e695caa`).
+
+### Security — R3 cross-tenant isolation & IDOR (2026-06-25, commit `fbf8112`)
+
+Release R3 of the QA/security audit roadmap (`docs/qa-audit/issues.md`). All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping" findings closed in one ownership-scoping sweep. **0 open High findings remain.**
+
+- **F-SSH-08** — SSH tunnel cache key now includes a credential discriminator (key fingerprint hash); cross-tenant tunnel sharing is no longer possible.
+- **F-SSH-06** — `SshKeyService` no longer treats `user_id IS NULL` keys as shared across tenants.
+- **F-RULE-01** — global (`project_id=null`) rule creation requires admin; non-admin rules are gated by project membership. Cross-tenant prompt injection via global rules closed.
+- **F-RULE-05** — agent `manage_rules` update/delete scopes the rule lookup by project; IDOR on arbitrary `rule_id` closed.
+- **F-DG-07 / F-DG-09** — `/investigate` validates that the referenced chat message, connection, and session belong to the URL project before reading/executing; cross-tenant leak + exec closed.
+- **F-GRAPH-01** — `DELETE /api/data-graph/{project_id}/metrics/{metric_id}` scopes the metric load to the project; cross-tenant destructive IDOR closed.
+- **F-LEARN-07** — global-pattern learnings are tenant-isolated (fail closed); `cross_connection_learnings_enabled` can no longer leak patterns across tenants.
+
 ## [1.15.1] - 2026-07-09 - Embedding-loader log hygiene + infra guidance
 
 Post-release hardening from a production log review of the 1.15.0 deploy (v194).

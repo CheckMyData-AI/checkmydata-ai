@@ -1,8 +1,19 @@
 # API Reference
 
+> **Coverage note (2026-07-24):** this document is incomplete — 65 implemented endpoints are
+> not yet documented here (Billing, Connection Learnings, Runs, and Health Monitor sections
+> are missing entirely, plus ~45 individual endpoints). The full audited inventory lives in
+> [`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md).
+> For anything not listed below, prefer the OpenAPI docs at `/docs` (see the bottom of this
+> page).
+
 The backend exposes a REST API at `http://localhost:8000/api`. All endpoints
-except `/api/auth/*` and `/api/health` require authentication via one of two
-mechanisms (`backend/app/api/deps.py::get_current_user`):
+require authentication, except the public-by-design set:
+`/api/auth/*` (register/login/google/verify-email/resend-verification/forgot-password/reset-password),
+`GET /api/health`, `GET /api/plans`, and the two signed webhooks
+(`POST /api/webhook` — Stripe signature; `POST /api/repos/{project_id}/webhook` — HMAC).
+Note that `GET /api/health/modules` **does** require authentication.
+Two mechanisms are supported (`backend/app/api/deps.py::get_current_user`):
 
 - **Browsers** authenticate with an `httpOnly` **session cookie** plus a **CSRF
   double-submit** token (the `X-CSRF-Token` header must equal the CSRF cookie on
@@ -100,11 +111,11 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/batch` | Create and run batch |
+| POST | `/api/batch/execute` | Create and run batch |
 | GET | `/api/batch?project_id=` | List batches |
 | GET | `/api/batch/{id}` | Get batch results |
 | DELETE | `/api/batch/{id}` | Delete batch |
-| GET | `/api/batch/{id}/export` | Export batch results |
+| POST | `/api/batch/{id}/export` | Export batch results |
 
 ## Repositories
 
@@ -336,8 +347,8 @@ The following counters are registered by `MetricsCollector` and exposed via `/ap
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/health` | Basic health check |
-| GET | `/api/health/modules` | Detailed module health |
+| GET | `/api/health` | Basic health check (public) |
+| GET | `/api/health/modules` | Detailed module health (authentication required — 401 without a token) |
 
 ## Error Responses
 
@@ -361,8 +372,14 @@ Common status codes:
 
 ## Rate Limiting
 
-Mutating endpoints are rate-limited per IP. Limits vary by endpoint
-sensitivity. The `X-RateLimit-*` headers indicate current usage.
+Most mutating endpoints are rate-limited per IP (112 of 120 mutations; the 8
+unthrottled exceptions include `POST /api/checkout`, `POST /api/portal`,
+`PATCH /api/schedules/{id}`, `POST /api/chat/ws-ticket`,
+`POST /api/data-validation/investigate/{id}/confirm-fix`, `POST /api/auth/logout`,
+`POST /api/auth/complete-onboarding`, and the Stripe `POST /api/webhook` — see
+[`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md)
+§3 N-1). Limits vary by endpoint sensitivity. The `X-RateLimit-*` headers
+indicate current usage.
 
 ## OpenAPI Documentation
 

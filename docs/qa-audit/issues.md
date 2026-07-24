@@ -6,6 +6,14 @@ git (see "Already fixed" below). This document tracks only what is **still open*
 
 > Finding id format: `F-<MODULE>-NN`. Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low · ⚪ Info.
 
+> **Update 2026-07-24:** a full repository audit was run — see
+> [`full-audit-2026-07-24/`](full-audit-2026-07-24/) (10 reports). Since the tally below was
+> written, **all 3 open High findings were closed**: F-SSH-08 + F-RULE-01 by release R3
+> (commit `fbf8112`, 2026-06-25, together with F-RULE-05, F-DG-07/09, F-GRAPH-01, F-SSH-06,
+> F-LEARN-07) and F-PROJ-01 by the email-verification work (2026-07-19, commit `1701b46`,
+> covered by `backend/tests/integration/test_auth_email_verification.py`). The tally, module
+> tables, and release roadmap below have been updated to reflect this.
+
 ## Already fixed (not tracked here — for reference)
 
 **31 findings closed and verified** (backend 4458 tests / 74.62% coverage; frontend 472 tests),
@@ -38,6 +46,19 @@ in branch `fix/security-audit-2026-06-24` → PR
   rowcount log, L2 prompt-header date gating, L3 child-run orphaning (covered by H1+H9), L4
   truncation markers + relevance matching. Combined suite 4560 passing, 75% coverage; ruff/mypy
   clean; alembic up/down/base clean. Spec + plan under `docs/superpowers/{specs,plans}/2026-06-25-*`.
+- **Release R3 — cross-tenant isolation & IDOR** F-RULE-01, F-RULE-05, F-DG-07, F-DG-09,
+  F-GRAPH-01, F-SSH-08, F-SSH-06, F-LEARN-07 (commit `fbf8112`, 2026-06-25): ownership-scoping
+  sweep — global-rule creation requires admin, agent `manage_rules` scoped by project,
+  `/investigate` validates message/connection/session belong to the URL project, data-graph
+  metric delete scoped by project, SSH tunnel cache key carries a credential discriminator,
+  `user_id IS NULL` SSH keys no longer shared across tenants, global-pattern learnings
+  tenant-isolated (fail closed).
+- **UX audit remediation** (2026-07-19, commits `1701b46`, `5ead515`, `b100e44`, `27104ef`,
+  `68f47e4`, `e695caa`): closes **F-PROJ-01** (email verification — registration issues a
+  verification email; unverified accounts no longer auto-accepted into projects; backend +
+  UI, tested by `backend/tests/integration/test_auth_email_verification.py`) and **F-AUTH-13**
+  (forgot/reset password flow, single-use token + `token_version` bump). Also shipped:
+  decline invite, dashboard delete, batch results view, honesty sweep, logout toast.
 
 This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` baseline + manual
 review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =
@@ -54,27 +75,34 @@ frontend **A** (563 smells, 7 SOLID).
 | Severity | Open |
 |---|---|
 | 🔴 Critical | 0 |
-| 🟠 High | 3 |
-| 🟡 Medium | ~33 |
-| 🟢 Low | ~49 |
+| 🟠 High | **0** |
+| 🟡 Medium | ~27 |
+| 🟢 Low | ~48 |
 | ⚪ Info | ~15 |
 
-*(R1+R2 closed 4 High + 8 Medium + 3 Low. Includes the 2026-06-23 codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
+*(R1+R2 closed 4 High + 8 Medium + 3 Low. R3 (`fbf8112`) closed 2 High (F-SSH-08, F-RULE-01) +
+5 Medium (F-RULE-05, F-DG-07/09, F-GRAPH-01, F-LEARN-07) + 1 Low (F-SSH-06). The 2026-07-19 UX
+remediation closed the last High (F-PROJ-01) + 1 Medium (F-AUTH-13). Includes the 2026-06-23
+codebase-audit items folded in — see §7 and the "Already fixed" mapping.)*
 
-**Single highest-leverage fix:** enforce **read-only at the DB session/connector level** (per
-dialect). It closes the largest cluster (F-CONN-01/02, F-SQL-04/08, F-SCHED-02, F-NOTE-01, MCP
-raw-query) because today the read-only invariant rests on **one evadable regex** with no
-database-level backstop.
+**All open High findings are closed.** Highest-leverage remaining items per the 2026-07-24 full
+audit ([`full-audit-2026-07-24/`](full-audit-2026-07-24/)): the MongoDB connector motor-truthiness
+bug (`05-cross-db.md` B1, Critical) and SSRF host filtering in `validate_repo_url`
+(`07-security.md` S-01, High). Within this document's own scope, the top remaining clusters are
+§3 items 4–7 (credential redaction F-CONN-08, prompt-injection gate, durable AuditLog,
+idempotency).
 
 ---
 
 ## 2. Top priorities (open High)
 
-| ID | Sev | Title | Where | Fix |
-|---|---|---|---|---|
-| **F-SSH-08** | 🟠 | SSH tunnel cache key omits the credential → **cross-tenant tunnel sharing** (bypasses SSH-key auth). | `connectors/ssh_tunnel.py:212-216` | Include a credential discriminator (key fingerprint hash) in `_key`. |
-| **F-PROJ-01** | 🟠 | Unverified-email registration + email-based auto-accept = invite/access harvesting. | `routes/auth.py`, `services/invite_service.py` | Email verification before invite auto-accept. |
-| **F-RULE-01** | 🟠 | No authz on **global** (`project_id=null`) rule creation → cross-tenant prompt injection. | `routes/rules.py` | Require admin for global rules; gate by membership otherwise. |
+**None — all three former open High findings are CLOSED:**
+
+| ID | Sev | Title | Status / evidence |
+|---|---|---|---|
+| ~~**F-SSH-08**~~ | 🟠 | SSH tunnel cache key omits the credential → cross-tenant tunnel sharing | **CLOSED** by R3 (commit `fbf8112`, 2026-06-25): `_key` now includes a credential discriminator (key fingerprint hash). |
+| ~~**F-PROJ-01**~~ | 🟠 | Unverified-email registration + email-based auto-accept = invite/access harvesting | **CLOSED** by the email-verification work (2026-07-19, commit `1701b46`): registration issues a verification email; invite auto-accept requires verified email; covered by `backend/tests/integration/test_auth_email_verification.py`. |
+| ~~**F-RULE-01**~~ | 🟠 | No authz on global (`project_id=null`) rule creation → cross-tenant prompt injection | **CLOSED** by R3 (commit `fbf8112`, 2026-06-25): global-rule creation requires admin; membership-gated otherwise. |
 
 ---
 
@@ -84,18 +112,19 @@ database-level backstop.
    F-CONN-03/10.~~ **CLOSED by R1 (`50ce7c8`)**: per-dialect DB-session read-only + statement-
    initial allow-list + batch/notes call-site guards. (Hardening of the MCP raw-query path that
    reuses connectors inherits the DB-session backstop automatically.)
-2. **Object-ownership IDOR family** — F-DG-07, F-DG-09, F-GRAPH-01, F-RULE-05: route checks
-   URL-project membership but the mutation/load uses a bare resource id. **Fix:** scope every
-   resource load/mutation by `project_id`.
+2. ~~**Object-ownership IDOR family** — F-DG-07, F-DG-09, F-GRAPH-01, F-RULE-05: route checks
+   URL-project membership but the mutation/load uses a bare resource id.~~ **CLOSED by R3
+   (`fbf8112`)**: every resource load/mutation scoped by `project_id`.
 3. ~~**Token-budget / billing under-count** — F-MCP-01, F-CHAT-07, F-SQL-06.~~ **CLOSED by R2
    (`fda9ce5`)**: per-request `UsageSink` threaded through `LLMRouter`; `DbUsageSink` records every
    call + post-call budget hard-stop (also closes F-BILL-05). MCP path gets full parity with chat.
 4. **Credential leakage in errors** — F-CONN-08 returns `str(e)` (DSN/password) in the API response
    and logs; the Sentry scrubber only covers Sentry egress. **Fix:** scrub at the
    `connection_service` error site.
-5. **Stored prompt-injection / memory poisoning** — F-RULE-01/02, F-LEARN-01/06, F-SQL-01,
-   F-PROJ-15: LLM-authored / DB-sourced content injected as authoritative with no content-safety
-   gate. **Fix:** shared content-safety screen on every rule/learning ingest + provenance tags.
+5. **Stored prompt-injection / memory poisoning** — F-RULE-02, F-LEARN-01/06, F-SQL-01,
+   F-PROJ-15 (F-RULE-01 closed by R3): LLM-authored / DB-sourced content injected as
+   authoritative with no content-safety gate. **Fix:** shared content-safety screen on every
+   rule/learning ingest + provenance tags.
 6. **Non-durable observability** — F-AUTH-15 (`audit_log` logger-only, ephemeral on Heroku, not
    queryable). **Fix:** persist an `AuditLog` table alongside the logger line.
 7. **Idempotency / retry hazards** — F-SCHED-07 (batch ARQ-retry duplicates writes), F-LEARN-08
@@ -109,7 +138,6 @@ database-level backstop.
 ### 01 — Auth & Session
 | ID | Sev | Issue |
 |---|---|---|
-| F-AUTH-13 | 🟡 | No password-reset flow → forgotten password = permanent lockout |
 | F-AUTH-14 | 🟢 | No per-account login lockout (only IP rate limit) |
 | F-AUTH-15 | 🟡 | `audit_log` logger-only — no durable/queryable audit table (`core/audit.py:19`) |
 | F-AUTH-16 | 🟢 | `/refresh` + `/logout` emit no audit event |
@@ -117,7 +145,6 @@ database-level backstop.
 ### 02 — Projects, RBAC & Invites
 | ID | Sev | Issue |
 |---|---|---|
-| F-PROJ-01 | 🟠 | Unverified-email registration + auto-accept = invite/access harvesting |
 | F-PROJ-02 | 🟡 | Owner tracked in two places that drift; `require_role` ignores `owner_id` |
 | F-PROJ-03 | 🟡 | `accept_invite` commits inside `begin_nested()` → 500 on idempotent re-accept |
 | F-PROJ-04 | 🟡 | Invites never expire; auto-accepted indefinitely |
@@ -146,13 +173,11 @@ database-level backstop.
 ### 04 — SSH Tunnel & Keys
 | ID | Sev | Issue |
 |---|---|---|
-| F-SSH-08 | 🟠 | Tunnel cache key omits credential → cross-tenant tunnel sharing |
 | F-SSH-01 | 🟡 | TOFU host-key verify fails *open* when known_hosts not writable |
 | F-SSH-02 | 🟡 | ClickHouse exec template leaks DB password on remote command line |
 | F-SSH-03 | 🟢 | Pre-command allowlist has a global kill-switch (re-enables RCE) |
 | F-SSH-04 | 🟢 | `db_port` template var not shell-escaped |
 | F-SSH-05 | 🟢 | TOFU check-then-pin not atomic (concurrent first-connect race) |
-| F-SSH-06 | 🟢 | `SshKeyService` treats `user_id IS NULL` keys as shared across tenants (latent) |
 | F-SSH-07 | 🟢 | Auto-reconnect re-runs command → double-executes non-idempotent ops |
 | F-SSH-09 | 🟢 | `_locks`/per-key state grows unboundedly |
 
@@ -198,8 +223,6 @@ database-level backstop.
 ### 09 — Data Validation / Investigations / DataGate
 | ID | Sev | Issue |
 |---|---|---|
-| F-DG-07 | 🟡 | `/investigate` reads chat message by id, no project check → cross-tenant leak (IDOR) |
-| F-DG-09 | 🟡 | `/investigate` trusts caller `connection_id`/`session_id`/`message_id` → cross-tenant exec + leak |
 | F-DG-01 | 🟡 | `Decimal` percent/date values bypass the range hard-check |
 | F-DG-02 | 🟡 | Hard checks run on a sample → impossible values past window pass |
 | F-DG-03 | 🟡 | Hard-FAIL keys on fuzzy name-based classification |
@@ -212,7 +235,6 @@ database-level backstop.
 | ID | Sev | Issue |
 |---|---|---|
 | F-LEARN-06 | 🟡 | Learning-override PATCH bypasses quality gate (direct-API poisoning) |
-| F-LEARN-07 | 🟡 | `cross_connection_learnings_enabled` global patterns leak across **tenants** |
 | F-LEARN-08 | 🟡 | Feedback not idempotent → repeated 👎 deactivates shared learnings (downvote-bomb) |
 | F-LEARN-01 | 🟡 | LLM-authored lessons injected with no content-safety/provenance gate |
 | F-LEARN-02 | 🟡 | Non-ASCII ratio gate silently rejects CJK/non-Latin lessons |
@@ -223,8 +245,6 @@ database-level backstop.
 ### 11 — Rules Engine
 | ID | Sev | Issue |
 |---|---|---|
-| F-RULE-01 | 🟠 | No authz on global rule create → cross-tenant prompt injection |
-| F-RULE-05 | 🟡 | Agent `manage_rules` update/delete: IDOR on arbitrary `rule_id` (globals/other tenant) |
 | F-RULE-02 | 🟡 | Rule content injected as authoritative, no content/posture guard |
 | F-RULE-03 | 🟡 | `rules_to_context` no budget/size truncation (overflow/cost) |
 | F-RULE-04 | 🟢 | Filesystem rule loading reads any matching-suffix file incl. symlinks |
@@ -279,7 +299,6 @@ database-level backstop.
 ### 18 — Semantic / Graph / Temporal / Exploration / Models / Demo
 | ID | Sev | Issue |
 |---|---|---|
-| F-GRAPH-01 | 🟡 | `DELETE /{project_id}/metrics/{metric_id}` deletes any project's metric → cross-tenant destructive IDOR |
 | F-EXP-01 | 🟡 | Demo project uses `:memory:` SQLite, no seeding → empty/misleading |
 | F-EXP-02 | 🟢 | Demo connection created writable, against read-only default |
 | F-EXP-03 | 🟢 | `demo_setup` creates real quota-counting Project+Connection, no dedup |
@@ -297,9 +316,12 @@ database-level backstop.
 
 1. **DB-session read-only enforcement** (per dialect) + statement-initial allow-list → closes
    F-SQL-08, F-CONN-01/02, F-SQL-04, F-SCHED-02, F-NOTE-01, F-CONN-03/10, MCP raw-query.
-2. **F-SSH-08** credential discriminator in tunnel cache key (cross-tenant tunnel sharing).
-3. **Object-ownership IDOR sweep** — F-DG-07/09, F-GRAPH-01, F-RULE-05 (+ audit all mutations).
-4. **F-PROJ-01 / F-RULE-01** — email verification before invite auto-accept; global-rule authz.
+2. ~~**F-SSH-08** credential discriminator in tunnel cache key (cross-tenant tunnel sharing).~~
+   **DONE — R3 (`fbf8112`).**
+3. ~~**Object-ownership IDOR sweep** — F-DG-07/09, F-GRAPH-01, F-RULE-05 (+ audit all mutations).~~
+   **DONE — R3 (`fbf8112`).**
+4. ~~**F-PROJ-01 / F-RULE-01** — email verification before invite auto-accept; global-rule authz.~~
+   **DONE — F-RULE-01 by R3 (`fbf8112`); F-PROJ-01 by email verification (`1701b46`).**
 5. **Per-request usage sink** in `LLMRouter` → F-MCP-01, F-CHAT-07, F-SQL-06, F-BILL-05.
 6. **Credential-redaction at source** (F-CONN-08) + **durable `AuditLog` table** (F-AUTH-15/16).
 7. **Idempotency** — F-SCHED-07 (batch claim) + F-LEARN-08 (feedback transition-guard).
@@ -377,13 +399,13 @@ its bug IDs; every open finding is assigned to exactly one release.
 |---|---|---|---|---|---|
 | ~~**R1**~~ | DB-level read-only enforcement | ✅ DONE | F-SQL-08, F-SQL-04, F-CONN-01, F-CONN-02, F-CONN-03, F-CONN-10, F-SCHED-02, F-NOTE-01 | `core/safety.py`, `connectors/*`, `services/batch_service.py`, `routes/notes.py` | Closed by commit `50ce7c8` — per-dialect DB-session read-only + statement-initial allow-list + batch/notes call-site guards. **All 8 bugs closed.** |
 | ~~**R2**~~ | Usage accounting & MCP auth | ✅ DONE | F-MCP-01, F-MCP-02, F-MCP-03, F-MCP-04, F-CHAT-07, F-SQL-06, F-BILL-05 | `llm/router.py`, `mcp_server/*`, `agents/*` budget sites | Closed by commit `fda9ce5` — per-request `UsageSink` in `LLMRouter` + `DbUsageSink` post-call recording & budget hard-stop + MCP parity with chat (limiter + sink) + JWT precedence + DNS-rebinding startup warning. **All 7 bugs closed.** |
-| ▶ **R3** | Cross-tenant isolation & IDOR | 🟠 | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | All "resource loaded/mutated by bare id (or shared cache key) without tenant scoping." One ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. |
+| ~~**R3**~~ | Cross-tenant isolation & IDOR | ✅ DONE | F-RULE-01, F-RULE-05, F-DG-07, F-DG-09, F-GRAPH-01, F-LEARN-07, F-SSH-08, F-SSH-06 | `routes/{rules,data_investigations,data_graph}.py`, `services/agent_learning_service.py`, `connectors/ssh_tunnel.py`, `ssh_key_service.py` | Closed by commit `fbf8112` (2026-06-25) — ownership-scoping sweep + tunnel/key credential discriminator + global-rule authz. **All 8 bugs closed.** |
 
 #### Wave B — security / correctness (Medium)
 
 | Rel | Title | Sev | Bugs | Modules / key files | Why grouped |
 |---|---|---|---|---|---|
-| **R4** | Identity, auth lifecycle & durable audit | 🟠 | F-PROJ-01, F-AUTH-13, F-AUTH-14, F-AUTH-15, F-AUTH-16 | `routes/auth.py`, `services/{auth,invite,email}_service.py`, `core/audit.py`, new `AuditLog` model | Shared email-verification + account-security infra; durable `AuditLog` table underpins F-AUTH-15/16. Closes the last open High (F-PROJ-01). |
+| **R4** | Identity, auth lifecycle & durable audit | 🟠 | ~~F-PROJ-01~~, ~~F-AUTH-13~~, F-AUTH-14, F-AUTH-15, F-AUTH-16 | `routes/auth.py`, `services/{auth,invite,email}_service.py`, `core/audit.py`, new `AuditLog` model | Shared email-verification + account-security infra; durable `AuditLog` table underpins F-AUTH-15/16. *(F-PROJ-01 and F-AUTH-13 closed out-of-band by the 2026-07-19 UX remediation — R4 scope reduced to F-AUTH-14/15/16.)* |
 | **R5** | Connection & SSH hardening + credential redaction | 🟡 | F-CONN-04, F-CONN-05, F-CONN-06, F-CONN-07, F-CONN-08, F-CONN-09, F-SSH-01, F-SSH-02, F-SSH-03, F-SSH-04, F-SSH-05, F-SSH-07, F-SSH-09, F-LLM-03 | `connectors/*`, `connectors/ssh_*`, `services/connection_service.py` | Same files (connectors + ssh); SSRF host-validation, key rotation, error redaction at source (F-CONN-08 + F-LLM-03), pool caps, SSH template/escape/atomicity. |
 | **R6** | Memory & prompt-injection hygiene | 🟡 | F-RULE-02, F-RULE-03, F-RULE-04, F-LEARN-01, F-LEARN-02, F-LEARN-03, F-LEARN-04, F-LEARN-05, F-LEARN-06, F-LEARN-08, F-SQL-01 | `knowledge/custom_rules.py`, `services/agent_learning_service.py`, `agents/sql_agent.py` | Shared content-safety/provenance gate on every rule/learning ingest + dedup + idempotent feedback; F-SQL-01 (DB-content injection) is the upstream source. |
 | **R7** | Knowledge & GitAgent hardening | 🟡 | F-KNOW-04, F-KNOW-06, F-KNOW-07, F-KNOW-08, F-KNOW-09, F-GIT-01, F-GIT-02, F-GIT-03, F-GIT-04, F-GIT-05, F-GIT-06 | `knowledge/{repo_analyzer,bm25_index,pipeline_runner}.py`, `agents/git_agent.py` | Module 07/08 ingestion + live-git; F-GIT-01 (rev option-injection → arbitrary write) is the security driver; BM25 pickle→safe format precedes shared-storage (F-KNOW-07). |
@@ -401,5 +423,6 @@ its bug IDs; every open finding is assigned to exactly one release.
 | **R14** | Frontend polish, notes & tech-debt | 🟢 | F-FE-03, F-FE-04, F-NOTE-02, F-NOTE-03, CB-M4, CB-L1 | `frontend/src/*`, `routes/notes.py`, god-file decomposition | a11y/design-token sweep, JSON-LD assertion, note pool reuse/staleness, god-file decomposition (CB-M4), suppression-debt cleanup (CB-L1). |
 
 **Coverage check:** R1–R14 partition all open findings (Modules 01–19 + codebase-wide CB-*).
-**R1 done** (`50ce7c8`), **R2 done** (`fda9ce5`); the 3 remaining open High items land in R3
-(F-RULE-01, F-SSH-08) and R4 (F-PROJ-01); after R3 + R4 there are **0 open High**.
+**R1 done** (`50ce7c8`), **R2 done** (`fda9ce5`), **R3 done** (`fbf8112`); the last open High
+(F-PROJ-01, R4) was closed out-of-band by the 2026-07-19 UX remediation — there are now
+**0 open High**.
