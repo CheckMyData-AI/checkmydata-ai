@@ -163,9 +163,11 @@ async def update_error(
 ):
     """Transition an error's remediation status open→acknowledged→resolved (owner-only)."""
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
+    if body.status not in ("open", "acknowledged", "resolved"):
+        raise HTTPException(status_code=400, detail="Invalid status")
     ok = await _logs_svc.update_error_status(db, project_id, error_id, body.status)
     if not ok:
-        raise HTTPException(status_code=400, detail="Invalid error id or status")
+        raise HTTPException(status_code=404, detail="Error not found")
     return {"ok": True}
 
 

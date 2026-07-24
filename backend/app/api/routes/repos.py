@@ -734,6 +734,8 @@ def _git_fetch(repo_dir) -> None:
 @router.get("/{project_id}/docs")
 async def list_docs(
     project_id: str,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -748,7 +750,7 @@ async def list_docs(
             "commit_sha": d.commit_sha,
             "updated_at": d.updated_at.isoformat() if d.updated_at else None,
         }
-        for d in docs
+        for d in docs[offset : offset + limit]
     ]
 
 

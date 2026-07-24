@@ -3,7 +3,7 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,6 +99,8 @@ async def list_metrics(
     project_id: str,
     connection_id: str | None = None,
     category: str | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -122,7 +124,7 @@ async def list_metrics(
             times_referenced=m.times_referenced,
             connection_id=m.connection_id,
         )
-        for m in metrics
+        for m in metrics[offset : offset + limit]
     ]
 
 
@@ -162,6 +164,8 @@ async def upsert_metric(
 async def list_relationships(
     project_id: str,
     metric_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -179,7 +183,7 @@ async def list_relationships(
             description=r.description,
             confidence=r.confidence,
         )
-        for r in rels
+        for r in rels[offset : offset + limit]
     ]
 
 

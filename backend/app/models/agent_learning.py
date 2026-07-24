@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -34,6 +35,7 @@ class AgentLearning(Base):
             "lesson_hash",
             name="uq_agent_learning_dedup",
         ),
+        Index("ix_agent_learnings_conn_active_conf", "connection_id", "is_active", "confidence"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

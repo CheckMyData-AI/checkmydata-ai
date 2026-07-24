@@ -147,3 +147,67 @@ class TestTraceDetailNotFound:
                 user=mock_user,
             )
         assert exc_info.value.status_code == 404
+
+
+class TestUpdateError:
+    """PATCH /api/logs/{project_id}/errors/{error_id} status transitions."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_returns_400(self):
+        from app.api.routes.logs import _ErrorStatusBody, _logs_svc, _membership_svc, update_error
+
+        mock_db = _mock_db()
+        _membership_svc.require_role = AsyncMock(return_value="owner")
+        _logs_svc.update_error_status = AsyncMock(return_value=False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_error(
+                request=_fake_request(),
+                project_id="proj-1",
+                error_id="err-1",
+                body=_ErrorStatusBody(status="bogus"),
+                db=mock_db,
+                user=_mock_user(),
+            )
+        assert exc_info.value.status_code == 400
+        _logs_svc.update_error_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_error_returns_404(self):
+        from app.api.routes.logs import _ErrorStatusBody, _logs_svc, _membership_svc, update_error
+
+        mock_db = _mock_db()
+        _membership_svc.require_role = AsyncMock(return_value="owner")
+        _logs_svc.update_error_status = AsyncMock(return_value=False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_error(
+                request=_fake_request(),
+                project_id="proj-1",
+                error_id="nonexistent",
+                body=_ErrorStatusBody(status="acknowledged"),
+                db=mock_db,
+                user=_mock_user(),
+            )
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_returns_ok(self):
+        from app.api.routes.logs import _ErrorStatusBody, _logs_svc, _membership_svc, update_error
+
+        mock_db = _mock_db()
+        _membership_svc.require_role = AsyncMock(return_value="owner")
+        _logs_svc.update_error_status = AsyncMock(return_value=True)
+
+        result = await update_error(
+            request=_fake_request(),
+            project_id="proj-1",
+            error_id="err-1",
+            body=_ErrorStatusBody(status="resolved"),
+            db=mock_db,
+            user=_mock_user(),
+        )
+        assert result == {"ok": True}
+        _logs_svc.update_error_status.assert_called_once_with(
+            mock_db, "proj-1", "err-1", "resolved"
+        )

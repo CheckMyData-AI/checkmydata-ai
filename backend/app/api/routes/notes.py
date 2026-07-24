@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,13 +146,16 @@ async def create_note(
 async def list_notes(
     project_id: str,
     scope: str = "mine",
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     if scope not in ("mine", "shared", "all"):
         raise HTTPException(status_code=400, detail="scope must be mine, shared, or all")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_by_project(db, project_id, user["user_id"], scope=scope)
+    notes = await _svc.list_by_project(db, project_id, user["user_id"], scope=scope)
+    return notes[offset : offset + limit]
 
 
 @router.get("/{note_id}", response_model=NoteResponse)

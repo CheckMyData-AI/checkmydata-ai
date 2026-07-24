@@ -67,6 +67,8 @@ class RequestTrace(Base):
     __table_args__ = (
         Index("ix_request_traces_project_created", "project_id", "created_at"),
         Index("ix_request_traces_user_created", "user_id", "created_at"),
+        Index("ix_request_traces_session_id", "session_id"),
+        Index("ix_request_traces_message_id", "message_id"),
     )
 
 

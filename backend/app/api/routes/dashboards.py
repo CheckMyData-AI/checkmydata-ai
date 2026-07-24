@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,11 +81,14 @@ async def create_dashboard(
 async def list_dashboards(
     request: Request,
     project_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_for_project(db, project_id, user["user_id"])
+    dashboards = await _svc.list_for_project(db, project_id, user["user_id"])
+    return dashboards[offset : offset + limit]
 
 
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
