@@ -29,9 +29,7 @@ class LearningVote(Base):
     """
 
     __tablename__ = "learning_votes"
-    __table_args__ = (
-        UniqueConstraint("learning_id", "user_id", name="uq_learning_vote_user"),
-    )
+    __table_args__ = (UniqueConstraint("learning_id", "user_id", name="uq_learning_vote_user"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     learning_id: Mapped[str] = mapped_column(

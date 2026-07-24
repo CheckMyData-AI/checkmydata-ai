@@ -535,18 +535,20 @@ class TestLowBatchData15:
         # 144693.14 vs 144693.15 — a penny apart at the rounding boundary on a
         # ~145k total (rel diff ~7e-8): same total computed in different scan
         # orders. Exact equality used to miss this pair.
-        assert sql_results_reconcile(
-            [self._result(144693.14, "q1"), self._result(144693.15, "q2")]
-        ) is True
+        assert (
+            sql_results_reconcile([self._result(144693.14, "q1"), self._result(144693.15, "q2")])
+            is True
+        )
 
     def test_genuinely_different_totals_still_do_not_reconcile(self):
         """Guard: the tolerance must not paper over real discrepancies."""
         from app.agents.sql_result_reconciliation import sql_results_reconcile
 
         # ~0.7% apart — a real mismatch, not float noise.
-        assert sql_results_reconcile(
-            [self._result(144693.14, "q1"), self._result(143700.00, "q2")]
-        ) is False
+        assert (
+            sql_results_reconcile([self._result(144693.14, "q1"), self._result(143700.00, "q2")])
+            is False
+        )
 
     def test_reconciliation_note_built_for_tolerant_match(self):
         from app.agents.sql_result_reconciliation import build_reconciliation_note
