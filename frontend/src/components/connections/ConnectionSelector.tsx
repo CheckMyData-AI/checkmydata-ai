@@ -7,6 +7,7 @@ import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { ListError } from "@/components/ui/ListError";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
@@ -40,6 +41,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
   );
   const connections = useAppStore((s) => s.connections);
+  const connectionsError = useAppStore((s) => s.connectionsError);
+  const setConnectionsError = useAppStore((s) => s.setConnectionsError);
   const activeConnection = useAppStore((s) => s.activeConnection);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
   const sshKeys = useAppStore((s) => s.sshKeys);
@@ -112,6 +115,25 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     setSyncStatus({});
     resetForm();
   }, [activeProject?.id]);
+
+  // Retry after a failed project-data load (audit M5): re-fetch the
+  // connections list only — sessions are unaffected by the inline retry.
+  const handleRetryLoad = useCallback(async () => {
+    if (!activeProject) return;
+    try {
+      const conns = await api.connections.listByProject(activeProject.id);
+      useAppStore.getState().setConnections(conns);
+      setConnectionsError(null);
+      if (!useAppStore.getState().activeConnection && conns[0]) {
+        setActiveConnection(conns[0]);
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to load project data";
+      setConnectionsError(msg);
+      toast(msg, "error");
+    }
+  }, [activeProject, setConnectionsError, setActiveConnection]);
 
   const startIndexPoll = useCallback((id: string) => {
     const prevTimer = indexPollRef.current.get(id);
@@ -1073,7 +1095,15 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         {formUI}
       </FormModal>
 
-      {!isFormOpen && connections.length === 0 && (
+      {!isFormOpen && connections.length === 0 && connectionsError && (
+        <ListError
+          message={connectionsError}
+          onRetry={() => void handleRetryLoad()}
+          className="px-2 py-3 text-center text-[10px] text-error flex flex-col items-center gap-1"
+        />
+      )}
+
+      {!isFormOpen && connections.length === 0 && !connectionsError && (
         <div className="px-2 py-3 text-center">
           <p className="text-[10px] text-text-muted">No connections yet</p>
         </div>

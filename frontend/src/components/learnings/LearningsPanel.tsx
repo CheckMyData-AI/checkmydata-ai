@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AgentLearningDTO } from "@/lib/api";
 import { Icon } from "@/components/ui/Icon";
 import { FormModal } from "@/components/ui/FormModal";
+import { ListError } from "@/components/ui/ListError";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { usePermission } from "@/hooks/usePermission";
@@ -44,21 +45,34 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
   const { canDelete, canEdit } = usePermission();
   const [learnings, setLearnings] = useState<AgentLearningDTO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLesson, setEditLesson] = useState("");
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("confidence");
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async (signal?: { cancelled: boolean }) => {
     setLoading(true);
-    api.connections
-      .listLearnings(connectionId)
-      .then((data) => { if (!cancelled) setLearnings(data); })
-      .catch(() => { if (!cancelled) toast("Failed to load learnings", "error"); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    setLoadError(null);
+    try {
+      const data = await api.connections.listLearnings(connectionId);
+      if (!signal?.cancelled) setLearnings(data);
+    } catch {
+      if (signal?.cancelled) return;
+      // Inline error + Retry — a failed load must not masquerade as an
+      // empty list (audit M5).
+      setLoadError("Failed to load learnings");
+      toast("Failed to load learnings", "error");
+    } finally {
+      if (!signal?.cancelled) setLoading(false);
+    }
   }, [connectionId]);
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void load(signal);
+    return () => { signal.cancelled = true; };
+  }, [load]);
 
   useEffect(() => {
     onCountChange?.(learnings.filter((l) => l.is_active).length);
@@ -286,6 +300,12 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
               </div>
             ))}
           </div>
+        ) : loadError ? (
+          <ListError
+            message={loadError}
+            onRetry={() => void load()}
+            className="p-6 text-center text-sm text-error flex flex-col items-center gap-2"
+          />
         ) : learnings.length === 0 ? (
           <div className="p-6 text-center text-text-muted text-sm">
             No learnings yet. The agent will automatically learn from query outcomes.

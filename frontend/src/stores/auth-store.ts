@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { api, type AuthUser } from "@/lib/api";
+import { api, resetSessionExpiredFlag, type AuthUser } from "@/lib/api";
 import * as storage from "@/lib/safe-storage";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/session-flash";
 import { toast } from "@/stores/toast-store";
 import { useAppStore } from "@/stores/app-store";
 import { useNotesStore } from "@/stores/notes-store";
@@ -31,6 +32,8 @@ function storeAuth(set: (s: Partial<AuthState>) => void, res: { token: string; u
   } catch {
     /* storage quota / unavailable */
   }
+  // Successful (re-)authentication re-arms the one-shot 401 handler (M1).
+  resetSessionExpiredFlag();
   set({ user: res.user, token: res.token, isLoading: false });
 }
 
@@ -71,7 +74,7 @@ function scheduleRefresh(
 
   const remaining = expMs - Date.now();
   if (remaining <= 0) {
-    toast("Your session has expired. Please log in again.", "error");
+    toast(SESSION_EXPIRED_MESSAGE, "error");
     setTimeout(() => useAuthStore.getState().logout(), 0);
     return;
   }
@@ -84,7 +87,7 @@ function scheduleRefresh(
       storeAuth(set, res);
       scheduleRefresh(set, res);
     } catch {
-      toast("Your session has expired. Please log in again.", "error");
+      toast(SESSION_EXPIRED_MESSAGE, "error");
       useAuthStore.getState().logout();
     }
   }, refreshAt);
@@ -159,6 +162,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     appStore.setActiveSession(null);
     appStore.setProjects([]);
     appStore.setConnections([]);
+    appStore.setConnectionsError(null);
     appStore.setChatSessions([]);
     appStore.setSshKeys([]);
     appStore.resetSessionUsage();

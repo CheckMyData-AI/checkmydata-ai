@@ -168,6 +168,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   const setProjects = useAppStore((s) => s.setProjects);
   const setActiveProject = useAppStore((s) => s.setActiveProject);
   const setConnections = useAppStore((s) => s.setConnections);
+  const setConnectionsError = useAppStore((s) => s.setConnectionsError);
   const setActiveConnection = useAppStore((s) => s.setActiveConnection);
   const setChatSessions = useAppStore((s) => s.setChatSessions);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
@@ -386,6 +387,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
     setActiveSession(null);
     setChatSessions([]);
     setConnections([]);
+    setConnectionsError(null);
     setActiveConnection(null);
     try {
       const [conns, sessions] = await Promise.all([
@@ -415,10 +417,13 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       setConnections([]);
       setActiveConnection(null);
       setChatSessions([]);
-      toast(
-        err instanceof Error ? err.message : "Failed to load project data",
-        "error",
-      );
+      const msg =
+        err instanceof Error ? err.message : "Failed to load project data";
+      // Surface the failure inline (with Retry) in the connections list —
+      // a bare "No connections yet" would masquerade as an empty project
+      // (audit M5).
+      setConnectionsError(msg);
+      toast(msg, "error");
     } finally {
       if (seq === selectSeqRef.current) setSelectingId(null);
     }

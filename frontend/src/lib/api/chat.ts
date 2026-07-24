@@ -1,4 +1,5 @@
 import { API_BASE, getCsrfHeaders, handleSessionExpired, request } from "./_client";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/session-flash";
 import type {
   ChatMessageDTO,
   ChatResponse,
@@ -149,7 +150,7 @@ export const chat = {
             error: "Session expired",
             error_type: "auth",
             is_retryable: false,
-            user_message: "Session expired, please log in again.",
+            user_message: SESSION_EXPIRED_MESSAGE,
           });
           throw new Error("Session expired");
         }

@@ -152,6 +152,20 @@ describe("RulesManager", () => {
     });
   });
 
+  it("create form has a Cancel button that closes the modal (SCN-077)", async () => {
+    const { RulesManager } = await import("@/components/rules/RulesManager");
+    const user = userEvent.setup({ delay: null });
+    render(<RulesManager createRequested={true} onCreateHandled={() => {}} />);
+
+    const nameInput = await screen.findByLabelText("Rule name");
+    await user.type(nameInput, "Draft rule");
+
+    await user.click(screen.getByText("Cancel"));
+    // Modal closed, draft discarded.
+    expect(screen.queryByLabelText("Rule name")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Draft rule")).not.toBeInTheDocument();
+  });
+
   it("clicking a rule row opens the edit form", async () => {
     const rule = makeRule({ id: "r1", name: "Row Click Rule", content: "row content" });
     (api.rules.list as ReturnType<typeof vi.fn>).mockResolvedValue([rule]);

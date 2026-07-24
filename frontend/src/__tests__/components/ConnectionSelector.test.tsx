@@ -134,6 +134,7 @@ beforeEach(() => {
     projects: [],
     activeProject: makeProject(),
     connections: [],
+    connectionsError: null,
     activeConnection: null,
     userRole: "owner",
   });
@@ -249,5 +250,46 @@ describe("ConnectionSelector", () => {
 
     fireEvent.change(typeSelect, { target: { value: "mysql" } });
     expect(screen.getByLabelText("Database port")).toHaveValue("3306");
+  });
+});
+
+describe("ConnectionSelector load failure (M5)", () => {
+  it("shows inline error with Retry instead of the empty state", async () => {
+    useAppStore.setState({ connectionsError: "Failed to load project data" });
+
+    await renderSelector();
+
+    expect(screen.getByText("Failed to load project data")).toBeInTheDocument();
+    expect(screen.queryByText("No connections yet")).not.toBeInTheDocument();
+
+    const conn = makeConnection({ id: "c9", name: "Recovered DB" });
+    (api.connections.listByProject as ReturnType<typeof vi.fn>).mockResolvedValueOnce([conn]);
+
+    const user = userEvent.setup({ delay: null });
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Recovered DB")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Failed to load project data")).not.toBeInTheDocument();
+    expect(useAppStore.getState().connectionsError).toBeNull();
+    // First connection becomes active after recovery.
+    expect(useAppStore.getState().activeConnection?.id).toBe("c9");
+  });
+
+  it("keeps the Retry visible when the retry also fails", async () => {
+    useAppStore.setState({ connectionsError: "Failed to load project data" });
+    (api.connections.listByProject as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("still down"),
+    );
+
+    await renderSelector();
+    const user = userEvent.setup({ delay: null });
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("still down")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });

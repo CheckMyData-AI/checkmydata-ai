@@ -1,4 +1,5 @@
 import { API_BASE, getCsrfHeaders, handleSessionExpired, request } from "./_client";
+import { SESSION_EXPIRED_MESSAGE } from "@/lib/session-flash";
 import type {
   AppNotification,
   BatchQueryDTO,
@@ -202,7 +203,7 @@ export const viz = {
     });
     if (res.status === 401 && typeof window !== "undefined") {
       handleSessionExpired();
-      throw new Error("Session expired. Please log in again.");
+      throw new Error(SESSION_EXPIRED_MESSAGE);
     }
     if (!res.ok) throw new Error("Export failed");
     return res.blob();
@@ -304,7 +305,7 @@ export const batch = {
     });
     if (res.status === 401 && typeof window !== "undefined") {
       handleSessionExpired();
-      throw new Error("Session expired. Please log in again.");
+      throw new Error(SESSION_EXPIRED_MESSAGE);
     }
     if (!res.ok) throw new Error("Export failed");
     return res.blob();

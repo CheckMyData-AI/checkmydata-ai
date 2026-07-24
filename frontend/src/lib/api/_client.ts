@@ -1,9 +1,19 @@
 import { toast } from "@/stores/toast-store";
+import { SESSION_EXPIRED_MESSAGE, setSessionFlash } from "@/lib/session-flash";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 let sessionExpiredHandled = false;
+
+/**
+ * Re-arm the one-shot 401 guard (M1). Called by the auth store after a
+ * successful (re-)authentication so a later 401 is handled again within the
+ * same document lifetime.
+ */
+export function resetSessionExpiredFlag(): void {
+  sessionExpiredHandled = false;
+}
 
 export function handleSessionExpired(): void {
   if (sessionExpiredHandled || typeof window === "undefined") return;
@@ -13,7 +23,10 @@ export function handleSessionExpired(): void {
   void import("@/stores/auth-store").then(({ useAuthStore }) => {
     useAuthStore.getState().logout();
   });
-  toast("Session expired, please log in again", "error");
+  // The redirect below unloads the document and kills the in-memory toast —
+  // stash a flash the login page surfaces exactly once (FA-010).
+  setSessionFlash(SESSION_EXPIRED_MESSAGE);
+  toast(SESSION_EXPIRED_MESSAGE, "error");
   window.location.href = "/login";
 }
 
@@ -116,7 +129,7 @@ export async function request<T>(
       const isAuthRoute = path.startsWith("/auth/");
       if (res.status === 401 && !isAuthRoute && typeof window !== "undefined") {
         handleSessionExpired();
-        throw new Error("Session expired. Please log in again.");
+        throw new Error(SESSION_EXPIRED_MESSAGE);
       }
       if (res.status === 403) {
         throw new Error("You don't have permission to perform this action.");

@@ -53,4 +53,54 @@ describe("ChatInput", () => {
     expect(btn.className).toContain("min-h-[44px]");
     expect(btn.className).toContain("min-w-[44px]");
   });
+
+  it("auto-grows with content up to the cap, then scrolls (SCN-041)", async () => {
+    render(<ChatInput onSend={onSend} />);
+    const textarea = screen.getByRole("textbox");
+
+    Object.defineProperty(textarea, "scrollHeight", {
+      value: 96,
+      configurable: true,
+    });
+    await userEvent.type(textarea, "line one\nline two");
+    expect(textarea.style.height).toBe("96px");
+
+    Object.defineProperty(textarea, "scrollHeight", {
+      value: 500,
+      configurable: true,
+    });
+    await userEvent.type(textarea, "\nmore");
+    // Capped at max-h-40 (160px); overflow-y-auto keeps the rest scrollable.
+    expect(textarea.style.height).toBe("160px");
+    expect(textarea.className).toContain("overflow-y-auto");
+  });
+
+  it("resets its height after sending", async () => {
+    render(<ChatInput onSend={onSend} />);
+    const textarea = screen.getByRole("textbox");
+
+    Object.defineProperty(textarea, "scrollHeight", {
+      value: 120,
+      configurable: true,
+    });
+    await userEvent.type(textarea, "multi\nline\nquestion");
+    expect(textarea.style.height).toBe("120px");
+
+    Object.defineProperty(textarea, "scrollHeight", {
+      value: 52,
+      configurable: true,
+    });
+    await userEvent.click(screen.getByLabelText("Send message"));
+    expect(onSend).toHaveBeenCalled();
+    expect(textarea.style.height).toBe("52px");
+  });
+
+  it("Enter submits, Shift+Enter inserts a newline (submit UX unchanged)", async () => {
+    render(<ChatInput onSend={onSend} />);
+    const textarea = screen.getByRole("textbox");
+    await userEvent.type(textarea, "first line{Shift>}{Enter}{/Shift}second");
+    expect(onSend).not.toHaveBeenCalled();
+    await userEvent.type(textarea, "{Enter}");
+    expect(onSend).toHaveBeenCalledWith("first line\nsecond");
+  });
 });

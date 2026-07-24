@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState, useRef, useCallback } from "react";
+import { type ReactNode, useState, useRef, useCallback, useEffect } from "react";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -8,6 +8,9 @@ interface ChatInputProps {
   placeholder?: string;
   rightSlot?: ReactNode;
 }
+
+/** Matches the max-h-40 (10rem) CSS cap — beyond this the textarea scrolls. */
+const MAX_TEXTAREA_HEIGHT_PX = 160;
 
 export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInputProps) {
   const [value, setValue] = useState("");
@@ -20,6 +23,18 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
     setValue("");
     inputRef.current?.focus();
   }, [value, disabled, onSend]);
+
+  // Auto-growing textarea (SCN-041): expand with content up to
+  // MAX_TEXTAREA_HEIGHT_PX, then scroll (overflow-y-auto stays on).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // jsdom reports scrollHeight 0 — leave the CSS height alone in that case.
+    if (el.scrollHeight > 0) {
+      el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT_PX)}px`;
+    }
+  }, [value]);
 
   const MAX_LENGTH = 20000;
   const remaining = MAX_LENGTH - value.length;

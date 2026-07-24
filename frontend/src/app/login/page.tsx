@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/stores/auth-store";
+import { consumeSessionFlash } from "@/lib/session-flash";
 import { Icon } from "@/components/ui/Icon";
 import { LogoMark } from "@/components/ui/Logo";
 import { Spinner } from "@/components/ui/Spinner";
@@ -58,6 +59,13 @@ function LoginPageContent() {
   const [emailTouched, setEmailTouched] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [sessionFlash, setSessionFlash] = useState<string | null>(null);
+
+  useEffect(() => {
+    // One-shot flash stashed by the 401 interceptor before the hard redirect
+    // here (FA-010) — consumed exactly once so a reload shows nothing.
+    setSessionFlash(consumeSessionFlash());
+  }, []);
   const googleLoadingRef = useRef(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const nonceRef = useRef<string>(generateRandomToken());
@@ -186,6 +194,16 @@ function LoginPageContent() {
           <h2 className="text-lg font-semibold text-text-primary">
             {mode === "login" ? "Sign In" : "Create Account"}
           </h2>
+
+          {sessionFlash && (
+            <p
+              role="alert"
+              className="text-xs text-warning bg-warning-muted border border-warning/30 rounded-lg px-3 py-2 flex items-center gap-1.5"
+            >
+              <Icon name="alert-triangle" size={12} className="shrink-0" />
+              {sessionFlash}
+            </p>
+          )}
 
           {mode === "register" && (
             <input

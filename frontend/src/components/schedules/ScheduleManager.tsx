@@ -8,6 +8,7 @@ import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { FormModal } from "@/components/ui/FormModal";
+import { ListError } from "@/components/ui/ListError";
 import { StatusDot } from "@/components/ui/StatusDot";
 
 const CRON_PRESETS: { label: string; value: string }[] = [
@@ -80,6 +81,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
 
   const [schedules, setSchedules] = useState<ScheduledQuery[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -103,13 +105,18 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
   const load = useCallback(async (signal?: { cancelled: boolean }) => {
     if (!activeProject) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api.schedules.list(activeProject.id);
       if (signal?.cancelled) return;
       setSchedules(data);
     } catch (err) {
       if (signal?.cancelled) return;
-      toast(err instanceof Error ? err.message : "Failed to load schedules", "error");
+      const msg = err instanceof Error ? err.message : "Failed to load schedules";
+      // Inline error + Retry — a failed load must not masquerade as an
+      // empty list (audit M5).
+      setLoadError(msg);
+      toast(msg, "error");
     } finally {
       if (!signal?.cancelled) setLoading(false);
     }
@@ -334,7 +341,15 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
         </div>
       )}
 
-      {!loading && schedules.length === 0 && !showForm && (
+      {!loading && schedules.length === 0 && !showForm && loadError && (
+        <ListError
+          message={loadError}
+          onRetry={() => void load()}
+          className="px-1 py-2 text-[11px] text-error flex items-center gap-2"
+        />
+      )}
+
+      {!loading && schedules.length === 0 && !showForm && !loadError && (
         <p className="text-[11px] text-text-muted px-1 py-1">
           No scheduled queries yet.
         </p>

@@ -223,14 +223,12 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
               >
                 {saving ? "Saving..." : editingId ? "Save" : "Create"}
               </button>
-              {editingId && (
-                <button
-                  onClick={cancel}
-                  className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
-                >
-                  Cancel
-                </button>
-              )}
+              <button
+                onClick={cancel}
+                className="px-3 py-2 text-text-tertiary hover:text-text-primary text-xs transition-colors"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}

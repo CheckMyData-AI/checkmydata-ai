@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { RunHistoryItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
+import { ListError } from "@/components/ui/ListError";
 
 const KINDS = ["", "index_repo", "db_index", "code_db_sync", "daily_sync"];
 
@@ -59,12 +60,7 @@ export function RunsTab({ projectId }: { projectId: string }) {
         {loading && rows.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary animate-pulse">Loading runs…</div>
         ) : error ? (
-          <div className="p-6 text-center text-xs text-error flex flex-col items-center gap-2">
-            <span>{error}</span>
-            <button onClick={() => void load()} className="underline hover:no-underline">
-              Retry
-            </button>
-          </div>
+          <ListError message={error} onRetry={() => void load()} />
         ) : rows.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary">No runs recorded</div>
         ) : (

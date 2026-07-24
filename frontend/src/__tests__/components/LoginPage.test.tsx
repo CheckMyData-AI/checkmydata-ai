@@ -201,3 +201,28 @@ describe("LoginPage forgot-password link (SCN-013)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("LoginPage session-expired flash (FA-010)", () => {
+  it("shows the stashed session-expired message once and clears it", async () => {
+    sessionStorage.setItem(
+      "cmd_session_flash",
+      "Your session has expired. Please log in again.",
+    );
+
+    await setupAndRender({ clientId: "", restore: async () => {} });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Your session has expired. Please log in again.",
+    );
+    // Consumed on mount — a reload must not show it again.
+    expect(sessionStorage.getItem("cmd_session_flash")).toBeNull();
+  });
+
+  it("renders no flash banner when nothing was stashed", async () => {
+    await setupAndRender({ clientId: "", restore: async () => {} });
+
+    await screen.findByRole("button", { name: "Sign In" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});

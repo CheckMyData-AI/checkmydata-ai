@@ -6,6 +6,7 @@
 export * from "./types";
 export {
   handleSessionExpired,
+  resetSessionExpiredFlag,
   API_BASE,
   request,
   getCsrfToken,

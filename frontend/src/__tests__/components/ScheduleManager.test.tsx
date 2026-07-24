@@ -143,4 +143,28 @@ describe("ScheduleManager", () => {
     const dots = container.querySelectorAll(".w-1\\.5.h-1\\.5.rounded-full");
     expect(dots.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("shows inline error with Retry when the list load fails (M5)", async () => {
+    const { api } = await import("@/lib/api");
+    const listMock = api.schedules.list as ReturnType<typeof vi.fn>;
+    // The useAppStore mock above returns fresh state objects per call, so the
+    // load effect fires more than once — reject persistently until the retry.
+    listMock.mockRejectedValue(new Error("Failed to load schedules"));
+    const user = userEvent.setup({ delay: null });
+
+    render(<ScheduleManager />);
+
+    // Inline "it broke" state instead of the deceptive empty copy.
+    expect(
+      await screen.findByText("Failed to load schedules"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No scheduled queries yet.")).not.toBeInTheDocument();
+
+    listMock.mockResolvedValue(mockSchedules);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(screen.getByText("Daily report")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Failed to load schedules")).not.toBeInTheDocument();
+  });
 });

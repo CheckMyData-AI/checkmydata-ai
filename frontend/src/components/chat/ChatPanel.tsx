@@ -7,14 +7,10 @@ import { SPRING, DUR } from "@/lib/motion/tokens";
 import { api, type ChatResponse, type StreamError, type QuerySuggestion, type CostEstimate } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
 import { toast } from "@/stores/toast-store";
-import dynamic from "next/dynamic";
 import { ChatInput } from "./ChatInput";
-import { ChatMessage, mdComponents, remarkPlugins } from "./ChatMessage";
+import { ChatMessage } from "./ChatMessage";
+import { Markdown, mdComponents } from "./Markdown";
 import { StatusDot } from "@/components/ui/StatusDot";
-
-const ReactMarkdown = dynamic(() => import("react-markdown"), {
-  loading: () => <span className="text-sm text-text-tertiary">Loading…</span>,
-});
 import { SuggestionChips } from "./SuggestionChips";
 import { ThinkingLog } from "./ThinkingLog";
 import { PlanSummaryCard, type PlanSummaryData } from "./PlanSummaryCard";
@@ -919,7 +915,7 @@ export function ChatPanel() {
             {streamingText ? (
               <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
                 <div className="chat-markdown overflow-hidden">
-                  <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents}>{streamingText}</ReactMarkdown>
+                  <Markdown components={mdComponents}>{streamingText}</Markdown>
                   <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" />
                 </div>
                 <button

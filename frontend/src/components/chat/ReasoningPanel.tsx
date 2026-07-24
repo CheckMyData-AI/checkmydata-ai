@@ -39,6 +39,10 @@ function getIconName(step: string): "activity" | "database" | "book-open" | "bar
   return "circle";
 }
 
+function formatStepElapsed(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
 function StepRow({
   step,
   isLast,
@@ -77,9 +81,16 @@ function StepRow({
       </div>
       <div className="flex-1 min-w-0 pb-3">
         <p className="text-xs text-text-primary leading-snug">{label}</p>
-        {step.agent && (
-          <span className="text-xs text-text-tertiary">{step.agent}</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {step.agent && (
+            <span className="text-xs text-text-tertiary">{step.agent}</span>
+          )}
+          {step.elapsed_ms != null && (
+            <span className="text-[10px] text-text-muted font-mono tabular-nums">
+              {formatStepElapsed(step.elapsed_ms)}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

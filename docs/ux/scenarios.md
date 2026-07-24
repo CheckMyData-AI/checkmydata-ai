@@ -321,16 +321,16 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-011: Session expiry → forced re-login
 - **Persona:** analyst
 - **Feature:** auth
-- **Entry point:** any authenticated screen when the refresh timer expires
+- **Entry point:** any authenticated screen when the refresh timer expires, or any API call that returns 401
 - **Preconditions:** authenticated session reaches expiry
 - **Steps:**
-  1. Refresh timer fires
-- **Expected result:** toast "Your session has expired. Please log in again." then auto-logout → `/login`
-- **UI elements:** toast, AuthGate "Redirecting..."
+  1. Refresh timer fires, or a 401 is intercepted from any non-auth API call
+- **Expected result:** toast "Your session has expired. Please log in again." then auto-logout → `/login`; on the 401 path the same message is stashed to sessionStorage before the hard redirect and shown once on `/login` as an inline banner (role="alert"), then cleared
+- **UI elements:** toast, AuthGate "Redirecting...", login-page session-expired banner
 - **States covered:** error
-- **Errors & recovery:** this IS the recovery path — user re-authenticates via SCN-006/007
+- **Errors & recovery:** this IS the recovery path — user re-authenticates via SCN-006/007. One shared message constant `SESSION_EXPIRED_MESSAGE` (`lib/session-flash.ts`) across the 401 interceptor, SSE path, and timer path; the one-shot 401 guard (`sessionExpiredHandled`) is re-armed by `resetSessionExpiredFlag()` on every successful (re-)authentication, so repeat 401s are handled even without a full page reload
 - **Status:** implemented
-- **Coverage:** stores/auth-store.ts:74,87; components/auth/AuthGate.tsx:16-36
+- **Coverage:** frontend/src/lib/session-flash.ts; frontend/src/lib/api/_client.ts:14-31,131-132; stores/auth-store.ts:36,77,90; app/login/page.tsx:62-68,198-205; components/auth/AuthGate.tsx:16-36; tests src/__tests__/session-flash.test.ts, src/__tests__/components/LoginPage.test.tsx (flash banner), src/__tests__/auth-store.test.ts (re-arm)
 
 ### SCN-012: Email verification after registration
 - **Persona:** new-user
@@ -423,9 +423,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** active project + role swap; connections and chat sessions reload; first connection auto-selected; a welcome session ensured when none exist
 - **UI elements:** project row (role="button"), active indicator, role badge, per-row Spinner
 - **States covered:** loading, error, success
-- **Errors & recovery:** parallel load fails → toast "Failed to load project data" and connections/sessions reset; stale responses ignored via sequence guard (`ProjectSelector.tsx:379-425`)
+- **Errors & recovery:** parallel load fails → toast "Failed to load project data", connections/sessions reset, and an inline error + Retry rendered in the connections list instead of a deceptive "No connections yet" (audit M5; `connectionsError` in app-store); stale responses ignored via sequence guard (`ProjectSelector.tsx:379-431`)
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:379-425,679-729
+- **Coverage:** components/projects/ProjectSelector.tsx:379-431,679-729; components/connections/ConnectionSelector.tsx:118-136,1097-1103
 
 ### SCN-018: Edit a project
 - **Persona:** owner
@@ -726,10 +726,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User opens Connections
 - **Expected result:** "No connections yet" (or "Select a project first")
 - **UI elements:** empty-state text, "New connection" action (owner)
-- **States covered:** empty
-- **Errors & recovery:** n/a. Known gap: the connections list has no list-level loading spinner (populated via project switch)
+- **States covered:** empty, error
+- **Errors & recovery:** connections load failure (project switch) → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ConnectionSelector.tsx:1097-1103`). Known gap: the connections list has no list-level loading spinner (populated via project switch)
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:1076-1080,613; components/connections/ConnectionsPanel.tsx:12-37
+- **Coverage:** components/connections/ConnectionSelector.tsx:1097-1110 (empty vs error states), :118-136 (retry); components/connections/ConnectionsPanel.tsx:12-37; components/ui/ListError.tsx
 
 ## ssh-keys
 
@@ -791,11 +791,11 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   2. Agent streams tokens; plan summary, thinking log, and tool activity appear live
   3. Final answer renders (text/table/chart)
 - **Expected result:** an assistant answer with reasoning trace, verification badge, and any visualization
-- **UI elements:** auto-growing textarea, send button, char-remaining counter, PlanSummaryCard, ThinkingLog, ToolCallIndicator, StageProgress, "■ Stop generating"
+- **UI elements:** auto-growing textarea (grows with content up to 160px, then scrolls; Enter submits / Shift+Enter newline), send button, char-remaining counter, PlanSummaryCard, ThinkingLog, ToolCallIndicator, StageProgress, "■ Stop generating"
 - **States covered:** loading, success, error
 - **Errors & recovery:** session auto-create fails → toast + abort; stream error → in-transcript red "Error: …" bubble with optional Retry (`ChatPanel.tsx:417-420,611-621`)
 - **Status:** implemented
-- **Coverage:** components/chat/ChatPanel.tsx:394-672,912-955; components/chat/ChatInput.tsx:16-65
+- **Coverage:** components/chat/ChatPanel.tsx:394-672,912-955; components/chat/ChatInput.tsx:12-90 (auto-grow at :26-38); tests src/__tests__/components/ChatInput.test.tsx
 
 ### SCN-042: Quick-ask from project overview
 - **Persona:** analyst
@@ -979,12 +979,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** the message has a captured reasoning trace
 - **Steps:**
   1. User opens the reasoning panel
-- **Expected result:** Plan (tables/strategy/rules/learnings/warnings), Thinking log, and per-step timeline with elapsed time
+- **Expected result:** Plan (tables/strategy/rules/learnings/warnings), Thinking log, and per-step timeline with elapsed time (per-step `elapsed_ms` rendered next to each step, overall elapsed in the header)
 - **UI elements:** reasoning toggle button, ReasoningPanel (close X, mobile bottom-sheet)
 - **States covered:** empty ("No reasoning data available"), success
 - **Errors & recovery:** none (trace is in-store; no async fetch). Button hidden when no trace
 - **Status:** implemented
-- **Coverage:** components/chat/ReasoningPanel.tsx:92-215; components/chat/ChatMessage.tsx:156-181
+- **Coverage:** components/chat/ReasoningPanel.tsx:42-95 (per-step elapsed :42-44,88-92),:96-224; components/chat/ChatMessage.tsx:104-130; tests src/__tests__/components/ReasoningPanel.test.tsx
 
 ### SCN-055: Step-limit reached → continue analysis
 - **Persona:** analyst
@@ -1265,10 +1265,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User opens the modal, filters by category, sorts (confidence/newest/most confirmed/most applied)
 - **Expected result:** learnings grouped by category with confidence bars and confirmed/applied counts
 - **UI elements:** category filter pills, sort dropdown, learning rows, skeleton
-- **States covered:** loading, empty, success
-- **Errors & recovery:** load fails → toast "Failed to load learnings" (no inline error) (`LearningsPanel.tsx:58`)
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** load fails → inline error "Failed to load learnings" + Retry in place of the empty state (toast kept; shared `ListError`, audit M5) (`LearningsPanel.tsx:53-71,303-308`)
 - **Status:** implemented
-- **Coverage:** components/learnings/LearningsPanel.tsx:240-432
+- **Coverage:** components/learnings/LearningsPanel.tsx:240-456; components/ui/ListError.tsx; tests src/__tests__/components/LearningsPanel.test.tsx
 
 ### SCN-074: Confirm/contradict/edit/deactivate a learning
 - **Persona:** editor
@@ -1327,9 +1327,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Rule created"; rule appears in the list
 - **UI elements:** name input, content textarea, Create, Cancel
 - **States covered:** loading, error, success
-- **Errors & recovery:** create fails → toast "Failed to create rule" (`RulesManager.tsx:97-101`). Requires non-empty name+content
+- **Errors & recovery:** create fails → toast "Failed to create rule" (`RulesManager.tsx:97-101`). Requires non-empty name+content. Cancel closes the modal and discards the draft (same `cancel()` as edit mode)
 - **Status:** implemented
-- **Coverage:** components/rules/RulesManager.tsx:62-70,201-233
+- **Coverage:** components/rules/RulesManager.tsx:62-70,168-176,201-234; tests src/__tests__/components/RulesManager.test.tsx
 
 ### SCN-078: Edit a custom rule
 - **Persona:** editor
@@ -1530,9 +1530,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Schedule created"; schedule appears in the list
 - **UI elements:** title/SQL inputs, connection select, cron preset/custom toggle, alert-condition rows, Create
 - **States covered:** loading, error, success
-- **Errors & recovery:** validation toasts (title/SQL/cron/connection); save fails → toast "Failed to save" (`ScheduleManager.tsx:181-243`)
+- **Errors & recovery:** validation toasts (title/SQL/cron/connection); save fails → toast "Failed to save" (`ScheduleManager.tsx:181-243`); list load fails → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ScheduleManager.tsx:103-122,344-350`)
 - **Status:** implemented
-- **Coverage:** components/schedules/ScheduleManager.tsx:444-612
+- **Coverage:** components/schedules/ScheduleManager.tsx:444-612; components/ui/ListError.tsx; tests src/__tests__/components/ScheduleManager.test.tsx
 
 ### SCN-091: Edit / pause / run-now a schedule
 - **Persona:** owner
@@ -1778,9 +1778,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** requests listed; trace spans with input/output/token detail
 - **UI elements:** date filter, tabs, request list + status filter + pagination, LogsTraceDetail span tree
 - **States covered:** loading, empty, error, success
-- **Errors & recovery:** queries load fails → banner "Failed to load logs" + Retry; trace fails → inline "Failed to load trace" (`LogsScreen.tsx:76,147-154`; `LogsTraceDetail.tsx:63-69`)
+- **Errors & recovery:** queries load fails → banner "Failed to load logs" + Retry, visible on all three tabs (not only Queries — audit L6; `LogsScreen.tsx:76,147-154`); trace fails → inline "Failed to load trace" (`LogsTraceDetail.tsx:63-69`)
 - **Status:** implemented
-- **Coverage:** components/logs/LogsScreen.tsx:104-207; components/logs/LogsTraceDetail.tsx:44-141
+- **Coverage:** components/logs/LogsScreen.tsx:104-216; components/logs/LogsTraceDetail.tsx:44-141; tests src/__tests__/components/LogsScreenTabs.test.tsx
 
 ### SCN-107: Runs & Errors log tabs
 - **Persona:** owner
@@ -1793,9 +1793,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** runs / error rows listed; error status cycles
 - **UI elements:** kind select + Refresh (Runs), source/status selects + Refresh + status-cycle button (Errors)
 - **States covered:** loading, empty, error, success
-- **Errors & recovery:** Runs/Errors fetch failures render an inline error message + Retry (matching the Queries tab), distinct from the empty state; Errors status-cycle failure toasts the error (`RunsTab.tsx:19-33`, `ErrorsTab.tsx:31-51`)
+- **Errors & recovery:** Runs/Errors fetch failures render an inline error message + Retry (shared `ListError`, matching the Queries tab banner), distinct from the empty state; Errors status-cycle failure toasts the error (`RunsTab.tsx:17-29,63`, `ErrorsTab.tsx:25-41,97`)
 - **Status:** implemented
-- **Coverage:** components/logs/RunsTab.tsx:34-59; components/logs/ErrorsTab.tsx:55-128
+- **Coverage:** components/logs/RunsTab.tsx:35-59; components/logs/ErrorsTab.tsx:57-129; components/ui/ListError.tsx
 
 ### SCN-108: Live activity log stream
 - **Persona:** analyst

@@ -144,7 +144,7 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
         ))}
       </div>
 
-      {error && tab === "queries" && (
+      {error && (
         <div className="px-4 py-2 bg-error/5 text-xs text-error border-b border-border-subtle flex items-center gap-2">
           <span>{error}</span>
           <button onClick={loadData} className="underline hover:no-underline">

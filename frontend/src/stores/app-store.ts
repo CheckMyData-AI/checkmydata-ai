@@ -102,6 +102,8 @@ interface AppState {
   activeProject: Project | null;
   connections: Connection[];
   activeConnection: Connection | null;
+  /** Last connections-list load failure (audit M5) — null when healthy. */
+  connectionsError: string | null;
   chatSessions: ChatSession[];
   activeSession: ChatSession | null;
   messages: ChatMessage[];
@@ -126,6 +128,7 @@ interface AppState {
   setProjects: (projects: Project[]) => void;
   setActiveProject: (project: Project | null) => void;
   setConnections: (connections: Connection[]) => void;
+  setConnectionsError: (msg: string | null) => void;
   setActiveConnection: (connection: Connection | null) => void;
   setChatSessions: (sessions: ChatSession[]) => void;
   setActiveSession: (session: ChatSession | null) => void;
@@ -165,6 +168,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeProject: null,
   connections: [],
   activeConnection: null,
+  connectionsError: null,
   chatSessions: [],
   activeSession: null,
   messages: [],
@@ -204,6 +208,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ activeProject: project });
   },
   setConnections: (connections) => set({ connections }),
+  setConnectionsError: (msg) => set({ connectionsError: msg }),
   setActiveConnection: (connection) => {
     persistId("active_connection_id", connection?.id ?? null);
     set({ activeConnection: connection });

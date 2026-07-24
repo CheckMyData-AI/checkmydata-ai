@@ -175,4 +175,33 @@ describe("auth store", () => {
     expect(useAuthStore.getState().token).toBeNull();
     expect(localStorage.getItem("auth_user")).toBeNull();
   });
+
+  it("successful login re-arms the one-shot 401 handler (M1)", async () => {
+    const { handleSessionExpired, resetSessionExpiredFlag } = await import(
+      "@/lib/api/_client"
+    );
+    const { consumeSessionFlash, SESSION_EXPIRED_MESSAGE } = await import(
+      "@/lib/session-flash"
+    );
+    sessionStorage.clear();
+    resetSessionExpiredFlag();
+
+    handleSessionExpired(); // consumes the one-shot guard
+    expect(consumeSessionFlash()).toBe(SESSION_EXPIRED_MESSAGE);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          token: "jwt-rearm",
+          user: { id: "u8", email: "re@b.com", display_name: "Re" },
+        }),
+    });
+    await useAuthStore.getState().login("re@b.com", "password1");
+
+    sessionStorage.clear();
+    handleSessionExpired(); // must fire again after the successful auth
+    expect(consumeSessionFlash()).toBe(SESSION_EXPIRED_MESSAGE);
+    resetSessionExpiredFlag();
+  });
 });
