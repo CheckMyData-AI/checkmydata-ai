@@ -110,8 +110,13 @@ if [ "$DEPLOY_BACKEND" = true ]; then
   echo "  BACKEND"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "→ Building backend image …"
-  docker build \
+  # Heroku registry rejects OCI manifest lists ("error from registry:
+  # unsupported") produced by containerd-backed builders — force a
+  # single-platform Docker v2 image in the daemon.
+  docker buildx build \
     --platform linux/amd64 \
+    --provenance=false --sbom=false \
+    --output type=docker \
     -t "registry.heroku.com/${BACKEND_APP}/web" \
     -f Dockerfile.backend .
 
@@ -139,8 +144,10 @@ if [ "$DEPLOY_FRONTEND" = true ]; then
   echo "  FRONTEND"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "→ Building frontend image …"
-  docker build \
+  docker buildx build \
     --platform linux/amd64 \
+    --provenance=false --sbom=false \
+    --output type=docker \
     --build-arg "NEXT_PUBLIC_API_URL=${BACKEND_API_URL}" \
     --build-arg "NEXT_PUBLIC_WS_URL=${BACKEND_WS_URL}" \
     --build-arg "NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \

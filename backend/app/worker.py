@@ -302,6 +302,28 @@ async def shutdown(ctx: dict) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 
 
+def _arq_func_with_timeout(coro, timeout_seconds: int):  # pragma: no cover
+    """Register a per-function job timeout when ARQ is available.
+
+    arq's ``enqueue_job`` forwards unknown kwargs to the coroutine, so a
+    per-job timeout cannot be passed at enqueue time — it must live on the
+    function registration (``arq.worker.func(timeout=...)``). Falls back to
+    the raw coroutine where arq is not installed (local dev, tests).
+    """
+    try:
+        from arq.worker import func
+
+        return func(coro, timeout=timeout_seconds)
+    except Exception:
+        return coro
+
+
+def _daily_sync_timeout() -> int:  # pragma: no cover
+    from app.config import settings
+
+    return settings.daily_knowledge_sync_job_timeout_seconds
+
+
 def _redis_settings():  # pragma: no cover
     """Build ARQ RedisSettings from REDIS_URL env var."""
     from app.core.redis_tls import arq_redis_settings
@@ -318,7 +340,10 @@ class WorkerSettings:  # pragma: no cover
         run_code_db_sync,
         run_repo_index,
         run_batch,
-        run_daily_project_knowledge_sync,
+        _arq_func_with_timeout(
+            run_daily_project_knowledge_sync,
+            _daily_sync_timeout(),
+        ),
     ]
     on_startup = startup
     on_shutdown = shutdown

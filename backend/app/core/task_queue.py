@@ -91,12 +91,22 @@ async def enqueue(
     """
     if _arq_pool is not None:
         try:
+            # NOTE: arq's ``enqueue_job`` forwards unknown kwargs to the task
+            # coroutine — there is no per-job timeout parameter at enqueue
+            # time (verified against arq 0.28). ``_job_timeout`` is therefore
+            # intentionally NOT forwarded; per-function timeouts are set on
+            # the WorkerSettings registration (see ``app.worker``).
             arq_kwargs: dict[str, Any] = {
                 "_job_id": task_id,
                 "_queue_name": _queue_name or "arq:queue",
             }
             if _job_timeout is not None:
-                arq_kwargs["_job_timeout"] = _job_timeout
+                logger.debug(
+                    "Task %s: _job_timeout=%s is enforced via WorkerSettings "
+                    "function registration, not at enqueue time",
+                    task_name,
+                    _job_timeout,
+                )
             job = await _arq_pool.enqueue_job(
                 task_name,
                 **kwargs,

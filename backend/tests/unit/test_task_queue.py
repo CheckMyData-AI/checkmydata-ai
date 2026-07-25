@@ -103,6 +103,99 @@ async def test_is_arq_active_false_in_fallback():
 
 
 @pytest.mark.asyncio
+async def test_enqueue_arq_does_not_forward_job_timeout(monkeypatch):
+    """arq's ``enqueue_job`` has no ``_job_timeout`` parameter — unknown kwargs
+    are forwarded to the task coroutine, so passing it caused
+    ``TypeError: ... got an unexpected keyword argument '_job_timeout'`` on the
+    worker (prod daily_sync failures). Per-function timeouts belong to the
+    WorkerSettings registration (``arq.worker.func(timeout=...)``), not to the
+    enqueue call."""
+    from unittest.mock import AsyncMock
+
+    import app.core.task_queue as tq
+
+    pool = AsyncMock()
+    pool.enqueue_job.return_value.job_id = "job-1"
+    monkeypatch.setattr(tq, "_arq_pool", pool)
+
+    async def dummy():  # pragma: no cover - never runs
+        pass
+
+    jid = await tq.enqueue(
+        "run_daily_project_knowledge_sync",
+        dummy,
+        task_id="daily_sync:p1:2026-07-25",
+        _job_timeout=7200,
+        project_id="p1",
+    )
+
+    assert jid == "job-1"
+    _, call_kwargs = pool.enqueue_job.call_args
+    assert "_job_timeout" not in call_kwargs
+    assert call_kwargs["_job_id"] == "daily_sync:p1:2026-07-25"
+    assert call_kwargs["project_id"] == "p1"
+
+
+def _import_worker_with_arq_stub(monkeypatch, worker_module):
+    """Import ``app.worker`` fresh with arq stubbed (arq is not installed in the
+    unit-test venv; ``WorkerSettings`` builds RedisSettings at class definition)."""
+    import importlib
+    import sys
+    from unittest.mock import MagicMock
+
+    arq_stub = MagicMock()
+    arq_stub.connections.RedisSettings = MagicMock(return_value=MagicMock())
+    monkeypatch.setitem(sys.modules, "arq", arq_stub)
+    monkeypatch.setitem(sys.modules, "arq.connections", arq_stub.connections)
+    monkeypatch.setitem(sys.modules, "arq.worker", worker_module)
+    redis_tls_stub = MagicMock()
+    redis_tls_stub.arq_redis_settings = MagicMock(return_value=MagicMock())
+    monkeypatch.setitem(sys.modules, "app.core.redis_tls", redis_tls_stub)
+    monkeypatch.delitem(sys.modules, "app.worker", raising=False)
+    return importlib.import_module("app.worker")
+
+
+def test_arq_func_with_timeout_falls_back_without_arq(monkeypatch):
+    """Where arq has no ``worker.func`` (or arq is absent) the helper must return
+    the raw coroutine so the registration degrades gracefully."""
+    import types
+
+    worker_mod = types.ModuleType("arq.worker")  # no `func` attribute on purpose
+    w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
+
+    assert (
+        w._arq_func_with_timeout(w.run_daily_project_knowledge_sync, 7200)
+        is w.run_daily_project_knowledge_sync
+    )
+
+
+def test_daily_sync_registered_with_timeout_when_arq_available(monkeypatch):
+    """With arq available the daily sync is registered via ``arq.worker.func``
+    carrying the configured per-function timeout (7200s by default) — arq's
+    ``enqueue_job`` forwards unknown kwargs to the coroutine, so the timeout
+    must live on the function registration."""
+    import types
+
+    captured: list = []
+
+    def fake_func(coroutine, **kwargs):
+        captured.append((coroutine, kwargs))
+        return ("Function", coroutine.__name__, kwargs)
+
+    worker_mod = types.ModuleType("arq.worker")
+    worker_mod.func = fake_func
+    w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
+
+    registration = next(f for f in w.WorkerSettings.functions if isinstance(f, tuple))
+    assert registration == (
+        "Function",
+        "run_daily_project_knowledge_sync",
+        {"timeout": 7200},
+    )
+    assert captured and captured[0][1] == {"timeout": 7200}
+
+
+@pytest.mark.asyncio
 async def test_dispatch_db_index_uses_enqueue_when_arq_active(monkeypatch):
     """Phase 0 consolidation: in ARQ mode the DB index goes through the worker
     (task_queue.enqueue) and no in-process task handle is registered."""
