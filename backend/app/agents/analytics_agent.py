@@ -337,6 +337,12 @@ class _Window:
     missing: list[str]
     failed: list[str]
     last_error: str | None
+    #: ``"{period}: {caveat}"`` for periods the collector stored as ``ok`` while
+    #: the *vendor* only handed over part of them (``AnalyticsReport.truncated``,
+    #: journalled as an ``error`` on an ``ok`` row). Distinct from
+    #: ``missing``/``failed``: the numbers are real, they are just not all of
+    #: them, so this never means the period is absent from the totals.
+    degraded: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -729,6 +735,15 @@ class AnalyticsAgent(BaseAgent):
         columns = [*group_names, *binding.metric_columns]
         missing = [p for p in periods if p not in statuses]
         failed = [p for p in periods if statuses.get(p, ("", None))[0] == "failed"]
+        # A collected period can still carry a caveat: the collect service writes
+        # the vendor's ``degraded`` sentence into ``error`` on an otherwise ``ok``
+        # row. Reading only ``missing``/``failed`` drops it, and the window then
+        # reports itself complete while a period inside it was truncated.
+        degraded = [
+            f"{p}: {statuses[p][1]}"
+            for p in periods
+            if statuses.get(p, ("", None))[0] in DONE_STATUSES and statuses[p][1]
+        ]
         window = _Window(
             report=binding.name,
             start=start.isoformat(),
@@ -736,6 +751,7 @@ class AnalyticsAgent(BaseAgent):
             missing=missing,
             failed=failed,
             last_error=self._last_error({p: statuses[p] for p in failed if p in statuses}),
+            degraded=degraded,
         )
         state.windows.append(window)
 
@@ -935,6 +951,21 @@ class AnalyticsAgent(BaseAgent):
         return text
 
     @staticmethod
+    def _render_degraded(entries: Sequence[str]) -> str:
+        """Vendor caveats, capped like the period lists so one line stays a line.
+
+        Each entry already opens with its period, so truncating the list still
+        leaves every rendered caveat attributable to a date. The vendor's own
+        sentence ends in a full stop; it is dropped here so the surrounding
+        prose punctuates the line rather than doubling up.
+        """
+        head = [entry.strip().removesuffix(".") for entry in entries[:MAX_NAMED_PERIODS]]
+        text = "; ".join(head)
+        if len(entries) > MAX_NAMED_PERIODS:
+            text += f" … and {len(entries) - MAX_NAMED_PERIODS} more"
+        return text
+
+    @staticmethod
     def _cell(value: Any) -> str:
         if isinstance(value, Decimal):
             return format(value.normalize(), "f")
@@ -959,6 +990,18 @@ class AnalyticsAgent(BaseAgent):
                 failed_line += f" (last error: {window.last_error})"
             failed_line += " — these periods are missing from the totals below."
             lines.append(failed_line)
+        if window.degraded:
+            lines.append(
+                "PARTIAL VENDOR DATA: "
+                + self._render_degraded(window.degraded)
+                + " — the vendor truncated "
+                + ("these periods" if len(window.degraded) > 1 else "this period")
+                + " at collect time, so the values below are based on a partial "
+                "vendor response: they are real, but lower than the true total."
+            )
+        # Only when nothing above fired: this sentence and any caveat line are a
+        # contradiction, and the contradiction is what tells a user a fraction of
+        # a number is the number.
         if not lines:
             lines.append(
                 f"Coverage: all {len(periods)} period(s) in this window have been "
@@ -1044,8 +1087,20 @@ class AnalyticsAgent(BaseAgent):
     def _partial_caveats(self, state: _RunState) -> list[str]:
         caveats: list[str] = []
         for window in state.windows:
-            if not window.missing and not window.failed:
-                continue
+            caveats.extend(self._window_partial_caveats(window))
+        return caveats
+
+    def _window_partial_caveats(self, window: _Window) -> list[str]:
+        """Absent periods and truncated ones, kept apart.
+
+        Two different failures of honesty need two different sentences: a missing
+        or failed period is *not in* the totals, while a vendor-truncated one is
+        in them and is simply short. Folding them together would either invite
+        the reader to add back a period that is already counted, or imply a
+        period that never arrived is partly represented.
+        """
+        caveats: list[str] = []
+        if window.missing or window.failed:
             clauses: list[str] = []
             if window.missing:
                 clauses.append(
@@ -1064,6 +1119,15 @@ class AnalyticsAgent(BaseAgent):
                 + "; ".join(clauses)
                 + ". Those periods are excluded from the numbers above and are "
                 "NOT zeros."
+            )
+        if window.degraded:
+            caveats.append(
+                f"PARTIAL DATA: report '{window.report}' over "
+                f"{window.start}..{window.end} is based on a partial vendor "
+                "response — " + self._render_degraded(window.degraded) + ". Those "
+                "periods ARE counted above, but the vendor only handed over part "
+                "of each, so the numbers are real and are a lower bound — NOT a "
+                "complete measurement."
             )
         return caveats
 

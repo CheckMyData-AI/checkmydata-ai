@@ -15,7 +15,7 @@ here touches the network or needs a credential, and the credential that *is*
 created goes through the real API, is really Fernet-encrypted, and is really
 decrypted again by the collect service (asserted, not assumed).
 
-Five things are proven, one per test:
+Six things are proven, one per test:
 
 1. **The happy path across every seam.** The number the fake vendor returned is
    the number in the agent's sentence.
@@ -35,6 +35,16 @@ Five things are proven, one per test:
 5. **Delete really cascades.** Deleting the connection removes every journal row
    and every fact row for it — counted before (>0) and after (0), so the test
    cannot pass against a connection that never had data.
+6. **A period the vendor truncated is not a complete measurement.** The vendor
+   caps one period's rows. The run is still ``ok`` and the rows that arrived are
+   real, but the adapter's ``degraded`` sentence rides along in ``error`` on that
+   ``ok`` journal row — and the agent's answer has to name the period and say the
+   data is partial. What makes this its own test rather than a unit assertion is
+   that the collect service *did* record the caveat and the agent *did* have a
+   truncation caveat of its own, and the honesty still fell through the gap
+   between them: the answer presented a vendor-truncated window as a complete
+   measurement. Hence the assertion that the "all periods collected … real
+   measurements" sentence is *absent* — the two statements together are the bug.
 
 Dates are pinned in the past (July 2026) rather than derived from ``today``: the
 collect window is injected, and a fixed window keeps DataGate's future-date check
@@ -68,7 +78,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.analytics_agent import AnalyticsAgent, AnalyticsResult
 from app.agents.base import AgentContext
-from app.analytics.ga4.adapter import GA4Adapter
+from app.analytics.ga4.adapter import DEFAULT_MAX_ROWS, GA4Adapter
 from app.analytics.ga4.config import CREDENTIAL_SECRET_KEY
 from app.analytics.ga4.reports import GA4_REPORTS, GA4Field, GA4ReportSpec
 from app.analytics.outcome import CollectOutcome
@@ -107,6 +117,11 @@ TOTAL_SESSIONS = 666
 
 #: Requests per collect run: five reports × three periods × one property.
 FULL_RUN_REQUESTS = len(GA4_REPORTS) * len(COLLECTED_DAYS)
+
+#: How many rows the vendor says it holds for a *row-capped* period, against the
+#: single row it actually hands over once the fetch cap bites. Any number above
+#: the cap works; five makes "we showed you a fifth of it" legible in a failure.
+ROW_CAPPED_TOTAL = 5
 
 GA4_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIBT9E2ESECRET\n-----END PRIVATE KEY-----\n"
 GA4_SECRET = json.dumps(
@@ -185,6 +200,11 @@ class FakeGA4Client:
         quota_exhausted: ``(report, period)`` pairs answered with a response
             whose quota block is spent, which is how a real mid-run quota wall
             arrives. The adapter turns that into ``QuotaExhaustedError``.
+        row_capped: ``(report, period)`` pairs whose response declares
+            ``row_count = ROW_CAPPED_TOTAL`` while still handing over one row —
+            the vendor saying "there is more than you took". Paired with a small
+            ``max_rows`` on the adapter, that is Δ1's truncation, reported the
+            way GA4 reports it.
     """
 
     def __init__(
@@ -192,9 +212,11 @@ class FakeGA4Client:
         *,
         sessions_by_day: dict[str, int] | None = None,
         quota_exhausted: frozenset[tuple[str, str]] = frozenset(),
+        row_capped: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self.sessions_by_day = dict(sessions_by_day or SESSIONS_BY_DAY)
         self.quota_exhausted = quota_exhausted
+        self.row_capped = row_capped
         self.requests: list[RunReportRequest] = []
 
     async def run_report(self, request: RunReportRequest) -> RunReportResponse:
@@ -231,11 +253,12 @@ class FakeGA4Client:
                 MetricValue(value=_metric_value(field.api_name, sessions)) for field in spec.metrics
             ],
         )
+        capped = (spec.name, day) in self.row_capped
         return RunReportResponse(
             dimension_headers=[DimensionHeader(name=n) for n in spec.dimension_names],
             metric_headers=[MetricHeader(name=n) for n in spec.metric_names],
             rows=[row],
-            row_count=1,
+            row_count=ROW_CAPPED_TOTAL if capped else 1,
         )
 
 
@@ -248,8 +271,8 @@ class RecordingGA4Adapter(GA4Adapter):
     an injected client would otherwise hide.
     """
 
-    def __init__(self, client: Any) -> None:
-        super().__init__(client=client)
+    def __init__(self, client: Any, *, max_rows: int = DEFAULT_MAX_ROWS) -> None:
+        super().__init__(client=client, max_rows=max_rows)
         self.configs: list[Any] = []
 
     async def connect(self, config: Any) -> None:
@@ -258,14 +281,19 @@ class RecordingGA4Adapter(GA4Adapter):
 
 
 class Vendor:
-    """The fake client plus every adapter the collect service built from it."""
+    """The fake client plus every adapter the collect service built from it.
 
-    def __init__(self, **client_kwargs: Any) -> None:
+    ``max_rows`` is the real adapter's own knob, lowered so a fetch cap can be
+    reached with one row instead of a million.
+    """
+
+    def __init__(self, *, max_rows: int = DEFAULT_MAX_ROWS, **client_kwargs: Any) -> None:
         self.client = FakeGA4Client(**client_kwargs)
+        self.max_rows = max_rows
         self.adapters: list[RecordingGA4Adapter] = []
 
     def factory(self, _connection: Connection) -> RecordingGA4Adapter:
-        adapter = RecordingGA4Adapter(self.client)
+        adapter = RecordingGA4Adapter(self.client, max_rows=self.max_rows)
         self.adapters.append(adapter)
         return adapter
 
@@ -783,3 +811,84 @@ async def test_deleting_the_connection_removes_every_journal_and_fact_row(
     }
     after["analytics_imports"] = await _count(db_session, AnalyticsImport, connection_id)
     assert after == dict.fromkeys(before, 0), after
+
+
+# ---------------------------------------------------------------------------
+# 6 — a period the vendor truncated is not a complete measurement
+# ---------------------------------------------------------------------------
+
+
+async def test_a_vendor_truncated_period_is_caveated_in_the_answer(
+    db_session: AsyncSession, engine: Any, ga4_connection: str
+) -> None:
+    """The vendor hands over part of one period; the user is told which one.
+
+    Truncation is not failure — the rows that did arrive are real measurements —
+    so the run stays ``ok`` and the period keeps an ``ok`` journal row. What the
+    row also keeps is the adapter's ``degraded`` sentence, and the whole point of
+    writing it there is that the agent quotes it back. An answer that reports the
+    surviving total *and* calls the window fully collected is the failure this
+    test exists to catch: both statements are individually defensible, and
+    together they tell the user a fifth of a number is the number.
+    """
+    connection_id = ga4_connection
+    capped_day = COLLECTED_DAYS[1]
+    vendor = Vendor(row_capped=frozenset({("overview", capped_day)}), max_rows=1)
+
+    outcome = await _collect(db_session, connection_id, vendor)
+
+    # A truncated period is collected, not failed: every period counts as ok.
+    assert outcome.status == "ok", outcome.errors
+    assert outcome.errors == []
+    assert outcome.periods_ok == FULL_RUN_REQUESTS
+    assert len(vendor.requests) == FULL_RUN_REQUESTS
+
+    # The journal row for that period: status ok, and the vendor's caveat on it.
+    overview_journal = await _journal_rows(db_session, connection_id, "overview")
+    capped_row = next(row for row in overview_journal if row.period == capped_day)
+    assert capped_row.status == "ok"
+    assert capped_row.error, "the degraded sentence never reached the journal"
+    assert "fetch cap" in capped_row.error
+    assert capped_day in capped_row.error
+    # …and only that period. A cap that leaked everywhere would make the answer
+    # assertions below pass for the wrong reason.
+    assert [row.period for row in overview_journal if row.error] == [capped_day]
+    for spec in GA4_REPORTS:
+        if spec.name == "overview":
+            continue
+        rows = await _journal_rows(db_session, connection_id, spec.name)
+        assert [row.error for row in rows] == [None] * len(COLLECTED_DAYS), spec.name
+
+    # The rows that did arrive were stored, so the totals below are real.
+    assert await _count(db_session, GA4OverviewDaily, connection_id) == len(COLLECTED_DAYS)
+
+    await db_session.commit()
+
+    result = await _ask(
+        engine,
+        connection_id,
+        "How many sessions did we have between 13 and 15 July 2026?",
+        [_overview_window_call(COLLECTED_DAYS[0], COLLECTED_DAYS[-1])],
+    )
+
+    assert result.status == "success", result.error
+
+    # The bug's user-visible face: a truncated window must never be described as
+    # a complete measurement.
+    assert "real measurements" not in result.answer, (
+        "a vendor-truncated window is presented as a complete measurement:\n" + result.answer
+    )
+    # And the honest half: the affected period is named, and said to be partial.
+    assert "PARTIAL VENDOR DATA" in result.answer, result.answer
+    assert capped_day in result.answer, result.answer
+    assert any("partial vendor response" in caveat.lower() for caveat in result.caveats), (
+        result.caveats
+    )
+    assert "⚠️ PARTIAL DATA" in result.answer, result.answer
+
+    # The numbers are still the vendor's — partial, not withheld, not failed.
+    assert str(TOTAL_SESSIONS) in result.answer
+    assert result.rows[0][1] == TOTAL_SESSIONS
+    # A truncated period is not a pending one: it was collected, just not whole.
+    assert result.pending_periods == []
+    assert "collection failed" not in result.answer.lower()
