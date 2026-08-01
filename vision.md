@@ -81,7 +81,7 @@ This is NOT:
 
 - **A generic SQL editor** — the value is not in writing SQL, it is in understanding data deeply enough to generate correct SQL automatically
 - **A BI dashboard tool** — dashboards are a means of sharing verified queries, not the primary interaction model; the core is conversational intelligence
-- **A data warehouse or ETL pipeline** — the system reads from existing databases; it does not store, transform, or move production data
+- **A data warehouse or ETL pipeline** — the system reads from existing databases; it never stores, transforms, or moves data out of a user's production database. The one deliberate exception is external report APIs (Google Analytics 4, App Store Connect, Google Play): they are quota-limited, lag by days, and expose no query language, so the reports they return are cached per connection with provenance and a TTL — enough to make them answerable, never a general-purpose warehouse, and never applied to production database data (see `docs/adr/0001-external-report-cache.md`)
 - **A one-size-fits-all chatbot** — every answer is shaped by the specific database schema, codebase, custom rules, and accumulated learnings of that particular project
 - **A replacement for database expertise** — it augments experts by handling the tedious context-gathering and query-debugging work, and empowers non-experts to safely query data they could not access before
 - **A static documentation generator** — the knowledge base is alive, continuously updated through code analysis, query outcomes, and user feedback
