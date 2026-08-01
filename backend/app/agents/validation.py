@@ -7,6 +7,7 @@ output to the user.  Validators never raise — they return a
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,11 @@ from app.viz.chart_rules import VALID_VIZ_TYPES, apply_chart_rules
 
 if TYPE_CHECKING:
     from app.connectors.base import QueryResult
+
+#: "Does this answer state a figure?" — one digit is enough. Deliberately blunt:
+#: the cost of a false positive is one extra caveat, the cost of a false negative
+#: is a number presented over data that was never collected.
+_MENTIONS_A_NUMBER = re.compile(r"\d")
 
 
 @dataclass
@@ -120,6 +126,52 @@ class AgentResultValidator:
         answer = getattr(result, "answer", "")
         if not answer:
             outcome.warnings.append("MCP source returned an empty answer")
+
+        return outcome
+
+    # ------------------------------------------------------------------
+    # Analytics source result
+    # ------------------------------------------------------------------
+
+    def validate_analytics_result(self, result: Any) -> ValidationOutcome:
+        """Validate an :class:`~app.agents.analytics_agent.AnalyticsResult`.
+
+        Strictly stronger than :meth:`validate_mcp_result`. It shares the
+        error/``no_result`` rejection, and adds the check that only an analytics
+        source can make: an answer may not present **numbers** for a window whose
+        coverage is incomplete without saying so. A missing period is not a zero,
+        and a figure quoted over one is a measurement the system never took.
+
+        The number check reads ``raw_answer`` (the model's own text) rather than
+        ``answer`` (model text + the agent's caveats), so the caveat's own dates
+        cannot satisfy the check it is being judged by.
+        """
+        outcome = ValidationOutcome()
+
+        if getattr(result, "status", "") in ("error", "no_result"):
+            # "no_result" = the analytics agent exhausted its iteration budget
+            # without composing an answer. Never surface the placeholder as data.
+            outcome.passed = False
+            outcome.errors.append(
+                getattr(result, "error", None) or "Analytics agent returned no result"
+            )
+            return outcome
+
+        answer = getattr(result, "answer", "")
+        if not answer:
+            outcome.warnings.append("Analytics source returned an empty answer")
+
+        pending = list(getattr(result, "pending_periods", None) or [])
+        judged = getattr(result, "raw_answer", "") or answer
+        if pending and _MENTIONS_A_NUMBER.search(judged):
+            outcome.warnings.append(
+                "The answer reports figures for a window that is not fully collected — "
+                f"{', '.join(pending[:8])} "
+                + ("are" if len(pending) > 1 else "is")
+                + " missing or failed, so the totals exclude "
+                + ("them" if len(pending) > 1 else "it")
+                + "."
+            )
 
         return outcome
 

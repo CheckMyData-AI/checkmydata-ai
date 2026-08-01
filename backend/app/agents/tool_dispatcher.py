@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time as _time
 from dataclasses import replace
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from app.agents.base import AgentContext, BaseAgent
 from app.agents.errors import (
@@ -29,6 +29,12 @@ from app.llm.base import ToolCall
 from app.llm.errors import RETRYABLE_LLM_ERRORS
 from app.services.data_processor import get_data_processor
 
+if TYPE_CHECKING:
+    # Imported lazily at call time: ``analytics_agent`` pulls in the GA4 report
+    # catalogue (and therefore the Google client libraries), which no request
+    # that never touches analytics should pay for at boot.
+    from app.agents.analytics_agent import AnalyticsAgent, AnalyticsResult
+
 logger = logging.getLogger(__name__)
 
 _PREVIEW_MAX = 500
@@ -45,6 +51,7 @@ _WALL_GUARDED_TOOLS = frozenset(
         "query_database",
         "search_codebase",
         "query_mcp_source",
+        "query_analytics_source",
         "analyze_git",
         "get_release_timeline",
     }
@@ -64,7 +71,14 @@ class _ClarificationRequestError(Exception):
 class ToolDispatcher:
     """Dispatches orchestrator meta-tool calls to the appropriate sub-agent."""
 
-    _DEDUP_TOOL_NAMES = frozenset({"query_database", "search_codebase", "query_mcp_source"})
+    _DEDUP_TOOL_NAMES = frozenset(
+        {
+            "query_database",
+            "search_codebase",
+            "query_mcp_source",
+            "query_analytics_source",
+        }
+    )
 
     def __init__(
         self,
@@ -77,11 +91,16 @@ class ToolDispatcher:
         wf_sql_results: dict[str, list[SQLAgentResult]],
         wf_enriched: dict[str, tuple[SQLAgentResult, float]],
         git_agent: GitAgent | None = None,
+        analytics_agent: AnalyticsAgent | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
         self._mcp_source = mcp_source_agent
         self._git = git_agent
+        # Built on first use from the request's own router when not injected, so
+        # the analytics path needs no orchestrator change to work (and still
+        # accepts an instance for tests / a shared usage sink).
+        self._analytics = analytics_agent
         self._validator = validator
         self._tracker = tracker
         self._wf_sql_results = wf_sql_results
@@ -109,6 +128,7 @@ class ToolDispatcher:
             "search_codebase": "Knowledge Agent",
             "manage_rules": "Rules Manager",
             "query_mcp_source": "MCP Source Agent",
+            "query_analytics_source": "Analytics Agent",
             "ask_user": "Asking user for clarification",
             "process_data": "Data Processing",
             "analyze_git": "Git Agent",
@@ -173,6 +193,12 @@ class ToolDispatcher:
             mcp_text, mcp_sub = await self._handle_query_mcp_source(tc, context, wf_id, total_usage)
             self._emit_tool_result_thinking(wf_id, "MCP Source Agent", mcp_sub)
             return mcp_text, mcp_sub
+        if tc.name == "query_analytics_source":
+            an_text, an_sub = await self._handle_query_analytics_source(
+                tc, context, wf_id, total_usage
+            )
+            self._emit_tool_result_thinking(wf_id, "Analytics Agent", an_sub)
+            return an_text, an_sub
         if tc.name == "process_data":
             pd_text = await self._handle_process_data(tc, wf_id)
             bucket = self._wf_sql_results.get(wf_id) or []
@@ -192,8 +218,8 @@ class ToolDispatcher:
         return (
             f"Error: unknown tool '{tc.name}'. Available tools: "
             "query_database, search_codebase, manage_rules, list_rules, "
-            "query_mcp_source, process_data, analyze_git, get_release_timeline, "
-            "write_code_note, ask_user."
+            "query_mcp_source, query_analytics_source, process_data, analyze_git, "
+            "get_release_timeline, write_code_note, ask_user."
         ), None
 
     # ------------------------------------------------------------------
@@ -1173,6 +1199,130 @@ class ToolDispatcher:
                     logger.warning("Failed to disconnect MCP adapter", exc_info=True)
 
         return "MCP source query failed after maximum retries.", None
+
+    async def _handle_query_analytics_source(
+        self,
+        tc: ToolCall,
+        context: AgentContext,
+        wf_id: str,
+        total_usage: dict[str, int],
+    ) -> tuple[str, AnalyticsResult | None]:
+        """Delegate to :class:`~app.agents.analytics_agent.AnalyticsAgent`.
+
+        Mirrors :meth:`_handle_query_mcp_source`, with one difference that is not
+        stylistic: the project check on an explicitly named ``connection_id`` is
+        mandatory (R3). That id comes from an LLM, which means it comes from
+        whatever the user typed, so "the model asked for it" is not authority to
+        read another tenant's collected analytics.
+        """
+        from app.agents.analytics_agent import AnalyticsAgent
+        from app.agents.tools.analytics_tools import ANALYTICS_SOURCE_TYPES
+        from app.models.base import async_session_factory
+        from app.services.connection_service import ConnectionService
+
+        args = tc.arguments or {}
+        sub_question: str = args.get("question", context.user_question)
+        connection_id: str = args.get("connection_id", "")
+
+        conn_svc = ConnectionService()
+        async with async_session_factory() as session:
+            if connection_id:
+                conn = await conn_svc.get(session, connection_id)
+                if not conn or conn.source_type not in ANALYTICS_SOURCE_TYPES:
+                    return (
+                        f"Error: analytics connection '{connection_id}' not found",
+                        None,
+                    )
+                if conn.project_id != context.project_id:
+                    return (
+                        "Error: analytics connection does not belong to this project",
+                        None,
+                    )
+            else:
+                connections = await conn_svc.list_by_project(session, context.project_id)
+                analytics_conns = [
+                    c for c in connections if c.source_type in ANALYTICS_SOURCE_TYPES
+                ]
+                if not analytics_conns:
+                    return (
+                        "Error: no analytics sources are connected to this project",
+                        None,
+                    )
+                conn = analytics_conns[0]
+            source_type = conn.source_type
+            source_name = conn.name
+            resolved_id = conn.id
+
+        agent = self._analytics or AnalyticsAgent(llm_router=context.llm_router)
+
+        for attempt in range(MAX_SUB_AGENT_RETRIES + 1):
+            try:
+                _sd: dict[str, Any] = {
+                    "input_preview": f"source={source_name}\n{sub_question[:400]}"[:_PREVIEW_MAX],
+                }
+                async with self._tracker.step(
+                    wf_id,
+                    "orchestrator:analytics_agent",
+                    f"Analytics Agent (attempt {attempt + 1})",
+                    step_data=_sd,
+                    span_type="sub_agent",
+                ):
+                    analytics_ctx = replace(
+                        context,
+                        chat_history=(
+                            context.chat_history[-settings.history_tail_messages :]
+                            if context.chat_history
+                            else []
+                        ),
+                    )
+                    result = await agent.run(
+                        analytics_ctx,
+                        connection_id=resolved_id,
+                        question=sub_question,
+                        source_name=source_name,
+                        source_type=source_type,
+                        report=args.get("report") or None,
+                        date_from=args.get("date_from") or None,
+                        date_to=args.get("date_to") or None,
+                    )
+                    _sd["output_preview"] = (
+                        f"status={result.status}\n{(result.answer or '')[:400]}"
+                    )[:_PREVIEW_MAX]
+
+                _accum_usage(total_usage, result.token_usage)
+
+                if result.status == "error":
+                    return f"Analytics source error: {result.error}", result
+
+                vr = self._validator.validate_analytics_result(result)
+                if not vr.passed and attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info(
+                        "Analytics agent validation failed (attempt %d): %s",
+                        attempt + 1,
+                        vr.errors,
+                    )
+                    continue
+                if not vr.passed:
+                    return f"Analytics source issue: {'; '.join(vr.errors)}", result
+
+                text = result.answer
+                if vr.warnings:
+                    text += "\n\nNote: " + "; ".join(vr.warnings)
+                return text, result
+            except RETRYABLE_LLM_ERRORS as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Analytics agent LLM error (attempt %d): %s", attempt + 1, e)
+                    await asyncio.sleep(e.retry_after_seconds or 2.0)
+                    continue
+                return f"Analytics source query failed: {e.user_message}", None
+            except Exception as e:
+                if attempt < MAX_SUB_AGENT_RETRIES:
+                    logger.info("Analytics source query error (attempt %d): %s", attempt + 1, e)
+                    continue
+                logger.exception("Analytics source query failed")
+                return f"Analytics source query failed: {e}", None
+
+        return "Analytics source query failed after maximum retries.", None
 
     # ------------------------------------------------------------------
     # Helpers
