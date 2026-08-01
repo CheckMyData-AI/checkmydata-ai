@@ -9,6 +9,7 @@ from app.api.deps import get_current_user, get_db
 from app.connectors.registry import get_connector
 from app.core.health_monitor import health_monitor
 from app.core.rate_limit import limiter
+from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 
@@ -77,13 +78,18 @@ async def reconnect_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"])
 
+    # T12: the health probe opens a real database connector. An analytics
+    # source has no engine, port or database — answer 400 with the reason
+    # instead of letting ``get_connector(None)`` raise "Unsupported adapter".
+    db_type = require_database_connection(conn, subject="The connection health probe")
+
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     try:
-        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
     except TypeError:
         return {
             "success": False,
-            "error": f"Connector type {conn.db_type!r} does not support health checks",
+            "error": f"Connector type {db_type!r} does not support health checks",
         }
 
     try:

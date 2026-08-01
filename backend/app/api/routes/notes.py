@@ -10,6 +10,7 @@ from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.core.safety import SafetyGuard, SafetyLevel
+from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 from app.services.note_service import NoteService
@@ -242,6 +243,11 @@ async def execute_note(
     if conn_model.project_id != note.project_id:
         raise HTTPException(status_code=403, detail="Connection does not belong to note's project")
 
+    # T12: re-running a note executes its stored SQL, so this endpoint is
+    # database-only. An analytics source has no engine — say so with a 400
+    # instead of failing deep inside the connector factory.
+    db_type = require_database_connection(conn_model, subject="Executing a saved note")
+
     config = await _conn_svc.to_config(db, conn_model, user_id=user["user_id"])
 
     from app.connectors.registry import get_connector
@@ -251,14 +257,14 @@ async def execute_note(
         guard = SafetyGuard(SafetyLevel.READ_ONLY)
     else:
         guard = SafetyGuard(SafetyLevel.ALLOW_DML)
-    safety_result = guard.validate(note.sql_query, conn_model.db_type)
+    safety_result = guard.validate(note.sql_query, db_type)
     if not safety_result.is_safe:
         raise HTTPException(
             status_code=400,
             detail=f"Query blocked: {safety_result.reason}",
         )
 
-    connector = get_connector(conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode)
+    connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
     try:
         await connector.connect(config)
         try:
