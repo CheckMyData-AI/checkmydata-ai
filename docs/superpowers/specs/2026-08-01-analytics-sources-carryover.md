@@ -12,3 +12,6 @@
 | C5 | 0 | ~~Production deploy + stage-8 post-deploy verification~~ | ~~D10 stops each module at an open PR~~ | — | **resolved 2026-08-01** — operator revised D10 to a standing go per module ("1, автономно до конца"); deploy + stage 8 are now in-scope and run per module |
 | C6 | 0 | **Standing cost (R1): every future quality gate must be wired twice** — once for SQL, once for analytics | Consequence of D2 | `BACKLOG.md` — revisit if a third non-SQL source appears | recorded |
 | C7 | 0 | Reconcile `query_mcp_source` tool description, which names "Google Analytics" as its use case | Now misleading: GA4 is a first-class source, not an MCP one | REQ-027 (docs) — update the tool description in M0 | open |
+| C8 | 1 | ASC report types newly available since the blueprint: `INSTALLS`, `FIRST_ANNUAL`, `WIN_BACK_ELIGIBILITY`, `SUBSCRIPTION_OFFER_CODE_REDEMPTION`; sub-types `SUMMARY_INSTALL_TYPE`, `SUMMARY_TERRITORY`, `SUMMARY_CHANNEL` | D7 froze scope at blueprint parity | `BACKLOG.md` | deferred |
+| C9 | 1 | Apple's newer **Analytics Reports API** (`/v1/analyticsReportRequests`) — request/poll/download, categories App Usage + Commerce | D7 blueprint parity; a distinct flow from `salesReports` | `BACKLOG.md` | deferred |
+| C10 | 1 | A3 (frankfurter keyless/available) **validated by live probe**, not assumed | — | — | **closed** |
