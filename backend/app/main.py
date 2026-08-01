@@ -53,6 +53,7 @@ from app.api.routes import (
     tasks,
     temporal,
     usage,
+    vendor_credentials,
     visualizations,
     workflows,
 )
@@ -82,6 +83,7 @@ _health_check_task: asyncio.Task[None] | None = None
 _maintenance_task: asyncio.Task[None] | None = None
 _git_poll_task: asyncio.Task[None] | None = None
 _daily_knowledge_sync_task: asyncio.Task[None] | None = None
+_analytics_collect_task: asyncio.Task[None] | None = None
 _reaper_task: asyncio.Task[None] | None = None
 
 
@@ -89,6 +91,7 @@ _reaper_task: asyncio.Task[None] | None = None
 async def lifespan(app: FastAPI):
     global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
     global _git_poll_task, _daily_knowledge_sync_task, _reaper_task  # noqa: PLW0603
+    global _analytics_collect_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -153,6 +156,7 @@ async def lifespan(app: FastAPI):
     _maintenance_task = asyncio.create_task(_maintenance_loop())
     _git_poll_task = asyncio.create_task(_git_poll_loop())
     _daily_knowledge_sync_task = asyncio.create_task(_daily_knowledge_sync_cron_loop())
+    _analytics_collect_task = asyncio.create_task(_analytics_collect_cron_loop())
 
     from app.core.reaper_loop import reaper_loop
 
@@ -197,6 +201,7 @@ async def lifespan(app: FastAPI):
         _maintenance_task,
         _git_poll_task,
         _daily_knowledge_sync_task,
+        _analytics_collect_task,
         _reaper_task,
     ):
         if task and not task.done():
@@ -432,6 +437,9 @@ app.include_router(
 )
 app.include_router(repos.router, prefix="/api/repos", tags=["repos"])
 app.include_router(ssh_keys.router, prefix="/api/ssh-keys", tags=["ssh-keys"])
+app.include_router(
+    vendor_credentials.router, prefix="/api/vendor-credentials", tags=["vendor-credentials"]
+)
 app.include_router(visualizations.router, prefix="/api/visualizations", tags=["visualizations"])
 app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"])
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
@@ -835,6 +843,120 @@ async def _daily_knowledge_sync_cron_loop() -> None:
             await asyncio.sleep(60)
 
 
+async def _dispatch_analytics_collect_wave() -> None:
+    """Enqueue one collection job per analytics connection due this hour (spec §3.2).
+
+    Deliberately the same shape as :func:`_dispatch_daily_knowledge_sync_wave`:
+    an hour-scoped Redis lock so exactly one web dyno dispatches each hour's
+    wave, and a day-scoped ``task_id`` so a connection cannot be double-collected
+    within one calendar day even if two hours' locks are somehow both acquired.
+    (The upsert is idempotent regardless — the task_id saves the vendor quota,
+    not the data.)
+
+    A connection is due when it is an analytics source, active,
+    ``collection_enabled``, and its ``collection_hour`` equals the current hour
+    in ``daily_knowledge_sync_timezone`` — the same timezone the knowledge-sync
+    cron uses, so both crons agree on what "3 a.m." means.
+    """
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
+
+    from app.core import task_queue
+    from app.models.connection import Connection
+    from app.services.analytics_collect_service import ANALYTICS_SOURCE_TYPES
+
+    tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
+    now = datetime.now(tz)
+    run_date = now.strftime("%Y-%m-%d")
+    current_hour = now.hour
+
+    async with redis_lock(
+        f"cron:analytics_collect:{run_date}:{current_hour}", ttl_seconds=3600
+    ) as acquired:
+        if not acquired:
+            logger.info("Cron: analytics collect wave skipped (lock held by another dyno)")
+            return
+
+        dispatched = 0
+        try:
+            async with async_session_factory() as session:
+                due_ids = list(
+                    (
+                        await session.execute(
+                            select(Connection.id).where(
+                                Connection.source_type.in_(ANALYTICS_SOURCE_TYPES),
+                                Connection.is_active.is_(True),
+                                Connection.collection_enabled.is_(True),
+                                Connection.collection_hour == current_hour,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+            for conn_id in due_ids:
+                cid = conn_id
+
+                async def _run_in_process(*, connection_id: str = cid) -> None:
+                    # Imported inside so the in-process fallback resolves the
+                    # service at call time (and so importing main.py does not
+                    # pull in the vendor SDKs).
+                    from app.services.analytics_collect_service import AnalyticsCollectService
+
+                    await AnalyticsCollectService().collect(connection_id)
+
+                await task_queue.enqueue(
+                    "run_analytics_collect",
+                    coro_factory=_run_in_process,
+                    task_id=f"analytics_collect:{cid}:{run_date}",
+                    _job_timeout=settings.analytics_collect_job_timeout_seconds,
+                    connection_id=cid,
+                )
+                dispatched += 1
+
+            logger.info(
+                "Cron: analytics collect wave dispatched connections=%d hour=%d",
+                dispatched,
+                current_hour,
+            )
+        except Exception:
+            logger.exception("Cron: analytics collect wave dispatch failed")
+
+
+async def _analytics_collect_cron_loop() -> None:
+    """Fire the analytics collection wave once per hour, wall-clock aligned.
+
+    Returns immediately unless ``analytics_collect_enabled`` — collection calls
+    third-party APIs on a schedule, so it is an explicit opt-in and the flag is
+    checked once, at start, rather than every hour.
+    """
+    if not settings.analytics_collect_enabled:
+        return
+
+    from zoneinfo import ZoneInfo
+
+    while True:
+        try:
+            tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
+            now = datetime.now(tz)
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            wait_seconds = max(1.0, (next_hour - now).total_seconds())
+            logger.info(
+                "Cron: next analytics collect wave in %.0f seconds (at %s)",
+                wait_seconds,
+                next_hour.isoformat(),
+            )
+            await asyncio.sleep(wait_seconds)
+            await _dispatch_analytics_collect_wave()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Cron: analytics collect loop iteration failed; will retry next cycle")
+            await asyncio.sleep(60)
+
+
 async def _cleanup_pipeline_runs() -> None:
     """Delete pipeline_runs older than PIPELINE_RUN_TTL_DAYS."""
     try:
@@ -865,6 +987,7 @@ async def _scheduler_loop() -> None:
     from app.core.alert_evaluator import AlertEvaluator
     from app.core.safety import SafetyGuard, SafetyLevel
     from app.models.notification import Notification
+    from app.services.batch_service import DATABASE_SOURCE_TYPE, not_a_database_detail
     from app.services.connection_service import ConnectionService
     from app.services.scheduler_service import SchedulerService
 
@@ -896,6 +1019,30 @@ async def _scheduler_loop() -> None:
                             )
                             continue
 
+                        # ``Connection.db_type`` is nullable since the analytics
+                        # spine — a GA4/App Store source has no engine, so it can
+                        # neither be SafetyGuard-validated nor handed to
+                        # ``get_connector``. Fail this run with the same honest
+                        # message the HTTP routes give (``not_a_database_detail``)
+                        # instead of crashing the scheduler loop on
+                        # "Unsupported adapter: database". Checked before
+                        # ``to_config``, which also assumes a database.
+                        db_type = conn_model.db_type
+                        if conn_model.source_type != DATABASE_SOURCE_TYPE or db_type is None:
+                            detail = not_a_database_detail(
+                                conn_model, subject="Running a scheduled query"
+                            )
+                            await svc.record_run(
+                                session,
+                                schedule.id,
+                                status="failed",
+                                result_summary=json.dumps({"error": detail}),
+                            )
+                            logger.warning(
+                                "Scheduler: schedule %s skipped — %s", schedule.id[:8], detail
+                            )
+                            continue
+
                         config = await conn_svc.to_config(session, conn_model)
 
                         from app.connectors.registry import get_connector
@@ -905,7 +1052,7 @@ async def _scheduler_loop() -> None:
                             guard = SafetyGuard(SafetyLevel.READ_ONLY)
                         else:
                             guard = SafetyGuard(SafetyLevel.ALLOW_DML)
-                        safety_result = guard.validate(schedule.sql_query, conn_model.db_type)
+                        safety_result = guard.validate(schedule.sql_query, db_type)
                         if not safety_result.is_safe:
                             await svc.record_run(
                                 session,
@@ -922,9 +1069,7 @@ async def _scheduler_loop() -> None:
                             )
                             continue
 
-                        connector = get_connector(
-                            conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode
-                        )
+                        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
                         start = _time.monotonic()
                         try:
                             await connector.connect(config)
@@ -1104,6 +1249,7 @@ async def _maintenance_loop() -> None:
                 await _periodic_insight_maintenance()
                 await _freshness_reconcile()
                 await _sweep_telemetry_retention()
+                await _prune_analytics_journal()
         except asyncio.CancelledError:
             break
         except Exception:
@@ -1125,6 +1271,22 @@ async def _sweep_telemetry_retention() -> None:
             await session.commit()
     except Exception:
         logger.warning("Telemetry retention sweep failed", exc_info=True)
+
+
+async def _prune_analytics_journal() -> None:
+    """Drop analytics import-journal rows past their retention window (REQ-015).
+
+    Best-effort: the journal is what distinguishes "collected as zero" from
+    "never collected", so failing to *prune* it is never worth failing the
+    maintenance pass over.
+    """
+    from app.analytics import journal
+
+    try:
+        async with async_session_factory() as session:
+            await journal.prune(session, older_than_days=settings.analytics_journal_retention_days)
+    except Exception:
+        logger.warning("Analytics journal prune failed", exc_info=True)
 
 
 async def _maybe_initial_backup() -> None:

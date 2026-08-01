@@ -248,6 +248,35 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
     await DailyKnowledgeSyncService().run_for_project(project_id)
 
 
+async def run_analytics_collect(ctx: dict, *, connection_id: str) -> None:  # noqa: ARG001
+    """Collect one analytics connection's reports into its fact tables (spec §3.2).
+
+    Dispatched hourly by ``_dispatch_analytics_collect_wave`` in ``app.main``
+    for every connection whose ``collection_hour`` matches. Swallows its own
+    failures deliberately: the collect service already journals per-period
+    verdicts and returns an honest outcome, so an exception escaping here would
+    only mark the ARQ job failed while telling the user nothing extra.
+    """
+    from app.services.analytics_collect_service import AnalyticsCollectService
+
+    try:
+        outcome = await AnalyticsCollectService().collect(connection_id)
+    except Exception:
+        logger.exception("run_analytics_collect failed for %s", connection_id[:8])
+        return
+
+    log = logger.warning if outcome.status != "ok" else logger.info
+    log(
+        "run_analytics_collect %s: connection=%s rows=%d ok=%d empty=%d errors=%s",
+        outcome.status,
+        connection_id[:8],
+        outcome.rows_written,
+        outcome.periods_ok,
+        outcome.periods_empty,
+        outcome.errors or "none",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Startup / shutdown hooks
 # ---------------------------------------------------------------------------
@@ -324,6 +353,12 @@ def _daily_sync_timeout() -> int:  # pragma: no cover
     return settings.daily_knowledge_sync_job_timeout_seconds
 
 
+def _analytics_collect_timeout() -> int:  # pragma: no cover
+    from app.config import settings
+
+    return settings.analytics_collect_job_timeout_seconds
+
+
 def _redis_settings():  # pragma: no cover
     """Build ARQ RedisSettings from REDIS_URL env var."""
     from app.core.redis_tls import arq_redis_settings
@@ -343,6 +378,10 @@ class WorkerSettings:  # pragma: no cover
         _arq_func_with_timeout(
             run_daily_project_knowledge_sync,
             _daily_sync_timeout(),
+        ),
+        _arq_func_with_timeout(
+            run_analytics_collect,
+            _analytics_collect_timeout(),
         ),
     ]
     on_startup = startup
