@@ -123,6 +123,13 @@ class TestConnectionRoutes:
         mock_conn.mcp_server_command = None
         mock_conn.mcp_server_url = None
         mock_conn.mcp_transport_type = None
+        # Analytics fields (spec §1.2) — a database connection carries none.
+        # Set explicitly: an unset attribute on a MagicMock auto-creates a
+        # MagicMock, which fails ConnectionResponse's string validation.
+        mock_conn.vendor_credential_id = None
+        mock_conn.source_config_json = None
+        mock_conn.collection_enabled = True
+        mock_conn.collection_hour = 3
 
         with (
             patch("app.api.routes.connections._svc") as mock_svc,

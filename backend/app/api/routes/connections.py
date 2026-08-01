@@ -1,27 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from app.connectors.base import ConnectionConfig
+    from app.models.connection import Connection
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.config import settings as app_config
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.agent_learning_service import AgentLearningService
+from app.services.batch_service import not_a_database_detail
 from app.services.code_db_sync_service import CodeDbSyncService
-from app.services.connection_service import ConnectionService
+from app.services.connection_service import ConnectionService, is_analytics_source
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
 from app.services.sync_budget import preflight_owner_budget
@@ -297,15 +302,20 @@ _learning_svc = AgentLearningService()
 class ConnectionCreate(BaseModel):
     project_id: str = Field(max_length=255)
     name: str = Field(max_length=255)
-    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] = Field(max_length=50)
+    # Optional since the analytics spine: a GA4 source has no engine. The
+    # model validator below requires one for every non-analytics source, so a
+    # database connection can still never be created without it.
+    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] | None = Field(
+        default=None, max_length=50
+    )
     source_type: str = Field(default="database", max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = Field(None, max_length=255)
     ssh_key_id: str | None = Field(None, max_length=255)
     db_host: str = Field(default="127.0.0.1", max_length=255)
-    db_port: int = Field(default=5432, ge=1, le=65535)
-    db_name: str = Field(default="", max_length=255)
+    db_port: int | None = Field(default=5432, ge=1, le=65535)
+    db_name: str | None = Field(default="", max_length=255)
     db_user: str | None = Field(None, max_length=255)
     db_password: str | None = Field(None, max_length=1024)
     connection_string: str | None = Field(None, max_length=2048)
@@ -319,6 +329,12 @@ class ConnectionCreate(BaseModel):
     mcp_server_url: str | None = Field(None, max_length=1024)
     mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
+    # Analytics-source fields (spec §1.2). The credential itself is never sent
+    # here — only the id of an already-stored, owner-scoped VendorCredential.
+    vendor_credential_id: str | None = Field(None, max_length=36)
+    source_config: dict[str, Any] | None = None
+    collection_enabled: bool = True
+    collection_hour: int = Field(default=3, ge=0, le=23)
     # H6: opt-out of sending DB sample data to the LLM (default True = send)
     send_sample_data_to_llm: bool = True
 
@@ -348,6 +364,26 @@ class ConnectionCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_conn_string_or_host(self):
+        if is_analytics_source(self.source_type):
+            if not self.vendor_credential_id:
+                raise ValueError(
+                    f"A {self.source_type} connection requires a vendor_credential_id — "
+                    "create the credential first, then attach it here"
+                )
+            # An analytics source has no engine, host, port or database. Clear
+            # the database defaults rather than persisting them: a stored
+            # "127.0.0.1:5432" would make every downstream "is this a database?"
+            # guard answer yes for a source that has never had one.
+            self.db_type = None
+            self.db_host = ""
+            self.db_port = None
+            self.db_name = None
+            return self
+        if self.db_type is None:
+            raise ValueError(
+                "db_type is required for database and MCP connections "
+                "(postgres, mysql, mongodb, clickhouse, mcp)"
+            )
         if self.db_type == "mcp":
             if not self.mcp_server_command and not self.mcp_server_url:
                 raise ValueError(
@@ -384,6 +420,11 @@ class ConnectionUpdate(BaseModel):
     mcp_server_url: str | None = Field(None, max_length=2000)
     mcp_transport_type: str | None = Field(None, max_length=50)
     mcp_env: dict[str, str] | None = None
+    # Analytics-source fields (spec §1.2).
+    vendor_credential_id: str | None = Field(None, max_length=36)
+    source_config: dict[str, Any] | None = None
+    collection_enabled: bool | None = None
+    collection_hour: int | None = Field(None, ge=0, le=23)
     # H6: opt-out of sending DB sample data to the LLM
     send_sample_data_to_llm: bool | None = None
 
@@ -402,15 +443,17 @@ class ConnectionResponse(BaseModel):
     id: str
     project_id: str
     name: str
-    db_type: str
+    # Nullable for analytics sources — a GA4 connection has no engine, port or
+    # database name, and reporting one would be a lie the UI cannot detect.
+    db_type: str | None
     source_type: str = "database"
     ssh_host: str | None
     ssh_port: int
     ssh_user: str | None
     ssh_key_id: str | None
     db_host: str
-    db_port: int
-    db_name: str
+    db_port: int | None
+    db_name: str | None
     db_user: str | None
     is_read_only: bool
     is_active: bool
@@ -421,6 +464,101 @@ class ConnectionResponse(BaseModel):
     mcp_server_command: str | None = None
     mcp_server_url: str | None = None
     mcp_transport_type: str | None = None
+    vendor_credential_id: str | None = None
+    collection_enabled: bool = True
+    collection_hour: int = 3
+    # Carried only to derive ``source_config`` below; ``exclude`` keeps the raw
+    # text out of the payload so clients see one representation, not two.
+    source_config_json: str | None = Field(default=None, exclude=True)
+
+    # A computed field rather than a plain one: it is *derived*, so nothing on
+    # the source object can shadow it, and it stays read-only. The ignore is
+    # pydantic's documented workaround for mypy not supporting decorators above
+    # @property — not a suppressed type error.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source_config(self) -> dict[str, Any] | None:
+        """The connection's non-secret vendor knobs, decoded.
+
+        A corrupt blob degrades to ``None`` rather than 500-ing a listing: the
+        knobs are advisory, and a connection the user can still see and fix is
+        more useful than an error page.
+        """
+        if not self.source_config_json:
+            return None
+        try:
+            parsed = json.loads(self.source_config_json)
+        except (TypeError, ValueError):
+            logger.warning("Connection %s has unparseable source_config_json", self.id)
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+
+async def _require_owned_credential(
+    db: AsyncSession,
+    credential_id: str,
+    source_type: str,
+    user_id: str,
+) -> None:
+    """Assert *credential_id* exists, belongs to *user_id* and matches *source_type*.
+
+    Two distinct refusals, deliberately:
+
+    * **404** when the credential is not visible to this user — the lookup is
+      owner-strict (``VendorCredentialService.get`` never unions NULL-owner
+      rows), so "someone else's" and "does not exist" are answered identically
+      and neither confirms the id.
+    * **422** when it exists but its ``provider`` is for another vendor.
+      Attaching an App Store key to a GA4 connection is a user error worth
+      naming, not a permission problem.
+    """
+    from app.services.vendor_credential_service import VendorCredentialService
+
+    credential = await VendorCredentialService().get(db, credential_id, user_id=user_id)
+    if credential is None:
+        raise HTTPException(status_code=404, detail="Vendor credential not found")
+    if credential.provider != source_type:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Vendor credential '{credential.name}' is for '{credential.provider}', "
+                f"but this connection is a '{source_type}' source. Pick a "
+                f"{source_type} credential."
+            ),
+        )
+
+
+def _require_analytics_connection(conn: Connection, *, subject: str) -> None:
+    """Reject a non-analytics connection on an analytics-only route (400)."""
+    if is_analytics_source(conn.source_type):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"{subject} requires an analytics connection (Google Analytics, App Store "
+            f"Connect, Google Play); '{conn.name}' is a "
+            f"{'database' if conn.source_type == 'database' else conn.source_type} source."
+        ),
+    )
+
+
+def _reject_analytics_source(conn: Connection, *, subject: str) -> None:
+    """Reject an analytics connection on a schema/code route (400).
+
+    Indexing and code↔DB sync assume a schema and a query language. Pointing
+    either at a GA4 source would dispatch a pipeline that cannot possibly
+    succeed and would leave a run row stuck; say what to do instead.
+    """
+    if not is_analytics_source(conn.source_type):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"{subject} does not apply to '{conn.name}' — it is an analytics source with "
+            "no schema to index. Use POST /api/connections/{id}/collect to pull its "
+            "reports instead."
+        ),
+    )
 
 
 @router.post("", response_model=ConnectionResponse)
@@ -439,6 +577,12 @@ async def create_connection(
         await EntitlementService().enforce_connection_quota(db, user["user_id"])
     except QuotaExceededError as exc:
         raise HTTPException(status_code=402, detail=exc.as_payload()) from exc
+
+    if body.vendor_credential_id:
+        await _require_owned_credential(
+            db, body.vendor_credential_id, body.source_type, user["user_id"]
+        )
+
     conn = await _svc.create(db, **body.model_dump())
     logger.info(
         "Connection created: name=%s type=%s project=%s",
@@ -496,16 +640,26 @@ async def update_connection(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     updates = body.model_dump(exclude_unset=True)
 
-    merged_conn_string = updates.get("connection_string")
-    if merged_conn_string is None and conn.connection_string_encrypted:
-        merged_conn_string = True
-    merged_db_host = updates.get("db_host", conn.db_host)
-    merged_db_name = updates.get("db_name", conn.db_name)
-    if not merged_conn_string and not (merged_db_host and merged_db_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Provide either a connection string or db_host + db_name",
-        )
+    merged_source_type = updates.get("source_type", conn.source_type)
+    if is_analytics_source(merged_source_type):
+        # An analytics source has no host or database to require. Its
+        # credential, however, must stay owner-strict on every edit — otherwise
+        # a PATCH would be a way around the create-time ownership check.
+        if updates.get("vendor_credential_id"):
+            await _require_owned_credential(
+                db, updates["vendor_credential_id"], merged_source_type, user["user_id"]
+            )
+    else:
+        merged_conn_string = updates.get("connection_string")
+        if merged_conn_string is None and conn.connection_string_encrypted:
+            merged_conn_string = True
+        merged_db_host = updates.get("db_host", conn.db_host)
+        merged_db_name = updates.get("db_name", conn.db_name)
+        if not merged_conn_string and not (merged_db_host and merged_db_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either a connection string or db_host + db_name",
+            )
 
     conn = await _svc.update(db, connection_id, **updates)
     if not conn:
@@ -558,7 +712,9 @@ async def test_connection(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
     result = await _svc.test_connection(db, connection_id)
 
-    if result.get("success"):
+    # Only a database source has a schema to index; an analytics source's
+    # "index" is a collection run, which the collect endpoint and the cron own.
+    if result.get("success") and conn.source_type == "database" and conn.db_type:
         from app.config import settings as app_settings
 
         if app_settings.auto_index_db_on_test:
@@ -613,11 +769,21 @@ async def refresh_schema(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
+    # 400 rather than a connector-factory crash: ``db_type`` is nullable since
+    # the analytics spine and an analytics source has no schema to introspect.
+    # Keyed on ``db_type`` rather than ``source_type`` on purpose — MCP sources
+    # do have an adapter here and must keep working.
+    db_type = conn.db_type
+    if db_type is None:
+        raise HTTPException(
+            status_code=400, detail=not_a_database_detail(conn, subject="Refreshing the schema")
+        )
+
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     try:
         from app.connectors.registry import get_connector
 
-        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
         await connector.connect(config)
         try:
             schema = await connector.introspect_schema()
@@ -696,6 +862,7 @@ async def index_database(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    _reject_analytics_source(conn, subject="Database indexing")
 
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     project_id = conn.project_id
@@ -1053,6 +1220,7 @@ async def trigger_sync(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    _reject_analytics_source(conn, subject="Code-database sync")
 
     # H5: budget pre-flight — block over-budget owners before we even acquire the lock.
     ok, reason, _ = await preflight_owner_budget(db, conn.project_id)
@@ -1252,3 +1420,98 @@ async def _run_sync_background(
                 await session.commit()
         except Exception:
             logger.debug("Failed to update sync_status", exc_info=True)
+
+
+# ------------------------------------------------------------------
+# Analytics collection endpoints (spec §5)
+# ------------------------------------------------------------------
+
+
+@router.post("/{connection_id}/collect", status_code=202)
+@limiter.limit("10/minute")
+async def collect_now(
+    request: Request,
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Collect this analytics connection's reports now (spec §3.2, §5).
+
+    Enqueues exactly the job the hourly cron enqueues — same task name, same
+    day-scoped ``task_id``, same timeout — so "collect now" and the schedule can
+    never race into two concurrent runs for one connection on one day. The
+    upsert is idempotent regardless; the dedup key saves vendor quota.
+
+    Deliberately does **not** check ``collection_enabled``: that flag pauses the
+    *schedule*. A user who has paused a connection to stop the nightly wave must
+    still be able to pull data on demand, which is the normal way to test a
+    credential fix.
+    """
+    from zoneinfo import ZoneInfo
+
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
+    _require_analytics_connection(conn, subject="Collecting")
+
+    run_date = datetime.now(ZoneInfo(app_config.daily_knowledge_sync_timezone)).strftime("%Y-%m-%d")
+    task_id = f"analytics_collect:{connection_id}:{run_date}"
+
+    async def _run_in_process(*, connection_id: str = connection_id) -> None:
+        # Imported at call time so this module never pulls in the vendor SDKs,
+        # and so the in-process fallback resolves the current service class.
+        from app.services.analytics_collect_service import AnalyticsCollectService
+
+        await AnalyticsCollectService().collect(connection_id)
+
+    await task_queue.enqueue(
+        "run_analytics_collect",
+        coro_factory=_run_in_process,
+        task_id=task_id,
+        _job_timeout=app_config.analytics_collect_job_timeout_seconds,
+        connection_id=connection_id,
+    )
+
+    logger.info(
+        "Analytics collect requested: connection=%s source=%s",
+        connection_id[:8],
+        conn.source_type,
+    )
+    audit_log(
+        "connection.collect",
+        user_id=user["user_id"],
+        project_id=conn.project_id,
+        resource_type="connection",
+        resource_id=connection_id,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "queued",
+            "connection_id": connection_id,
+            "task_id": task_id,
+        },
+    )
+
+
+@router.get("/{connection_id}/collection-status")
+async def collection_status(
+    connection_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Per-report collection state for an analytics connection (spec §5).
+
+    See :meth:`ConnectionService.collection_status` for the payload's two
+    load-bearing distinctions: ``last_error`` (a real failure) is never the
+    same field as ``caveat`` (a partial-data note on data that did arrive), and
+    a period recorded ``empty`` is complete, not pending.
+    """
+    conn = await _svc.get(db, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    _require_analytics_connection(conn, subject="Collection status")
+
+    return await _svc.collection_status(db, conn)
