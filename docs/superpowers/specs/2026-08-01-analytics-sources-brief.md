@@ -54,8 +54,6 @@ scenarios, docs, wiki and an ADR.
 - GA4 realtime reports and extra Apple analytics report types (D7).
 - SQL access over the analytics cache (D2 chose a sub-agent; SQLAgent is not extended).
 - Query-repair loop, query-failure learning, SQL reconciliation for analytics (D3).
-- **Production deploy and post-deploy verification** — D10 stops each module at an
-  open PR. Stage 8 runs only if the operator merges in-session.
 
 ## Requirements (the REQ spine — frozen; adding is free, removing needs operator agreement)
 
@@ -123,7 +121,7 @@ Status lifecycle written at stage 4, 5 and 10 only: `open` → `planned` → `bu
 | D7 | Data scope | **Blueprint parity** (GA4 5 reports · ASC 6 tables · Play 5 tables) | Proven against live accounts; every gotcha already documented |
 | D8 | FX | **Frankfurter/ECB, keyless**; missing rate ⇒ `amount_usd` NULL + native kept | No new user credential, no cost; degradation never loses the money |
 | D9 | Design surface | **Text-only**, recorded in `docs/ux/foundation.md` → Design tooling | Every surface extends already-designed components under `DESIGN_SYSTEM.md`; no new visual language |
-| D10 | Branch + deploy | **Stop at the PR** — one branch per module, all gates green, PR opened, operator merges | Operator's call. Merging to `main` auto-deploys to production, so this keeps a human on every release |
+| D10 | Branch + deploy | **Standing go per module** *(revised 2026-08-01 — operator: "1, автономно до конца", superseding the earlier stop-at-PR answer)*. One branch per module; on ALL named gates green I merge to `main`, which auto-deploys to **production**; then stage 8 verifies. Any gate red → stop, report, do not merge | Specific standing authorization per the deploy floor: **named target** `checkmydata-api` + `checkmydata-web`; **named preconditions** `ruff format --check` · `ruff check` · `mypy` · backend unit+integration with combined coverage ≥ 72 % · `tsc --noEmit` · `eslint --max-warnings=0` · `vitest` · `docs/ux/lint.py` |
 | D11 | Retention | Facts kept; **raw never persisted**; journal pruned > 400 d; delete cascades | Fixes the blueprint's own recorded "no retention → infinite growth" flaw; also sidesteps Heroku's ephemeral FS |
 | D12 | Escalation | Vendor-contract surprises + gate failures + new credentials/paid deps | Implementation detail is mine; anything that would shrink a REQ or add a dependency is yours |
 
@@ -150,12 +148,12 @@ Status lifecycle written at stage 4, 5 and 10 only: `open` → `planned` → `bu
 | 3 Design surface | Figma or text-only | **Text-only** (D9); recorded in `docs/ux/foundation.md` |
 | 3 Design file | Team/file | N/A — text-only |
 | 4–5 Dev | Branch policy | `feat/analytics-m0-ga4`, `feat/analytics-m1-appstore`, `feat/analytics-m2-play` off `main`, built in a worktree. **`main` is off-limits for direct commits.** Conventional commits. Tracker: `BACKLOG.md` |
-| 5 Integration | How it lands | **PR per module; operator merges** (D10). No parallel fan-out across modules — they are sequential by design |
+| 5 Integration | How it lands | **I merge to `main` per module once all gates are green** (D10). No parallel fan-out across modules — they are sequential by design |
 | 6 Tests | Command / green | `make test-all` (backend) + `cd frontend && npm test`. Green = 0 failures; combined coverage ≥ 72 %. No known-red baseline |
 | 7 Lint | Command | `ruff format --check app/ tests/` · `ruff check app/ tests/` · `mypy app/ --ignore-missing-imports` · `tsc --noEmit` · `eslint . --max-warnings=0` · `python docs/ux/lint.py` |
-| 7 Deploy | Target + path | Heroku `checkmydata-api` + `checkmydata-web` via GH Actions on `main`. **Not exercised by this run** — PR is the stopping point |
-| 7 Deploy | Authorization | **None granted.** Operator merges each PR themselves |
-| 8 Post-deploy | Logs / health | `heroku logs -a checkmydata-api`, `GET /api/health`. Runs only if the operator merges in-session; otherwise a carry-over row with these exact commands |
+| 7 Deploy | Target + path | Heroku `checkmydata-api` + `checkmydata-web`, via GH Actions `deploy.yml` on CI success on `main`. Release automation: on. Deploy-from-`main` only |
+| 7 Deploy | Authorization | **Standing go, specific** (D10): merge→deploy per module, gated on the eight named checks. Red gate ⇒ stop, no merge. Anything outward beyond this (new infra, env-var changes on the Heroku app, force-push) still asks |
+| 8 Post-deploy | Logs / health | Per module after merge: watch GH Actions CI → Deploy, then `heroku logs -a checkmydata-api` for migration + boot, then `GET https://api.checkmydata.ai/api/health` |
 | 9 Docs+wiki | Targets | `CLAUDE.md`, `API.md`, `CHANGELOG.md`, `docs/ANALYTICS_SOURCES.md`, `backend/.env.example`, `docs/ux/*`, wiki `projects/checkmydata-ai/*`; **wiki sync = yes** |
 | 10 Acceptance | Sign-off / deferrals | Operator signs off; deferrals → `BACKLOG.md` + carry-over ledger |
 
@@ -167,7 +165,9 @@ Status lifecycle written at stage 4, 5 and 10 only: `open` → `planned` → `bu
    re-running a period never duplicates rows; a partial run reports `partial`, not success.
 3. Asking a revenue/installs/traffic question in chat returns an answer that carries its
    freshness and any partial-data caveat, and charts like any other answer.
-4. All gates green per module (lint, types, tests, coverage ≥ 72 %, ux-lint), PR opened.
+4. All gates green per module (lint, types, tests, coverage ≥ 72 %, ux-lint), merged to
+   `main`, deployed to production, and verified live (migrations applied, clean boot,
+   `/api/health` 200).
 5. Every REQ accounted for at stage 10 with evidence from a check seen failing once.
 
 ## Open assumptions / risks
@@ -178,5 +178,5 @@ Status lifecycle written at stage 4, 5 and 10 only: `open` → `planned` → `bu
 | A2 | Vendor report schemas match their published docs | Stage 1 grounds every contract on fetched docs; parsers tested on fixture payloads. **Divergence is a D12 stop-and-ask** |
 | A3 | frankfurter.app remains keyless and available | Degradation is designed in (REQ-020): missing rate never loses the amount |
 | A4 | `google-analytics-data` + `google-auth` + `PyJWT[crypto]` add acceptable image weight | Measured at stage 6; all are pure-Python or already-transitive |
-| A5 | No staging environment exists — production is the only deploy target | Mitigated entirely by D10: the run never deploys |
+| A5 | No staging environment exists — production is the only deploy target | **Now load-bearing** after the D10 revision: the eight-gate precondition and per-module (not big-bang) deploys are the only safety net. Each module is additive and feature-flagged off (`analytics_collect_enabled=false`), so a bad deploy degrades to "new source type unusable", not "existing chat broken" |
 | **R1** | **D2 (sub-agent over SQL) means every future quality gate must be wired twice** — once for SQL, once for analytics | Recorded here as a standing cost, not a one-off. Revisit if a third non-SQL source appears |
