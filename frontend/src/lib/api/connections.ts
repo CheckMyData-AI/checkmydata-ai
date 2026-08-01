@@ -10,6 +10,63 @@ import type {
   SyncStatus,
 } from "./types";
 
+/**
+ * Overall collection outcome (spec §2.4 + `ConnectionService.collection_status`).
+ * `never_collected` is its own state on purpose — it is not a kind of failure.
+ */
+export type CollectionOutcome = "ok" | "partial" | "failed" | "never_collected";
+
+export interface CollectionReportStatus {
+  report: string;
+  grain?: string | null;
+  /** Newest period with rows. Null while every collected period was empty. */
+  latest_ok_period: string | null;
+  /** Newest period the journal completed at all (`ok` **or** `empty`). */
+  latest_collected_period?: string | null;
+  ok_periods: number;
+  empty_periods: number;
+  failed_periods: number;
+  rows_written: number;
+  /** How many expected periods the journal has not completed. */
+  pending_periods: number;
+  /** The first few pending periods, for display. */
+  pending_sample?: string[] | null;
+  last_run_at?: string | null;
+  /** Set only by a genuinely `failed` journal row. */
+  last_error?: string | null;
+  /**
+   * Partial-data note carried by a **non-failed** row — a truncated vendor page
+   * or a sampled range. A caveat qualifies data that did arrive; it is never an
+   * error, and the two fields are deliberately separate on the wire.
+   */
+  caveat?: string | null;
+}
+
+export interface CollectionStatus {
+  connection_id?: string;
+  source_type?: string;
+  collection_enabled?: boolean;
+  collection_hour?: number;
+  /** Hour-of-day (0–23) the schedule next fires; null when auto-collect is off. */
+  next_scheduled_hour: number | null;
+  /** IANA zone the collection hour is expressed in. */
+  timezone?: string;
+  backfill_days?: number;
+  status: CollectionOutcome;
+  last_run_at: string | null;
+  last_error?: string | null;
+  caveat?: string | null;
+  /** Total pending periods across every report. */
+  pending_periods: number;
+  reports: CollectionReportStatus[];
+}
+
+export interface CollectNowResponse {
+  status: string;
+  task_id?: string;
+  connection_id?: string;
+}
+
 export const connections = {
   listByProject: (projectId: string) =>
     request<Connection[]>(`/connections/project/${projectId}`),
@@ -57,6 +114,13 @@ export const connections = {
   getSync: (id: string) => request<SyncResponse>(`/connections/${id}/sync`),
   deleteSync: (id: string) =>
     request<{ ok: boolean }>(`/connections/${id}/sync`, { method: "DELETE" }),
+
+  /** Journal summary for an analytics source (spec §5). */
+  collectionStatus: (id: string) =>
+    request<CollectionStatus>(`/connections/${id}/collection-status`),
+  /** Manual "collect now" — enqueues the same job the hourly cron dispatches. */
+  collectNow: (id: string) =>
+    request<CollectNowResponse>(`/connections/${id}/collect`, { method: "POST" }),
 
   learningsStatus: (id: string) =>
     request<LearningsStatus>(`/connections/${id}/learnings/status`),

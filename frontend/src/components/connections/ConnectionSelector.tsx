@@ -10,11 +10,22 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { ListError } from "@/components/ui/ListError";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
+import {
+  ConnectionHealth,
+  CollectionStatusRow,
+} from "@/components/connections/ConnectionHealth";
 import { LearningsPanel } from "@/components/learnings/LearningsPanel";
+import { VendorCredentialFields } from "@/components/settings/VendorCredentialsPanel";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 import { usePermission } from "@/hooks/usePermission";
 import { FormModal } from "@/components/ui/FormModal";
+import {
+  GA4_PROVIDER,
+  credentialAccountEmail,
+  shortFingerprint,
+  vendorCredentials,
+  type VendorCredential,
+} from "@/lib/api/vendor-credentials";
 
 import {
   DB_TYPES,
@@ -35,6 +46,56 @@ interface ConnectionSelectorProps {
   onCreateHandled?: () => void;
 }
 
+/**
+ * Source types that collect into local fact tables instead of being queried
+ * live. `ga4` ships in m0; `appstore`/`googleplay` are reserved for m1/m2.
+ */
+const ANALYTICS_SOURCE_TYPES = new Set(["ga4", "appstore", "googleplay"]);
+
+function isAnalyticsSource(sourceType: string | null | undefined): boolean {
+  return ANALYTICS_SOURCE_TYPES.has(sourceType ?? "");
+}
+
+const EMPTY_ANALYTICS_FORM = {
+  vendor_credential_id: "",
+  property_id: "",
+  backfill_days: "30",
+  collection_hour: "3",
+  collection_enabled: true,
+};
+
+type AnalyticsFormState = typeof EMPTY_ANALYTICS_FORM;
+
+/** Analytics columns the API adds to a connection (spec §1.2); optional here. */
+interface AnalyticsConnectionFields {
+  vendor_credential_id?: string | null;
+  source_config?: {
+    property_ids?: string[] | null;
+    backfill_days?: number | null;
+  } | null;
+  collection_enabled?: boolean | null;
+  collection_hour?: number | null;
+}
+
+function analyticsFormFromConnection(c: Connection): AnalyticsFormState {
+  const extra = c as Connection & AnalyticsConnectionFields;
+  return {
+    vendor_credential_id: extra.vendor_credential_id ?? "",
+    property_id: extra.source_config?.property_ids?.[0] ?? "",
+    backfill_days: String(extra.source_config?.backfill_days ?? 30),
+    collection_hour: String(extra.collection_hour ?? 3),
+    collection_enabled: extra.collection_enabled ?? true,
+  };
+}
+
+function safeInt(raw: string, fallback: number, min: number, max: number): number {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+const COLLECTION_HOURS = Array.from({ length: 24 }, (_, h) => h);
+
 export function ConnectionSelector({ createRequested, onCreateHandled }: ConnectionSelectorProps) {
   const activeProject = useAppStore((s) => s.activeProject);
   const pipelineStatus = useAppStore((s) =>
@@ -50,6 +111,15 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
+  const [analyticsForm, setAnalyticsForm] = useState<AnalyticsFormState>({
+    ...EMPTY_ANALYTICS_FORM,
+  });
+  const [ga4Credentials, setGa4Credentials] = useState<VendorCredential[]>([]);
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
+  const [credentialsError, setCredentialsError] = useState<string | null>(null);
+  const [showNewCredential, setShowNewCredential] = useState(false);
+  const [credentialInvalid, setCredentialInvalid] = useState(false);
+  const [propertyInvalid, setPropertyInvalid] = useState(false);
   const [useConnString, setUseConnString] = useState(false);
   const [detectedType, setDetectedType] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
@@ -243,6 +313,9 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   useEffect(() => {
     let cancelled = false;
     connections.forEach((c) => {
+      // An analytics source has no schema to index and no code to cross-ref;
+      // asking would just be two guaranteed-useless round trips per row.
+      if (isAnalyticsSource(c.source_type)) return;
       api.connections
         .indexDbStatus(c.id)
         .then((s) => {
@@ -324,14 +397,123 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
+    setAnalyticsForm({ ...EMPTY_ANALYTICS_FORM });
+    setShowNewCredential(false);
+    setCredentialInvalid(false);
+    setPropertyInvalid(false);
     setUseConnString(false);
     setDetectedType(null);
   };
 
   const isMCP = form.db_type === "mcp";
-  const hasSSH = !isMCP && form.ssh_host.trim().length > 0;
+  const isGA4 = form.db_type === "ga4";
+  const isDatabase = !isMCP && !isGA4;
+  const hasSSH = isDatabase && form.ssh_host.trim().length > 0;
+  const selectedCredential = ga4Credentials.find(
+    (c) => c.id === analyticsForm.vendor_credential_id,
+  );
+  const formIsOpen = showCreate || editingId !== null;
+
+  const loadGa4Credentials = useCallback(async () => {
+    setCredentialsLoading(true);
+    setCredentialsError(null);
+    try {
+      const rows = await vendorCredentials.list();
+      if (!mountedRef.current) return;
+      setGa4Credentials(rows.filter((c) => c.provider === GA4_PROVIDER));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setCredentialsError(
+        err instanceof Error ? err.message : "Failed to load vendor credentials",
+      );
+    } finally {
+      if (mountedRef.current) setCredentialsLoading(false);
+    }
+  }, []);
+
+  // Only fetch when the GA4 branch is actually on screen — a database
+  // connection form has no business asking for vendor credentials.
+  useEffect(() => {
+    if (!formIsOpen || !isGA4) return;
+    void loadGa4Credentials();
+  }, [formIsOpen, isGA4, loadGa4Credentials]);
+
+  /**
+   * Validate the GA4 branch. Returns the create payload, or null after having
+   * told the user exactly what is missing — a silent no-op on submit is the one
+   * outcome this form must never produce (SCN-113).
+   */
+  const buildGa4Payload = (): Record<string, unknown> | null => {
+    if (!form.name.trim()) {
+      toast("Connection name is required.", "error");
+      return null;
+    }
+    if (!analyticsForm.vendor_credential_id) {
+      setCredentialInvalid(true);
+      toast(
+        "Select a Google Analytics credential — a GA4 connection cannot collect without one.",
+        "error",
+      );
+      return null;
+    }
+    const propertyId = analyticsForm.property_id.trim();
+    if (!propertyId) {
+      setPropertyInvalid(true);
+      toast(
+        "Enter the GA4 property ID (the numeric id in Admin → Property details).",
+        "error",
+      );
+      return null;
+    }
+    setCredentialInvalid(false);
+    setPropertyInvalid(false);
+    return {
+      source_type: GA4_PROVIDER,
+      vendor_credential_id: analyticsForm.vendor_credential_id,
+      source_config: {
+        property_ids: [propertyId],
+        backfill_days: safeInt(analyticsForm.backfill_days, 30, 1, 3650),
+      },
+      collection_enabled: analyticsForm.collection_enabled,
+      collection_hour: safeInt(analyticsForm.collection_hour, 3, 0, 23),
+    };
+  };
+
+  const handleCreateGa4 = async () => {
+    if (!activeProject) return;
+    const analytics = buildGa4Payload();
+    if (!analytics) return;
+    setSaving(true);
+    try {
+      // No host, port, database or tunnel: a GA4 property has none of them.
+      const conn = await api.connections.create({
+        project_id: activeProject.id,
+        name: form.name.trim(),
+        db_type: null,
+        ...analytics,
+      } as Parameters<typeof api.connections.create>[0]);
+      useAppStore.setState((state) => ({
+        connections: [conn, ...state.connections],
+      }));
+      setActiveConnection(conn);
+      setShowCreate(false);
+      resetForm();
+      toast("Connection created", "success");
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to create connection",
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleCreate = async () => {
+    if (isGA4) {
+      await handleCreateGa4();
+      return;
+    }
     if (!activeProject || !form.name.trim()) return;
     if (!isMCP && form.ssh_host.trim() && (!form.ssh_user.trim() || !form.ssh_key_id)) {
       toast("SSH host is set — please provide an SSH user and key.", "error");
@@ -410,13 +592,59 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
   const handleEdit = (c: Connection) => {
     setEditingId(c.id);
-    setForm(connToForm(c));
+    if (isAnalyticsSource(c.source_type)) {
+      setForm({ ...connToForm(c), db_type: GA4_PROVIDER });
+      setAnalyticsForm(analyticsFormFromConnection(c));
+    } else {
+      setForm(connToForm(c));
+      setAnalyticsForm({ ...EMPTY_ANALYTICS_FORM });
+    }
+    setShowNewCredential(false);
+    setCredentialInvalid(false);
+    setPropertyInvalid(false);
     setShowCreate(false);
     setUseConnString(false);
   };
 
+  const applyUpdate = async (updates: Record<string, unknown>) => {
+    if (!editingId) return;
+    setSaving(true);
+    try {
+      const updated = await api.connections.update(editingId, updates);
+      useAppStore.setState((state) => ({
+        connections: state.connections.map((c) =>
+          c.id === updated.id ? updated : c,
+        ),
+        ...(state.activeConnection?.id === updated.id
+          ? { activeConnection: updated }
+          : {}),
+      }));
+      setStatus((prev) => {
+        const next = { ...prev };
+        delete next[editingId];
+        return next;
+      });
+      setEditingId(null);
+      resetForm();
+      toast("Connection updated", "success");
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to update connection",
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleUpdate = async () => {
     if (!editingId || saving) return;
+    if (isGA4) {
+      const analytics = buildGa4Payload();
+      if (!analytics) return;
+      await applyUpdate({ name: form.name.trim(), ...analytics });
+      return;
+    }
     if (!form.name.trim()) {
       toast("Connection name is required.", "error");
       return;
@@ -487,33 +715,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       }
     }
 
-    setSaving(true);
-    try {
-      const updated = await api.connections.update(editingId, updates);
-      useAppStore.setState((state) => ({
-        connections: state.connections.map((c) =>
-          c.id === updated.id ? updated : c,
-        ),
-        ...(state.activeConnection?.id === updated.id
-          ? { activeConnection: updated }
-          : {}),
-      }));
-      setStatus((prev) => {
-        const next = { ...prev };
-        delete next[editingId];
-        return next;
-      });
-      setEditingId(null);
-      resetForm();
-      toast("Connection updated", "success");
-    } catch (err) {
-      toast(
-        err instanceof Error ? err.message : "Failed to update connection",
-        "error",
-      );
-    } finally {
-      setSaving(false);
-    }
+    await applyUpdate(updates);
   };
 
   const handleCheckStatus = async (id: string) => {
@@ -602,7 +804,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const conn = connections.find((c) => c.id === id);
-    const name = conn?.db_name || conn?.id || "this connection";
+    const name = conn?.name || conn?.db_name || conn?.id || "this connection";
     if (
       !(await confirmAction(`Delete connection "${name}"?`, {
         severity: "critical",
@@ -633,8 +835,6 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   };
 
   if (!activeProject) return null;
-
-  const isFormOpen = showCreate || editingId !== null;
 
   const cancelForm = () => {
     setEditingId(null);
@@ -685,6 +885,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             {t}
           </option>
         ))}
+        <option value={GA4_PROVIDER}>Google Analytics 4</option>
       </select>
 
       {isMCP ? (
@@ -745,8 +946,153 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             className={inputCls + " font-mono text-[10px] resize-y"}
           />
           <p className="text-[10px] text-text-muted px-1">
-            Connect to an external MCP server to query data from services like
-            Google Analytics, Stripe, Jira, etc.
+            Connect to an external MCP server to query data from services
+            without a first-class connector.
+          </p>
+        </div>
+      ) : isGA4 ? (
+        <div className="space-y-2.5">
+          {credentialsLoading && (
+            <p className="text-[10px] text-text-muted px-1">Loading credentials…</p>
+          )}
+          {credentialsError && (
+            <ListError
+              message={credentialsError}
+              onRetry={() => void loadGa4Credentials()}
+              className="px-1 py-1 text-[10px] text-error flex flex-col items-start gap-1"
+            />
+          )}
+
+          <select
+            value={analyticsForm.vendor_credential_id}
+            aria-label="GA4 vendor credential"
+            aria-required="true"
+            aria-invalid={credentialInvalid ? "true" : undefined}
+            onChange={(e) => {
+              setCredentialInvalid(false);
+              setAnalyticsForm({
+                ...analyticsForm,
+                vendor_credential_id: e.target.value,
+              });
+            }}
+            className={inputCls}
+          >
+            <option value="">Select a stored credential…</option>
+            {ga4Credentials.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {credentialAccountEmail(c) ?? shortFingerprint(c.fingerprint)}
+              </option>
+            ))}
+          </select>
+
+          {selectedCredential && (
+            <p className="text-[10px] text-text-muted px-1 font-mono">
+              Fingerprint {shortFingerprint(selectedCredential.fingerprint)}
+            </p>
+          )}
+
+          {!credentialsLoading && !credentialsError && ga4Credentials.length === 0 && (
+            <p className="text-[10px] text-warning px-1">
+              No Google Analytics credentials yet — add one below, or from
+              Settings → Vendor credentials.
+            </p>
+          )}
+
+          {showNewCredential ? (
+            <div className="border border-border-subtle rounded-lg p-2.5">
+              <VendorCredentialFields
+                lockProvider={GA4_PROVIDER}
+                onCancel={() => setShowNewCredential(false)}
+                onCreated={(created) => {
+                  setGa4Credentials((prev) => [created, ...prev]);
+                  setAnalyticsForm((prev) => ({
+                    ...prev,
+                    vendor_credential_id: created.id,
+                  }));
+                  setCredentialInvalid(false);
+                  setShowNewCredential(false);
+                }}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowNewCredential(true)}
+              className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors px-1"
+            >
+              <Icon name="plus" size={12} />
+              New credential
+            </button>
+          )}
+
+          <input
+            value={analyticsForm.property_id}
+            onChange={(e) => {
+              setPropertyInvalid(false);
+              setAnalyticsForm({ ...analyticsForm, property_id: e.target.value });
+            }}
+            placeholder="GA4 property ID (e.g. 294380179)"
+            aria-label="GA4 property ID"
+            aria-required="true"
+            aria-invalid={propertyInvalid ? "true" : undefined}
+            inputMode="numeric"
+            className={inputCls}
+            maxLength={32}
+          />
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={analyticsForm.backfill_days}
+              onChange={(e) =>
+                setAnalyticsForm({ ...analyticsForm, backfill_days: e.target.value })
+              }
+              placeholder="Backfill days"
+              aria-label="Backfill days"
+              inputMode="numeric"
+              className={halfInputCls}
+              maxLength={4}
+            />
+            <select
+              value={analyticsForm.collection_hour}
+              aria-label="Collection hour"
+              onChange={(e) =>
+                setAnalyticsForm({
+                  ...analyticsForm,
+                  collection_hour: e.target.value,
+                })
+              }
+              className={halfInputCls}
+            >
+              {COLLECTION_HOURS.map((h) => (
+                <option key={h} value={String(h)}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={analyticsForm.collection_enabled}
+              aria-label="Collect automatically"
+              onChange={(e) =>
+                setAnalyticsForm({
+                  ...analyticsForm,
+                  collection_enabled: e.target.checked,
+                })
+              }
+              className="accent-accent"
+            />
+            <span className="flex items-center gap-1.5">
+              <Icon name="clock" size={12} />
+              Collect automatically
+            </span>
+          </label>
+
+          <p className="text-[10px] text-text-muted px-1">
+            GA4 is collected up to yesterday — today is always partial. Grant the
+            service account Viewer on the property first.
           </p>
         </div>
       ) : (
@@ -855,7 +1201,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         </>
       )}
 
-      {!isMCP && (useConnString ? (
+      {isDatabase && (useConnString ? (
         <p className="text-[10px] text-text-muted px-1">
           SSH tunnel is not used with connection strings. Switch to individual
           fields to configure SSH.
@@ -1029,7 +1375,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         </>
       ))}
 
-      {!isMCP && (
+      {isDatabase && (
         <label className="flex items-center gap-2 text-text-tertiary cursor-pointer select-none">
           <input
             type="checkbox"
@@ -1087,7 +1433,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   return (
     <div className="px-1">
       <FormModal
-        open={isFormOpen}
+        open={formIsOpen}
         onClose={cancelForm}
         title={editingId ? "Edit Connection" : "New Connection"}
         maxWidth="max-w-lg"
@@ -1095,7 +1441,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         {formUI}
       </FormModal>
 
-      {!isFormOpen && connections.length === 0 && connectionsError && (
+      {!formIsOpen && connections.length === 0 && connectionsError && (
         <ListError
           message={connectionsError}
           onRetry={() => void handleRetryLoad()}
@@ -1103,7 +1449,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         />
       )}
 
-      {!isFormOpen && connections.length === 0 && !connectionsError && (
+      {!formIsOpen && connections.length === 0 && !connectionsError && (
         <div className="px-2 py-3 text-center">
           <p className="text-[10px] text-text-muted">No connections yet</p>
         </div>
@@ -1114,6 +1460,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           const isActive = activeConnection?.id === c.id;
           const idx = indexStatus[c.id];
           const sync = syncStatus[c.id];
+          const isAnalytics = isAnalyticsSource(c.source_type);
 
           return (
             <div key={c.id}>
@@ -1159,7 +1506,11 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   </span>
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                     <span className="text-[10px] text-text-muted font-mono uppercase">
-                      {c.source_type === "mcp" ? "MCP" : c.db_type}
+                      {c.source_type === "mcp"
+                        ? "MCP"
+                        : isAnalytics
+                          ? c.source_type
+                          : c.db_type}
                     </span>
                     {c.is_read_only && (
                       <span className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
@@ -1197,7 +1548,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           </span>
                         </Tooltip>
                       )
-                    ) : isActive && canIndex ? (
+                    ) : isActive && canIndex && !isAnalytics ? (
                       <Tooltip label="Index database schema" position="bottom">
                         <button
                           type="button"
@@ -1325,7 +1676,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       size="xs"
                     />
                   )}
-                  {isActive && c.source_type !== "mcp" && canIndex && (
+                  {isActive && c.source_type !== "mcp" && !isAnalytics && canIndex && (
                     <ActionButton
                       icon="database"
                       title="Refresh schema cache"
@@ -1345,6 +1696,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   )}
                 </div>
               </div>
+              {isAnalytics && <CollectionStatusRow connectionId={c.id} />}
               {healthStatuses[c.id] === "down" && (
                 <div className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-[10px] flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
