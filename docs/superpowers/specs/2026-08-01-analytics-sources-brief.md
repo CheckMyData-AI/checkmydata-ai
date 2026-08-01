@@ -73,7 +73,7 @@ scenarios, docs, wiki and an ADR.
 | REQ-010 | Honesty gates wired: DataGate hard checks, truncation/partial caveat, freshness warning, AnswerQualityGate | `test_analytics_datagate_blocks_impossible_values`, `test_analytics_answer_carries_freshness_caveat`, `test_analytics_partial_data_caveat` | open |
 | REQ-011 | Analytics results chart through VizAgent unchanged | `test_analytics_result_renders_chart` | open |
 | REQ-012 | UI: source-type branch in `ConnectionSelector`, credential picker, `VendorCredentials` panel, collection status row in `ConnectionHealth` | vitest specs per component + `npx tsc --noEmit` + `eslint --max-warnings=0` | open |
-| REQ-013 | UX scenarios for add-GA4-connection, manage-vendor-credentials, collection-status-with-partial-data — traced | `docs/ux/scenarios.md` rows + `python docs/ux/lint.py` green | open |
+| REQ-013 | UX scenarios for add-GA4-connection, manage-vendor-credentials, collection-status-with-partial-data — traced | `docs/ux/scenarios.md` rows **+ a real scenario-consistency check** `tests/unit/docs/test_ux_scenarios.py` asserting index↔body parity and that every `Coverage:` path resolves. *(Corrected at stage 3: `docs/ux/lint.py` named in the original brief does not exist in this project — see correction note below)* | open |
 | REQ-014 | `vision.md` §8 amended with the external-report carve-out + `docs/adr/0001-external-report-cache.md` written | `grep` §8 contains carve-out; ADR file exists with context/decision/consequences | open |
 | REQ-015 | Retention: raw vendor payloads never persisted; journal rows pruned > 400 days; connection/project delete cascades all analytics rows | `test_raw_payload_not_written_to_disk`, `test_journal_prune_over_400_days`, `test_delete_connection_cascades_analytics` | open |
 
@@ -150,7 +150,7 @@ Status lifecycle written at stage 4, 5 and 10 only: `open` → `planned` → `bu
 | 4–5 Dev | Branch policy | `feat/analytics-m0-ga4`, `feat/analytics-m1-appstore`, `feat/analytics-m2-play` off `main`, built in a worktree. **`main` is off-limits for direct commits.** Conventional commits. Tracker: `BACKLOG.md` |
 | 5 Integration | How it lands | **I merge to `main` per module once all gates are green** (D10). No parallel fan-out across modules — they are sequential by design |
 | 6 Tests | Command / green | `make test-all` (backend) + `cd frontend && npm test`. Green = 0 failures; combined coverage ≥ 72 %. No known-red baseline |
-| 7 Lint | Command | `ruff format --check app/ tests/` · `ruff check app/ tests/` · `mypy app/ --ignore-missing-imports` · `tsc --noEmit` · `eslint . --max-warnings=0` · `python docs/ux/lint.py` |
+| 7 Lint | Command | `ruff format --check app/ tests/` · `ruff check app/ tests/` · `mypy app/ --ignore-missing-imports` · `tsc --noEmit` · `eslint . --max-warnings=0` · `pytest tests/unit/docs/test_ux_scenarios.py` *(replaces the non-existent `docs/ux/lint.py`)* |
 | 7 Deploy | Target + path | Heroku `checkmydata-api` + `checkmydata-web`, via GH Actions `deploy.yml` on CI success on `main`. Release automation: on. Deploy-from-`main` only |
 | 7 Deploy | Authorization | **Standing go, specific** (D10): merge→deploy per module, gated on the eight named checks. Red gate ⇒ stop, no merge. Anything outward beyond this (new infra, env-var changes on the Heroku app, force-push) still asks |
 | 8 Post-deploy | Logs / health | Per module after merge: watch GH Actions CI → Deploy, then `heroku logs -a checkmydata-api` for migration + boot, then `GET https://api.checkmydata.ai/api/health` |
