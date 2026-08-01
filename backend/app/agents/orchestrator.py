@@ -561,9 +561,13 @@ class OrchestratorAgent(BaseAgent):
             has_connection = context.connection_config is not None
             db_type = context.connection_config.db_type if context.connection_config else None
 
-            # Lightweight capability checks (KB is local, MCP needs DB)
+            # Lightweight capability checks (KB is local, MCP/analytics need DB)
             has_kb = self._ctx_loader.has_knowledge_base(context.project_id)
             has_mcp = await self._ctx_loader.has_mcp_sources(context.project_id, wf_id)
+            # T13: analytics sources (GA4 & co) are a first-class data source and
+            # are threaded exactly like ``has_mcp`` — the probe degrades to False
+            # on any lookup failure, so a bad check costs a tool, not a crash.
+            has_analytics = await self._ctx_loader.has_analytics_sources(context.project_id, wf_id)
             has_repo = self._ctx_loader.has_repo(context.project_id)
 
             # --- LLM-driven routing ---
@@ -620,10 +624,11 @@ class OrchestratorAgent(BaseAgent):
                 direct_resp = await self._run_direct_response(
                     context,
                     wf_id,
-                    has_connection,
-                    has_kb,
-                    has_mcp,
-                    has_repo,
+                    has_connection=has_connection,
+                    has_kb=has_kb,
+                    has_mcp=has_mcp,
+                    has_repo=has_repo,
+                    has_analytics=has_analytics,
                 )
                 if direct_resp is not None:
                     return direct_resp
@@ -640,7 +645,11 @@ class OrchestratorAgent(BaseAgent):
             # knows how to emit search_codebase / analyze_git / query_mcp_source
             # stages for non-DB projects — the old `and has_connection` guard
             # silently dropped those complex questions to the flat loop.
-            has_any_data_source = has_connection or has_kb or has_mcp or has_repo
+            # T13: an analytics-only project HAS a data source — it must never be
+            # handled as "nothing is connected".  ``_run_complex_pipeline`` bounces
+            # the analytics-only case to the flat loop itself (the M0 StageExecutor
+            # has no analytics stage), so the gate stays a pure capability check.
+            has_any_data_source = has_connection or has_kb or has_mcp or has_repo or has_analytics
             if route_result.use_complex_pipeline and has_any_data_source:
                 table_map = await self._load_table_map(context, wf_id) if has_connection else ""
                 # Even on the complex (multi-stage planner) path we owe the
@@ -667,17 +676,19 @@ class OrchestratorAgent(BaseAgent):
                     has_repo=has_repo,
                     has_kb=has_kb,
                     has_mcp=has_mcp,
+                    has_analytics=has_analytics,
                 )
 
             # --- Unified tool loop for everything else ---
             return await self._run_unified_agent(
                 context,
                 wf_id,
-                has_connection,
-                db_type,
-                has_kb,
-                has_mcp,
-                has_repo,
+                has_connection=has_connection,
+                db_type=db_type,
+                has_kb=has_kb,
+                has_mcp=has_mcp,
+                has_repo=has_repo,
+                has_analytics=has_analytics,
                 route_result=route_result,
             )
 
@@ -767,6 +778,7 @@ class OrchestratorAgent(BaseAgent):
         has_kb: bool,
         has_mcp: bool,
         has_repo: bool = False,
+        has_analytics: bool = False,
     ) -> AgentResponse | None:
         """Handle conversational/meta questions with a single LLM call, no tools.
 
@@ -783,6 +795,18 @@ class OrchestratorAgent(BaseAgent):
             has_mcp_sources=has_mcp,
             has_repo=has_repo,
         )
+        # T13: ``build_direct_response_prompt`` has no analytics flag, so on an
+        # analytics-only project it advertises "have general conversations" and
+        # omits the C1 escape — the model would then answer traffic questions
+        # from prior knowledge. State the capability (and the escape) here.
+        if has_analytics:
+            system_prompt += (
+                "\nThis project also has connected analytics sources (e.g. Google "
+                "Analytics) whose traffic, revenue and subscription data has already "
+                "been collected — that data IS available to you via tools. If "
+                "answering accurately would need it, do NOT guess: reply with EXACTLY "
+                f"{NEEDS_DATA_SENTINEL} and nothing else."
+            )
 
         messages: list[Message] = [Message(role="system", content=system_prompt)]
         if context.chat_history:
@@ -819,7 +843,7 @@ class OrchestratorAgent(BaseAgent):
         # C1: re-route escape. The model emits NEEDS_DATA_SENTINEL when a
         # question routed "direct" actually needs fresh data. Only honor it when
         # a data source exists (otherwise there is nothing to re-route to).
-        has_data_source = has_connection or has_kb or has_mcp or has_repo
+        has_data_source = has_connection or has_kb or has_mcp or has_repo or has_analytics
         if has_data_source and final_text.strip() == NEEDS_DATA_SENTINEL:
             logger.info(
                 "Direct route escalated to the tool loop — model requested data (wf=%s)",
@@ -866,6 +890,7 @@ class OrchestratorAgent(BaseAgent):
         has_kb: bool,
         has_mcp: bool,
         has_repo: bool = False,
+        has_analytics: bool = False,
         *,
         route_result: RouteResult,
     ) -> AgentResponse:
@@ -938,6 +963,7 @@ class OrchestratorAgent(BaseAgent):
             has_connection=has_connection,
             has_knowledge_base=has_kb,
             has_mcp_sources=has_mcp,
+            has_analytics_sources=has_analytics,
             has_repo=has_repo,
         )
 
@@ -949,6 +975,7 @@ class OrchestratorAgent(BaseAgent):
             has_kb=has_kb,
             has_mcp=has_mcp,
             has_repo=has_repo,
+            has_analytics=has_analytics,
             table_map=table_map,
             project_overview=project_overview,
             recent_learnings=recent_learnings,
@@ -973,6 +1000,7 @@ class OrchestratorAgent(BaseAgent):
         has_kb: bool,
         has_mcp: bool,
         has_repo: bool = False,
+        has_analytics: bool = False,
         table_map: str,
         project_overview: str | None,
         recent_learnings: str | None,
@@ -1024,6 +1052,21 @@ class OrchestratorAgent(BaseAgent):
             recent_learnings=allocation.learnings_text,
             custom_rules=allocation.rules_text,
         )
+
+        # T13: ``build_orchestrator_system_prompt`` has no analytics flag — on an
+        # analytics-only project it ends the capability list with "No database or
+        # knowledge base is connected. You can only have a general conversation."
+        # while ``query_analytics_source`` sits right there in ``tools``. Correct
+        # the record so the model actually uses the tool it was given.
+        if has_analytics:
+            system_prompt += (
+                "\n\nANALYTICS SOURCES:\n"
+                "- **query_analytics_source**: connected analytics sources (e.g. "
+                "Google Analytics) have already collected traffic, revenue, install "
+                "and subscription data for this project. Delegate those questions "
+                "here. This IS a connected data source — never tell the user you can "
+                "only have a general conversation."
+            )
 
         if route_result and route_result.approach:
             system_prompt += (
@@ -2040,6 +2083,7 @@ class OrchestratorAgent(BaseAgent):
         has_repo: bool = False,
         has_kb: bool = False,
         has_mcp: bool = False,
+        has_analytics: bool = False,
     ) -> AgentResponse:
         """Plan and execute a multi-stage pipeline for complex queries.
 
@@ -2050,7 +2094,22 @@ class OrchestratorAgent(BaseAgent):
         ``has_kb`` / ``has_mcp`` (ORCH-P04) — passed down so the planner's
         last-resort quick-plan fallback picks a tool that can actually execute
         against the available data sources.
+
+        ``has_analytics`` (T13) — analytics counts as a data source for routing,
+        but ``StageExecutor`` dispatches ``query_database`` / ``search_codebase``
+        / ``analyze_git`` / ``query_mcp_source`` only. A project whose ONLY
+        source is analytics is therefore bounced to the flat loop, where
+        ``query_analytics_source`` is offered.
         """
+        has_connection = context.connection_config is not None
+        if has_analytics and not (has_connection or has_kb or has_repo or has_mcp):
+            return await self._fallback_to_unified(
+                context,
+                wf_id,
+                "Analytics is the only connected source — the multi-stage pipeline "
+                "cannot execute analytics stages; using the standard approach…",
+            )
+
         await self._tracker.emit(
             wf_id,
             "thinking",
@@ -2061,7 +2120,6 @@ class OrchestratorAgent(BaseAgent):
 
         # ORCH-P04: derive a fallback tool that matches the available data
         # source so that the last-resort quick-plan can actually execute.
-        has_connection = context.connection_config is not None
         if has_connection:
             _fallback_tool = "query_database"
         elif has_kb:
