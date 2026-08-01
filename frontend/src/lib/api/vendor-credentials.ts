@@ -8,8 +8,8 @@ import { request } from "./_client";
  * `meta` carries the non-secret extras the backend lifted out of the payload
  * (for a Google service account, its `client_email`).
  *
- * Kept as a standalone module rather than folded into the `api` barrel because
- * `lib/api/index.ts` is outside this task's file ownership; import it directly.
+ * Re-exported from the `api` barrel (`api.vendorCredentials`); importing this
+ * module directly is equally fine.
  */
 export interface VendorCredential {
   id: string;

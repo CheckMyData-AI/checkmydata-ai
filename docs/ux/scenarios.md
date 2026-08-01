@@ -1901,7 +1901,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-114: Add / delete a vendor credential
 - **Persona:** owner
 - **Feature:** analytics-sources
-- **Entry point:** Settings → "Vendor credentials" panel → "Add" (mirrors the SSH-keys panel, SCN-038/039)
+- **Entry point:** Sidebar → Setup group → "Vendor credentials" section → "Add" (mirrors the SSH-keys section, SCN-038/039); also reachable inline from the GA4 connection form's "＋ New credential"
 - **Preconditions:** authenticated
 - **Steps:**
   1. User opens Vendor credentials and clicks Add
@@ -1913,7 +1913,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** malformed service-account JSON → 422 with a specific inline message and nothing stored; create fails → inline error; the secret is never echoed back — reopening a row shows only the fingerprint; another user's credential is never listed; delete refused while a connection still uses it → SCN-116
 - **Status:** draft
-- **Coverage:** planned: components/settings/VendorCredentialsPanel.tsx
+- **Coverage:** components/settings/VendorCredentialsPanel.tsx
 
 ### SCN-115: Analytics collection status — ok / partial / pending periods
 - **Persona:** editor
@@ -1944,4 +1944,4 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** error
 - **Errors & recovery:** this scenario IS the error path; recovery is to delete the referencing connection (SCN-032) or re-point it at another credential (SCN-113), then retry the credential delete
 - **Status:** draft
-- **Coverage:** planned: components/settings/VendorCredentialsPanel.tsx; components/connections/ConnectionSelector.tsx
+- **Coverage:** components/settings/VendorCredentialsPanel.tsx; components/connections/ConnectionSelector.tsx
