@@ -60,6 +60,12 @@ from app.analytics.errors import (
 )
 from app.analytics.ga4.config import CREDENTIAL_SECRET_KEY, SOURCE_CONFIG_KEY
 from app.analytics.outcome import CollectOutcome
+
+# Re-exported: ``app.main``'s cron dispatcher and ``connection_service`` import
+# ANALYTICS_SOURCE_TYPES from here. The definition moved to the import-light
+# ``app.analytics.source_types`` so the agent side can read it without paying
+# for the GA4 client libraries this module pulls in; the old path keeps working.
+from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
 from app.config import settings
 from app.connectors.base import ConnectionConfig
 from app.models.analytics_ga4 import (
@@ -72,11 +78,6 @@ from app.models.analytics_ga4 import (
 from app.models.connection import Connection
 
 logger = logging.getLogger(__name__)
-
-#: Every ``Connection.source_type`` served by an analytics adapter. The cron's
-#: selection query, the pipeline registry and the agent's tool gating all read
-#: this one tuple so a new vendor is added in exactly one place.
-ANALYTICS_SOURCE_TYPES: tuple[str, ...] = ("ga4", "appstore", "googleplay")
 
 
 @dataclass(frozen=True)

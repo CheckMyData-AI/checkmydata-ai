@@ -589,6 +589,7 @@ class OrchestratorAgent(BaseAgent):
                     has_knowledge_base=has_kb,
                     has_mcp_sources=has_mcp,
                     has_repo=has_repo,
+                    has_analytics_sources=has_analytics,
                     chat_history=context.chat_history,
                     preferred_provider=context.preferred_provider,
                     model=context.model,

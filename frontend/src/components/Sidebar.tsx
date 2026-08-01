@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { SshKeyManager } from "./ssh/SshKeyManager";
+import { VendorCredentialsPanel } from "./settings/VendorCredentialsPanel";
 import { ProjectSelector } from "./projects/ProjectSelector";
 import { ConnectionSelector } from "./connections/ConnectionSelector";
 import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
@@ -211,6 +212,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const showOnboarding = projects.length === 0;
 
   const sshCollapse = useSectionCollapse("ssh-keys");
+  const vendorCredsCollapse = useSectionCollapse("vendor-credentials");
   const projectsCollapse = useSectionCollapse("projects");
   const repoCollapse = useSectionCollapse("repository");
   const connCollapse = useSectionCollapse("connections");
@@ -510,6 +512,10 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 <SshKeyManager />
               </SidebarSection>
 
+              <SidebarSection icon="lock" title="Vendor Credentials" open={vendorCredsCollapse.open} onToggle={vendorCredsCollapse.toggle} collapsed={false}>
+                <VendorCredentialsPanel />
+              </SidebarSection>
+
               <div ref={projectsRef}>
                 <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
                   <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
@@ -736,6 +742,19 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             collapsed={collapsed}
           >
             <SshKeyManager />
+          </SidebarSection>
+
+          {/* Owner-scoped analytics-vendor secrets (GA4 service accounts &c.) —
+              same list/add/delete rhythm as SSH Keys, and the only place a
+              credential can be reviewed or removed once a connection exists. */}
+          <SidebarSection
+            icon="lock"
+            title="Vendor Credentials"
+            open={vendorCredsCollapse.open}
+            onToggle={vendorCredsCollapse.toggle}
+            collapsed={collapsed}
+          >
+            <VendorCredentialsPanel />
           </SidebarSection>
 
           <div ref={projectsRef}>

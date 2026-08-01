@@ -27,7 +27,7 @@ _PIPELINE_ESTIMATED_QUERIES_THRESHOLD = 3
 
 @dataclass
 class RouteResult:
-    route: str  # "direct" | "query" | "knowledge" | "git" | "mcp" | "explore"
+    route: str  # "direct" | "query" | "knowledge" | "git" | "mcp" | "analytics" | "explore"
     complexity: str  # "simple" | "moderate" | "complex"
     approach: str
     estimated_queries: int
@@ -69,6 +69,7 @@ def _build_router_prompt(
     has_knowledge_base: bool,
     has_mcp_sources: bool,
     has_repo: bool = False,
+    has_analytics_sources: bool = False,
 ) -> str:
     capabilities: list[str] = []
     routes: list[str] = []
@@ -96,6 +97,22 @@ def _build_router_prompt(
     if has_mcp_sources:
         capabilities.append("External MCP data sources are connected.")
         routes.append('"mcp" — questions requiring external MCP-connected service data')
+    if has_analytics_sources:
+        # T14: without this the only analytics-only project the router ever saw
+        # was one with "No data sources connected" — so product questions were
+        # classified "direct" and only recovered via the orchestrator's
+        # NEEDS_DATA sentinel, at the cost of an extra LLM round trip. Naming
+        # the metrics matters: "analytics is connected" is not routable, "users
+        # and revenue by day and country" is.
+        capabilities.append(
+            "Analytics sources connected: Google Analytics 4 — traffic, users, "
+            "events, revenue by day/country/platform, already collected into "
+            "this project."
+        )
+        routes.append(
+            '"analytics" — questions about site/app traffic, sessions, users, '
+            "events, conversions or revenue from the connected analytics source"
+        )
 
     routes.append('"explore" — spans multiple capabilities, or you are unsure which applies')
 
@@ -164,7 +181,7 @@ def _extract_json(raw: str) -> dict | None:
     return None
 
 
-_VALID_ROUTES = {"direct", "query", "knowledge", "git", "mcp", "explore"}
+_VALID_ROUTES = {"direct", "query", "knowledge", "git", "mcp", "analytics", "explore"}
 _VALID_COMPLEXITY = {"simple", "moderate", "complex"}
 
 # ORCH-R03: cheap data-intent conjunction heuristic so that multi-step questions
@@ -197,6 +214,7 @@ def _parse_route_response(
     has_knowledge_base: bool,
     has_mcp_sources: bool,
     has_repo: bool = False,
+    has_analytics_sources: bool = False,
 ) -> RouteResult:
     data = _extract_json(raw)
     if data is None:
@@ -218,6 +236,8 @@ def _parse_route_response(
     if route == "git" and not has_repo:
         route = "explore"
     if route == "mcp" and not has_mcp_sources:
+        route = "explore"
+    if route == "analytics" and not has_analytics_sources:
         route = "explore"
 
     if complexity not in _VALID_COMPLEXITY:
@@ -246,6 +266,7 @@ async def route_request(
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
     has_repo: bool = False,
+    has_analytics_sources: bool = False,
     chat_history: list[Message] | None = None,
     preferred_provider: str | None = None,
     model: str | None = None,
@@ -260,6 +281,7 @@ async def route_request(
         has_knowledge_base=has_knowledge_base,
         has_mcp_sources=has_mcp_sources,
         has_repo=has_repo,
+        has_analytics_sources=has_analytics_sources,
     )
 
     messages: list[Message] = [Message(role="system", content=system_prompt)]
@@ -296,6 +318,7 @@ async def route_request(
         has_knowledge_base=has_knowledge_base,
         has_mcp_sources=has_mcp_sources,
         has_repo=has_repo,
+        has_analytics_sources=has_analytics_sources,
     )
 
     # ORCH-R03: OR-in the cheap heuristic so under-estimated multi-step questions

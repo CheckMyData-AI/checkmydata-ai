@@ -6,23 +6,23 @@ a first-class connector, a collection schedule and a journal that records exactl
 which periods are on file, so the agent behind this tool can say "we have not
 collected that week yet" instead of guessing. ``query_mcp_source`` cannot.
 
-:data:`ANALYTICS_SOURCE_TYPES` is the single definition of "this connection is an
-analytics vendor". Everything that gates on it — tool availability
-(:func:`~app.agents.tools.orchestrator_tools.get_orchestrator_tools`), the project
-probe (:meth:`~app.agents.context_loader.ContextLoader.has_analytics_sources`) and
-the dispatcher's connection resolution — imports it from here rather than
-re-spelling the set, so adding a vendor is one edit.
+:data:`ANALYTICS_SOURCE_TYPES` — "this connection is an analytics vendor" — is
+re-exported here for the callers that already read it from this module: tool
+availability (:func:`~app.agents.tools.orchestrator_tools.get_orchestrator_tools`),
+the project probe
+(:meth:`~app.agents.context_loader.ContextLoader.has_analytics_sources`) and the
+dispatcher's connection resolution. It is *defined* once, in
+:mod:`app.analytics.source_types` — an import-light module the collect service
+shares — so the agent side and the collection side can never disagree about
+which vendors exist.
 """
 
 from __future__ import annotations
 
+from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
 from app.llm.base import Tool, ToolParameter
 
-#: ``Connection.source_type`` values served by the analytics agent.
-#: ``appstore``/``googleplay`` are reserved for m1/m2; they are listed here
-#: because connection *gating* is vendor-agnostic — the agent itself refuses a
-#: vendor it has no report catalogue for, with a message that says which.
-ANALYTICS_SOURCE_TYPES: frozenset[str] = frozenset({"ga4", "appstore", "googleplay"})
+__all__ = ["ANALYTICS_SOURCE_TYPES", "QUERY_ANALYTICS_SOURCE_TOOL"]
 
 
 QUERY_ANALYTICS_SOURCE_TOOL = Tool(
