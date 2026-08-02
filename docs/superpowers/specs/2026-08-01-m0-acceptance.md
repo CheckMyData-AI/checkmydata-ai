@@ -3,9 +3,28 @@
 Program: analytics data sources (GA4 · App Store Connect · Google Play).
 Module 1 of 3. Merge commit `6290f6c` on `main`. Version `1.16.0`.
 
-**Status: complete and merged locally; NOT deployed.** `git push origin main` was
-blocked by the harness safety classifier — correctly, since it is an outward,
-irreversible production action. One operator action closes it (see *Human step*).
+**Status: SHIPPED.** Deployed to production 2026-08-02 as Heroku release **v199**
+(`checkmydata-api` + `checkmydata-web`), version `1.16.0`.
+
+Stage 8 verification, all confirmed against production rather than workflow status:
+
+| Check | Result |
+|---|---|
+| `GET https://api.checkmydata.ai/api/health` | `200 {"status":"ok"}` |
+| Alembic | `Database schema is up to date (revision=a7b8c9d0e1f2)` — web **and** worker |
+| Boot | `Application startup complete`, no traceback |
+| OpenAPI `info.version` | `1.16.0` (the hardcoded field that went stale on past releases) |
+| New routes live | `/api/vendor-credentials`, `/api/vendor-credentials/{id}`, `/api/connections/{id}/collect`, `/api/connections/{id}/collection-status` — all present, all `401` unauthenticated |
+
+**The first push failed CI** on `test_post_index_steps_keep_heartbeat_alive`
+(`sqlite3.OperationalError: database is locked`) — 5380 passed, 1 failed — so the
+deploy workflow fired and **skipped**. That test is untouched by this work
+(`453df6f`, an earlier resilience workstream) and had been flagged as flaky by two
+build agents, which I recorded as noise. That was the wrong call: a load-sensitive
+flake on the deploy path is a gate that fails at random. Fixed in `c5c6460` —
+reproduced at 1/12 under load, then WAL + a 30 s busy timeout, verified 0/30 under
+heavier load, assertions untouched. CI `30744045271` then passed (79 % combined
+coverage) and deploy `30744425621` succeeded.
 
 ## Gate results (the eight named preconditions from brief D10)
 
@@ -89,23 +108,23 @@ the code rather than the spec.
   introduced here and not fixed here — it touches ~6 shared call sites, and
   folding that into an already-validated branch at the last minute was the wrong
   trade. **Recommended as the next piece of work.**
-- **C20 — the push is blocked**, so nothing is deployed yet.
+- **C20 — resolved.** Pushed, CI green, deployed and verified (see *Status* above).
 
-## Human step — the only one
+## To actually start collecting
 
-```bash
-git push origin main
-```
-
-That triggers CI (`ci.yml`) and, on success, the production deploy
-(`deploy.yml` → `checkmydata-api` + `checkmydata-web`). Once it is pushed, stage 8
-verification is: watch the two workflows, then
+The feature is live but **dormant by design** — per the house rule that ingestion
+automation ships off. To turn it on:
 
 ```bash
-heroku logs -a checkmydata-api --tail | grep -E "alembic|Application startup"
-curl -s https://api.checkmydata.ai/api/health
+heroku config:set ANALYTICS_COLLECT_ENABLED=true -a checkmydata-api
 ```
 
-Migration `a7b8c9d0e1f2` runs from the `Procfile` before the web dyno boots.
-Collection stays off until `ANALYTICS_COLLECT_ENABLED=true` is set on the app —
-deliberately, per the house rule that ingestion automation ships off.
+That gates the hourly wave in the **web** process and is read once at start-up, so
+the config set (which restarts the dynos) is what applies it — see carry-over C14.
+Per-connection `collection_enabled` already defaults on, so a GA4 connection created
+after that collects at its chosen hour with no further action. `POST /collect` works
+immediately either way, which is how a credential fix gets verified.
+
+Setup steps for a GA4 property (service account, enabling the Data API, and the
+commonly-missed *grant Viewer on each property*) are in
+[`docs/ANALYTICS_SOURCES.md`](../../ANALYTICS_SOURCES.md).

@@ -5,7 +5,7 @@ Build order top to bottom. Status: `planned` → `in progress` → `done` | `def
 
 | # | Module | Delivers | Owns (entities) | Depends on | Contracts exposed | UI? | REQs | Status |
 |---|---|---|---|---|---|---|---|---|
-| 1 | **m0-ga4-spine** | Connect a GA4 property, collect it on schedule, ask about it in chat, see a chart — end to end | `VendorCredential`, `AnalyticsImport`, `Ga4Overview/Geo/Platform/Trend/Event` | — | `AnalyticsSourceAdapter` ABC · `AnalyticsPipeline` · `CollectOutcome` · journal API · `query_analytics_source` tool · `/api/vendor-credentials` | yes | REQ-001…015 | planned |
+| 1 | **m0-ga4-spine** | Connect a GA4 property, collect it on schedule, ask about it in chat, see a chart — end to end | `VendorCredential`, `AnalyticsImport`, `Ga4Overview/Geo/Platform/Trend/Event` | — | `AnalyticsSourceAdapter` ABC · `AnalyticsPipeline` · `CollectOutcome` · journal API · `query_analytics_source` tool · `/api/vendor-credentials` | yes | REQ-001…015 | **done** — `1.16.0`, prod v199, 2026-08-02 |
 | 2 | **m1-appstore** | App Store revenue, subscriptions and authoritative finance, normalised to USD | `AscSalesDaily`, `AscSubscriptionEventDaily`, `AscSubscriptionDaily`, `AscFinanceMonthly`, `AscProduct`, `FxRate` | m0-ga4-spine | `FxRate` table + `fx.rate_for(currency, month)` | yes | REQ-016…021 | planned |
 | 3 | **m2-googleplay** | Google Play earnings, sales, installs, subscriptions and vitals | `GpEarningsMonthly`, `GpSalesMonthly`, `GpInstallsDaily`, `GpSubscriptionsDaily`, `GpVitalsDaily` | m0-ga4-spine, m1-appstore (`FxRate` only) | — (terminal consumer) | yes | REQ-022…026 | planned |
 | — | *program-level* | Docs/runbook/wiki currency and the coverage floor | — | all | — | no | REQ-027, REQ-028 | planned |
