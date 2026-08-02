@@ -408,13 +408,14 @@ async def delete_account(
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete the current user and all associated data."""
-    from sqlalchemy import delete, select
+    from sqlalchemy import delete, func, select, update
 
     from app.models.connection import Connection
     from app.models.mcp_api_key import McpApiKey
     from app.models.project import Project
     from app.models.project_member import ProjectMember
     from app.models.user import User
+    from app.models.vendor_credential import VendorCredential
     from app.services.indexing_artifacts import (
         cleanup_connection_artifacts,
         cleanup_project_artifacts,
@@ -437,9 +438,50 @@ async def delete_account(
             .all()
         )
 
+    orphaned_connections = 0
     async with db.begin_nested():
         if owned_ids:
             await db.execute(delete(Project).where(Project.id.in_(owned_ids)))
+
+        # H2: ``vendor_credentials.user_id`` is ON DELETE CASCADE while
+        # ``connections.vendor_credential_id`` is ON DELETE RESTRICT. Only
+        # projects this user *owns* were deleted above, but an invite can grant
+        # role="owner" on someone else's project — so a co-owner can leave a
+        # connection behind that still references their credential. The user
+        # CASCADE then fires into the RESTRICT and the entire delete aborts with
+        # an IntegrityError: a data-subject deletion request that hard-fails
+        # with a 500, forever.
+        #
+        # Detach those connections first — and pause their collection. An
+        # analytics source whose credential has just been destroyed cannot
+        # collect; leaving ``collection_enabled`` on would have the nightly wave
+        # dispatch it and journal an auth failure every day. (A collect that is
+        # attempted anyway still fails honestly: the adapter refuses a
+        # credential-less connection by name rather than crashing.)
+        #
+        # Counted first, then updated by the same subquery rather than by the
+        # ids just read: a connection created between the two statements must
+        # still be detached, or the RESTRICT fires anyway. The count is only for
+        # the log line, so it is allowed to lag; the UPDATE is not.
+        own_credentials = select(VendorCredential.id).where(VendorCredential.user_id == user_id)
+        orphaned_connections = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(Connection)
+                    .where(Connection.vendor_credential_id.in_(own_credentials))
+                )
+            ).scalar_one()
+        )
+        await db.execute(
+            update(Connection)
+            .where(Connection.vendor_credential_id.in_(own_credentials))
+            .values(vendor_credential_id=None, collection_enabled=False)
+        )
+        # Explicit credential destruction (the FK cascade covers it too, but a
+        # secret's removal should not be an inference from another table's
+        # ``ondelete``), now that nothing references them.
+        await db.execute(delete(VendorCredential).where(VendorCredential.user_id == user_id))
         # Explicit MCP-key revocation (defensive; FK cascade also covers it now that
         # SQLite FKs are enforced — F-AUTH-01).
         await db.execute(delete(McpApiKey).where(McpApiKey.user_id == user_id))
@@ -456,9 +498,11 @@ async def delete_account(
 
     audit_log("auth.delete_account", user_id=user_id, detail=email)
     logger.info(
-        "Account deleted: user_id=%s (projects=%d, connections=%d)",
+        "Account deleted: user_id=%s (projects=%d, connections=%d, "
+        "connections detached from deleted vendor credentials=%d)",
         user_id,
         len(owned_ids),
         len(connection_ids),
+        orphaned_connections,
     )
     return {"ok": True}

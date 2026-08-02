@@ -55,6 +55,15 @@ _UPDATABLE_FIELDS = {
 }
 
 
+#: Human names for the analytics vendors, used in user-facing refusals. Keys are
+#: ``Connection.source_type`` values.
+_VENDOR_LABELS: dict[str, str] = {
+    "ga4": "Google Analytics",
+    "appstore": "App Store Connect",
+    "googleplay": "Google Play",
+}
+
+
 def is_analytics_source(source_type: str | None) -> bool:
     """True when *source_type* is served by an analytics vendor adapter.
 
@@ -66,6 +75,59 @@ def is_analytics_source(source_type: str | None) -> bool:
     from app.services.analytics_collect_service import ANALYTICS_SOURCE_TYPES
 
     return source_type in ANALYTICS_SOURCE_TYPES
+
+
+def unavailable_analytics_source_detail(source_type: str | None) -> str | None:
+    """Why no connection may be created for *source_type* yet, or ``None``.
+
+    ``ANALYTICS_SOURCE_TYPES`` deliberately names the whole vendor family,
+    including the ``appstore``/``googleplay`` slots reserved for modules m1/m2 —
+    connection *gating* is vendor-agnostic. Collection is not:
+    ``FACT_TABLES_BY_SOURCE`` is what says where a report's rows land, and a
+    source missing from it has nowhere to put them.
+
+    Without this check such a connection is accepted, scheduled, and dispatched
+    by the hourly cron every single day — journalling a failure every day for a
+    module that does not exist. Refusing it at the door is the honest answer,
+    and the refusal disappears on its own the moment m1/m2 register their fact
+    tables, because that table is the source of truth here rather than a second
+    hand-maintained list.
+    """
+    if not is_analytics_source(source_type):
+        return None
+    from app.services.analytics_collect_service import FACT_TABLES_BY_SOURCE
+
+    if source_type in FACT_TABLES_BY_SOURCE:
+        return None
+    label = _VENDOR_LABELS.get(source_type or "", source_type or "")
+    available = ", ".join(sorted(FACT_TABLES_BY_SOURCE))
+    return (
+        "App Store Connect and Google Play sources are not available yet, so a "
+        f"{label} connection cannot be created. Analytics source types this "
+        f"release can collect: {available}."
+    )
+
+
+def is_queryable_database(config: ConnectionConfig | None) -> bool:
+    """True when *config* points at an engine the SQL tools can actually query.
+
+    "Is a connection attached?" and "is there a database to query?" are two
+    different questions, and conflating them is a user-visible bug: an analytics
+    connection produces a config whose ``db_type`` carries the **vendor** id
+    (``"ga4"``) because that is what the analytics adapter dispatches on. A
+    caller that derives SQL availability from ``config is not None`` therefore
+    advertises ``query_database`` for a GA4 source, and ``get_connector("ga4")``
+    raises ``ValueError: Unsupported adapter: ga4`` in the middle of the user's
+    chat the moment the model takes the offer.
+
+    MCP sources stay queryable: they are dispatched through the connector
+    registry like any engine.
+    """
+    if config is None:
+        return False
+    if is_analytics_source(config.db_type):
+        return False
+    return bool(config.db_type)
 
 
 class ConnectionService:

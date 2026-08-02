@@ -26,7 +26,11 @@ from app.core.rate_limit import limiter
 from app.services.agent_learning_service import AgentLearningService
 from app.services.batch_service import not_a_database_detail
 from app.services.code_db_sync_service import CodeDbSyncService
-from app.services.connection_service import ConnectionService, is_analytics_source
+from app.services.connection_service import (
+    ConnectionService,
+    is_analytics_source,
+    unavailable_analytics_source_detail,
+)
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
 from app.services.sync_budget import preflight_owner_budget
@@ -365,6 +369,13 @@ class ConnectionCreate(BaseModel):
     @model_validator(mode="after")
     def require_conn_string_or_host(self):
         if is_analytics_source(self.source_type):
+            # M5: refuse a vendor with no collector before anything else — the
+            # "attach a credential" message would be advice the user cannot act
+            # on, since no credential makes an appstore/googleplay connection
+            # collectable yet.
+            unavailable = unavailable_analytics_source_detail(self.source_type)
+            if unavailable:
+                raise ValueError(unavailable)
             if not self.vendor_credential_id:
                 raise ValueError(
                     f"A {self.source_type} connection requires a vendor_credential_id — "
@@ -641,15 +652,42 @@ async def update_connection(
     updates = body.model_dump(exclude_unset=True)
 
     merged_source_type = updates.get("source_type", conn.source_type)
-    if is_analytics_source(merged_source_type):
-        # An analytics source has no host or database to require. Its
-        # credential, however, must stay owner-strict on every edit — otherwise
-        # a PATCH would be a way around the create-time ownership check.
-        if updates.get("vendor_credential_id"):
-            await _require_owned_credential(
-                db, updates["vendor_credential_id"], merged_source_type, user["user_id"]
-            )
-    else:
+    unavailable = unavailable_analytics_source_detail(merged_source_type)
+    if unavailable:
+        # M5: a PATCH must not be able to produce a connection that create
+        # refuses.
+        raise HTTPException(status_code=422, detail=unavailable)
+
+    # B1: ONE assertion of the credential invariant, on the *merged* row rather
+    # than per branch — after this PATCH, if the connection carries a
+    # ``vendor_credential_id`` then that credential belongs to the requester.
+    #
+    # The check used to be nested inside the analytics branch AND keyed on the
+    # payload carrying the credential id, which two PATCHes walked straight
+    # past: attach another tenant's credential while the row is still a database
+    # (non-analytics branch, no check at all), then flip ``source_type`` to
+    # ``ga4`` without naming the credential (analytics branch, key absent, check
+    # skipped). The connection then collected the victim's property with the
+    # victim's key, because the collect path resolves the secret with
+    # ``user_id=None`` — trusting exactly the ownership this route is supposed
+    # to have settled.
+    #
+    # Keying on the merged id also refuses a vendor credential on a database
+    # connection (provider mismatch → 422): a row that is not an analytics
+    # source has no business holding vendor key material.
+    merged_credential_id = (
+        updates["vendor_credential_id"]
+        if "vendor_credential_id" in updates
+        else conn.vendor_credential_id
+    )
+    if merged_credential_id:
+        await _require_owned_credential(
+            db, merged_credential_id, merged_source_type, user["user_id"]
+        )
+
+    # An analytics source has no host or database to require; every other kind
+    # must still end up reachable.
+    if not is_analytics_source(merged_source_type):
         merged_conn_string = updates.get("connection_string")
         if merged_conn_string is None and conn.connection_string_encrypted:
             merged_conn_string = True
