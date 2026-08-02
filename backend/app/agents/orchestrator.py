@@ -14,7 +14,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from app.agents.adaptive_planner import AdaptivePlanner
 from app.agents.base import AgentContext, BaseAgent
@@ -116,6 +116,146 @@ MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 PROMPT_VERSION = "v2.2"
 
 _PREVIEW_MAX = 500
+
+
+# ---------------------------------------------------------------------------
+# Chartable sub-results (REQ-011)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class TabularSubResult(Protocol):
+    """Structural contract for a sub-agent result that hands back a table.
+
+    The visualization pipeline needs three things — the column headers, the
+    rows, and whether that is the whole truth. It needs nothing about *which*
+    sub-agent produced them.
+
+    Matching structurally rather than on a concrete class is deliberate: the
+    pipeline used to test ``isinstance(sub_result, SQLAgentResult)``, so
+    ``AnalyticsResult`` (an ``AgentResult``, not a ``SQLAgentResult``) carried
+    columns and rows that nothing ever read. Any future non-SQL source that
+    carries a table charts here for free instead of re-opening REQ-011.
+    """
+
+    #: Column headers, in row order.
+    columns: list[str]
+    #: Row values, one list per row.
+    rows: list[list[Any]]
+    #: ``True`` when the rows are a capped view of the real answer — totals
+    #: over them are a lower bound, not the total.
+    truncated: bool
+
+
+@runtime_checkable
+class TabularProvenance(Protocol):
+    """Optional companion to :class:`TabularSubResult`.
+
+    Names the report the table was read from, and the periods of the requested
+    window that were never collected. A source that knows neither still
+    charts — it simply charts without a provenance label and without a
+    coverage caveat.
+    """
+
+    #: Name of the report/dataset the rows came from, when the source has one.
+    report: str | None
+    #: Periods inside the queried window that hold no collected data. Rows
+    #: exist for the rest, so the table is real but does not cover the window.
+    pending_periods: list[str]
+
+
+@dataclass
+class _ChartCandidate:
+    """One tabular payload queued for the visualization pipeline.
+
+    Source-agnostic on purpose: SQL results and non-SQL tables both become one
+    of these, so the viz stage below has a single input shape instead of an
+    ``isinstance`` chain that has to grow with every new data source.
+    """
+
+    #: The table itself. Never ``None`` — a candidate only exists when there
+    #: is something to draw.
+    results: QueryResult
+    #: Two candidates with the same key are the same table read twice; the
+    #: read with more rows wins. Namespaced per source so a SQL query text can
+    #: never collide with a report name.
+    dedup_key: str
+    #: What the viz agent is told the table was produced by (the SQL text for
+    #: a SQL result, the report name for a named report).
+    viz_query: str = ""
+    #: Mirrors ``SQLResultBlock``: the SQL behind the table, or ``None`` when
+    #: there was no SQL. Never synthesised — an invented query is a lie.
+    query: str | None = None
+    query_explanation: str | None = None
+    insights: list[dict[str, Any]] = field(default_factory=list)
+    #: ``False`` for every non-SQL source. Read by the viz gate, because
+    #: ``determine_response_type`` only knows SQL/knowledge/MCP and would
+    #: otherwise leave an analytics answer typed ``"text"`` and unplotted.
+    is_sql: bool = True
+
+
+def _tabular_chart_candidate(
+    result: TabularSubResult,
+    *,
+    tool_name: str,
+) -> _ChartCandidate | None:
+    """Turn a non-SQL tabular sub-result into a chart candidate.
+
+    Returns ``None`` when there is nothing honest to draw — no columns or no
+    rows. An empty chart reads as "the answer is zero" where the truth is "we
+    hold no rows for this window", which is the exact confusion the analytics
+    coverage caveats exist to prevent (spec §3.3).
+    """
+    columns = list(result.columns)
+    rows = [list(row) for row in result.rows]
+    if not columns or not rows:
+        return None
+
+    # Partial-ness rides on the QueryResult, exactly as it does on the SQL
+    # path: ``QueryResult.truncated`` is what DataGate, the answer validator,
+    # the synthesis prompt and the API payload all already read. A window with
+    # never-collected periods is partial in the same user-visible way as a
+    # row-capped read — a chart drawn from three of seven days must not read
+    # as a complete week — so it raises the same flag.
+    truncated = bool(result.truncated)
+    report: str | None = None
+    if isinstance(result, TabularProvenance):
+        report = result.report
+        if result.pending_periods:
+            truncated = True
+
+    return _ChartCandidate(
+        results=QueryResult(
+            columns=columns,
+            rows=rows,
+            row_count=len(rows),
+            truncated=truncated,
+        ),
+        dedup_key=f"{tool_name}:{report or ''}",
+        viz_query=report or "",
+        query=None,
+        query_explanation=report,
+        is_sql=False,
+    )
+
+
+def _dedup_chart_candidates(candidates: list[_ChartCandidate]) -> list[_ChartCandidate]:
+    """Collapse candidates that read the same table twice, keeping the widest.
+
+    First-seen position is preserved, so the caller's ordering — and with it
+    which block the top-level ``viz_type``/``results`` fields point at —
+    is unchanged.
+    """
+    kept: list[_ChartCandidate] = []
+    index: dict[str, int] = {}
+    for candidate in candidates:
+        prev_idx = index.get(candidate.dedup_key)
+        if prev_idx is None:
+            index[candidate.dedup_key] = len(kept)
+            kept.append(candidate)
+        elif candidate.results.row_count > kept[prev_idx].results.row_count:
+            kept[prev_idx] = candidate
+    return kept
 
 
 def _messages_preview(messages: list[Message], max_len: int = _PREVIEW_MAX) -> str:
@@ -1149,6 +1289,12 @@ class OrchestratorAgent(BaseAgent):
         tool_call_log: list[dict] = []
         last_sql_result: SQLAgentResult | None = None
         all_sql_results: list[SQLAgentResult] = []
+        # REQ-011: tables handed back by non-SQL sub-agents (analytics today),
+        # in arrival order. Kept apart from ``all_sql_results`` because that
+        # list also drives SQL-only concerns (reconciliation, sql_calls
+        # metrics, the process_data replacement rule) that a report is not
+        # part of.
+        tabular_candidates: list[_ChartCandidate] = []
         knowledge_sources: list[RAGSource] = []
         # Per-turn dedup safety net: (tool_name, question) of data-retrieval
         # calls that SUCCEEDED in earlier iterations of THIS turn. Gate-flagged
@@ -1660,6 +1806,21 @@ class OrchestratorAgent(BaseAgent):
                 elif isinstance(sub_result, MCPSourceResult):
                     has_mcp_result = True
 
+                # REQ-011: anything that came back carrying a table feeds the
+                # visualization pipeline, whichever sub-agent produced it.
+                # Deliberately its own check rather than another arm of the
+                # chain above: a result can both be classified by its agent
+                # (knowledge, MCP, …) *and* carry a chartable table, and the
+                # SQL branch keeps its own richer path (query text, insights,
+                # process_data replacement), so it is excluded here rather
+                # than left to depend on which attributes it happens to have.
+                if not isinstance(sub_result, SQLAgentResult) and isinstance(
+                    sub_result, TabularSubResult
+                ):
+                    tabular_candidate = _tabular_chart_candidate(sub_result, tool_name=tc.name)
+                    if tabular_candidate is not None:
+                        tabular_candidates.append(tabular_candidate)
+
                 # Record successful data-retrieval questions for the per-turn
                 # dedup safety net. Skip gate-flagged / failed / deduped calls so
                 # corrective re-queries are never blocked on the next iteration.
@@ -1813,20 +1974,36 @@ class OrchestratorAgent(BaseAgent):
         viz_type = "text"
         viz_config: dict = {}
         sql_result_blocks: list[SQLResultBlock] = []
-        viable_sql_raw = [sr for sr in all_sql_results if sr.results and sr.results.rows]
-        seen_queries: dict[str, int] = {}
-        viable_sql: list[SQLAgentResult] = []
-        for sr in viable_sql_raw:
-            key = (sr.query or "").strip().lower()
-            if key in seen_queries:
-                prev_idx = seen_queries[key]
-                prev = viable_sql[prev_idx]
-                if sr.results and prev.results and sr.results.row_count > prev.results.row_count:
-                    viable_sql[prev_idx] = sr
-            else:
-                seen_queries[key] = len(viable_sql)
-                viable_sql.append(sr)
-        if viable_sql and response_type in ("sql_result", "step_limit_reached"):
+        sql_candidates: list[_ChartCandidate] = []
+        for sr in all_sql_results:
+            sr_results = sr.results
+            if sr_results is None or not sr_results.rows:
+                continue
+            sql_candidates.append(
+                _ChartCandidate(
+                    results=sr_results,
+                    dedup_key=f"sql:{(sr.query or '').strip().lower()}",
+                    viz_query=sr.query or "",
+                    query=sr.query,
+                    query_explanation=sr.query_explanation,
+                    insights=sr.insights,
+                    is_sql=True,
+                )
+            )
+        # Non-SQL tables go FIRST so the top-level ``viz_type``/``viz_config``/
+        # ``results`` fields — taken from the LAST block — keep describing the
+        # last SQL result exactly as they did before REQ-011. When there is no
+        # SQL result, the non-SQL tables are all there is and one of them
+        # rightly becomes the primary result.
+        chart_candidates = _dedup_chart_candidates(tabular_candidates + sql_candidates)
+        # ``determine_response_type`` only knows SQL / knowledge / MCP, so an
+        # analytics-only answer is typed ``"text"`` however good its table is.
+        # Gating the viz pipeline on that type alone is what kept REQ-011
+        # dead; a non-SQL table qualifies on being a table.
+        has_non_sql_table = any(not c.is_sql for c in chart_candidates)
+        if chart_candidates and (
+            response_type in ("sql_result", "step_limit_reached") or has_non_sql_table
+        ):
             viz_ctx = replace(
                 context,
                 chat_history=(
@@ -1835,12 +2012,12 @@ class OrchestratorAgent(BaseAgent):
                     else []
                 ),
             )
-            n_viz = len(viable_sql)
+            n_viz = len(chart_candidates)
             label = f"Choosing visualization{'s' if n_viz > 1 else ''}…"
             await self._tracker.emit(wf_id, "thinking", "in_progress", label)
 
             async def _pick_one_viz(
-                sr_idx: int, sr: SQLAgentResult
+                sr_idx: int, cand: _ChartCandidate
             ) -> tuple[int, str, dict[str, Any], Any]:
                 """Run a single viz.run with step tracking. Returns (idx, viz_type, cfg, result)."""
                 sr_viz_type = "table"
@@ -1853,7 +2030,6 @@ class OrchestratorAgent(BaseAgent):
                         if n_viz > 1
                         else "Choosing visualization"
                     )
-                    assert sr.results is not None  # guaranteed by viable_sql filter
                     async with self._tracker.step(
                         wf_id,
                         "orchestrator:viz",
@@ -1864,9 +2040,9 @@ class OrchestratorAgent(BaseAgent):
                         viz_result = await asyncio.wait_for(
                             self._viz.run(
                                 viz_ctx,
-                                results=sr.results,
+                                results=cand.results,
                                 question=question,
-                                query=sr.query or "",
+                                query=cand.viz_query,
                             ),
                             timeout=settings.viz_timeout_seconds,
                         )
@@ -1887,31 +2063,30 @@ class OrchestratorAgent(BaseAgent):
             # calls with no shared mutable state, so asyncio.gather is safe
             # and turns an N-call wait into a 1-call wait.
             viz_outcomes = await asyncio.gather(
-                *(_pick_one_viz(i, sr) for i, sr in enumerate(viable_sql)),
+                *(_pick_one_viz(i, cand) for i, cand in enumerate(chart_candidates)),
                 return_exceptions=False,
             )
 
             for sr_idx, sr_viz_type, sr_viz_config, viz_result in viz_outcomes:
-                sr = viable_sql[sr_idx]
-                assert sr.results is not None  # guaranteed by viable_sql filter
+                cand = chart_candidates[sr_idx]
                 if viz_result is not None:
                     self.accum_usage(total_usage, viz_result.token_usage)
                     vv = self._validator.validate_viz_result(
                         viz_result,
-                        row_count=sr.results.row_count,
-                        column_count=len(sr.results.columns),
+                        row_count=cand.results.row_count,
+                        column_count=len(cand.results.columns),
                     )
                     if vv.fallback_viz_type:
                         sr_viz_type = vv.fallback_viz_type
 
                 sql_result_blocks.append(
                     SQLResultBlock(
-                        query=sr.query,
-                        query_explanation=sr.query_explanation,
-                        results=sr.results,
+                        query=cand.query,
+                        query_explanation=cand.query_explanation,
+                        results=cand.results,
                         viz_type=sr_viz_type,
                         viz_config=sr_viz_config,
-                        insights=sr.insights,
+                        insights=cand.insights,
                     )
                 )
             if sql_result_blocks:
@@ -2014,11 +2189,23 @@ class OrchestratorAgent(BaseAgent):
 
         final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
 
+        # REQ-011: the chat route renders the single-result case from these
+        # top-level fields (``build_sql_results_payload`` only kicks in from
+        # two blocks up). With no SQL result they would stay empty while
+        # ``viz_type``/``viz_config`` already described a non-SQL chart, so the
+        # route would render a chart config against no data. Fall back to the
+        # block those two were taken from, keeping all three consistent.
+        primary_results = last_sql_result.results if last_sql_result else None
+        primary_explanation = last_sql_result.query_explanation if last_sql_result else None
+        if last_sql_result is None and sql_result_blocks:
+            primary_results = sql_result_blocks[-1].results
+            primary_explanation = sql_result_blocks[-1].query_explanation
+
         return AgentResponse(
             answer=final_text,
             query=last_sql_result.query if last_sql_result else None,
-            query_explanation=(last_sql_result.query_explanation if last_sql_result else None),
-            results=last_sql_result.results if last_sql_result else None,
+            query_explanation=primary_explanation,
+            results=primary_results,
             viz_type=viz_type,
             viz_config=viz_config,
             knowledge_sources=knowledge_sources,
