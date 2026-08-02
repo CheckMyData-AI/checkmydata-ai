@@ -46,7 +46,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,9 +75,28 @@ from app.models.analytics_ga4 import (
     GA4PlatformDaily,
     GA4TrendDaily,
 )
+from app.models.analytics_import import AnalyticsImport
 from app.models.connection import Connection
 
 logger = logging.getLogger(__name__)
+
+#: Journal ``report`` value for the connection-level sentinel row (H3).
+#:
+#: A run that dies *before* any period is fetched — bad credential, unshared
+#: property, unusable knobs — has no period to blame, and used to write nothing
+#: at all. ``collection_status`` then saw an empty journal, said
+#: ``never_collected``, and the UI rendered a neutral "this source has not been
+#: collected yet" forever: the single most likely failure for a fresh GA4
+#: connection was indistinguishable from nothing having happened. The sentinel
+#: makes that failure durable and readable.
+#:
+#: Contract with the reader side (``connection_service.collection_status``):
+#: ``report="_connect"``, ``period=<run date, YYYY-MM-DD>``, ``status="failed"``,
+#: ``error=<reason>``. The reader surfaces the error and excludes ``_connect``
+#: from the per-report list. The leading underscore keeps it outside any
+#: vendor's namespace, and :meth:`AnalyticsCollectService._collect_report`
+#: refuses a vendor report that tries to claim the name.
+CONNECT_SENTINEL_REPORT = "_connect"
 
 
 @dataclass(frozen=True)
@@ -257,45 +276,59 @@ class AnalyticsCollectService:
         Returns:
             The run's outcome. ``ok`` with zero rows means nothing was due;
             errors with zero rows is ``failed``. The two never collapse.
+
+        Every connection-level failure below — one that stops the run before any
+        period is fetched — is journalled under
+        :data:`CONNECT_SENTINEL_REPORT` before returning (H3), because a run that
+        writes nothing at all is read downstream as "never collected" rather than
+        "broken".
         """
         outcome = CollectOutcome()
 
         conn = await session.get(Connection, connection_id)
         if conn is None:
             # Deleted between dispatch and execution (spec §7). Not a failure:
-            # there is nothing left to collect and nobody to tell.
+            # there is nothing left to collect and nobody to tell — and no
+            # connection row to hang a journal entry off (the journal's FK
+            # points at it), so the sentinel deliberately does not apply here.
             logger.info("Analytics collect: connection %s no longer exists", connection_id[:8])
             return outcome
 
         if conn.source_type not in ANALYTICS_SOURCE_TYPES:
-            outcome.errors.append(
+            return await self._fail_connection(
+                session,
+                conn,
+                outcome,
                 f"Connection '{conn.name}' is not an analytics source "
-                f"(source_type={conn.source_type!r})."
+                f"(source_type={conn.source_type!r}).",
             )
-            return outcome
 
         tables = FACT_TABLES_BY_SOURCE.get(conn.source_type)
         if not tables:
-            outcome.errors.append(
-                f"No fact tables are defined for source type '{conn.source_type}' yet."
+            return await self._fail_connection(
+                session,
+                conn,
+                outcome,
+                f"No fact tables are defined for source type '{conn.source_type}' yet.",
             )
-            return outcome
 
         try:
             adapter = self._adapter_factory(conn)
         except ValueError as exc:
-            outcome.errors.append(str(exc))
-            return outcome
+            return await self._fail_connection(session, conn, outcome, str(exc))
 
         try:
             config = await self._build_config(session, conn)
             await adapter.connect(config)
         except AnalyticsError as exc:
-            # A bad credential or unusable knobs: nothing can be collected, and
-            # no period is at fault, so the run fails without journalling.
-            outcome.errors.append(f"{conn.name}: {exc}")
+            # A bad credential or unusable knobs: nothing can be collected and no
+            # period is at fault, so the verdict goes on the connection itself.
             logger.warning("Analytics collect: connect failed for %s: %s", conn.id[:8], exc)
-            return outcome
+            return await self._fail_connection(session, conn, outcome, f"{conn.name}: {exc}")
+
+        # The connection works. Drop any sentinel a previous run left behind, so
+        # a fixed credential stops showing yesterday's banner.
+        await self._clear_connect_failure(session, conn.id)
 
         try:
             backfill_days = self._backfill_days(conn)
@@ -324,6 +357,82 @@ class AnalyticsCollectService:
         )
         return outcome
 
+    # -- connection-level verdicts (H3) ------------------------------------
+
+    async def _fail_connection(
+        self,
+        session: AsyncSession,
+        conn: Connection,
+        outcome: CollectOutcome,
+        reason: str,
+    ) -> CollectOutcome:
+        """Record a connection-level failure in both the outcome and the journal.
+
+        Returns the same *outcome* so callers can ``return await
+        self._fail_connection(...)`` and keep the early return a single line.
+        """
+        outcome.errors.append(reason)
+        await self._journal_connect_failure(session, conn.id, reason)
+        return outcome
+
+    async def _journal_connect_failure(
+        self, session: AsyncSession, connection_id: str, reason: str
+    ) -> None:
+        """Write the ``_connect`` sentinel row for today's run.
+
+        Journalling is best-effort on purpose: the run has already failed, and a
+        second failure here (a dead DB connection, say) must surface as its own
+        log line rather than replace the reason the caller is trying to report.
+        """
+        try:
+            await journal.record(
+                session,
+                connection_id=connection_id,
+                report=CONNECT_SENTINEL_REPORT,
+                period=self._today().isoformat(),
+                status="failed",
+                error=reason,
+            )
+        except SQLAlchemyError:
+            await session.rollback()
+            logger.exception(
+                "Analytics collect: could not journal the connect failure for %s",
+                connection_id[:8],
+            )
+
+    async def _clear_connect_failure(self, session: AsyncSession, connection_id: str) -> None:
+        """Delete any ``_connect`` sentinel rows for this connection.
+
+        Called once the adapter has connected. Without it a credential fixed on
+        Tuesday would still be reported as broken by Monday's sentinel — the
+        journal would be telling the truth about Monday and lying about now.
+        A successful run therefore leaves *no* ``_connect`` row at all.
+        """
+        try:
+            # A DELETE yields a CursorResult (which carries ``rowcount``); the
+            # AsyncSession.execute signature only promises the narrower Result.
+            result: Any = await session.execute(
+                delete(AnalyticsImport).where(
+                    AnalyticsImport.connection_id == connection_id,
+                    AnalyticsImport.report == CONNECT_SENTINEL_REPORT,
+                )
+            )
+            cleared = int(result.rowcount or 0)
+            if cleared:
+                await session.commit()
+                logger.info(
+                    "Analytics collect: connection %s recovered; cleared %d stale "
+                    "connect-failure row(s)",
+                    connection_id[:8],
+                    cleared,
+                )
+        except SQLAlchemyError:
+            await session.rollback()
+            logger.exception(
+                "Analytics collect: could not clear the stale connect failure for %s",
+                connection_id[:8],
+            )
+
     # -- one report --------------------------------------------------------
 
     async def _collect_report(
@@ -343,6 +452,18 @@ class AnalyticsCollectService:
         Returns early — never raises — so one report can never take the run
         down with it.
         """
+        if report == CONNECT_SENTINEL_REPORT:
+            # A vendor report by this name would share the journal key with the
+            # connection-level sentinel, so one would overwrite the other and
+            # ``collection_status`` could not tell a failed *connection* from a
+            # failed *report*. Refuse it rather than let the two aliases meet.
+            message = (
+                f"{conn.name}: report '{report}' uses the reserved connection-level name; skipped."
+            )
+            logger.error("Analytics collect: %s", message)
+            outcome.errors.append(message)
+            return
+
         if table is None:
             # The adapter offers a report nothing knows how to store. That is a
             # wiring bug, not a vendor failure: say so and keep collecting the

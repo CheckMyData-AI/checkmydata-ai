@@ -55,6 +55,7 @@ from app.models.connection import Connection
 from app.models.project import Project
 from app.services.analytics_collect_service import (
     ANALYTICS_SOURCE_TYPES,
+    CONNECT_SENTINEL_REPORT,
     GA4_FACT_TABLES,
     AnalyticsCollectService,
     period_range,
@@ -609,6 +610,161 @@ class TestCollect:
         # No fabricated database endpoint on an analytics connection.
         assert adapter.config.db_host == ""
         assert adapter.config.db_port == 0
+
+
+# ---------------------------------------------------------------------------
+# Connection-level failures are journalled (H3)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectFailureIsJournalled:
+    """A run that dies before any period is fetched must still leave a trace.
+
+    Every connection-level early return used to write nothing at all, so
+    ``collection_status`` saw an empty journal, reported ``never_collected`` and
+    the UI rendered a neutral "not collected yet" — forever. The most likely
+    failure for a fresh GA4 connection (property never shared with the service
+    account) was therefore indistinguishable from "nothing has happened yet",
+    with a ``logger.warning`` as its only trace.
+
+    The fix is a connection-level sentinel row: ``report="_connect"``,
+    ``period=<run date>``, ``status="failed"``, ``error=<reason>``. The reader
+    side (``connection_service.collection_status``) surfaces its ``error`` and
+    excludes ``_connect`` from the per-report list.
+    """
+
+    async def test_auth_failure_at_connect_is_journalled_with_its_reason(
+        self, db: AsyncSession, connection_id: str
+    ):
+        adapter = FakeAdapter(connect_error=AnalyticsAuthError("401 invalid_grant"))
+
+        outcome = await _service(adapter).collect_in_session(db, connection_id)
+
+        assert outcome.status == "failed"
+        rows = await _journal(db, CONNECT_SENTINEL_REPORT)
+        assert list(rows) == [TODAY.isoformat()], "the sentinel is keyed on the run date"
+        row = rows[TODAY.isoformat()]
+        assert row.status == "failed"
+        assert "401 invalid_grant" in (row.error or "")
+        assert row.rows_written == 0
+
+    async def test_permission_failure_at_connect_is_journalled(
+        self, db: AsyncSession, connection_id: str
+    ):
+        adapter = FakeAdapter(
+            connect_error=AnalyticsPermissionError("property 294380179 is not shared")
+        )
+
+        outcome = await _service(adapter).collect_in_session(db, connection_id)
+
+        assert outcome.status == "failed"
+        row = (await _journal(db, CONNECT_SENTINEL_REPORT))[TODAY.isoformat()]
+        assert row.status == "failed"
+        assert "not shared" in (row.error or "")
+
+    async def test_a_successful_run_writes_no_connect_row(
+        self, db: AsyncSession, connection_id: str
+    ):
+        adapter = FakeAdapter(reports=_only("overview"))
+
+        outcome = await _service(adapter).collect_in_session(db, connection_id)
+
+        assert outcome.status == "ok"
+        assert await _journal(db, CONNECT_SENTINEL_REPORT) == {}
+
+    async def test_a_recovered_run_clears_the_stale_sentinel(
+        self, db: AsyncSession, connection_id: str
+    ):
+        """Once the credential is fixed, the old banner must not survive it."""
+        broken = FakeAdapter(connect_error=AnalyticsAuthError("401 invalid_grant"))
+        await _service(broken).collect_in_session(db, connection_id)
+        assert await _journal(db, CONNECT_SENTINEL_REPORT) != {}
+
+        healed = FakeAdapter(reports=_only("overview"))
+        outcome = await _service(healed).collect_in_session(db, connection_id)
+
+        assert outcome.status == "ok"
+        assert await _journal(db, CONNECT_SENTINEL_REPORT) == {}
+
+    async def test_a_non_analytics_connection_is_journalled(self, db: AsyncSession):
+        project = Project(name="p")
+        db.add(project)
+        await db.commit()
+        conn = Connection(
+            project_id=project.id, name="pg", source_type="database", db_type="postgres"
+        )
+        db.add(conn)
+        await db.commit()
+
+        outcome = await _service(FakeAdapter()).collect_in_session(db, conn.id)
+
+        assert outcome.status == "failed"
+        row = (await _journal(db, CONNECT_SENTINEL_REPORT))[TODAY.isoformat()]
+        assert "not an analytics source" in (row.error or "")
+
+    async def test_a_source_type_without_fact_tables_is_journalled(self, db: AsyncSession):
+        """``appstore`` is an accepted source type with nowhere to put rows yet."""
+        project = Project(name="p")
+        db.add(project)
+        await db.commit()
+        conn = Connection(project_id=project.id, name="asc", source_type="appstore")
+        db.add(conn)
+        await db.commit()
+
+        outcome = await _service(FakeAdapter()).collect_in_session(db, conn.id)
+
+        assert outcome.status == "failed"
+        row = (await _journal(db, CONNECT_SENTINEL_REPORT))[TODAY.isoformat()]
+        assert "fact tables" in (row.error or "")
+
+    async def test_an_adapter_that_cannot_be_built_is_journalled(
+        self, db: AsyncSession, connection_id: str
+    ):
+        def explode(_conn: Connection) -> AnalyticsSourceAdapter:
+            raise ValueError("no analytics adapter for source_type 'ga4'")
+
+        service = AnalyticsCollectService(
+            adapter_factory=explode, today=lambda: TODAY, refetch_tail_periods=0
+        )
+
+        outcome = await service.collect_in_session(db, connection_id)
+
+        assert outcome.status == "failed"
+        row = (await _journal(db, CONNECT_SENTINEL_REPORT))[TODAY.isoformat()]
+        assert "no analytics adapter" in (row.error or "")
+
+    async def test_a_deleted_connection_journals_nothing(self, db: AsyncSession):
+        """No connection row means no FK target — and nobody left to tell."""
+        outcome = await _service(FakeAdapter()).collect_in_session(db, "does-not-exist")
+
+        assert outcome.status == "ok"
+        assert await _journal(db, CONNECT_SENTINEL_REPORT) == {}
+
+    async def test_the_sentinel_name_is_refused_as_a_vendor_report(
+        self, db: AsyncSession, connection_id: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A vendor report called ``_connect`` would collide with the sentinel."""
+        impostor = GA4ReportSpec(
+            name=CONNECT_SENTINEL_REPORT,
+            grain="daily",
+            description="a report that squats on the reserved name",
+            dimensions=REPORTS_BY_NAME["overview"].dimensions,
+            metrics=REPORTS_BY_NAME["overview"].metrics,
+        )
+        monkeypatch.setitem(REPORTS_BY_NAME, CONNECT_SENTINEL_REPORT, impostor)
+        adapter = FakeAdapter(reports=(impostor, REPORTS_BY_NAME["geo"]))
+
+        outcome = await _service(adapter).collect_in_session(db, connection_id)
+
+        assert any("reserved" in error for error in outcome.errors)
+        assert adapter.periods_for(CONNECT_SENTINEL_REPORT) == [], "it must not be fetched"
+        assert await _journal(db, CONNECT_SENTINEL_REPORT) == {}
+        # The legitimate report still runs.
+        assert await _count(db, GA4GeoDaily) == BACKFILL_DAYS
+
+    def test_no_shipped_ga4_report_uses_the_reserved_name(self):
+        assert CONNECT_SENTINEL_REPORT not in {spec.name for spec in GA4_REPORTS}
+        assert CONNECT_SENTINEL_REPORT not in GA4_FACT_TABLES
 
 
 # ---------------------------------------------------------------------------

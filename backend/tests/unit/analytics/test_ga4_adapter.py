@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -55,10 +56,15 @@ from app.analytics.errors import (
 from app.analytics.ga4.adapter import GA4Adapter
 from app.analytics.ga4.config import GA4Config, GA4Credentials
 from app.analytics.ga4.reports import GA4_REPORTS, REPORT_NAMES
+from app.analytics.http import MAX_RETRY_DELAY
+from app.config import settings
 from app.connectors.base import ConnectionConfig
 
 PROPERTY = "294380179"
 PERIOD = "2026-07-31"
+
+#: The shipped attempt budget every un-overridden adapter uses.
+ATTEMPTS = settings.analytics_http_attempts
 
 #: The payload columns each report must produce, spelled out from spec §1.4 (the
 #: five ``ga4_*`` fact tables). This is T7's upsert contract: if these drift, the
@@ -151,6 +157,53 @@ class FakeGA4Client:
         return item
 
 
+class RepeatingGA4Client:
+    """Replays one item — a response or an exception — for *every* call.
+
+    A scripted fake cannot express "the vendor is down": the second call falls
+    off the end of the script. Retry behaviour needs a source that keeps
+    failing, plus a call count saying how many attempts the adapter spent.
+    """
+
+    def __init__(self, item: Any) -> None:
+        self._item = item
+        self.requests: list[RunReportRequest] = []
+
+    async def run_report(self, request: RunReportRequest) -> Any:
+        self.requests.append(request)
+        if isinstance(self._item, Exception):
+            raise self._item
+        return self._item
+
+    @property
+    def calls(self) -> int:
+        return len(self.requests)
+
+
+class FakeSleep:
+    """Records the delays asked for instead of waiting — no test touches the clock."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+
+
+class _VendorRetryAfterError(Exception):
+    """A vendor error shaped like ``google.api_core.exceptions.GoogleAPICallError``.
+
+    ``.code`` carries the HTTP status the taxonomy maps on, and ``.response``
+    is the HTTP response google-api-core attaches — which is where a
+    ``Retry-After`` header actually arrives.
+    """
+
+    def __init__(self, code: int, headers: dict[str, str]) -> None:
+        super().__init__(f"HTTP {code}")
+        self.code = code
+        self.response = SimpleNamespace(headers=headers)
+
+
 class PagingGA4Client:
     """A property with ``total`` rows, served in pages of at most ``page_cap``.
 
@@ -195,6 +248,13 @@ def _config(**overrides: Any) -> ConnectionConfig:
 
 
 async def _connected(client: Any, **kwargs: Any) -> GA4Adapter:
+    """A connected adapter whose retry delays are recorded, never slept.
+
+    The ``sleep`` default matters: the adapter now retries transient vendor
+    failures, so without an injected delay a single 503 fixture would put the
+    test suite to sleep for real.
+    """
+    kwargs.setdefault("sleep", FakeSleep())
     adapter = GA4Adapter(client=client, **kwargs)
     await adapter.connect(_config())
     return adapter
@@ -387,7 +447,9 @@ async def test_exhausted_quota_raises_quota_exhausted_error() -> None:
             )
         ]
     )
-    adapter = await _connected(client)
+    # attempts=1: this test is about the quota *mapping*. Exhaustion is
+    # retryable, and the retry path has its own test below.
+    adapter = await _connected(client, attempts=1)
     with pytest.raises(QuotaExhaustedError, match="tokens_per_day"):
         await adapter.fetch("overview", PERIOD)
 
@@ -433,23 +495,28 @@ async def test_absent_quota_block_is_not_read_as_exhaustion() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raised", "expected"),
+    ("raised", "expected", "expected_calls"),
     [
-        (gexc.Unauthenticated("bad key"), AnalyticsAuthError),
-        (gexc.PermissionDenied("property not shared"), AnalyticsPermissionError),
-        (gexc.NotFound("no such property"), AnalyticsEmpty),
-        (gexc.ResourceExhausted("slow down"), AnalyticsTransientError),
-        (gexc.ServiceUnavailable("backend down"), AnalyticsTransientError),
-        (gexc.InternalServerError("boom"), AnalyticsTransientError),
-        (gexc.InvalidArgument("bad dimension"), AnalyticsError),
+        (gexc.Unauthenticated("bad key"), AnalyticsAuthError, 1),
+        (gexc.PermissionDenied("property not shared"), AnalyticsPermissionError, 1),
+        (gexc.NotFound("no such property"), AnalyticsEmpty, 1),
+        (gexc.ResourceExhausted("slow down"), AnalyticsTransientError, ATTEMPTS),
+        (gexc.ServiceUnavailable("backend down"), AnalyticsTransientError, ATTEMPTS),
+        (gexc.InternalServerError("boom"), AnalyticsTransientError, ATTEMPTS),
+        (gexc.InvalidArgument("bad dimension"), AnalyticsError, 1),
     ],
 )
-async def test_client_errors_map_onto_the_taxonomy(
-    raised: Exception, expected: type[AnalyticsError]
+async def test_client_errors_map_onto_the_taxonomy_and_only_transient_ones_retry(
+    raised: Exception, expected: type[AnalyticsError], expected_calls: int
 ) -> None:
-    adapter = await _connected(FakeGA4Client([raised]))
+    """The mapping *and* the retry decision it drives, on the real fetch path."""
+    client = RepeatingGA4Client(raised)
+    adapter = await _connected(client)
+
     with pytest.raises(expected):
         await adapter.fetch("overview", PERIOD)
+
+    assert client.calls == expected_calls
 
 
 async def test_permission_denied_is_not_swallowed_as_empty() -> None:
@@ -484,6 +551,198 @@ async def test_fetch_before_connect_raises() -> None:
     adapter = GA4Adapter(client=FakeGA4Client([]))
     with pytest.raises(AnalyticsError, match="not connected"):
         await adapter.fetch("overview", PERIOD)
+
+
+# --------------------------------------------------------------------------
+# Retrying transient vendor failures — on the production path (M3, REQ-003)
+# --------------------------------------------------------------------------
+#
+# REQ-003's retry policy was implemented and unit-tested in ``app.analytics.http``
+# and then reached by nothing: ``GA4Adapter`` talks to google's own client, so
+# ``request_with_retry`` had exactly one caller — its own test. A single 429 or
+# 503 marked a period ``failed`` that one retry would have collected. Every test
+# below therefore drives ``GA4Adapter.fetch``/``test_connection`` — the paths
+# production actually runs — and not the retry helper in isolation.
+
+
+def _geo_response() -> _FakeResponse:
+    return _FakeResponse(
+        [_FakeRow(["20260731", "Germany"], ["12", "9"])],
+        1,
+        dimension_headers=["date", "country"],
+        metric_headers=["sessions", "activeUsers"],
+    )
+
+
+async def test_a_transient_failure_is_retried_and_the_next_attempt_is_returned() -> None:
+    client = FakeGA4Client([gexc.ServiceUnavailable("backend down"), _geo_response()])
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    report = await adapter.fetch("geo", PERIOD)
+
+    assert report.rows == [[PROPERTY, dt.date(2026, 7, 31), "Germany", 12, 9]]
+    assert len(client.requests) == 2, "the vendor must actually be called twice"
+    assert sleep.delays == [1.0]
+
+
+async def test_a_429_is_retried() -> None:
+    client = FakeGA4Client([gexc.TooManyRequests("rate limited"), _geo_response()])
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    assert len((await adapter.fetch("geo", PERIOD)).rows) == 1
+    assert len(client.requests) == 2
+
+
+async def test_an_auth_failure_is_never_retried() -> None:
+    client = RepeatingGA4Client(gexc.Unauthenticated("invalid_grant"))
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep)
+
+    with pytest.raises(AnalyticsAuthError):
+        await adapter.fetch("overview", PERIOD)
+
+    assert client.calls == 1
+    assert sleep.delays == [], "a wrong credential can never become right by waiting"
+
+
+async def test_a_permission_failure_is_never_retried() -> None:
+    client = RepeatingGA4Client(gexc.PermissionDenied("property not shared"))
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep)
+
+    with pytest.raises(AnalyticsPermissionError):
+        await adapter.fetch("geo", PERIOD)
+
+    assert client.calls == 1
+    assert sleep.delays == []
+
+
+async def test_the_attempt_budget_comes_from_the_configured_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``analytics_http_attempts`` was declared, validated, documented — and unread."""
+    monkeypatch.setattr(settings, "analytics_http_attempts", 4)
+    client = RepeatingGA4Client(gexc.ServiceUnavailable("backend down"))
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    with pytest.raises(AnalyticsTransientError):
+        await adapter.fetch("overview", PERIOD)
+
+    assert client.calls == 4
+    assert sleep.delays == [1.0, 2.0, 4.0], "exponential backoff, no sleep after the last try"
+
+
+async def test_a_vendor_retry_after_header_is_honoured() -> None:
+    client = FakeGA4Client([_VendorRetryAfterError(503, {"Retry-After": "7"}), _geo_response()])
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    assert len((await adapter.fetch("geo", PERIOD)).rows) == 1
+    assert sleep.delays == [7.0], "the vendor's own hint wins over our backoff"
+
+
+async def test_an_absurd_vendor_retry_after_is_clamped() -> None:
+    """A day-long ``Retry-After`` must not hold the collection job for a day."""
+    client = FakeGA4Client([_VendorRetryAfterError(429, {"retry-after": "86400"}), _geo_response()])
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    await adapter.fetch("geo", PERIOD)
+
+    assert sleep.delays == [MAX_RETRY_DELAY]
+
+
+async def test_quota_exhaustion_is_retried_and_can_recover() -> None:
+    """Δ3's quota check runs *inside* the retried attempt, so a rollover heals it."""
+    exhausted = _FakeResponse(
+        [_FakeRow(["20260731", "Germany"], ["1", "1"])],
+        1,
+        dimension_headers=["date", "country"],
+        metric_headers=["sessions", "activeUsers"],
+        property_quota=PropertyQuota(tokens_per_hour=QuotaStatus(consumed=5_000, remaining=0)),
+    )
+    client = FakeGA4Client([exhausted, _geo_response()])
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
+
+    assert len((await adapter.fetch("geo", PERIOD)).rows) == 1
+    assert len(client.requests) == 2
+
+
+async def test_an_unmapped_client_exception_still_propagates_unretried() -> None:
+    """A bug is not weather: it must surface as itself, on the first attempt."""
+    client = RepeatingGA4Client(RuntimeError("client is broken"))
+    sleep = FakeSleep()
+    adapter = await _connected(client, sleep=sleep)
+
+    with pytest.raises(RuntimeError, match="client is broken"):
+        await adapter.fetch("overview", PERIOD)
+
+    assert client.calls == 1
+    assert sleep.delays == []
+
+
+async def test_test_connection_retries_a_transient_probe_failure() -> None:
+    """The connect-test button must not fail a good property on one 503."""
+    client = FakeGA4Client(
+        [
+            gexc.ServiceUnavailable("backend down"),
+            _FakeResponse(
+                [_FakeRow(["20260731"], ["1", "1", "1", "1", "1", "1"])],
+                1,
+                dimension_headers=["date"],
+                metric_headers=[
+                    "sessions",
+                    "activeUsers",
+                    "newUsers",
+                    "screenPageViews",
+                    "eventCount",
+                    "totalRevenue",
+                ],
+            ),
+        ]
+    )
+    adapter = await _connected(client, retry_base_delay=1.0)
+
+    assert await adapter.test_connection() is True
+    assert len(client.requests) == 2
+
+
+async def test_paging_retries_only_the_failed_page() -> None:
+    """A blip on page two must not restart the report from page one."""
+
+    class _FlakyPagingClient:
+        def __init__(self) -> None:
+            self.requests: list[RunReportRequest] = []
+            self._failed_once = False
+
+        async def run_report(self, request: RunReportRequest) -> Any:
+            self.requests.append(request)
+            if int(request.offset) == 1 and not self._failed_once:
+                self._failed_once = True
+                raise gexc.ServiceUnavailable("backend down")
+            row = _FakeRow(["20260731", "Germany"], ["1", "1"])
+            served = 1 if int(request.offset) < 2 else 0
+            return _FakeResponse(
+                [row] * served,
+                2,
+                dimension_headers=["date", "country"],
+                metric_headers=["sessions", "activeUsers"],
+            )
+
+    client = _FlakyPagingClient()
+    sleep = FakeSleep()
+    adapter = GA4Adapter(client=client, page_size=1, sleep=sleep, retry_base_delay=1.0)
+    await adapter.connect(_config())
+
+    report = await adapter.fetch("geo", PERIOD)
+
+    assert len(report.rows) == 2
+    assert report.truncated is False
+    assert [int(r.offset) for r in client.requests] == [0, 1, 1]
 
 
 # --------------------------------------------------------------------------

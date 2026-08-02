@@ -24,15 +24,27 @@ throttling us" from a guess based on a 429 into a fact, raised as the typed
 :class:`QuotaExhaustedError` so the collect service records that period failed and
 keeps going instead of hammering an empty bucket.
 
+**Retries (REQ-003, M3).** Every vendor call goes through
+:func:`app.analytics.http.retry_async`, the same policy the raw-HTTP transport
+uses: ``AnalyticsTransientError`` and ``QuotaExhaustedError`` are retried with
+bounded exponential backoff (honouring the vendor's ``Retry-After`` when it sends
+one) for ``settings.analytics_http_attempts`` attempts; auth and permission
+failures are raised on the first attempt, because a wrong credential cannot
+become right by waiting. This adapter cannot use ``request_with_retry`` — google's
+client owns the socket — which is exactly how the policy came to be implemented,
+tested, and reached by nothing: one 429 used to mark a whole period ``failed``.
+
 Raw response bodies are never persisted — rows are parsed and the response goes out
 of scope (spec §3.4).
 """
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import datetime as dt
 import logging
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -55,7 +67,8 @@ from app.analytics.errors import (
 )
 from app.analytics.ga4.config import CREDENTIAL_SECRET_KEY, GA4Config, GA4Credentials
 from app.analytics.ga4.reports import GA4_REPORTS, REPORTS_BY_NAME, GA4Field, GA4ReportSpec
-from app.analytics.http import Resp, classify_response
+from app.analytics.http import Resp, SleepFn, classify_response, retry_after_seconds, retry_async
+from app.config import settings
 from app.connectors.base import ConnectionConfig
 
 logger = logging.getLogger(__name__)
@@ -86,6 +99,33 @@ _QUOTA_BUCKETS = (
 #: Network-level failures worth retrying. Anything else propagates unchanged —
 #: an unexpected exception is a bug and must not be laundered into a vendor error.
 _TRANSPORT_ERRORS = (TimeoutError, ConnectionError, OSError)
+
+#: First backoff delay between vendor attempts, in seconds. Attempt *n* waits
+#: ``_RETRY_BASE_DELAY * 2**n``, bounded by ``app.analytics.http.MAX_RETRY_DELAY``.
+_RETRY_BASE_DELAY = 1.0
+
+
+def _vendor_retry_after(exc: BaseException) -> float | None:
+    """Best-effort ``Retry-After`` (seconds) from a vendor exception.
+
+    Duck-typed on purpose: what a google-api-core error exposes depends on the
+    transport it came from. A REST-derived ``GoogleAPICallError`` carries the
+    HTTP response (``exc.response.headers``); some clients expose the headers or
+    a parsed delay directly. Anything unrecognised returns ``None`` and the
+    caller falls back to exponential backoff — a missing hint is normal, and
+    guessing one would be worse than not having it.
+    """
+    direct = getattr(exc, "retry_after", None)
+    if isinstance(direct, (int, float)) and not isinstance(direct, bool):
+        return max(float(direct), 0.0)
+
+    for holder in (getattr(exc, "response", None), exc):
+        headers = getattr(holder, "headers", None)
+        if isinstance(headers, Mapping):
+            seconds = retry_after_seconds(headers)
+            if seconds is not None:
+                return seconds
+    return None
 
 
 def _map_client_error(exc: Exception) -> AnalyticsError | None:
@@ -181,6 +221,11 @@ class GA4Adapter(AnalyticsSourceAdapter):
             :meth:`connect` from the decrypted service-account JSON.
         page_size: Rows requested per call, clamped to ``MAX_PAGE_SIZE``.
         max_rows: Rows accumulated per ``fetch`` before declaring truncation.
+        attempts: Vendor attempts per request before a transient failure is
+            reported. ``None`` reads ``settings.analytics_http_attempts``.
+        retry_base_delay: First backoff delay in seconds (see
+            :data:`_RETRY_BASE_DELAY`).
+        sleep: Injected delay function, so no test waits on the wall clock.
     """
 
     def __init__(
@@ -189,11 +234,20 @@ class GA4Adapter(AnalyticsSourceAdapter):
         *,
         page_size: int = DEFAULT_PAGE_SIZE,
         max_rows: int = DEFAULT_MAX_ROWS,
+        attempts: int | None = None,
+        retry_base_delay: float = _RETRY_BASE_DELAY,
+        sleep: SleepFn = asyncio.sleep,
     ) -> None:
         self._client = client
         self._injected_client = client is not None
         self._page_size = max(1, min(int(page_size), MAX_PAGE_SIZE))
         self._max_rows = max(1, int(max_rows))
+        # Read at construction, not import: the setting is validated at startup
+        # and the adapter is built per collection run.
+        resolved_attempts = settings.analytics_http_attempts if attempts is None else attempts
+        self._attempts = max(1, int(resolved_attempts))
+        self._retry_base_delay = max(0.0, float(retry_base_delay))
+        self._sleep = sleep
         self._config: GA4Config | None = None
 
     # -- DataSourceAdapter ------------------------------------------------
@@ -383,21 +437,49 @@ class GA4Adapter(AnalyticsSourceAdapter):
         return request
 
     async def _run_report(self, request: RunReportRequest) -> Any:
-        """Call the vendor and translate its failures into the taxonomy."""
+        """Call the vendor, translating its failures into the taxonomy and retrying.
+
+        One page, one retry budget: only the failed request is repeated, so a
+        blip on page seven never restarts the report from page one (the request
+        carries its own ``offset``, which makes it safe to repeat).
+        """
         client = self._client
         if client is None:  # pragma: no cover - guarded by _require_config
             raise AnalyticsError("GA4 adapter is not connected — call connect() first")
-        try:
-            response = await client.run_report(request=request)
-        except AnalyticsError:
-            raise
-        except Exception as exc:
-            mapped = _map_client_error(exc)
-            if mapped is None:
+
+        hint: float | None = None
+
+        async def attempt() -> Any:
+            # The hint belongs to the attempt that just failed; clear it first so
+            # a later failure without a header cannot inherit an earlier one.
+            nonlocal hint
+            hint = None
+            try:
+                response = await client.run_report(request=request)
+            except AnalyticsError:
                 raise
-            raise mapped from exc
-        self._check_quota(getattr(response, "property_quota", None))
-        return response
+            except Exception as exc:
+                mapped = _map_client_error(exc)
+                if mapped is None:
+                    # Not a vendor failure — a bug. It must surface as itself,
+                    # unretried and unwrapped.
+                    raise
+                hint = _vendor_retry_after(exc)
+                raise mapped from exc
+            # Inside the retried attempt on purpose (Δ3): an exhausted bucket is
+            # a retryable condition, and a quota window that rolls over between
+            # attempts heals the very request that hit it.
+            self._check_quota(getattr(response, "property_quota", None))
+            return response
+
+        return await retry_async(
+            attempt,
+            attempts=self._attempts,
+            base_delay=self._retry_base_delay,
+            sleep=self._sleep,
+            retry_after=lambda: hint,
+            label=f"GA4 runReport {request.property}",
+        )
 
     @staticmethod
     def _check_quota(quota: Any) -> None:

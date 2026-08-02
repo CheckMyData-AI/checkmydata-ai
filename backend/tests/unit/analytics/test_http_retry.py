@@ -26,7 +26,7 @@ from app.analytics.errors import (
     AnalyticsTransientError,
     QuotaExhaustedError,
 )
-from app.analytics.http import Resp, request_with_retry
+from app.analytics.http import MAX_RETRY_DELAY, Resp, request_with_retry, retry_async
 
 URL = "https://analyticsdata.googleapis.com/v1beta/properties/294380179:runReport"
 
@@ -284,6 +284,178 @@ async def test_single_attempt_never_sleeps() -> None:
 
     assert http.call_count == 1
     assert sleep.delays == []
+
+
+# --------------------------------------------------------------------------- #
+# Delay bounds — a vendor header is untrusted input                            #
+# --------------------------------------------------------------------------- #
+
+
+async def test_an_absurd_retry_after_is_clamped_to_the_max_delay() -> None:
+    """``Retry-After: 86400`` must not park a collection run for a day."""
+    http = FakeHttp([_resp(429, {"Retry-After": "86400"}), _resp(200)])
+    sleep = FakeSleep()
+
+    await _call(http, sleep, attempts=3, base_delay=1.0)
+
+    assert sleep.delays == [MAX_RETRY_DELAY]
+    assert MAX_RETRY_DELAY < 86400
+
+
+async def test_exponential_backoff_is_capped_by_the_same_bound() -> None:
+    http = FakeHttp([_resp(500), _resp(500), _resp(500)])
+    sleep = FakeSleep()
+
+    with pytest.raises(AnalyticsTransientError):
+        await _call(http, sleep, attempts=3, base_delay=1_000.0)
+
+    assert sleep.delays == [MAX_RETRY_DELAY, MAX_RETRY_DELAY]
+
+
+async def test_max_delay_is_caller_overridable() -> None:
+    http = FakeHttp([_resp(429, {"Retry-After": "600"}), _resp(200)])
+    sleep = FakeSleep()
+
+    await _call(http, sleep, attempts=2, base_delay=1.0, max_delay=5.0)
+
+    assert sleep.delays == [5.0]
+
+
+# --------------------------------------------------------------------------- #
+# retry_async — the reusable policy both transports share                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestRetryAsync:
+    """``request_with_retry`` and the GA4 client path run on this one loop."""
+
+    async def test_returns_the_first_successful_result_without_sleeping(self) -> None:
+        sleep = FakeSleep()
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            return "done"
+
+        assert await retry_async(operation, attempts=3, sleep=sleep) == "done"
+        assert calls == 1
+        assert sleep.delays == []
+
+    async def test_a_transient_failure_is_retried_until_it_succeeds(self) -> None:
+        sleep = FakeSleep()
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise AnalyticsTransientError("503 backend error")
+            return "done"
+
+        assert await retry_async(operation, attempts=3, base_delay=1.0, sleep=sleep) == "done"
+        assert calls == 3
+        assert sleep.delays == [1.0, 2.0]
+
+    async def test_an_auth_failure_is_raised_on_the_first_attempt(self) -> None:
+        sleep = FakeSleep()
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            raise AnalyticsAuthError("401 invalid_grant")
+
+        with pytest.raises(AnalyticsAuthError):
+            await retry_async(operation, attempts=3, sleep=sleep)
+
+        assert calls == 1
+        assert sleep.delays == []
+
+    async def test_quota_exhaustion_is_retryable(self) -> None:
+        sleep = FakeSleep()
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise QuotaExhaustedError("tokens per hour exhausted")
+            return "done"
+
+        assert await retry_async(operation, attempts=2, base_delay=1.0, sleep=sleep) == "done"
+        assert calls == 2
+
+    async def test_the_retry_after_hint_overrides_the_backoff(self) -> None:
+        sleep = FakeSleep()
+        hint: float | None = 9.0
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise AnalyticsTransientError("429 slow down")
+            return "done"
+
+        await retry_async(
+            operation, attempts=2, base_delay=1.0, sleep=sleep, retry_after=lambda: hint
+        )
+
+        assert sleep.delays == [9.0]
+
+    async def test_the_retry_after_hint_is_bounded_too(self) -> None:
+        sleep = FakeSleep()
+
+        async def operation() -> str:
+            raise AnalyticsTransientError("429 slow down")
+
+        with pytest.raises(AnalyticsTransientError):
+            await retry_async(
+                operation, attempts=2, base_delay=1.0, sleep=sleep, retry_after=lambda: 86_400.0
+            )
+
+        assert sleep.delays == [MAX_RETRY_DELAY]
+
+    async def test_a_non_analytics_exception_propagates_unretried(self) -> None:
+        """A bug must surface as itself, not be laundered into a vendor error."""
+        sleep = FakeSleep()
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("socket exploded")
+
+        with pytest.raises(RuntimeError, match="socket exploded"):
+            await retry_async(operation, attempts=3, sleep=sleep)
+
+        assert calls == 1
+        assert sleep.delays == []
+
+    async def test_a_single_attempt_never_sleeps(self) -> None:
+        sleep = FakeSleep()
+
+        async def operation() -> str:
+            raise AnalyticsTransientError("503")
+
+        with pytest.raises(AnalyticsTransientError):
+            await retry_async(operation, attempts=1, sleep=sleep)
+
+        assert sleep.delays == []
+
+    async def test_invalid_attempts_is_rejected_before_the_first_call(self) -> None:
+        calls = 0
+
+        async def operation() -> str:
+            nonlocal calls
+            calls += 1
+            return "done"
+
+        with pytest.raises(ValueError):
+            await retry_async(operation, attempts=0)
+
+        assert calls == 0
 
 
 # --------------------------------------------------------------------------- #

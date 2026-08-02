@@ -7,6 +7,11 @@ local/dev environments without the extra installed keep working.
 Privacy posture:
 
 * ``send_default_pii=False`` — no IP addresses, no cookies, no auth headers.
+* ``include_local_variables=False`` — frame locals are never captured. They are
+  the one channel ``before_send`` cannot clean (it does not walk
+  ``stacktrace.frames[].vars``), and this codebase's error paths hold decrypted
+  credentials in locals. :class:`app.connectors.base.ConnectionConfig` redacts
+  its own ``repr`` as the second half of that defence.
 * ``before_send`` strips request bodies, headers, cookies and query strings,
   and redacts obviously sensitive values that leak into exception messages
   (bearer tokens, API keys, passwords in DSN-style URLs).
@@ -102,6 +107,13 @@ def init_sentry() -> bool:
         dsn=dsn,
         environment=settings.sentry_environment or settings.environment,
         send_default_pii=False,
+        # H5: the SDK defaults this to True, which attaches repr()-ed frame
+        # locals under exception.values[].stacktrace.frames[].vars — a payload
+        # `scrub_event` below never walks. Locals on this codebase's error paths
+        # hold decrypted credentials (ConnectionConfig.db_password,
+        # .ssh_key_content, and the plaintext service-account JSON in .extra), so
+        # capturing them ships secrets to a third party on any crash.
+        include_local_variables=False,
         traces_sample_rate=settings.sentry_traces_sample_rate,
         profiles_sample_rate=settings.sentry_profiles_sample_rate,
         # scrub_event is typed against plain dicts (so it stays unit-testable
