@@ -65,15 +65,132 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/connections` | Create database connection |
+| POST | `/api/connections` | Create connection (database, MCP, or analytics source) |
 | GET | `/api/connections/project/{project_id}` | List connections for a project |
 | GET | `/api/connections/{id}` | Get connection |
 | PATCH | `/api/connections/{id}` | Update connection |
 | DELETE | `/api/connections/{id}` | Delete connection |
-| POST | `/api/connections/{id}/test` | Test connectivity |
+| POST | `/api/connections/{id}/test` | Test connectivity (analytics sources are probed with the vendor adapter) |
 | POST | `/api/connections/{id}/refresh-schema` | Refresh schema cache |
 | POST | `/api/connections/{id}/index-db` | Index database schema |
 | POST | `/api/connections/{id}/sync` | Trigger code-DB sync (202) |
+
+### Analytics-source fields on create / update
+
+`POST /api/connections` and `PATCH /api/connections/{id}` accept five additional
+fields used by analytics sources (Google Analytics 4 today — see
+[`docs/ANALYTICS_SOURCES.md`](docs/ANALYTICS_SOURCES.md)):
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `source_type` | string | `"database"` | `"database"`, `"mcp"`, or an analytics vendor: `"ga4"`, `"appstore"`, `"googleplay"` |
+| `vendor_credential_id` | string \| null | `null` | Id of an already-stored `VendorCredential`. **Required** when `source_type` is an analytics source; the secret itself is never sent here. |
+| `source_config` | object \| null | `null` | Non-secret vendor knobs. For GA4: `{"property_ids": ["294380179"], "backfill_days": 30, "event_names": [...], "currency_code": "USD"}` |
+| `collection_enabled` | boolean | `true` | Whether the hourly wave dispatches this connection |
+| `collection_hour` | integer (0–23) | `3` | Hour the connection collects in, local to `DAILY_KNOWLEDGE_SYNC_TIMEZONE` |
+
+`source_config` is returned on `ConnectionResponse` as a decoded object (a corrupt
+blob degrades to `null` rather than failing the listing). `db_type`, `db_port` and
+`db_name` are **nullable** in the response since an analytics source has no engine,
+port or database — they are cleared on create rather than persisted as defaults.
+
+Behaviour notes:
+
+- Creating or updating an analytics connection without `vendor_credential_id` → **422**.
+- A `vendor_credential_id` the caller does not own → **404** (the lookup is owner-strict,
+  so "someone else's" and "does not exist" are answered identically). A credential whose
+  `provider` does not match `source_type` → **422**.
+- `PATCH` asserts credential ownership on the **merged** row, so a connection can never
+  end a PATCH holding a credential the requester does not own.
+- `source_type` `appstore` / `googleplay` → **422** in this release (no collector yet).
+- `index-db`, `refresh-schema` and `sync` refuse an analytics connection with **400**
+  and point at `POST /api/connections/{id}/collect`.
+
+### Analytics collection
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/connections/{id}/collect` | Enqueue a collection run now (**202**). Editor role. Rate limit 10/min. |
+| GET | `/api/connections/{id}/collection-status` | Per-report collection state. Viewer role. |
+
+Both return **400** for a non-analytics connection and **404** when the connection
+does not exist.
+
+`POST /api/connections/{id}/collect` enqueues exactly the job the hourly cron
+enqueues — same task name, same day-scoped task id — so "collect now" and the
+schedule cannot race into two concurrent runs for one connection on one day. It
+deliberately ignores `collection_enabled` (that flag pauses the *schedule*; pulling
+on demand is how a credential fix is verified). Response:
+
+```json
+{"status": "queued", "connection_id": "…", "task_id": "analytics_collect:<connection_id>:<YYYY-MM-DD>"}
+```
+
+`GET /api/connections/{id}/collection-status` returns:
+
+```json
+{
+  "connection_id": "…",
+  "source_type": "ga4",
+  "collection_enabled": true,
+  "collection_hour": 3,
+  "next_scheduled_hour": 3,
+  "timezone": "Europe/Berlin",
+  "backfill_days": 30,
+  "status": "partial",
+  "last_run_at": "2026-08-01T03:04:11+00:00",
+  "last_error": null,
+  "caveat": "GA4 returned a truncated page for this period",
+  "pending_periods": 2,
+  "reports": [
+    {
+      "report": "overview",
+      "grain": "daily",
+      "latest_ok_period": "2026-07-31",
+      "latest_collected_period": "2026-07-31",
+      "ok_periods": 28,
+      "empty_periods": 0,
+      "failed_periods": 1,
+      "rows_written": 28,
+      "pending_periods": 2,
+      "pending_sample": ["2026-07-14", "2026-07-15"],
+      "last_run_at": "2026-08-01T03:04:11+00:00",
+      "last_error": null,
+      "caveat": "GA4 returned a truncated page for this period"
+    }
+  ]
+}
+```
+
+**`status`** is one of:
+
+| Value | Meaning |
+|---|---|
+| `never_collected` | The journal holds no row for this connection — nothing has run yet. |
+| `ok` | Every period the backfill window expects has been collected. |
+| `partial` | Some periods landed; some are still owed (failed, or not yet fetched). |
+| `failed` | Rows exist but nothing succeeded — every period failed. |
+
+Zero rows is only a failure when something actually failed: a window that came back
+genuinely `empty` everywhere collected fine and reports `ok`.
+
+**`caveat` is not an error.** `last_error` carries the newest journal row whose
+*status* is `failed`; `caveat` carries the newest non-failed row that still has a
+note attached — most often "the vendor truncated this page", i.e. the data is real
+but a lower bound. An `ok` period can carry a caveat. Both fields exist per report
+and at connection level; clients must not render a caveat as a failure.
+
+**Pending vs empty.** `pending_periods` counts expected periods the journal has not
+completed. A period recorded `empty` is complete (the vendor genuinely had no data)
+and is not pending; a period recorded `failed` stays owed until it succeeds and is
+refilled on the next run. The tail-refetch window (the most recent
+`ANALYTICS_REFETCH_TAIL_PERIODS` periods, always re-fetched) is deliberately not
+counted as pending. `pending_sample` is capped at 10 periods.
+
+`next_scheduled_hour` is `null` when `collection_enabled` is `false`. A run that
+failed before it could reach any report is journalled under the reserved report
+name `_connect`, which currently appears as an entry in `reports[]` with
+`grain: null`.
 
 ## Chat
 
@@ -166,6 +283,65 @@ All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, 
 | GET | `/api/ssh-keys` | List current user's SSH keys |
 | GET | `/api/ssh-keys/{key_id}` | Get SSH key by id |
 | DELETE | `/api/ssh-keys/{key_id}` | Delete SSH key (409 if in use by a connection) |
+
+## Vendor Credentials
+
+Owner-scoped, reusable secrets for external analytics vendors (Google Analytics 4
+service-account JSON today; App Store Connect and Google Play secrets are accepted
+and stored but have no collector yet). Modelled on SSH keys: strictly owner-scoped
+lookups, Fernet-encrypted at rest, **write-only over HTTP**.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/vendor-credentials` | Store a credential (10/min) |
+| GET | `/api/vendor-credentials` | List the caller's credentials |
+| DELETE | `/api/vendor-credentials/{credential_id}` | Delete (10/min); **409** if a connection still references it |
+
+**Create body:**
+
+```json
+{"name": "analytics-sa", "provider": "ga4", "secret": "{\"type\":\"service_account\", …}"}
+```
+
+`provider` is one of `ga4`, `appstore`, `googleplay`. `secret` is capped at 32,000
+characters and is stored verbatim (no stripping — a `.p8` PEM's trailing newline is
+part of the key material).
+
+**Response — the secret is never in it, on any route:**
+
+```json
+{
+  "id": "…",
+  "name": "analytics-sa",
+  "provider": "ga4",
+  "fingerprint": "3f2a1c9e7b4d5061",
+  "meta": {"client_email": "sa@project.iam.gserviceaccount.com", "project_id": "…"},
+  "created_at": "2026-08-01T10:00:00+00:00",
+  "updated_at": "2026-08-01T10:00:00+00:00"
+}
+```
+
+`VendorCredentialResponse` has no field for the plaintext or its ciphertext.
+`fingerprint` is the first 16 hex characters of `sha256(plaintext)` — enough to
+answer "is this the same key?" without handing anything back. `meta` carries only
+non-secret fields lifted out of the credential (for GA4: `client_email` and
+`project_id`, so the UI can show which service account to share a property with);
+it is `null` for providers whose secret is an opaque blob. The plaintext leaves the
+store only through the collection job's service-level lookup — never over HTTP.
+
+Status codes:
+
+- **422** — unsupported `provider`, empty secret, or (for `ga4`) a secret that is
+  not valid JSON, is not a JSON object, or is missing `client_email` / `private_key`.
+  Nothing is persisted on a rejected create.
+- **404** — the credential is not visible to the caller. The lookup never unions
+  NULL-owner rows, so another tenant's credential and a non-existent id are answered
+  identically and neither confirms the id.
+- **409** — `DELETE` while a connection still references the credential
+  (`connections.vendor_credential_id` is `ON DELETE RESTRICT`, so the refusal comes
+  from the database rather than a pre-check a concurrent create could slip past):
+  *"Cannot delete: this credential is in use by a connection. Delete or re-point the
+  connection first."*
 
 ## Invites & Members
 

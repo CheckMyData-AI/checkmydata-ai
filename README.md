@@ -6,6 +6,7 @@
 AI-powered database query agent that analyzes Git repositories, understands database schemas, and lets you query databases through natural language chat with rich data visualization.
 
 **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB
+**Supported analytics sources**: Google Analytics 4 (App Store Connect and Google Play reserved — see [`docs/ANALYTICS_SOURCES.md`](docs/ANALYTICS_SOURCES.md))
 **LLM providers**: OpenAI, Anthropic, OpenRouter
 **Project tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990) (single source of truth for tasks, backlog, and bugs)
 
