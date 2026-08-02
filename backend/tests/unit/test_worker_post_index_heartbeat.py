@@ -24,8 +24,21 @@ from app.models.db_index import DbIndexSummary
 async def session(monkeypatch: pytest.MonkeyPatch, tmp_path) -> AsyncSession:
     # File-backed (not :memory:) so the heartbeat writer's concurrent sessions
     # share data without sharing a single StaticPool connection.
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    #
+    # Two pragmas make that concurrency safe rather than merely likely to work.
+    # This test deliberately drives the heartbeat at 50ms while holding its own
+    # reader session, so writer/reader contention is the *point* of the test —
+    # under SQLite's default rollback journal a writer takes an exclusive lock
+    # that fails readers outright with "database is locked", which showed up as
+    # a load-sensitive flake (~1 in 12 under CPU pressure locally, and it failed
+    # a CI run). WAL lets a reader proceed alongside a writer, and a generous
+    # busy timeout makes any remaining contention wait instead of raising.
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path}/test.db",
+        connect_args={"timeout": 30},
+    )
     async with engine.begin() as conn:
+        await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.run_sync(Base.metadata.create_all)
     sm = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr("app.models.base.async_session_factory", sm)
