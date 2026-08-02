@@ -357,6 +357,28 @@
 
 ---
 
+## Sprint 11 — Analytics sources (GA4 · App Store Connect · Google Play)
+
+**Status:** m0 (GA4) shipped in `1.16.0`. Carry-over from
+[the m0 acceptance report](docs/superpowers/specs/2026-08-01-m0-acceptance.md);
+program map in [`…-modules.md`](docs/superpowers/specs/2026-08-01-analytics-sources-modules.md).
+
+| #  | Task | Status | Priority | Source | Est. Complexity |
+|----|------|--------|----------|--------|-----------------|
+| **11.0** | **`ssh_key_id` cross-tenant attach — same shape as the m0 BLOCKER, pre-existing.** No ownership check on connection create/update, and `to_config` runs without `user_id` on the chat/SSE/WS paths, so `SshKeyService.get_decrypted(…, user_id=None)` is an unfiltered lookup by id. A tenant who learns another tenant's SSH key id can PATCH it onto their own connection and have the server tunnel with someone else's private key | `pending` | **P0 — security** | Found while fixing the analytics credential equivalent (carry-over C13); fix is the same shape but touches ~6 shared call sites | Medium |
+| 11.1 | **m1 — App Store Connect**: ES256 JWT client, TSV parse, sales/subscription-event/subscription/finance tables, fiscal-month lookahead, FX via frankfurter | `pending` | P1 | Module map row 2 | High |
+| 11.2 | **m2 — Google Play**: dual transport (GCS bucket + Play Developer Reporting API), earnings/sales/installs/subscriptions/vitals | `pending` | P1 | Module map row 3 | High |
+| 11.3 | `ANALYTICS_COLLECT_ENABLED` is read once at start-up and gates only the web process's cron loop — a config change without an API restart leaves collection dormant while status reads `never_collected` | `pending` | P2 | Carry-over C14 | Low |
+| 11.4 | Expose `event_names` / `currency_code` in the GA4 connection form (honoured in `source_config` and preserved on save, but API-only today) | `pending` | P3 | Carry-over C15 | Low |
+| 11.5 | Analytics-specific iteration budget (currently reuses `settings.max_mcp_iterations`) | `pending` | P3 | Carry-over C16 | Low |
+| 11.6 | Analytics stage for the multi-stage pipeline (`AdaptivePlanner` / `StageExecutor`) — today analytics-only complex questions bounce to the flat tool loop | `pending` | P2 | Carry-over C17 | Medium |
+| 11.7 | Normalise the 9 pre-existing `docs/ux/scenarios.md` `Coverage:` paths written relative to `frontend/` instead of `frontend/src/` (ratcheted at ≤9 so the count can shrink but never grow) | `pending` | P3 | Carry-over C19 | Low |
+| 11.8 | OAuth sign-in for Google sources (GA4, Play) instead of pasted service-account JSON | `pending` | P3 | Carry-over C1 (D4 chose paste + a reusable credential table) | High |
+| 11.9 | ASC report types available since the reference blueprint: `INSTALLS`, `FIRST_ANNUAL`, `WIN_BACK_ELIGIBILITY`, offer-code redemptions; plus Apple's newer Analytics Reports API | `pending` | P3 | Carry-over C8/C9 | Medium |
+| 11.10 | **Standing cost:** every future answer-quality gate must be wired twice — once for SQL, once for analytics (consequence of choosing a sub-agent over SQL-over-views). Revisit if a third non-SQL source appears | `note` | P3 | Carry-over C6 / brief risk R1 | — |
+
+---
+
 ## Completed
 
 | # | Task | Completed Date | Notes |
