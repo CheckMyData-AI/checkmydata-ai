@@ -9,6 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useLogStore } from "@/stores/log-store";
 import { Icon } from "@/components/ui/Icon";
 import { HomeAsk } from "@/components/home/HomeAsk";
+import { connectionSourceIcon, connectionSourceLabel } from "@/lib/connection-source";
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString("en-GB", {
@@ -61,13 +62,20 @@ export function ProjectOverview() {
           {activeConnection ? (
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs text-text-primary">
-                <Icon name="database" size={14} className="text-text-tertiary" />
+                <Icon
+                  name={connectionSourceIcon(activeConnection)}
+                  size={14}
+                  className="text-text-tertiary"
+                />
                 <span>{activeConnection.name}</span>
                 <span className="text-[10px] text-text-muted uppercase font-mono">
-                  {activeConnection.db_type}
+                  {connectionSourceLabel(activeConnection)}
                 </span>
               </div>
-              <ConnectionHealth connectionId={activeConnection.id} />
+              <ConnectionHealth
+                connectionId={activeConnection.id}
+                sourceType={activeConnection.source_type}
+              />
               <SyncStatusIndicator />
             </div>
           ) : connections.length > 0 ? (

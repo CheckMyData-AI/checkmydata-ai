@@ -18,6 +18,7 @@ from app.api.deps import get_current_user, get_db
 from app.api.schemas import AckWithCountResponse, OkResponse, OkWithIdResponse
 from app.core.rate_limit import limiter
 from app.services.agent_learning_service import AgentLearningService
+from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
 
@@ -221,11 +222,16 @@ async def validate_learnings_schema(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
+    # T12: schema validation introspects a database. An analytics source has no
+    # schema to cross-check, so return a clear 400 rather than a blanket 500
+    # ("Could not introspect schema") that hides the real reason.
+    db_type = require_database_connection(conn, subject="Schema validation")
+
     config = await _svc.to_config(db, conn, user_id=user["user_id"])
     try:
         from app.connectors.registry import get_connector
 
-        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
         await connector.connect(config)
         try:
             schema = await connector.introspect_schema()

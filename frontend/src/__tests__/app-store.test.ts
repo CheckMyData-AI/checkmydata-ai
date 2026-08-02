@@ -79,6 +79,10 @@ describe("app store", () => {
       mcp_server_command: null,
       mcp_server_url: null,
       mcp_transport_type: null,
+      vendor_credential_id: null,
+      source_config: null,
+      collection_enabled: true,
+      collection_hour: 3,
     });
     useAppStore.getState().setActiveProject(null);
     expect(localStorage.getItem("active_project_id")).toBeNull();
@@ -109,6 +113,10 @@ describe("app store", () => {
       mcp_server_command: null,
       mcp_server_url: null,
       mcp_transport_type: null,
+      vendor_credential_id: null,
+      source_config: null,
+      collection_enabled: true,
+      collection_hour: 3,
     });
     expect(localStorage.getItem("active_connection_id")).toBe("c2");
   });

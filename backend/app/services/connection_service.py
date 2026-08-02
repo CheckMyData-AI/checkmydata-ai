@@ -1,10 +1,13 @@
 import json
 import logging
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.connectors.base import ConnectionConfig
 from app.connectors.registry import get_connector
 from app.connectors.ssh_known_hosts import connect_with_policy
@@ -16,6 +19,11 @@ from app.services.ssh_key_service import SshKeyService
 logger = logging.getLogger(__name__)
 
 _ssh_key_svc = SshKeyService()
+
+#: How many owed periods a status response names explicitly. The count is
+#: always exact; the sample is capped so a connection that has never collected
+#: a 400-day backfill does not return four hundred strings to the UI.
+PENDING_SAMPLE_LIMIT = 10
 
 _UPDATABLE_FIELDS = {
     "name",
@@ -38,7 +46,88 @@ _UPDATABLE_FIELDS = {
     "mcp_server_url",
     "mcp_transport_type",
     "source_type",
+    # Analytics sources (spec §1.2). ``source_config`` arrives as a dict and is
+    # serialised into ``source_config_json`` before this set is consulted.
+    "vendor_credential_id",
+    "source_config_json",
+    "collection_enabled",
+    "collection_hour",
 }
+
+
+#: Human names for the analytics vendors, used in user-facing refusals. Keys are
+#: ``Connection.source_type`` values.
+_VENDOR_LABELS: dict[str, str] = {
+    "ga4": "Google Analytics",
+    "appstore": "App Store Connect",
+    "googleplay": "Google Play",
+}
+
+
+def is_analytics_source(source_type: str | None) -> bool:
+    """True when *source_type* is served by an analytics vendor adapter.
+
+    Imported lazily: :mod:`app.services.analytics_collect_service` pulls in the
+    vendor SDKs transitively, and this module is imported by nearly every route.
+    """
+    if not source_type:
+        return False
+    from app.services.analytics_collect_service import ANALYTICS_SOURCE_TYPES
+
+    return source_type in ANALYTICS_SOURCE_TYPES
+
+
+def unavailable_analytics_source_detail(source_type: str | None) -> str | None:
+    """Why no connection may be created for *source_type* yet, or ``None``.
+
+    ``ANALYTICS_SOURCE_TYPES`` deliberately names the whole vendor family,
+    including the ``appstore``/``googleplay`` slots reserved for modules m1/m2 —
+    connection *gating* is vendor-agnostic. Collection is not:
+    ``FACT_TABLES_BY_SOURCE`` is what says where a report's rows land, and a
+    source missing from it has nowhere to put them.
+
+    Without this check such a connection is accepted, scheduled, and dispatched
+    by the hourly cron every single day — journalling a failure every day for a
+    module that does not exist. Refusing it at the door is the honest answer,
+    and the refusal disappears on its own the moment m1/m2 register their fact
+    tables, because that table is the source of truth here rather than a second
+    hand-maintained list.
+    """
+    if not is_analytics_source(source_type):
+        return None
+    from app.services.analytics_collect_service import FACT_TABLES_BY_SOURCE
+
+    if source_type in FACT_TABLES_BY_SOURCE:
+        return None
+    label = _VENDOR_LABELS.get(source_type or "", source_type or "")
+    available = ", ".join(sorted(FACT_TABLES_BY_SOURCE))
+    return (
+        "App Store Connect and Google Play sources are not available yet, so a "
+        f"{label} connection cannot be created. Analytics source types this "
+        f"release can collect: {available}."
+    )
+
+
+def is_queryable_database(config: ConnectionConfig | None) -> bool:
+    """True when *config* points at an engine the SQL tools can actually query.
+
+    "Is a connection attached?" and "is there a database to query?" are two
+    different questions, and conflating them is a user-visible bug: an analytics
+    connection produces a config whose ``db_type`` carries the **vendor** id
+    (``"ga4"``) because that is what the analytics adapter dispatches on. A
+    caller that derives SQL availability from ``config is not None`` therefore
+    advertises ``query_database`` for a GA4 source, and ``get_connector("ga4")``
+    raises ``ValueError: Unsupported adapter: ga4`` in the middle of the user's
+    chat the moment the model takes the offer.
+
+    MCP sources stay queryable: they are dispatched through the connector
+    registry like any engine.
+    """
+    if config is None:
+        return False
+    if is_analytics_source(config.db_type):
+        return False
+    return bool(config.db_type)
 
 
 class ConnectionService:
@@ -50,8 +139,23 @@ class ConnectionService:
                 kwargs[field] = kwargs[field].strip()
         return kwargs
 
+    @staticmethod
+    def _encode_source_config(kwargs: dict) -> dict:
+        """Serialise an inbound ``source_config`` dict into ``source_config_json``.
+
+        The API speaks dicts; the column stores text. Popping the key
+        unconditionally (when present) keeps ``Connection(**kwargs)`` from
+        choking on a field that is not a column.
+        """
+        if "source_config" not in kwargs:
+            return kwargs
+        raw = kwargs.pop("source_config")
+        kwargs["source_config_json"] = json.dumps(raw) if raw else None
+        return kwargs
+
     async def create(self, session: AsyncSession, **kwargs) -> Connection:
         kwargs = self._sanitize_strings(kwargs)
+        kwargs = self._encode_source_config(kwargs)
         if "db_password" in kwargs and kwargs["db_password"]:
             kwargs["db_password_encrypted"] = encrypt(kwargs.pop("db_password"))
         if "connection_string" in kwargs and kwargs["connection_string"]:
@@ -97,6 +201,7 @@ class ConnectionService:
             logger.debug("update(): could not snapshot old config", exc_info=True)
 
         kwargs = self._sanitize_strings(kwargs)
+        kwargs = self._encode_source_config(kwargs)
         if "db_password" in kwargs:
             pw = kwargs.pop("db_password")
             conn.db_password_encrypted = encrypt(pw) if pw else None
@@ -266,8 +371,26 @@ class ConnectionService:
         if not conn:
             return {"success": False, "error": "Connection not found"}
 
+        if is_analytics_source(conn.source_type):
+            # An analytics source has no engine to open a socket to; "does this
+            # work?" means "can the credential read the property?".
+            return await self._test_analytics_connection(session, conn)
+
+        db_type = conn.db_type
+        if db_type is None:
+            # Since the analytics spine ``db_type`` is nullable. A non-analytics
+            # connection without one cannot be routed to a connector, and
+            # ``get_connector(None)`` would die with "Unsupported adapter",
+            # which tells the user nothing.
+            from app.services.batch_service import not_a_database_detail
+
+            return {
+                "success": False,
+                "error": not_a_database_detail(conn, subject="Testing this connection"),
+            }
+
         config = await self.to_config(session, conn)
-        connector = get_connector(conn.db_type, ssh_exec_mode=config.ssh_exec_mode)
+        connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
         try:
 
             @retry(
@@ -305,6 +428,51 @@ class ConnectionService:
             if len(error_msg) > 500:
                 error_msg = error_msg[:500] + "..."
             return {"success": False, "error": error_msg}
+
+    async def _test_analytics_connection(self, session: AsyncSession, conn: Connection) -> dict:
+        """Probe an analytics source with the vendor adapter (spec §7).
+
+        Returns the same ``{"success": bool, "error": str}`` shape as the
+        database path so the UI has one contract. A wrong credential and an
+        unshared property both come back as ``success: False`` with the vendor's
+        own message — never as a 500, and never as a silent success.
+        """
+        from app.services.analytics_collect_service import build_adapter
+
+        try:
+            adapter = build_adapter(conn.source_type)
+        except ValueError as exc:
+            # A reserved source type (appstore / googleplay) with no adapter yet.
+            return {"success": False, "error": str(exc)}
+
+        try:
+            config = await self._analytics_config(session, conn)
+            await adapter.connect(config)
+            try:
+                alive = await adapter.test_connection()
+            finally:
+                await adapter.disconnect()
+        except Exception as exc:
+            logger.warning(
+                "Analytics connection test error for '%s' (source=%s): %s",
+                conn.name,
+                conn.source_type,
+                exc,
+            )
+            return {"success": False, "error": str(exc)[:500]}
+
+        if not alive:
+            logger.info("Analytics connection test failed for '%s'", conn.name)
+            return {
+                "success": False,
+                "error": (
+                    "The vendor rejected this credential or the configured property "
+                    "is not shared with it. Grant the service account Viewer access "
+                    "on the property and try again."
+                ),
+            }
+        logger.info("Analytics connection test OK for '%s' (id=%s)", conn.name, conn.id[:8])
+        return {"success": True}
 
     async def test_ssh(
         self,
@@ -384,12 +552,48 @@ class ConnectionService:
         # this coroutine always returns a result dict.
         return {"success": False, "error": "SSH test did not complete"}
 
+    @staticmethod
+    async def _analytics_config(session: AsyncSession, conn: Connection) -> ConnectionConfig:
+        """The adapter-facing config for an analytics connection.
+
+        Delegates to :meth:`AnalyticsCollectService._build_config` rather than
+        rebuilding the same dict: that method *is* the contract the GA4 adapter
+        reads (``extra[SOURCE_CONFIG_KEY]`` + ``extra[CREDENTIAL_SECRET_KEY]``,
+        empty host/port/name), and two copies of it would drift the first time a
+        knob is added. The collect service owns that file; keeping one
+        definition is worth reaching across the boundary for.
+
+        The credential is resolved with ``user_id=None`` — a trusted internal
+        lookup. Ownership was settled when the credential was attached to the
+        connection (see ``connections`` route), and the scheduler that calls the
+        same builder has no request principal at all.
+        """
+        from app.services.analytics_collect_service import AnalyticsCollectService
+
+        return await AnalyticsCollectService()._build_config(session, conn)
+
     async def to_config(
         self,
         session: AsyncSession,
         conn: Connection,
         user_id: str | None = None,
     ) -> ConnectionConfig:
+        if is_analytics_source(conn.source_type):
+            # No host, no port, no database, no SSH, no DSN — building any of
+            # that here would fabricate a database that does not exist.
+            return await self._analytics_config(session, conn)
+
+        db_type = conn.db_type
+        if db_type is None:
+            # Nullable since the analytics spine. This row is not an analytics
+            # source (handled above) and has no engine either, so no connector
+            # can be dispatched for it. Unlike host/port/name there is no
+            # "absent" value for an engine — inventing one would route the
+            # query at whichever adapter happens to be first.
+            from app.services.batch_service import not_a_database_detail
+
+            raise ValueError(not_a_database_detail(conn, subject="Building a connection config"))
+
         try:
             db_password = None
             if conn.db_password_encrypted:
@@ -454,16 +658,26 @@ class ConnectionService:
                     logger.warning("Failed to decrypt MCP env for connection '%s'", conn.name)
                     extra["mcp_env"] = {}
 
+        # ``db_port``/``db_name`` are nullable since the analytics spine, but a
+        # DSN-only or MCP connection legitimately has neither, and
+        # ``ConnectionConfig`` already carries an "absent" value for both: port
+        # ``0`` (never a real port — the analytics builder uses the same marker)
+        # and the empty database name MCP rows have always used. Mapping NULL
+        # onto those markers keeps "unset" visible; defaulting to 5432 would
+        # invent a Postgres endpoint that was never configured.
+        db_port = 0 if conn.db_port is None else conn.db_port
+        db_name = "" if conn.db_name is None else conn.db_name
+
         return ConnectionConfig(
             # R1-7: carry the connection id so ``connector_key`` (R1-1) can use
             # it as the credential discriminator — without it the key falls back
             # to endpoint-only and two connections to the same host/db could
             # share a pooled connector under the wrong credentials.
             connection_id=conn.id,
-            db_type=conn.db_type,
+            db_type=db_type,
             db_host=conn.db_host,
-            db_port=conn.db_port,
-            db_name=conn.db_name,
+            db_port=db_port,
+            db_name=db_name,
             db_user=conn.db_user,
             db_password=db_password,
             connection_string=connection_string,
@@ -479,3 +693,202 @@ class ConnectionService:
             send_sample_data_to_llm=getattr(conn, "send_sample_data_to_llm", True),
             extra=extra,
         )
+
+    # ------------------------------------------------------------------
+    # Analytics collection status (spec §5)
+    # ------------------------------------------------------------------
+
+    async def collection_status(self, session: AsyncSession, conn: Connection) -> dict:
+        """Summarise one analytics connection's collection state, per report.
+
+        Reads the import journal — the only thing that can tell "collected as
+        zero" from "never collected" — and joins it against the periods the
+        current backfill window expects.
+
+        Two distinctions are the whole point of this payload and neither may be
+        collapsed:
+
+        * **``last_error`` vs ``caveat``.** The journal records a ``degraded``
+          sentence in ``error`` on an otherwise ``ok`` row (a truncated vendor
+          page, say). That is a caveat on real data, not a failure; rendering it
+          as an error would make a successful collection look broken. Only rows
+          whose *status* is ``failed`` populate ``last_error``.
+        * **pending vs empty.** ``pending_periods`` counts periods the window
+          expects that the journal has not completed. A period recorded
+          ``empty`` is complete — the vendor genuinely had no data — so it is
+          not pending, while a ``failed`` period stays owed forever (the hole
+          below the watermark refills, see :mod:`app.analytics.journal`).
+
+        Note the tail-refetch union that :func:`journal.pending_periods` applies
+        is deliberately *not* used here: the last couple of periods are always
+        refetched because vendors revise data, which would make a fully
+        collected connection permanently report work outstanding.
+        """
+        from app.analytics.base import Grain
+        from app.models.analytics_import import AnalyticsImport
+        from app.services.analytics_collect_service import (
+            AnalyticsCollectService,
+            build_adapter,
+            period_range,
+        )
+
+        rows = (
+            await session.execute(
+                select(
+                    AnalyticsImport.report,
+                    AnalyticsImport.period,
+                    AnalyticsImport.status,
+                    AnalyticsImport.rows_written,
+                    AnalyticsImport.error,
+                    AnalyticsImport.fetched_at,
+                ).where(AnalyticsImport.connection_id == conn.id)
+            )
+        ).all()
+
+        # The collect service owns the window definition (backfill knob + the
+        # "ends yesterday" rule in the scheduler's timezone). Reading it from
+        # there rather than recomputing keeps "pending" meaning exactly what the
+        # collector will fetch next.
+        collector = AnalyticsCollectService()
+        backfill_days = collector._backfill_days(conn)
+        today = collector._today()
+
+        grains: dict[str, Grain] = {}
+        try:
+            for spec in build_adapter(conn.source_type).available_reports():
+                grains[spec.name] = spec.grain
+        except Exception:
+            # A reserved source type with no adapter yet, or a missing vendor
+            # SDK. The journal still has something to say, so degrade to it
+            # rather than failing a read-only status call.
+            logger.debug(
+                "collection_status: no adapter for source_type %r", conn.source_type, exc_info=True
+            )
+
+        # Imported lazily: analytics_collect_service imports this module, so a
+        # module-level import here would close the cycle.
+        from app.services.analytics_collect_service import CONNECT_SENTINEL_REPORT
+
+        # The ``_connect`` sentinel records a connection-level failure (bad
+        # credential, adapter unbuildable) and is not a vendor report. It drives
+        # the top-level status/last_error below, but listing it as a report would
+        # put a row literally named "_connect" in the UI's per-report table.
+        report_names = sorted(
+            (set(grains) | {row.report for row in rows}) - {CONNECT_SENTINEL_REPORT}
+        )
+        reports = [
+            _report_status(
+                report=name,
+                grain=grains.get(name),
+                entries=[row for row in rows if row.report == name],
+                expected=(
+                    period_range(grains[name], backfill_days=backfill_days, today=today)
+                    if name in grains
+                    else []
+                ),
+            )
+            for name in report_names
+        ]
+
+        total_ok = sum(r["ok_periods"] for r in reports)
+        total_failed = sum(r["failed_periods"] for r in reports)
+        total_pending = sum(r["pending_periods"] for r in reports)
+
+        # Mirrors CollectOutcome.status (spec §2.4) and keeps its rule: zero rows
+        # is only a failure when something actually failed. A window that came
+        # back genuinely ``empty`` everywhere collected fine — the vendor just
+        # had no data — and calling that "failed" would send users hunting for a
+        # broken credential.
+        # A ``_connect`` row means the connection itself could not be opened, so
+        # no report could have run. It is excluded from ``reports`` above (it is
+        # not a vendor report), which also keeps it out of ``total_failed`` — so
+        # check it directly. Without this a broken credential reads as "partial",
+        # implying some data landed when none could.
+        connect_failed = any(
+            row.report == CONNECT_SENTINEL_REPORT and row.status == "failed" for row in rows
+        )
+
+        if not rows:
+            status = "never_collected"
+        elif connect_failed or (total_ok == 0 and total_failed):
+            status = "failed"
+        elif total_failed or total_pending:
+            status = "partial"
+        else:
+            status = "ok"
+
+        newest_failure = _newest(rows, lambda row: row.status == "failed" and bool(row.error))
+        newest_caveat = _newest(rows, lambda row: row.status != "failed" and bool(row.error))
+        newest_row = _newest(rows, lambda _row: True)
+
+        return {
+            "connection_id": conn.id,
+            "source_type": conn.source_type,
+            "collection_enabled": conn.collection_enabled,
+            "collection_hour": conn.collection_hour,
+            "next_scheduled_hour": conn.collection_hour if conn.collection_enabled else None,
+            "timezone": settings.daily_knowledge_sync_timezone,
+            "backfill_days": backfill_days,
+            "status": status,
+            "last_run_at": _iso(newest_row.fetched_at) if newest_row else None,
+            "last_error": newest_failure.error if newest_failure else None,
+            "caveat": newest_caveat.error if newest_caveat else None,
+            "pending_periods": total_pending,
+            "reports": reports,
+        }
+
+
+def _recency_key(row: Any) -> tuple:
+    """Sort key ordering journal rows oldest → newest, NULL timestamps first.
+
+    The leading flag keeps a NULL ``fetched_at`` from ever being compared
+    against a datetime (which raises), and ``period`` breaks ties inside one
+    batch written in the same microsecond.
+    """
+    return (row.fetched_at is not None, row.fetched_at, row.period)
+
+
+def _newest(rows: Sequence[Any], predicate: Callable[[Any], bool]) -> Any | None:
+    """The most recently fetched row satisfying *predicate*, or None."""
+    matching = [row for row in rows if predicate(row)]
+    return max(matching, key=_recency_key) if matching else None
+
+
+def _report_status(
+    *,
+    report: str,
+    grain: str | None,
+    entries: Sequence[Any],
+    expected: list[str],
+) -> dict:
+    """One report's entry in the collection-status payload."""
+    ok_periods = [e.period for e in entries if e.status == "ok"]
+    empty_periods = [e.period for e in entries if e.status == "empty"]
+    failed_periods = [e.period for e in entries if e.status == "failed"]
+    done = set(ok_periods) | set(empty_periods)
+    pending = sorted(set(expected) - done)
+
+    last_failure = _newest(entries, lambda e: e.status == "failed" and bool(e.error))
+    # A caveat rides in ``error`` on a row whose status is *not* failed.
+    last_caveat = _newest(entries, lambda e: e.status != "failed" and bool(e.error))
+    last_run = _newest(entries, lambda _e: True)
+
+    return {
+        "report": report,
+        "grain": grain,
+        "latest_ok_period": max(ok_periods) if ok_periods else None,
+        "latest_collected_period": max(done) if done else None,
+        "ok_periods": len(ok_periods),
+        "empty_periods": len(empty_periods),
+        "failed_periods": len(failed_periods),
+        "rows_written": sum(int(e.rows_written or 0) for e in entries),
+        "pending_periods": len(pending),
+        "pending_sample": pending[:PENDING_SAMPLE_LIMIT],
+        "last_run_at": _iso(last_run.fetched_at) if last_run else None,
+        "last_error": last_failure.error if last_failure else None,
+        "caveat": last_caveat.error if last_caveat else None,
+    }
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None

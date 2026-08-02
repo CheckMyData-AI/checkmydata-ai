@@ -21,8 +21,12 @@ class Connection(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "database" | "mcp" | "ga4" (+ "appstore" / "googleplay" reserved for m1/m2).
     source_type: Mapped[str] = mapped_column(String(50), default="database")
-    db_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Nullable since the analytics spine: a GA4/App Store connection has no
+    # engine, port or database name. Classic database connections still require
+    # all three — the service layer validates per source_type, not the column.
+    db_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # SSH tunnel settings
     ssh_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -34,8 +38,8 @@ class Connection(Base):
 
     # DB connection (encrypted at rest)
     db_host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
-    db_port: Mapped[int] = mapped_column(Integer, nullable=False)
-    db_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    db_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    db_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     db_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
     db_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -53,6 +57,32 @@ class Connection(Base):
     mcp_server_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     mcp_transport_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     mcp_env_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Analytics source fields (used when source_type is an analytics vendor).
+    # RESTRICT, not SET NULL: a credential still in use must fail to delete
+    # loudly (409) rather than silently leaving a connection that can no longer
+    # authenticate but still looks configured.
+    vendor_credential_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("vendor_credentials.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    # Non-secret vendor knobs, e.g.
+    # {"property_ids": [...], "backfill_days": 30, "event_names": [...]}.
+    source_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    collection_enabled: Mapped[bool] = mapped_column(
+        # server_default=true(): Postgres rejects an integer default on a
+        # boolean column (see send_sample_data_to_llm below).
+        Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    # Hour of day (0–23) to collect, local to settings.daily_knowledge_sync_timezone.
+    collection_hour: Mapped[int] = mapped_column(
+        Integer, default=3, server_default="3", nullable=False
+    )
 
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

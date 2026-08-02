@@ -125,6 +125,13 @@ human review moves them to `validated`.
 | SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-111 | Support / Contact / Legal pages | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | implemented | 2026-07-19 PASS |
+| SCN-113 | Add a Google Analytics 4 connection | analytics-sources | owner | draft | — |
+| SCN-114 | Add / delete a vendor credential | analytics-sources | owner | draft | — |
+| SCN-115 | Analytics collection status — ok / partial / pending periods | analytics-sources | editor | draft | — |
+| SCN-116 | Vendor credential delete blocked while in use | analytics-sources | owner | draft | — |
+| SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | draft | — |
+| SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | draft | — |
+| SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
 
 ## Personas
 
@@ -1869,3 +1876,119 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** none
 - **Status:** implemented
 - **Coverage:** components/auth/AuthRedirect.tsx:12-22
+
+## analytics-sources
+
+<!-- External report APIs (GA4 · App Store Connect · Google Play) cached per connection
+     with provenance and TTL — see docs/adr/0001-external-report-cache.md and
+     docs/superpowers/specs/2026-08-01-m0-ga4-spine-design.md. A `planned:` prefix on a
+     Coverage entry marks a file that does not exist yet (allowed only while draft). -->
+
+### SCN-113: Add a Google Analytics 4 connection
+- **Persona:** owner
+- **Feature:** analytics-sources
+- **Entry point:** Connections → "New connection" → source type "Google Analytics 4"
+- **Preconditions:** project owner; at least one `ga4` vendor credential already saved (SCN-114)
+- **Steps:**
+  1. User opens New Connection and picks "Google Analytics 4" as the source type
+  2. The DB/SSH/read-only fields disappear; a credential picker, GA4 property ID, backfill-days, collection-hour and a "Collect automatically" toggle appear
+  3. User selects a stored `ga4` credential, enters the property ID (e.g. `294380179`), and leaves backfill at 30 days and the hour at 03
+  4. User submits
+- **Expected result:** connection created with `source_type=ga4` and no host/port/database; it appears in the list with a GA4 badge and collects at the chosen hour (or immediately via "Collect now", SCN-115)
+- **UI elements:** source-type select ("Google Analytics 4"), credential select + "＋ new credential" affordance, property-ID input, backfill-days input, collection-hour select, "Collect automatically" toggle, Save button
+- **States covered:** loading, empty (no credentials saved yet), error, success
+- **Errors & recovery:** submitting without a credential → toast and the credential select is marked invalid; a property not shared with the service account → 403 → `AnalyticsPermissionError` surfaced as "grant Viewer on this property"; a credential owned by another user → 404 (owner-strict); create fails → toast, form keeps its values
+- **Status:** draft
+- **Coverage:** components/connections/ConnectionSelector.tsx
+
+### SCN-114: Add / delete a vendor credential
+- **Persona:** owner
+- **Feature:** analytics-sources
+- **Entry point:** Sidebar → Setup group → "Vendor credentials" section → "Add" (mirrors the SSH-keys section, SCN-038/039); also reachable inline from the GA4 connection form's "＋ New credential"
+- **Preconditions:** authenticated
+- **Steps:**
+  1. User opens Vendor credentials and clicks Add
+  2. User enters a name, picks the provider "Google Analytics 4", and pastes the service-account JSON into the write-only paste area
+  3. User clicks "Add credential"
+  4. Later, to remove one: user hovers the credential row, clicks the trash and confirms
+- **Expected result:** the secret is stored Fernet-encrypted; the row shows name, provider badge, fingerprint and the service-account `client_email` — never the secret itself. Delete removes an unreferenced credential with a toast
+- **UI elements:** "Add" button, name input, provider select, service-account JSON textarea (`aria-label`, write-only), "Add credential" button, credential rows with provider badge + fingerprint, trash ActionButton, ConfirmModal
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** malformed service-account JSON → 422 with a specific inline message and nothing stored; create fails → inline error; the secret is never echoed back — reopening a row shows only the fingerprint; another user's credential is never listed; delete refused while a connection still uses it → SCN-116
+- **Status:** draft
+- **Coverage:** components/settings/VendorCredentialsPanel.tsx
+
+### SCN-115: Analytics collection status — ok / partial / pending periods
+- **Persona:** editor
+- **Feature:** analytics-sources
+- **Entry point:** the collection row in a GA4 connection's health area (`ConnectionHealth`)
+- **Preconditions:** a GA4 connection exists (SCN-113)
+- **Steps:**
+  1. User opens Connections and looks at the GA4 connection's collection row
+  2. User reads the outcome badge, the latest collected period per report, and the pending-period list
+  3. User clicks "Collect now" to fill a gap without waiting for the scheduled hour
+- **Expected result:** the badge reads `ok` / `partial` / `failed` distinctly; `partial` additionally names the periods still pending and the last error; "Collect now" enqueues exactly one job and the row switches to running
+- **UI elements:** collection row, outcome badge (ok/partial/failed), last-run timestamp, per-report latest-ok period, pending-period list, next scheduled hour, "Collect now" button (`aria-label` + Tooltip)
+- **States covered:** loading, empty (never collected), success, partial, error
+- **Errors & recovery:** a period collected with zero rows reads as collected-zero, **not** as pending — the never-collected and the zero cases must render differently; a period that failed stays pending and is refilled on the next run; status fetch fails → inline error + Retry; "Collect now" fails → toast
+- **Status:** draft
+- **Coverage:** components/connections/ConnectionHealth.tsx
+
+### SCN-116: Vendor credential delete blocked while in use
+- **Persona:** owner
+- **Feature:** analytics-sources
+- **Entry point:** Settings → Vendor credentials → trash on a credential that a connection still references
+- **Preconditions:** at least one connection references the credential
+- **Steps:**
+  1. User clicks the trash on the credential
+  2. User confirms in the ConfirmModal
+- **Expected result:** the delete is refused (HTTP 409, FK RESTRICT); the credential row stays and the message says a connection still uses it — no connection is ever left orphaned
+- **UI elements:** trash ActionButton, ConfirmModal, error toast naming the conflict, the unchanged credential row
+- **States covered:** error
+- **Errors & recovery:** this scenario IS the error path; recovery is to delete the referencing connection (SCN-032) or re-point it at another credential (SCN-113), then retry the credential delete
+- **Status:** draft
+- **Coverage:** components/settings/VendorCredentialsPanel.tsx; components/connections/ConnectionSelector.tsx
+
+### SCN-117: Ask about analytics data in chat — grounded answer or honest refusal
+- **Persona:** analyst
+- **Feature:** analytics-sources
+- **Entry point:** Chat → question about traffic, users, events or revenue
+- **Preconditions:** a GA4 connection exists and has collected at least one period (SCN-113, SCN-115)
+- **Steps:**
+  1. User asks e.g. "how many sessions did we get last week?"
+  2. The agent reads the collected fact tables and answers with the figures
+- **Expected result:** every number in the answer comes from collected rows; the answer states its coverage
+- **UI elements:** chat answer, caveat lines, reasoning panel
+- **States covered:** success, partial, refusal, error
+- **Errors & recovery:** the model answering without reading data → it is re-prompted once and then refused, and no invented figure is shown; a window with periods that failed → `⚠️ PARTIAL DATA` naming them, and those periods are excluded from the totals; a window the vendor truncated → the numbers are shown as a real lower bound, explicitly not a complete measurement; a window whose collection record aged out of retention → the numbers are shown and counted, and only the record is reported missing; a period never collected → reported as unknown, never as zero
+- **Status:** draft
+- **Coverage:** backend/app/agents/analytics_agent.py
+
+### SCN-118: Analytics answer renders a chart
+- **Persona:** analyst
+- **Feature:** analytics-sources
+- **Entry point:** Chat → analytics question whose answer is tabular
+- **Preconditions:** a GA4 connection with collected rows (SCN-113)
+- **Steps:**
+  1. User asks a question that returns a table (e.g. sessions by country)
+  2. The answer renders with a chart, as a database answer does
+- **Expected result:** the tabular analytics result reaches the visualization pipeline and charts like any other result
+- **UI elements:** chart, result block, chart-type controls
+- **States covered:** success, partial, empty
+- **Errors & recovery:** a truncated or partially-collected window marks the result truncated so the chart is not presented as complete; a result with no rows produces no chart rather than an empty one implying zero
+- **Status:** draft
+- **Coverage:** backend/app/agents/orchestrator.py
+
+### SCN-119: Unsupported analytics source refused at creation
+- **Persona:** owner
+- **Feature:** analytics-sources
+- **Entry point:** New Connection form → source type
+- **Preconditions:** project owner
+- **Steps:**
+  1. User attempts to create an App Store Connect or Google Play connection
+- **Expected result:** creation is refused with a specific message; no connection row is created and nothing is scheduled
+- **UI elements:** source-type select, error toast
+- **States covered:** error
+- **Errors & recovery:** 422 naming the source as not yet available, rather than creating a connection that would fail silently every day; the credential providers remain selectable so keys can be stored ahead of support landing
+- **Status:** draft
+- **Coverage:** backend/app/services/connection_service.py

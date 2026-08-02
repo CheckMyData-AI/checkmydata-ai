@@ -12,6 +12,7 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ConnectionsPanel } from "@/components/connections/ConnectionsPanel";
 import { useAppStore } from "@/stores/app-store";
 import { useAppPanel } from "@/hooks/useAppPanel";
+import { connectionSourceIcon, connectionSourceLabel } from "@/lib/connection-source";
 
 const LogPanel = dynamic(
   () => import("@/components/log/LogPanel").then((m) => m.LogPanel),
@@ -233,12 +234,16 @@ function AppPageContent() {
                         <>
                           <span className="text-text-muted">/</span>
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <Icon name="database" size={12} className="text-text-tertiary shrink-0" />
+                            <Icon
+                              name={connectionSourceIcon(activeConnection)}
+                              size={12}
+                              className="text-text-tertiary shrink-0"
+                            />
                             <span className="text-xs text-text-secondary truncate">
                               {activeConnection.name}
                             </span>
                             <span className="text-[10px] text-text-muted uppercase font-mono">
-                              {activeConnection.db_type}
+                              {connectionSourceLabel(activeConnection)}
                             </span>
                           </div>
                         </>

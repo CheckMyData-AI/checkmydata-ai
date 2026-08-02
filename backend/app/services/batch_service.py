@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,7 @@ from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import tracker
 from app.models.base import async_session_factory
 from app.models.batch_query import BatchQuery
+from app.models.connection import Connection
 from app.models.saved_note import SavedNote
 from app.services.connection_service import ConnectionService
 from app.viz.utils import serialize_value
@@ -20,6 +22,61 @@ from app.viz.utils import serialize_value
 logger = logging.getLogger(__name__)
 
 _conn_svc = ConnectionService()
+
+# ---------------------------------------------------------------------------
+# Database-only guards (T12)
+#
+# Since the analytics spine, ``Connection.db_type`` / ``db_port`` / ``db_name``
+# are nullable: a GA4 (or other vendor) source has no engine, port or database.
+# Everything that reaches ``get_connector(db_type)`` or
+# ``SafetyGuard.validate(sql, db_type)`` therefore has to prove the connection
+# really is a database first — otherwise ``get_connector(None)`` falls through
+# to the source key and dies with ``ValueError: Unsupported adapter: database``,
+# which tells the user nothing.
+#
+# These live here (rather than in a new module) so that the four database-only
+# routes and this service share one definition; the service layer already
+# raises ``HTTPException`` elsewhere (see ``membership_service.require_role``).
+# ---------------------------------------------------------------------------
+
+DATABASE_SOURCE_TYPE = "database"
+
+_SOURCE_TYPE_LABELS = {
+    "ga4": "Google Analytics 4",
+    "appstore": "App Store Connect",
+    "googleplay": "Google Play",
+    "mcp": "MCP",
+}
+
+
+def describe_source_type(source_type: str) -> str:
+    """Human-readable vendor name for a ``Connection.source_type``."""
+    return _SOURCE_TYPE_LABELS.get(source_type, source_type or "non-database")
+
+
+def not_a_database_detail(conn: Connection, *, subject: str = "This endpoint") -> str:
+    """Explain why *conn* cannot serve SQL. Only meaningful for a non-database source."""
+    if conn.source_type != DATABASE_SOURCE_TYPE:
+        return (
+            f"{subject} requires a database connection; "
+            f"'{conn.name}' is a {describe_source_type(conn.source_type)} source."
+        )
+    return (
+        f"{subject} requires a database connection; "
+        f"'{conn.name}' has no database engine configured."
+    )
+
+
+def require_database_connection(conn: Connection, *, subject: str = "This endpoint") -> str:
+    """Return ``conn.db_type``, or raise HTTP 400 when *conn* is not a database source.
+
+    Fails early and explicitly so an analytics connection never reaches a
+    connector factory or the SQL SafetyGuard.
+    """
+    db_type = conn.db_type
+    if conn.source_type != DATABASE_SOURCE_TYPE or db_type is None:
+        raise HTTPException(status_code=400, detail=not_a_database_detail(conn, subject=subject))
+    return db_type
 
 
 class BatchService:
@@ -212,6 +269,20 @@ class BatchService:
                 await db.commit()
                 return
 
+            # T12: batch execution is SQL, so it is database-only. An analytics
+            # source has no engine to run against — fail the batch through the
+            # normal failure path with an honest error rather than crashing in
+            # ``get_connector(None)`` and leaving the row stuck in "running".
+            db_type = conn_model.db_type
+            if conn_model.source_type != DATABASE_SOURCE_TYPE or db_type is None:
+                detail = not_a_database_detail(conn_model, subject="Batch execution")
+                logger.warning("Batch %s rejected: %s", batch_id[:8], detail)
+                batch.status = "failed"
+                batch.results_json = json.dumps([{"error": detail}])
+                batch.completed_at = datetime.now(UTC)
+                await db.commit()
+                return
+
             config = await _conn_svc.to_config(db, conn_model, user_id=user_id)
             queries = json.loads(batch.queries_json)
             total = len(queries)
@@ -222,7 +293,6 @@ class BatchService:
                 SafetyLevel.READ_ONLY if conn_model.is_read_only else SafetyLevel.ALLOW_DML
             )
             guard = SafetyGuard(level=safety_level)
-            db_type = conn_model.db_type
 
             batch.status = "running"
             await db.commit()
@@ -240,7 +310,7 @@ class BatchService:
             # connector + its driver to multiplex queries safely; the
             # semaphore caps true concurrency so we don't DOS the
             # database with parallel queries.
-            connector = get_connector(conn_model.db_type, ssh_exec_mode=config.ssh_exec_mode)
+            connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
             await connector.connect(config)
             try:
                 if parallel and total > 1:

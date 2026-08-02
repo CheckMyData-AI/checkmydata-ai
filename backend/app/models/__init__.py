@@ -1,6 +1,14 @@
 """Import all ORM models so SQLAlchemy's mapper can resolve every relationship."""
 
 from app.models.agent_learning import AgentLearning  # noqa: F401
+from app.models.analytics_ga4 import (  # noqa: F401
+    GA4EventDaily,
+    GA4GeoDaily,
+    GA4OverviewDaily,
+    GA4PlatformDaily,
+    GA4TrendDaily,
+)
+from app.models.analytics_import import AnalyticsImport  # noqa: F401
 from app.models.backup_record import BackupRecord  # noqa: F401
 from app.models.batch_query import BatchQuery  # noqa: F401
 from app.models.benchmark import DataBenchmark  # noqa: F401
@@ -39,3 +47,4 @@ from app.models.session_note import SessionNote  # noqa: F401
 from app.models.ssh_key import SshKey  # noqa: F401
 from app.models.token_usage import TokenUsage  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.vendor_credential import VendorCredential  # noqa: F401

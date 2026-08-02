@@ -313,10 +313,17 @@ New dependency: `google-analytics-data>=0.18`. `google-auth` arrives transitivel
 - **`ConnectionHealth`** — a collection row: last run, outcome badge
   (`ok`/`partial`/`failed`), pending periods, next scheduled hour, "Collect now".
 
-Scenarios appended to `docs/ux/scenarios.md` in format v1:
-`SCN-105` add a GA4 connection · `SCN-106` add/delete a vendor credential ·
-`SCN-107` collection status incl. **partial** and pending periods ·
-`SCN-108` credential delete blocked while in use.
+Scenarios appended to `docs/ux/scenarios.md` in format v1. **IDs corrected during the
+build: SCN-105…108 were already taken (the file runs to SCN-112), so the block is
+SCN-113…116.** A spec that names scenario IDs is a proposal, not a reservation — IDs
+are allocated from the end of the file at write time and never reused.
+`SCN-113` add a GA4 connection · `SCN-114` add/delete a vendor credential ·
+`SCN-115` collection status incl. **partial** and pending periods ·
+`SCN-116` credential delete blocked while in use.
+
+A `Coverage:` entry may be prefixed `planned:` when the component it names is created by
+a later task; such an entry is exempt from the existence check **only while the scenario
+is `draft`** (enforced by its own test).
 
 ## 7. Failure & edge cases (each gets a test)
 

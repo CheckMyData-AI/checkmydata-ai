@@ -323,9 +323,17 @@ def get_orchestrator_tools(
     has_connection: bool = False,
     has_knowledge_base: bool = False,
     has_mcp_sources: bool = False,
+    has_analytics_sources: bool = False,
     has_repo: bool = False,
 ) -> list[Tool]:
-    """Return the meta-tools available to the orchestrator."""
+    """Return the meta-tools available to the orchestrator.
+
+    Each flag is a capability the project actually has: advertising a tool the
+    project cannot serve costs a wasted turn and an apology. ``has_analytics_sources``
+    gates ``query_analytics_source`` exactly as ``has_mcp_sources`` gates
+    ``query_mcp_source``, and independently of it — a project may have one, both
+    or neither.
+    """
     tools: list[Tool] = []
     if has_connection:
         tools.append(QUERY_DATABASE_TOOL)
@@ -342,5 +350,9 @@ def get_orchestrator_tools(
         from app.agents.tools.mcp_tools import QUERY_MCP_SOURCE_TOOL
 
         tools.append(QUERY_MCP_SOURCE_TOOL)
+    if has_analytics_sources:
+        from app.agents.tools.analytics_tools import QUERY_ANALYTICS_SOURCE_TOOL
+
+        tools.append(QUERY_ANALYTICS_SOURCE_TOOL)
     tools.append(ASK_USER_TOOL)
     return tools

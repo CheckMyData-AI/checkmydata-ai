@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **What it is**: AI-powered database query agent — natural language → SQL, codebase Q&A, visualizations, team workspaces.
 - **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB (via `backend/app/connectors/`).
+- **Supported analytics sources**: `Connection.source_type` also accepts three analytics vendors (`backend/app/analytics/`, family defined once in `app/analytics/source_types.py`): **`ga4`** (Google Analytics 4 — the only one with a collector today), plus **`appstore`** and **`googleplay`**, reserved for m1/m2 (connection creation refuses them with 422 until their fact tables land). Runbook: `docs/ANALYTICS_SOURCES.md`.
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: ~6,125 total (5,580 backend + 546 frontend Vitest); backend coverage ~78% (78.03% on the 2026-07-24 remediation run; the CI gate `fail_under` is **72%**).
-- **Recent work**: current release **`[1.15.1]`** (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
+- **Tests**: ~6,634 total (6,028 backend collected + 606 frontend Vitest across 86 files); backend coverage ~78% (78.03% on the 2026-07-24 remediation run; the CI gate `fail_under` is **72%**).
+- **Recent work**: current release **`[1.16.0]`** — GA4 as a first-class data source (vendor-credential store, scheduled collection behind an import journal, `AnalyticsAgent` with honesty gates, charting) plus the `vision.md` §8 carve-out recorded in `docs/adr/0001-external-report-cache.md`. `[1.15.1]` (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
 
 ## Prerequisites
 
@@ -168,6 +169,24 @@ Cleanup: `backend/app/services/indexing_artifacts.py` does best-effort cleanup o
 
 **Knowledge freshness**: `KnowledgeFreshnessService` combines DB-index age, code↔DB sync status, and Git HEAD vs indexed SHA into a single warning injected into orchestrator and sub-agent prompts.
 
+### Analytics source pipeline (GA4)
+
+A second, non-SQL ingestion path for external report APIs. `vision.md` §8 carries an explicit carve-out for it (cache-with-provenance, **not** a warehouse) — rationale, alternatives and retention in `docs/adr/0001-external-report-cache.md`. Operator runbook: `docs/ANALYTICS_SOURCES.md`.
+
+```
+adapter → journal → fact tables → AnalyticsAgent
+```
+
+| Stage | Where | What it does |
+|---|---|---|
+| **Adapter** | `app/analytics/ga4/adapter.py` (`GA4Adapter`), reports in `ga4/reports.py`, knobs vs secret split in `ga4/config.py` | Pages GA4's Data API on `offset` (Δ1 — a single un-paginated call silently truncates at 10 000 rows), requests `keep_empty_rows` so a dead day is a zero and not a gap (Δ2), and reads `PropertyQuota` (Δ3). Maps vendor failures onto the taxonomy in `app/analytics/errors.py`: 401→auth, 403→permission, 404→empty, 429/5xx→transient, spent bucket→quota. **Only transient/quota are retried** (`app/analytics/http.py::retry_async`, honours `Retry-After`, bounded at 60 s) — retrying an auth/permission error burns quota and can never succeed. |
+| **Journal** | `app/analytics/journal.py`, table `analytics_imports`, UNIQUE `(connection_id, report, period)` | One verdict per period: `ok` \| `empty` \| `failed`. Pending is **`expected − done`**, never `max(period)` — a hole below the high-water mark must refill, so a `failed` period stays owed while an `empty` one is complete. The most recent `analytics_refetch_tail_periods` are always re-fetched (vendors revise). `prune()` runs in the 24 h maintenance cron. |
+| **Fact tables** | `app/models/analytics_ga4.py`; `ga4_overview_daily`, `ga4_geo_daily`, `ga4_platform_daily`, `ga4_trend_daily`, `ga4_event_daily` | Natural-keyed on `(connection_id, property_id, date, …dimensions)` with `ON CONFLICT DO UPDATE`, so re-collecting a period overwrites rather than duplicates. Counts are `BigInteger`, revenue is `Numeric(18,4)` — never float. **Raw vendor payloads are never persisted.** |
+| **Collection** | `app/services/analytics_collect_service.py` | Per-period isolation: one failing period never aborts the run but is always journalled; an auth/permission error stops that report. Exit contract `ok` \| `partial` \| `failed` — errors with rows written is `partial`, errors with none is `failed`, and **no errors with zero rows is `ok`** (nothing was due). A run that dies before any report is journalled under the reserved report name `_connect`. |
+| **Agent** | `app/agents/analytics_agent.py`, tool `query_analytics_source` (`app/agents/tools/analytics_tools.py`) | Reads the **local fact tables**, never the vendor and **never free-form SQL** — three parameterised tools (`list_reports`, `query_report`, `coverage`). Gates in spec order: DataGate hard checks → truncation/partial caveat → freshness → `AnswerQualityGate`. Budget exhaustion returns `no_result`, and an answer with no tool call behind it is refused outright rather than published. Results chart through `VizAgent` like any tabular result. |
+
+Gating: `ContextLoader.has_analytics_sources(project_id)` decides whether `query_analytics_source` is exposed, mirroring `has_mcp_sources`. `AnalyticsPipeline` (`app/pipelines/analytics_pipeline.py`) is registered in `PIPELINE_REGISTRY` for all three vendor keys. `is_queryable_database()` in `connection_service.py` — not "has a config" — is the predicate for "is there a database to query"; an analytics connection must never advertise `query_database`.
+
 ### Background worker (ARQ)
 
 When `REDIS_URL` is set, long jobs run in the worker process; otherwise `app/core/task_queue.py` runs them in-process on the API event loop (keep both paths working).
@@ -178,8 +197,11 @@ Worker functions (`backend/app/worker.py`):
 - `run_code_db_sync` — code↔DB cross-reference
 - `run_repo_index` — Git repo knowledge pipeline
 - `run_batch` — batch query execution
+- `run_analytics_collect` — collect one analytics connection's reports into its fact tables (per-function timeout `analytics_collect_job_timeout_seconds`)
 
-Maintenance cron (24 h): learning/insight confidence decay, insight TTL expiry, optional backup (`maintenance_interval_hours`).
+Hourly cron loops in `app/main.py`, same shape and both multi-dyno-safe (hour-scoped `redis_lock` + day-scoped `task_id`): `_daily_knowledge_sync_cron_loop` (repo index → DB index → code↔DB sync, gated on `daily_knowledge_sync_enabled`) and `_analytics_collect_cron_loop` (analytics collection wave, gated on `analytics_collect_enabled`). Both read their flag **once at start-up** — flipping it needs a restart. They share `daily_knowledge_sync_timezone` so both agree what "3 a.m." means.
+
+Maintenance cron (24 h): learning/insight confidence decay, insight TTL expiry, analytics journal prune, optional backup (`maintenance_interval_hours`).
 
 ### API surface (route modules)
 
@@ -291,6 +313,19 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 
 `git_webhook_enabled`, `git_poll_enabled`, `auto_sync_after_index`, `freshness_reconciler_enabled`, `schema_change_alerts_enabled`.
 
+**Analytics sources** (`docs/ANALYTICS_SOURCES.md`; all six read from `backend/app/config.py`, all validated at boot — a non-positive value raises rather than silently idling the collector):
+
+| Setting | Default | Env | Notes |
+|---|---|---|---|
+| `analytics_collect_enabled` | **off** | `ANALYTICS_COLLECT_ENABLED` | Master switch for the hourly wave. Off per the ingestion-automation house rule — it calls third-party APIs on a schedule. Read once at start-up. |
+| `analytics_backfill_days` | 30 | `ANALYTICS_BACKFILL_DAYS` | Window width in periods of the report's grain, always ending **yesterday** (today is partial at the vendor). Overridden per connection by `source_config.backfill_days`. |
+| `analytics_refetch_tail_periods` | 2 | `ANALYTICS_REFETCH_TAIL_PERIODS` | Recent periods refetched even when already collected — GA4 settles within ~48 h. `0` disables the tail. |
+| `analytics_collect_job_timeout_seconds` | 1800 | `ANALYTICS_COLLECT_JOB_TIMEOUT_SECONDS` | Registered on the ARQ function (arq has no per-enqueue timeout) and passed to the in-process fallback. |
+| `analytics_http_attempts` | 3 | `ANALYTICS_HTTP_ATTEMPTS` | Attempts per vendor call. Transient/quota only — auth/permission are never retried. |
+| `analytics_journal_retention_days` | 400 | `ANALYTICS_JOURNAL_RETENTION_DAYS` | Journal prune horizon (24 h maintenance cron). Fact rows are **kept**; only the journal is pruned. |
+
+Per-connection, **not** a global flag: `collection_enabled` (default **on**) and `collection_hour` (default **3**, local to `daily_knowledge_sync_timezone`). `collection_enabled` pauses only the *schedule* — `POST /api/connections/{id}/collect` deliberately ignores it, since pulling on demand is how a credential fix is verified.
+
 **Platform / security:**
 
 `billing_enabled`, `mcp_enabled`, `mcp_mount_enabled` (HTTP mount, requires `mcp_enabled`), `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).
@@ -346,6 +381,7 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 | Release history | `CHANGELOG.md` |
 | Code-graph rollout | `docs/ROLLOUT_M1_M6.md` |
 | Knowledge layer | `docs/KNOWLEDGE_CATALOG.md` |
+| Analytics sources (GA4) | `docs/ANALYTICS_SOURCES.md` (operator runbook), `docs/adr/0001-external-report-cache.md` (why caching is allowed) |
 | Live Git roadmap | `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md` |
 | Deployment | `docs/DEPLOYMENT.md`, `INSTALLATION.md#production-deployment` |
 | Audit remediation | `docs/AUDIT_REMEDIATION_PLAN_2026-06.md` |

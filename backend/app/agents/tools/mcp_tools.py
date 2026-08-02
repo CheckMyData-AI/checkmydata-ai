@@ -9,8 +9,11 @@ QUERY_MCP_SOURCE_TOOL = Tool(
     name="query_mcp_source",
     description=(
         "Query an external data source connected via MCP (Model Context Protocol). "
-        "Use when the user asks about data from external services like "
-        "Google Analytics, Stripe, Jira, or other MCP-connected sources."
+        "Use this for sources that are NOT natively supported — e.g. Stripe, Jira, "
+        "or any other MCP-connected service. Google Analytics, App Store Connect "
+        "and Google Play have first-class connectors, so prefer "
+        "query_analytics_source for those: it answers from data already collected "
+        "into this project and reports which periods are missing."
     ),
     parameters=[
         ToolParameter(

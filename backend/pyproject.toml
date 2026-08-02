@@ -1,6 +1,6 @@
 [project]
 name = "checkmydata-ai"
-version = "1.15.1"
+version = "1.16.0"
 description = "AI-powered database agent with Git repo analysis, multi-DB support, and data visualization"
 readme = {text = "AI-powered database agent with Git repo analysis, multi-DB support, and data visualization", content-type = "text/plain"}
 license = {text = "MIT"}
@@ -32,6 +32,7 @@ dependencies = [
     "websockets>=14.1",
     "openpyxl>=3.1.5",
     "google-auth>=2.0.0",
+    "google-analytics-data>=0.18",
     # mcp is pinned exactly on purpose — bump deliberately and run the mcp
     # tests. 1.28.1 fixes CVE-2026-59950.
     "mcp==1.28.1",

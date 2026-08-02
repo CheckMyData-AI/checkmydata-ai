@@ -79,10 +79,13 @@ export function connToForm(c: Connection): FormState {
   }
   return {
     name: c.name,
-    db_type: c.db_type,
-    db_host: c.db_host,
-    db_port: String(c.db_port),
-    db_name: c.db_name,
+    // A non-database source carries nulls here. `String(null)` would put the
+    // literal "null" in the port box and a null `value` would make React warn
+    // about an uncontrolled input, so each one degrades to the empty form.
+    db_type: c.db_type ?? EMPTY_FORM.db_type,
+    db_host: c.db_host || EMPTY_FORM.db_host,
+    db_port: c.db_port == null ? EMPTY_FORM.db_port : String(c.db_port),
+    db_name: c.db_name ?? "",
     db_user: c.db_user || "",
     db_password: "",
     ssh_host: c.ssh_host || "",

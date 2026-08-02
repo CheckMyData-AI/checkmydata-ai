@@ -46,6 +46,16 @@ import {
   semanticLayer,
   temporal,
 } from "./analytics";
+import { vendorCredentials } from "./vendor-credentials";
+
+// The vendor-credential *types* travel with the client so callers can stay on
+// the `@/lib/api` import like every other domain. The provider catalogue and
+// the presentation helpers deliberately stay module-local — they are UI copy,
+// not API surface.
+export type {
+  VendorCredential,
+  VendorCredentialCreatePayload,
+} from "./vendor-credentials";
 
 export {
   auth,
@@ -77,6 +87,7 @@ export {
   tasks,
   temporal,
   usage,
+  vendorCredentials,
   viz,
 };
 
@@ -111,4 +122,5 @@ export const api = {
   explore,
   semanticLayer,
   reconciliation,
+  vendorCredentials,
 };

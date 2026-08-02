@@ -387,6 +387,32 @@ class Settings(BaseSettings):
     daily_knowledge_sync_timezone: str = "Europe/Berlin"
     daily_knowledge_sync_job_timeout_seconds: int = 7200
 
+    # ----- Analytics sources (GA4 / App Store / Google Play), spec §4 ---------
+    # Hourly collection wave for analytics connections. OFF by default: it calls
+    # third-party APIs on a schedule, which must be an explicit opt-in, and the
+    # per-connection ``collection_hour`` decides which hour a connection runs in
+    # (local to ``daily_knowledge_sync_timezone``, shared so both crons agree on
+    # what "3 a.m." means).
+    analytics_collect_enabled: bool = False
+    # How far back a fresh connection backfills, in periods of the report's
+    # grain, ending yesterday — today is always partial at the vendor. Overridden
+    # per connection by ``source_config_json.backfill_days``.
+    analytics_backfill_days: int = 30
+    # How many of the most recent periods are refetched even when already
+    # collected. Vendors revise recent data (GA4 settles within ~48 h), so a
+    # period that is merely "done" is not necessarily final.
+    analytics_refetch_tail_periods: int = 2
+    # Wall-clock budget for one connection's collection job. Registered on the
+    # ARQ function (arq has no per-enqueue timeout) and passed to the in-process
+    # fallback for parity.
+    analytics_collect_job_timeout_seconds: int = 1800
+    # Attempts per vendor HTTP call before it is reported as transient. Only
+    # transient/quota failures are retried — auth and permission never are.
+    analytics_http_attempts: int = 3
+    # Retention for the ``analytics_imports`` journal (REQ-015). A little over a
+    # year so year-over-year backfills still see their own history.
+    analytics_journal_retention_days: int = 400
+
     # Stale-run reaper (P0): heartbeat-based recovery of stuck 'running' statuses
     # after a hard worker crash (OOM/SIGKILL/dyno cycle) where the job's finally
     # block never ran. Reaper runs in both web and worker; idempotent.
@@ -892,6 +918,19 @@ class Settings(BaseSettings):
             )
         if self.mcp_token_default_expiry_days < 0:
             raise ValueError("MCP_TOKEN_DEFAULT_EXPIRY_DAYS must be >= 0 (0 = never).")
+        # Analytics collection: a zero/negative window would make the collector
+        # silently idle (nothing "expected", so nothing ever pending) instead of
+        # failing — the exact silent-no-data mode this module exists to prevent.
+        if self.analytics_backfill_days <= 0:
+            raise ValueError("ANALYTICS_BACKFILL_DAYS must be positive.")
+        if self.analytics_refetch_tail_periods < 0:
+            raise ValueError("ANALYTICS_REFETCH_TAIL_PERIODS must be >= 0 (0 = no tail).")
+        if self.analytics_collect_job_timeout_seconds <= 0:
+            raise ValueError("ANALYTICS_COLLECT_JOB_TIMEOUT_SECONDS must be positive.")
+        if self.analytics_http_attempts < 1:
+            raise ValueError("ANALYTICS_HTTP_ATTEMPTS must be >= 1.")
+        if self.analytics_journal_retention_days < 1:
+            raise ValueError("ANALYTICS_JOURNAL_RETENTION_DAYS must be >= 1.")
         return self
 
 

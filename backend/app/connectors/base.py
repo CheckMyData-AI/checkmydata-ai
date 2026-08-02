@@ -3,9 +3,33 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+_REDACTED = "<redacted>"
 
-@dataclass
+
+def _presence(value: Any) -> str:
+    """Render *whether* a secret is set, never what it is."""
+    return _REDACTED if value else repr(None)
+
+
+@dataclass(repr=False)
 class ConnectionConfig:
+    """Everything needed to reach one data source — secrets included.
+
+    ``repr=False`` and the hand-written :meth:`__repr__` below are load-bearing
+    security, not style (H5). Sentry's SDK captures ``repr()``-ed frame locals
+    (``include_local_variables``) and attaches them under
+    ``exception.values[].stacktrace.frames[].vars`` — a payload the ``before_send``
+    scrubber in :mod:`app.core.sentry` never walks. With the generated dataclass
+    repr, *any* exception raised in a frame holding one of these (a connector's
+    ``connect``, the analytics collect loop, ``to_config``) would ship the DB
+    password, the SSH private key and the decrypted service-account JSON to a
+    third party. ``init_sentry`` now also passes ``include_local_variables=False``;
+    this repr is the second, transport-independent half of the fix — it covers
+    every other place a config lands in a log line or an error message.
+
+    :class:`app.analytics.ga4.config.GA4Credentials` redacts for the same reason.
+    """
+
     db_type: str
     db_host: str = "127.0.0.1"
     db_port: int = 5432
@@ -29,6 +53,63 @@ class ConnectionConfig:
     extra: dict[str, Any] = field(default_factory=dict)
 
     connection_id: str | None = None
+
+    def __repr__(self) -> str:
+        """Render the config with every secret replaced by a presence marker.
+
+        What stays visible is what a human debugging a connection actually reads
+        — type, host, port, database, user, SSH target, the mode flags and the
+        connection id — plus, for each secret, whether it is set at all
+        ("password missing" is a real diagnosis; the password is not).
+
+        Three values are withheld beyond the obvious credentials:
+
+        * ``connection_string`` — a DSN embeds the password.
+        * ``ssh_command_template`` / ``ssh_pre_commands`` — free-form shell text
+          the user supplies, which can inline a literal credential. Their
+          presence (and the pre-command *count*) is the debugging signal.
+        * ``extra`` — an open bag. On the analytics path it carries the
+          decrypted vendor credential (``vendor_credential_secret``). Its *keys*
+          are rendered so "which knobs were passed?" stays answerable.
+        """
+        pre_commands = (
+            f"[{len(self.ssh_pre_commands)} command(s)]"
+            if self.ssh_pre_commands
+            else repr(self.ssh_pre_commands)
+        )
+        extra = (
+            "{" + ", ".join(f"{key!r}: {_REDACTED}" for key in sorted(self.extra)) + "}"
+            if self.extra
+            else "{}"
+        )
+        fields = [
+            f"db_type={self.db_type!r}",
+            f"db_host={self.db_host!r}",
+            f"db_port={self.db_port!r}",
+            f"db_name={self.db_name!r}",
+            f"db_user={self.db_user!r}",
+            f"db_password={_presence(self.db_password)}",
+            f"connection_string={_presence(self.connection_string)}",
+            f"ssh_host={self.ssh_host!r}",
+            f"ssh_port={self.ssh_port!r}",
+            f"ssh_user={self.ssh_user!r}",
+            f"ssh_key_content={_presence(self.ssh_key_content)}",
+            f"ssh_key_passphrase={_presence(self.ssh_key_passphrase)}",
+            f"ssh_exec_mode={self.ssh_exec_mode!r}",
+            f"ssh_command_template={_presence(self.ssh_command_template)}",
+            f"ssh_pre_commands={pre_commands}",
+            f"is_read_only={self.is_read_only!r}",
+            f"send_sample_data_to_llm={self.send_sample_data_to_llm!r}",
+            f"extra={extra}",
+            f"connection_id={self.connection_id!r}",
+        ]
+        return f"ConnectionConfig({', '.join(fields)})"
+
+    #: ``"%s" % config`` and ``f"{config}"`` must not be a second leak channel:
+    #: without this, ``__str__`` would fall back to ``object.__str__`` -> repr,
+    #: which is fine today, but stating it makes the guarantee explicit and
+    #: survives someone adding a ``__str__`` later.
+    __str__ = __repr__
 
 
 def connector_key(cfg: ConnectionConfig) -> str:

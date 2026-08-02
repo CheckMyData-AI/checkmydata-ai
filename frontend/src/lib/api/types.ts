@@ -40,19 +40,36 @@ export interface ProjectMember {
   display_name: string | null;
 }
 
+/**
+ * Non-secret vendor knobs for an analytics source (`ConnectionResponse.
+ * source_config`). The two keys the connection form owns are named; anything
+ * else the backend or a later milestone stores here must survive an edit
+ * untouched, so the index signature is deliberate rather than lazy.
+ */
+export interface ConnectionSourceConfig {
+  property_ids?: string[] | null;
+  backfill_days?: number | null;
+  [key: string]: unknown;
+}
+
 export interface Connection {
   id: string;
   project_id: string;
   name: string;
-  db_type: string;
+  /**
+   * Null for anything that is not a live database: a GA4 property has no
+   * engine, and reporting one would be a lie the UI cannot detect.
+   */
+  db_type: string | null;
+  /** "database" | "mcp" | "ga4" (+ "appstore" / "googleplay" in m1/m2). */
   source_type: string;
   ssh_host: string | null;
   ssh_port: number;
   ssh_user: string | null;
   ssh_key_id: string | null;
   db_host: string;
-  db_port: number;
-  db_name: string;
+  db_port: number | null;
+  db_name: string | null;
   db_user: string | null;
   is_read_only: boolean;
   is_active: boolean;
@@ -62,6 +79,11 @@ export interface Connection {
   mcp_server_command: string | null;
   mcp_server_url: string | null;
   mcp_transport_type: string | null;
+  /** Analytics spine (spec §1.2) — present on every connection, set on some. */
+  vendor_credential_id: string | null;
+  source_config: ConnectionSourceConfig | null;
+  collection_enabled: boolean;
+  collection_hour: number;
 }
 
 export interface SshKey {

@@ -26,6 +26,7 @@ class ContextData:
     has_connection: bool = False
     has_kb: bool = False
     has_mcp: bool = False
+    has_analytics: bool = False
     has_repo: bool = False
     table_map: str = ""
     db_type: str | None = None
@@ -55,6 +56,10 @@ class ContextLoader:
         self._tracker = tracker
         self._mcp_cache = mcp_cache
         self._MCP_CACHE_TTL = mcp_cache_ttl
+        # Deliberately NOT the MCP cache: the two probes answer different
+        # questions about the same connection list, and sharing one entry would
+        # let an MCP-only project be reported as having analytics (and back).
+        self._analytics_cache: dict[str, tuple[bool, float]] = {}
         self._hybrid_retriever = None
 
     def _get_hybrid_retriever(self):
@@ -162,6 +167,45 @@ class ContextLoader:
                     )
                 except Exception:
                     logger.debug("Failed to emit MCP degradation warning", exc_info=True)
+            return False
+
+    async def has_analytics_sources(self, project_id: str, wf_id: str = "") -> bool:
+        """Check if the project has any analytics-vendor connection (cached for 60s).
+
+        Gates ``query_analytics_source`` (spec §2.6). Degrades to ``False`` on any
+        lookup failure — vision invariant #5: a project loses a tool it might have
+        had, which is recoverable, rather than being offered one that cannot answer.
+        """
+        from app.agents.tools.analytics_tools import ANALYTICS_SOURCE_TYPES
+
+        cached = self._analytics_cache.get(project_id)
+        if cached:
+            has, ts = cached
+            if (time.monotonic() - ts) < self._MCP_CACHE_TTL:
+                return has
+
+        try:
+            from app.models.base import async_session_factory
+            from app.services.connection_service import ConnectionService
+
+            conn_svc = ConnectionService()
+            async with async_session_factory() as session:
+                connections = await conn_svc.list_by_project(session, project_id)
+                result = any(c.source_type in ANALYTICS_SOURCE_TYPES for c in connections)
+            self._analytics_cache[project_id] = (result, time.monotonic())
+            return result
+        except Exception:
+            logger.debug("Failed to check analytics sources", exc_info=True)
+            if wf_id:
+                try:
+                    await self._tracker.emit(
+                        wf_id,
+                        "orchestrator:warning",
+                        "degraded",
+                        "Analytics source check failed; analytics tools unavailable this request",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit analytics degradation warning", exc_info=True)
             return False
 
     def has_knowledge_base(self, project_id: str) -> bool:

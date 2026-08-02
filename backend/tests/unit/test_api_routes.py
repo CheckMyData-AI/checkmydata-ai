@@ -123,6 +123,13 @@ class TestConnectionRoutes:
         mock_conn.mcp_server_command = None
         mock_conn.mcp_server_url = None
         mock_conn.mcp_transport_type = None
+        # Analytics fields (spec §1.2) — a database connection carries none.
+        # Set explicitly: an unset attribute on a MagicMock auto-creates a
+        # MagicMock, which fails ConnectionResponse's string validation.
+        mock_conn.vendor_credential_id = None
+        mock_conn.source_config_json = None
+        mock_conn.collection_enabled = True
+        mock_conn.collection_hour = 3
 
         with (
             patch("app.api.routes.connections._svc") as mock_svc,
@@ -151,9 +158,15 @@ class TestConnectionRoutes:
         not a 422 — 422 is reserved for request-schema errors."""
         mock_conn = MagicMock()
         mock_conn.project_id = "proj-1"
+        mock_conn.source_type = "database"
         mock_conn.connection_string_encrypted = None
         mock_conn.db_host = None
         mock_conn.db_name = None
+        # Set explicitly for the same reason as the sibling test above: an unset
+        # attribute on a MagicMock auto-creates a truthy MagicMock, which the
+        # B1 merged-credential ownership check would take for a real credential
+        # id and try to resolve. A database connection carries none.
+        mock_conn.vendor_credential_id = None
 
         with (
             patch("app.api.routes.connections._svc") as mock_svc,

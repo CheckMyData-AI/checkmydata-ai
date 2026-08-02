@@ -94,3 +94,25 @@ class TestInitSentry:
         with patch("app.core.sentry.settings") as mock_settings:
             mock_settings.sentry_dsn = ""
             assert init_sentry() is False
+
+    def test_frame_local_variables_are_not_captured(self):
+        """H5: frame locals hold decrypted credentials and ``before_send`` never sees them.
+
+        The SDK defaults ``include_local_variables=True``, which attaches
+        ``repr()``-ed locals under ``exception.values[].stacktrace.frames[].vars``
+        — a payload :func:`scrub_event` does not walk. Any exception raised in a
+        frame holding a ``ConnectionConfig`` would therefore ship the DB
+        password, the SSH key or the decrypted service-account JSON to Sentry.
+        """
+        with patch("app.core.sentry.settings") as mock_settings, patch("sentry_sdk.init") as init:
+            mock_settings.sentry_dsn = "https://public@sentry.example.com/1"
+            mock_settings.sentry_environment = "test"
+            mock_settings.environment = "test"
+            mock_settings.sentry_traces_sample_rate = 0.0
+            mock_settings.sentry_profiles_sample_rate = 0.0
+
+            assert init_sentry() is True
+
+        assert init.call_args.kwargs["include_local_variables"] is False
+        # The rest of the privacy posture must survive alongside it.
+        assert init.call_args.kwargs["send_default_pii"] is False
