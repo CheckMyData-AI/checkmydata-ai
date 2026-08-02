@@ -765,7 +765,17 @@ class ConnectionService:
                 "collection_status: no adapter for source_type %r", conn.source_type, exc_info=True
             )
 
-        report_names = sorted(set(grains) | {row.report for row in rows})
+        # Imported lazily: analytics_collect_service imports this module, so a
+        # module-level import here would close the cycle.
+        from app.services.analytics_collect_service import CONNECT_SENTINEL_REPORT
+
+        # The ``_connect`` sentinel records a connection-level failure (bad
+        # credential, adapter unbuildable) and is not a vendor report. It drives
+        # the top-level status/last_error below, but listing it as a report would
+        # put a row literally named "_connect" in the UI's per-report table.
+        report_names = sorted(
+            (set(grains) | {row.report for row in rows}) - {CONNECT_SENTINEL_REPORT}
+        )
         reports = [
             _report_status(
                 report=name,
@@ -789,9 +799,18 @@ class ConnectionService:
         # back genuinely ``empty`` everywhere collected fine — the vendor just
         # had no data — and calling that "failed" would send users hunting for a
         # broken credential.
+        # A ``_connect`` row means the connection itself could not be opened, so
+        # no report could have run. It is excluded from ``reports`` above (it is
+        # not a vendor report), which also keeps it out of ``total_failed`` — so
+        # check it directly. Without this a broken credential reads as "partial",
+        # implying some data landed when none could.
+        connect_failed = any(
+            row.report == CONNECT_SENTINEL_REPORT and row.status == "failed" for row in rows
+        )
+
         if not rows:
             status = "never_collected"
-        elif total_ok == 0 and total_failed:
+        elif connect_failed or (total_ok == 0 and total_failed):
             status = "failed"
         elif total_failed or total_pending:
             status = "partial"
