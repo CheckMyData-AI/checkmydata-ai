@@ -78,6 +78,7 @@ from app.llm.errors import (
     LLMTokenLimitError,
 )
 from app.llm.router import LLMRouter
+from app.services.connection_service import is_queryable_database
 
 logger = logging.getLogger(__name__)
 
@@ -698,7 +699,7 @@ class OrchestratorAgent(BaseAgent):
             if resume_info:
                 return await self._resume_pipeline(resume_info, context)
 
-            has_connection = context.connection_config is not None
+            has_connection = is_queryable_database(context.connection_config)
             db_type = context.connection_config.db_type if context.connection_config else None
 
             # Lightweight capability checks (KB is local, MCP/analytics need DB)
@@ -2289,7 +2290,7 @@ class OrchestratorAgent(BaseAgent):
         source is analytics is therefore bounced to the flat loop, where
         ``query_analytics_source`` is offered.
         """
-        has_connection = context.connection_config is not None
+        has_connection = is_queryable_database(context.connection_config)
         if has_analytics and not (has_connection or has_kb or has_repo or has_mcp):
             return await self._fallback_to_unified(
                 context,
