@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Connection } from "@/lib/api";
+import { api, type Connection, type ConnectionSourceConfig } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
@@ -26,6 +26,11 @@ import {
   vendorCredentials,
   type VendorCredential,
 } from "@/lib/api/vendor-credentials";
+import {
+  connectionSourceFullLabel,
+  connectionSourceLabel,
+  isAnalyticsSource,
+} from "@/lib/connection-source";
 
 import {
   DB_TYPES,
@@ -46,16 +51,6 @@ interface ConnectionSelectorProps {
   onCreateHandled?: () => void;
 }
 
-/**
- * Source types that collect into local fact tables instead of being queried
- * live. `ga4` ships in m0; `appstore`/`googleplay` are reserved for m1/m2.
- */
-const ANALYTICS_SOURCE_TYPES = new Set(["ga4", "appstore", "googleplay"]);
-
-function isAnalyticsSource(sourceType: string | null | undefined): boolean {
-  return ANALYTICS_SOURCE_TYPES.has(sourceType ?? "");
-}
-
 const EMPTY_ANALYTICS_FORM = {
   vendor_credential_id: "",
   property_id: "",
@@ -66,26 +61,27 @@ const EMPTY_ANALYTICS_FORM = {
 
 type AnalyticsFormState = typeof EMPTY_ANALYTICS_FORM;
 
-/** Analytics columns the API adds to a connection (spec §1.2); optional here. */
-interface AnalyticsConnectionFields {
-  vendor_credential_id?: string | null;
-  source_config?: {
-    property_ids?: string[] | null;
-    backfill_days?: number | null;
-  } | null;
-  collection_enabled?: boolean | null;
-  collection_hour?: number | null;
+function analyticsFormFromConnection(c: Connection): AnalyticsFormState {
+  return {
+    vendor_credential_id: c.vendor_credential_id ?? "",
+    property_id: c.source_config?.property_ids?.[0] ?? "",
+    backfill_days: String(c.source_config?.backfill_days ?? 30),
+    collection_hour: String(c.collection_hour ?? 3),
+    collection_enabled: c.collection_enabled ?? true,
+  };
 }
 
-function analyticsFormFromConnection(c: Connection): AnalyticsFormState {
-  const extra = c as Connection & AnalyticsConnectionFields;
-  return {
-    vendor_credential_id: extra.vendor_credential_id ?? "",
-    property_id: extra.source_config?.property_ids?.[0] ?? "",
-    backfill_days: String(extra.source_config?.backfill_days ?? 30),
-    collection_hour: String(extra.collection_hour ?? 3),
-    collection_enabled: extra.collection_enabled ?? true,
-  };
+/**
+ * Property ids the form does not show. The form edits one property; a
+ * connection may collect several, and a save must not delete the rest.
+ */
+function trailingPropertyIds(
+  config: ConnectionSourceConfig | null,
+  edited: string,
+): string[] {
+  const ids = config?.property_ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.slice(1).filter((id) => typeof id === "string" && id && id !== edited);
 }
 
 function safeInt(raw: string, fallback: number, min: number, max: number): number {
@@ -114,6 +110,15 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [analyticsForm, setAnalyticsForm] = useState<AnalyticsFormState>({
     ...EMPTY_ANALYTICS_FORM,
   });
+  // The `source_config` of the connection being edited. The backend replaces
+  // the document wholesale, so whatever this form does not own has to be
+  // carried back up on save or it is deleted (M2).
+  const [sourceConfigBase, setSourceConfigBase] =
+    useState<ConnectionSourceConfig | null>(null);
+  // The analytics `source_type` of the row being edited. Only `ga4` ships in
+  // m0, but posting a hardcoded "ga4" back would rewrite the kind of an
+  // `appstore`/`googleplay` row the day one exists — the same failure H6 is.
+  const [editingSourceType, setEditingSourceType] = useState<string | null>(null);
   const [ga4Credentials, setGa4Credentials] = useState<VendorCredential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(false);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
@@ -398,6 +403,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
     setAnalyticsForm({ ...EMPTY_ANALYTICS_FORM });
+    setSourceConfigBase(null);
+    setEditingSourceType(null);
     setShowNewCredential(false);
     setCredentialInvalid(false);
     setPropertyInvalid(false);
@@ -408,11 +415,23 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const isMCP = form.db_type === "mcp";
   const isGA4 = form.db_type === "ga4";
   const isDatabase = !isMCP && !isGA4;
+  // Editing never changes a connection's kind (H6): a non-database source has
+  // no picker at all, and a database may only move between SQL engines.
+  const sourceTypeLocked = editingId !== null && !isDatabase;
+  const engineOptions: readonly string[] = editingId
+    ? DB_TYPES.filter((t) => t !== "mcp")
+    : DB_TYPES;
   const hasSSH = isDatabase && form.ssh_host.trim().length > 0;
   const selectedCredential = ga4Credentials.find(
     (c) => c.id === analyticsForm.vendor_credential_id,
   );
   const formIsOpen = showCreate || editingId !== null;
+  // Properties this connection collects that the single property field cannot
+  // show. They survive a save, and saying so beats a silent hidden value.
+  const carriedPropertyIds = trailingPropertyIds(
+    sourceConfigBase,
+    analyticsForm.property_id.trim(),
+  );
 
   const loadGa4Credentials = useCallback(async () => {
     setCredentialsLoading(true);
@@ -468,10 +487,15 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     setCredentialInvalid(false);
     setPropertyInvalid(false);
     return {
-      source_type: GA4_PROVIDER,
+      source_type: editingSourceType ?? GA4_PROVIDER,
       vendor_credential_id: analyticsForm.vendor_credential_id,
+      // The form owns exactly two keys. Everything else the connection already
+      // carries — event filters, currency, anything a later milestone adds —
+      // rides underneath, because the PATCH replaces the whole document and
+      // dropping `event_names` would un-filter the next collection.
       source_config: {
-        property_ids: [propertyId],
+        ...(sourceConfigBase ?? {}),
+        property_ids: [propertyId, ...trailingPropertyIds(sourceConfigBase, propertyId)],
         backfill_days: safeInt(analyticsForm.backfill_days, 30, 1, 3650),
       },
       collection_enabled: analyticsForm.collection_enabled,
@@ -595,9 +619,13 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     if (isAnalyticsSource(c.source_type)) {
       setForm({ ...connToForm(c), db_type: GA4_PROVIDER });
       setAnalyticsForm(analyticsFormFromConnection(c));
+      setSourceConfigBase(c.source_config ?? null);
+      setEditingSourceType(c.source_type);
     } else {
       setForm(connToForm(c));
       setAnalyticsForm({ ...EMPTY_ANALYTICS_FORM });
+      setSourceConfigBase(null);
+      setEditingSourceType(null);
     }
     setShowNewCredential(false);
     setCredentialInvalid(false);
@@ -852,41 +880,72 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         className={inputCls}
         maxLength={255}
       />
-      <select
-        value={form.db_type}
-        aria-label="Database type"
-        onChange={(e) => {
-          const newType = e.target.value;
-          const knownDefaults = Object.values(DEFAULT_PORTS);
-          const presetValues = Object.values(EXEC_TEMPLATE_PRESETS);
-          setForm((prev) => {
-            const autoTemplate =
-              prev.ssh_exec_mode &&
-              newType !== "mongodb" &&
-              (!prev.ssh_command_template ||
-                presetValues.includes(prev.ssh_command_template))
-                ? EXEC_TEMPLATE_PRESETS[newType] || ""
-                : prev.ssh_command_template;
-            return {
-              ...prev,
-              db_type: newType,
-              ...(knownDefaults.includes(prev.db_port)
-                ? { db_port: DEFAULT_PORTS[newType] || "5432" }
-                : {}),
-              ...(newType === "mongodb" ? { ssh_exec_mode: false } : {}),
-              ssh_command_template: autoTemplate,
-            };
-          });
-        }}
-        className={inputCls}
-      >
-        {DB_TYPES.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-        <option value={GA4_PROVIDER}>Google Analytics 4</option>
-      </select>
+      {sourceTypeLocked ? (
+        // A connection's *kind* is fixed at creation. Switching it in place is
+        // not a real operation: the two sides share no fields (credential and
+        // property vs host, port, user and an encrypted password) and no child
+        // data (collected fact tables vs a schema index). Leaving the picker
+        // live meant "postgres" on a GA4 row posted a `db_type` with no
+        // `source_type`, the backend merged the old `ga4` back in, and the user
+        // was told the update succeeded (H6). Read-only is the honest control.
+        <div className="flex items-center gap-2 px-1 py-1">
+          <span className="text-[10px] text-text-muted uppercase tracking-wider">
+            Source type
+          </span>
+          <span
+            data-testid="connection-source-type"
+            className="text-[11px] text-text-secondary font-mono"
+          >
+            {connectionSourceFullLabel({
+              db_type: form.db_type,
+              source_type: isGA4 ? (editingSourceType ?? GA4_PROVIDER) : "mcp",
+            })}
+          </span>
+        </div>
+      ) : (
+        <select
+          value={form.db_type}
+          aria-label="Database type"
+          onChange={(e) => {
+            const newType = e.target.value;
+            const knownDefaults = Object.values(DEFAULT_PORTS);
+            const presetValues = Object.values(EXEC_TEMPLATE_PRESETS);
+            setForm((prev) => {
+              const autoTemplate =
+                prev.ssh_exec_mode &&
+                newType !== "mongodb" &&
+                (!prev.ssh_command_template ||
+                  presetValues.includes(prev.ssh_command_template))
+                  ? EXEC_TEMPLATE_PRESETS[newType] || ""
+                  : prev.ssh_command_template;
+              return {
+                ...prev,
+                db_type: newType,
+                ...(knownDefaults.includes(prev.db_port)
+                  ? { db_port: DEFAULT_PORTS[newType] || "5432" }
+                  : {}),
+                ...(newType === "mongodb" ? { ssh_exec_mode: false } : {}),
+                ssh_command_template: autoTemplate,
+              };
+            });
+          }}
+          className={inputCls}
+        >
+          {engineOptions.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          {!editingId && <option value={GA4_PROVIDER}>Google Analytics 4</option>}
+        </select>
+      )}
+      {editingId && (
+        <p className="text-[10px] text-text-muted px-1">
+          {sourceTypeLocked
+            ? "A connection's source type is fixed at creation — create a new connection to use a different source."
+            : "Engines can be switched here; the source type is fixed at creation — create a new connection for a different source."}
+        </p>
+      )}
 
       {isMCP ? (
         <div className="space-y-2.5">
@@ -994,7 +1053,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           {!credentialsLoading && !credentialsError && ga4Credentials.length === 0 && (
             <p className="text-[10px] text-warning px-1">
               No Google Analytics credentials yet — add one below, or from
-              Settings → Vendor credentials.
+              Setup → Vendor Credentials in the sidebar.
             </p>
           )}
 
@@ -1039,6 +1098,12 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             className={inputCls}
             maxLength={32}
           />
+
+          {carriedPropertyIds.length > 0 && (
+            <p className="text-[10px] text-text-muted px-1">
+              Also collecting {carriedPropertyIds.join(", ")} — kept on save.
+            </p>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <input
@@ -1491,6 +1556,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   />
                   <ConnectionHealth
                     connectionId={c.id}
+                    sourceType={c.source_type}
                     onStatusChange={(s) =>
                       setHealthStatuses((prev) => ({ ...prev, [c.id]: s }))
                     }
@@ -1506,11 +1572,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   </span>
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                     <span className="text-[10px] text-text-muted font-mono uppercase">
-                      {c.source_type === "mcp"
-                        ? "MCP"
-                        : isAnalytics
-                          ? c.source_type
-                          : c.db_type}
+                      {connectionSourceLabel(c)}
                     </span>
                     {c.is_read_only && (
                       <span className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">

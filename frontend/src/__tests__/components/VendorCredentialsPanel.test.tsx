@@ -182,6 +182,53 @@ describe("VendorCredentialsPanel (SCN-114)", () => {
     ).toBe("not json");
   });
 
+  it("says what is missing on submit instead of refusing silently", async () => {
+    const user = userEvent.setup({ delay: null });
+    await renderPanel();
+    await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+    const submit = screen.getByRole("button", { name: "Add credential" });
+    // A disabled button is a refusal with no explanation: the user is left
+    // clicking a dead control with nothing telling them why.
+    expect(submit).toBeEnabled();
+
+    await user.click(submit);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /name and the credential itself are both required/i,
+      ),
+    );
+    expect(vendorCredentials.create).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Credential name")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByLabelText("Service account JSON")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
+  it("flags only the field that is actually missing", async () => {
+    const user = userEvent.setup({ delay: null });
+    await renderPanel();
+    await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+    fireEvent.change(screen.getByLabelText("Credential name"), {
+      target: { value: "analytics-sa" },
+    });
+    await user.click(screen.getByRole("button", { name: "Add credential" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByLabelText("Credential name")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByLabelText("Service account JSON")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(vendorCredentials.create).not.toHaveBeenCalled();
+  });
+
   it("deletes an unreferenced credential", async () => {
     (vendorCredentials.list as ReturnType<typeof vi.fn>).mockResolvedValue([CREDENTIAL]);
     (vendorCredentials.delete as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });

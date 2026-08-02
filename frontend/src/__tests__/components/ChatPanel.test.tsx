@@ -172,6 +172,10 @@ function makeConnection(overrides: Partial<Connection> = {}): Connection {
     mcp_server_command: null,
     mcp_server_url: null,
     mcp_transport_type: null,
+    vendor_credential_id: null,
+    source_config: null,
+    collection_enabled: true,
+    collection_hour: 3,
     ...overrides,
   };
 }
@@ -215,6 +219,29 @@ describe("ChatPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("Ready to query")).toBeInTheDocument();
     });
+    expect(screen.getByText(/\(postgres\)/)).toBeInTheDocument();
+  });
+
+  it("names the vendor of an analytics connection instead of an empty db_type", async () => {
+    useAppStore.setState({
+      activeProject: makeProject(),
+      activeConnection: makeConnection({
+        name: "GA4 prod",
+        db_type: null,
+        source_type: "ga4",
+        db_port: null,
+        db_name: null,
+      }),
+      messages: [],
+    });
+
+    await renderPanel();
+    await userEvent.click(screen.getByText("Bypass"));
+    await waitFor(() => {
+      expect(screen.getByText("Ready to query")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/\(GA4\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/\(\s*\)/)).not.toBeInTheDocument();
   });
 
   it("renders user messages", async () => {

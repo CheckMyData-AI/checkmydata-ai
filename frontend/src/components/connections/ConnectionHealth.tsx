@@ -10,6 +10,7 @@ import type {
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ListError } from "@/components/ui/ListError";
 import { onEvent, type WorkflowEvent } from "@/lib/sse";
+import { isAnalyticsSource } from "@/lib/connection-source";
 import { toast } from "@/stores/toast-store";
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
@@ -35,10 +36,22 @@ function formatCheckTime(iso: string | null): string {
 
 interface ConnectionHealthProps {
   connectionId: string;
+  /**
+   * The connection's source kind. An analytics source has no live session to
+   * probe — `/health` can only ever answer `unknown` for it — so the request is
+   * skipped and this component renders nothing; the collection row underneath
+   * carries the real state.
+   */
+  sourceType?: string | null;
   onStatusChange?: (status: HealthStatus) => void;
 }
 
-export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHealthProps) {
+export function ConnectionHealth({
+  connectionId,
+  sourceType,
+  onStatusChange,
+}: ConnectionHealthProps) {
+  const collectedSource = isAnalyticsSource(sourceType);
   const [health, setHealth] = useState<ConnectionHealthState | null>(null);
   const [loading, setLoading] = useState(true);
   const [reconnecting, setReconnecting] = useState(false);
@@ -54,6 +67,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
   }, []);
 
   const fetchHealth = useCallback(() => {
+    if (collectedSource) return;
     const now = Date.now();
     if (now - lastFetchRef.current < MIN_POLL_INTERVAL_MS) return;
     lastFetchRef.current = now;
@@ -69,7 +83,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       .catch(() => {
         if (mountedRef.current) setLoading(false);
       });
-  }, [connectionId]);
+  }, [connectionId, collectedSource]);
 
   useEffect(() => {
     lastFetchRef.current = 0;
@@ -77,6 +91,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
   }, [fetchHealth]);
 
   useEffect(() => {
+    if (collectedSource) return;
     const unsub = onEvent((event: WorkflowEvent) => {
       if (
         event.step === "connection_health" &&
@@ -96,7 +111,7 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       }
     });
     return unsub;
-  }, [connectionId]);
+  }, [connectionId, collectedSource]);
 
   const handleReconnect = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -113,6 +128,10 @@ export function ConnectionHealth({ connectionId, onStatusChange }: ConnectionHea
       if (mountedRef.current) setReconnecting(false);
     }
   };
+
+  // A permanently grey "unknown" dot next to a source that is collecting fine
+  // is a false signal, so a collected source shows no health dot at all.
+  if (collectedSource) return null;
 
   if (loading) {
     return (
@@ -361,9 +380,16 @@ export function CollectionStatusRow({
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[10px] text-text-tertiary font-medium">Collection</span>
         <Tooltip label={OUTCOME_TOOLTIPS[badge]} position="bottom">
+          {/* The tooltip is where the badge's meaning is written down, and
+              Tooltip opens on focus — so the badge is focusable, and carries
+              the same sentence as its accessible name for anyone who never
+              sees a popup. */}
           <span
             data-testid="collection-outcome"
-            className={`text-[10px] px-1.5 py-px rounded-full leading-none ${OUTCOME_BADGE_CLASSES[badge]}`}
+            tabIndex={0}
+            role="status"
+            aria-label={`Collection status: ${OUTCOME_LABELS[badge]} — ${OUTCOME_TOOLTIPS[badge]}`}
+            className={`text-[10px] px-1.5 py-px rounded-full leading-none outline-none focus-visible:ring-2 focus-visible:ring-accent ${OUTCOME_BADGE_CLASSES[badge]}`}
           >
             {OUTCOME_LABELS[badge]}
           </span>
@@ -404,7 +430,12 @@ export function CollectionStatusRow({
         </span>
       </div>
 
-      {status.reports.length > 0 ? (
+      {/* Only the report list. The payload's connection-level `caveat` /
+          `last_error` are the newest report-level values promoted to the top,
+          and every journal row that can set them also produces a report — so
+          "no reports" and "something to say" cannot co-occur, and printing the
+          summary alongside the list would just double up the same sentence. */}
+      {status.reports.length > 0 && (
         <ul className="mt-1 space-y-0.5">
           {status.reports.map((report) => {
             const pending = report.pending_sample ?? [];
@@ -437,23 +468,6 @@ export function CollectionStatusRow({
             );
           })}
         </ul>
-      ) : (
-        <>
-          {status.caveat && (
-            <p data-testid="collection-caveat" className="mt-1 text-[10px] text-warning">
-              Caveat: {status.caveat}
-            </p>
-          )}
-          {status.last_error && (
-            <p
-              data-testid="collection-error"
-              role="alert"
-              className="mt-1 text-[10px] text-error"
-            >
-              {status.last_error}
-            </p>
-          )}
-        </>
       )}
     </div>
   );

@@ -127,6 +127,21 @@ describe("CollectionStatusRow — outcome badge (SCN-115)", () => {
     expect(new Set([okClass, partialClass, failedBadge.className]).size).toBe(3);
   });
 
+  it("explains the badge to a keyboard and a screen reader, not just a mouse", async () => {
+    (api.connections.collectionStatus as ReturnType<typeof vi.fn>).mockResolvedValue(
+      status({ status: "partial" }),
+    );
+    await renderRow();
+    const badge = await screen.findByTestId("collection-outcome");
+
+    // The tooltip is the only place the badge's meaning is written down, and
+    // Tooltip opens on focus — so the badge has to be focusable to reach it.
+    expect(badge).toHaveAttribute("tabindex", "0");
+    // …and the meaning is on the element itself for anyone not seeing a popup.
+    expect(badge).toHaveAccessibleName(/collection status: partial/i);
+    expect(badge).toHaveAccessibleName(/still owed/i);
+  });
+
   it("distinguishes 'never collected' from a collected-zero run", async () => {
     (api.connections.collectionStatus as ReturnType<typeof vi.fn>).mockResolvedValue(
       status({
@@ -247,7 +262,12 @@ describe("CollectionStatusRow — a caveat is not an error (SCN-115 honesty)", (
     await renderRow();
     await screen.findByTestId("collection-outcome");
 
-    const caveat = screen.getByTestId("collection-caveat");
+    // The connection-level `caveat` is the newest report-level caveat promoted
+    // to the top of the payload, so it prints once — on the report that
+    // produced it — and is not echoed a second time as a summary.
+    const caveats = screen.getAllByTestId("collection-caveat");
+    expect(caveats).toHaveLength(1);
+    const caveat = caveats[0];
     expect(caveat).toHaveTextContent(/sampled this range/i);
     expect(caveat.className).not.toMatch(/error/);
     expect(caveat).not.toHaveAttribute("role", "alert");
@@ -255,6 +275,26 @@ describe("CollectionStatusRow — a caveat is not an error (SCN-115 honesty)", (
     expect(screen.queryByTestId("collection-error")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId("collection-outcome")).toHaveTextContent(/ok/i);
+  });
+
+  it("has no caveat or error to show when the journal is empty", async () => {
+    // `caveat` / `last_error` are derived from journal rows, and every journal
+    // row also produces a report — so "no reports" and "something to say" can
+    // never co-occur. Nothing is rendered outside the report list.
+    (api.connections.collectionStatus as ReturnType<typeof vi.fn>).mockResolvedValue(
+      status({
+        status: "never_collected",
+        last_run_at: null,
+        caveat: null,
+        last_error: null,
+        reports: [],
+      }),
+    );
+    await renderRow();
+    await screen.findByTestId("collection-outcome");
+
+    expect(screen.queryByTestId("collection-caveat")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("collection-error")).not.toBeInTheDocument();
   });
 
   it("renders a truncation caveat the same way", async () => {

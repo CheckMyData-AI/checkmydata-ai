@@ -324,13 +324,16 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     expect(document.body.innerHTML).not.toContain("SUPERSECRETVALUE");
   });
 
-  it("points at the settings panel when no ga4 credential exists yet", async () => {
+  it("points at the panel that actually exists when no ga4 credential is stored", async () => {
     (vendorCredentials.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     await renderForm();
     selectGa4();
-    await waitFor(() =>
-      expect(screen.getByText(/no google analytics credentials/i)).toBeInTheDocument(),
-    );
+    const hint = await screen.findByText(/no google analytics credentials/i);
+    // The panel lives in the sidebar's Setup group next to SSH Keys; there is
+    // no "Settings → Vendor credentials" to navigate to.
+    expect(hint).toHaveTextContent(/setup\s*→\s*vendor credentials/i);
+    expect(hint).toHaveTextContent(/sidebar/i);
+    expect(hint.textContent ?? "").not.toMatch(/settings\s*→/i);
   });
 });
 
@@ -346,7 +349,7 @@ describe("ConnectionSelector — the GA4 row in the list (SCN-113 / SCN-115)", (
       ssh_port: 22,
       ssh_user: null,
       ssh_key_id: null,
-      db_host: null,
+      db_host: "127.0.0.1",
       db_port: null,
       db_name: null,
       db_user: null,
@@ -358,7 +361,11 @@ describe("ConnectionSelector — the GA4 row in the list (SCN-113 / SCN-115)", (
       mcp_server_command: null,
       mcp_server_url: null,
       mcp_transport_type: null,
-    } as unknown as Connection;
+      vendor_credential_id: "vc1",
+      source_config: { property_ids: ["294380179"], backfill_days: 30 },
+      collection_enabled: true,
+      collection_hour: 3,
+    };
   }
 
   it("badges the source, shows the collection row and hides the DB-only actions", async () => {
@@ -370,7 +377,7 @@ describe("ConnectionSelector — the GA4 row in the list (SCN-113 / SCN-115)", (
     );
     render(<ConnectionSelector />);
 
-    expect(screen.getByText("ga4")).toBeInTheDocument();
+    expect(screen.getByText("GA4")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("collection-outcome")).toBeInTheDocument(),
     );
@@ -385,14 +392,16 @@ describe("ConnectionSelector — the GA4 row in the list (SCN-113 / SCN-115)", (
   });
 
   it("leaves a database connection's affordances alone", async () => {
-    const conn = {
+    const conn: Connection = {
       ...makeGa4Connection(),
       db_type: "postgres",
-      source_type: "direct",
+      source_type: "database",
       db_host: "localhost",
       db_port: 5432,
       db_name: "orders",
-    } as unknown as Connection;
+      vendor_credential_id: null,
+      source_config: null,
+    };
     useAppStore.setState({ connections: [conn], activeConnection: conn });
 
     const { ConnectionSelector } = await import(

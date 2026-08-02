@@ -21,6 +21,7 @@ import { pipelineEventToTransition } from "./pipeline-event-handlers";
 import { parseWorkflowEvent } from "@/lib/schemas/workflow-event";
 import { ReadinessGate, ReadinessBanner } from "./ReadinessGate";
 import { ConnectionHealth } from "@/components/connections/ConnectionHealth";
+import { connectionSourceLabel } from "@/lib/connection-source";
 import { CostEstimator } from "./CostEstimator";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
 import { useSessionPolling } from "@/hooks/useSessionPolling";
@@ -785,6 +786,7 @@ export function ChatPanel() {
         <div className="hidden">
           <ConnectionHealth
             connectionId={activeConnection.id}
+            sourceType={activeConnection.source_type}
             onStatusChange={setConnHealthStatus}
           />
         </div>
@@ -837,7 +839,7 @@ export function ChatPanel() {
               <p>
                 Connected to{" "}
                 <span className="text-text-primary">{activeConnection.name}</span>{" "}
-                ({activeConnection.db_type})
+                ({connectionSourceLabel(activeConnection)})
               </p>
             ) : (
               <p>Ask questions about your project documentation</p>

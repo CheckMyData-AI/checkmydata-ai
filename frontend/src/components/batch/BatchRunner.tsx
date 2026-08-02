@@ -7,6 +7,7 @@ import { useNotesStore } from "@/stores/notes-store";
 import { toast } from "@/stores/toast-store";
 import { useAppStore } from "@/stores/app-store";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { connectionSourceLabel } from "@/lib/connection-source";
 import { BatchResults } from "./BatchResults";
 
 interface QueryRow {
@@ -207,7 +208,9 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
           >
             <option value="">Select connection...</option>
             {connections.map((c) => (
-              <option key={c.id} value={c.id}>{c.name} ({c.db_type})</option>
+              <option key={c.id} value={c.id}>
+                {c.name} ({connectionSourceLabel(c)})
+              </option>
             ))}
           </select>
         </div>

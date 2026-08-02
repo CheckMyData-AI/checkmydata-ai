@@ -64,10 +64,24 @@ export function VendorCredentialFields({
   const nameMissing = name.trim().length === 0;
   const secretMissing = secret.trim().length === 0;
 
+  /**
+   * Validation happens on submit, not by disabling the button. A greyed-out
+   * control is a refusal with no explanation — the user clicks a dead button
+   * and is told nothing — and it also makes the message below and both
+   * `aria-invalid` expressions unreachable. The sibling GA4 form treats a
+   * silent no-op on submit as the one outcome it must never produce (SCN-113);
+   * this form follows the same rule.
+   */
   const handleCreate = async () => {
     if (creating) return;
     if (nameMissing || secretMissing) {
-      setError("A name and the credential itself are both required.");
+      setError(
+        nameMissing && secretMissing
+          ? "A name and the credential itself are both required."
+          : nameMissing
+            ? "A name is required — it is how you will recognise this credential later."
+            : `Paste the ${vendorProviderSecretLabel(effectiveProvider).toLowerCase()} — there is nothing to store yet.`,
+      );
       return;
     }
     setError(null);
@@ -152,7 +166,7 @@ export function VendorCredentialFields({
         <button
           type="button"
           onClick={handleCreate}
-          disabled={creating || nameMissing || secretMissing}
+          disabled={creating}
           className="flex-1 px-3 py-2.5 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {creating ? "Adding…" : submitLabel}
@@ -174,9 +188,7 @@ export function VendorCredentialFields({
 /** Name the referencing connection when the app store happens to know it. */
 function describeInUse(credentialId: string, fallback: string): string {
   const connections = useAppStore.getState().connections ?? [];
-  const match = connections.find(
-    (c) => (c as { vendor_credential_id?: string | null }).vendor_credential_id === credentialId,
-  );
+  const match = connections.find((c) => c.vendor_credential_id === credentialId);
   return match ? `In use by connection "${match.name}". ${fallback}` : fallback;
 }
 

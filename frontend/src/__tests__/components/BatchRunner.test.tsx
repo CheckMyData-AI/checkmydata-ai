@@ -7,8 +7,9 @@ vi.mock("@/stores/app-store", () => ({
     sel({
       activeProject: { id: "p1", name: "Test" },
       connections: [
-        { id: "c1", name: "DB1", db_type: "postgres" },
-        { id: "c2", name: "DB2", db_type: "mysql" },
+        { id: "c1", name: "DB1", db_type: "postgres", source_type: "database" },
+        { id: "c2", name: "DB2", db_type: "mysql", source_type: "database" },
+        { id: "c3", name: "GA4 prod", db_type: null, source_type: "ga4" },
       ],
     }),
   ),
@@ -65,6 +66,12 @@ describe("BatchRunner", () => {
     render(<BatchRunner onClose={onClose} />);
     expect(screen.getByText("DB1 (postgres)")).toBeTruthy();
     expect(screen.getByText("DB2 (mysql)")).toBeTruthy();
+  });
+
+  it("names an analytics connection's vendor rather than an empty db_type", () => {
+    render(<BatchRunner onClose={onClose} />);
+    expect(screen.getByText("GA4 prod (GA4)")).toBeTruthy();
+    expect(screen.queryByText("GA4 prod ()")).toBeNull();
   });
 
   it("shows Add Query button", () => {
