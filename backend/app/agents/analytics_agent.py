@@ -31,7 +31,23 @@ Two more consequences of reading local tables shape the design:
 
 The loop shape follows :class:`~app.agents.mcp_source_agent.MCPSourceAgent`:
 bounded iterations, truncated tool results, and ``no_result`` — never a composed
-answer — when the budget runs out.
+answer — when the budget runs out. It adds one rule of its own, for the same
+reason the caveats are appended by code rather than requested in the prompt:
+
+* **No answer without a read.** A turn that produces prose before any tool has
+  actually read something is the model reciting prior knowledge, and prior
+  knowledge about *this* connection's traffic does not exist. That turn is
+  re-prompted once and then refused (:data:`UNGROUNDED_REFUSAL`), mirroring the
+  orchestrator's ORCH-T02/T03 pair. "July had roughly 12,400 sessions" without a
+  ``query_report`` call is not a partially-supported answer to be caveated; it is
+  an invented measurement, and it is dropped.
+
+A second distinction the journal alone cannot make is what happens *after*
+retention: ``journal.prune`` deletes journal rows while nothing prunes the fact
+tables (deliberately — expiring them would turn answered history into "not
+collected"). So "no journal row" has two meanings too, and only the fact tables
+separate them: never collected, versus collected and the record has aged out.
+The second is not missing data and is never reported as such.
 """
 
 from __future__ import annotations
@@ -90,6 +106,27 @@ MAX_NAMED_PERIODS = 8
 #: Caps on what one tool result contributes to the context / to the trace.
 TOOL_RESULT_CHARS = 4000
 TOOL_PREVIEW_CHARS = 2000
+
+#: Sent once when the model answers before any tool has read anything. Phrased as
+#: an instruction with a way out — ``list_reports`` grounds even a question that
+#: needs no figures — so the model is never cornered into inventing one.
+UNGROUNDED_REPROMPT = (
+    "You have not read any collected data yet, so nothing you write can be a "
+    "measurement. Call a tool now: query_report(report, date_from, date_to) for "
+    "the window in question, coverage(report) to check what has been collected, "
+    "or list_reports() to see what this connection holds. Do not answer from "
+    "prior knowledge and do not estimate. If the question needs no figures, "
+    "call list_reports() and answer from what it returns."
+)
+
+#: Returned when the model still will not call a tool. The prose it offered is
+#: discarded rather than caveated: there is nothing behind it to caveat.
+UNGROUNDED_REFUSAL = (
+    "I have not read any collected analytics data for this question, so I have "
+    "no measurement to report. Any figure here would be invented rather than "
+    "collected. Ask again naming a report and a date window, or check that "
+    "collection has run for this connection."
+)
 
 #: Maps a GA4 field's storage kind onto a :class:`~app.agents.data_gate.DataGate`
 #: semantic kind. ``decimal`` is revenue, and revenue can legitimately be
@@ -297,6 +334,20 @@ def _period_to_date(period: str, grain: str) -> dt.date | None:
         return None
 
 
+def _period_key(day: Any, grain: str) -> str:
+    """Render a stored fact-table date as the journal's period key for *grain*.
+
+    The journal keys periods as text (``YYYY-MM-DD`` / ``YYYY-MM``) while the
+    fact tables key rows by ``date``; comparing coverage against rows means
+    crossing that boundary in exactly one place, here.
+    """
+    if isinstance(day, dt.datetime):
+        day = day.date()
+    elif not isinstance(day, dt.date):
+        day = _parse_date(str(day)[:10], "row date")
+    return day.strftime("%Y-%m") if grain == "monthly" else day.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Result / run state
 # ---------------------------------------------------------------------------
@@ -343,6 +394,11 @@ class _Window:
     #: ``missing``/``failed``: the numbers are real, they are just not all of
     #: them, so this never means the period is absent from the totals.
     degraded: list[str] = field(default_factory=list)
+    #: Periods with no journal row but with rows on file — collected, then the
+    #: journal entry aged out of retention. Kept apart from ``missing`` because
+    #: the totals below DO include them: calling them uncollected would deny
+    #: numbers the same answer prints.
+    unjournalled: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -360,14 +416,34 @@ class _RunState:
     report: str | None = None
     columns: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
+    #: How many tools actually read this connection's catalogue or journal.
+    #: ``query_report`` records a :class:`_Window` instead, so the two together
+    #: are the whole of "something was read".
+    catalogue_reads: int = 0
 
     @property
     def pending_periods(self) -> list[str]:
+        """Periods the answer is not allowed to imply it measured.
+
+        Deliberately *not* including :attr:`_Window.unjournalled`: those periods
+        are in the totals, so listing them here would make the validator warn
+        that figures exclude data they include.
+        """
         pending: set[str] = set()
         for window in self.windows:
             pending.update(window.missing)
             pending.update(window.failed)
         return sorted(pending)
+
+    @property
+    def has_grounding(self) -> bool:
+        """Did any tool actually read something before the model answered?
+
+        False after a rejected argument or an unknown tool name: what came back
+        was an error string, not data, and a figure written on top of an error
+        string was not measured.
+        """
+        return bool(self.windows) or self.catalogue_reads > 0
 
 
 SessionFactory = Callable[[], Any]
@@ -541,6 +617,9 @@ class AnalyticsAgent(BaseAgent):
             "total_tokens": 0,
         }
         budget = self._llm.get_context_window(context.model)
+        # One-shot re-prompt for a model that answered without reading anything.
+        # Bounded so a model that ignores the nudge cannot spin the loop.
+        reprompted_ungrounded = False
 
         for iteration in range(self.max_iterations):
             messages, _ = trim_loop_messages(messages, budget)
@@ -564,6 +643,34 @@ class AnalyticsAgent(BaseAgent):
             self.accum_usage(total_usage, llm_resp.usage)
 
             if not llm_resp.tool_calls:
+                if not state.has_grounding:
+                    # Nothing has been read, so this text was composed from the
+                    # model's own priors. Caveating it is not an option: there is
+                    # no window, hence no missing period to name, and the answer
+                    # would leave the agent looking like it measured something.
+                    if not reprompted_ungrounded:
+                        reprompted_ungrounded = True
+                        logger.info(
+                            "AnalyticsAgent answered with no tool call and no data "
+                            "(connection %s) — re-prompting once",
+                            connection_id,
+                        )
+                        messages.append(Message(role="system", content=UNGROUNDED_REPROMPT))
+                        continue
+                    logger.warning(
+                        "AnalyticsAgent refused an un-grounded answer (connection %s)",
+                        connection_id,
+                    )
+                    return AnalyticsResult(
+                        status="no_result",
+                        answer=UNGROUNDED_REFUSAL,
+                        error=(
+                            "The analytics agent produced an answer without calling any "
+                            "tool, so no collected data stood behind it."
+                        ),
+                        token_usage=total_usage,
+                        tool_calls_made=state.tool_calls_made,
+                    )
                 return await self._finalise(
                     state,
                     context,
@@ -681,6 +788,8 @@ class AnalyticsAgent(BaseAgent):
                     coverage += f", {len(failed)} failed"
                 lines.append(f"- {binding.name} ({binding.grain}): {coverage}")
                 lines.append(f"  {binding.description}")
+        # The journal was read, so an answer built on this listing is grounded.
+        state.catalogue_reads += 1
         return "\n".join(lines)
 
     async def _tool_coverage(self, state: _RunState, arguments: Mapping[str, Any]) -> str:
@@ -691,6 +800,8 @@ class AnalyticsAgent(BaseAgent):
 
         async with self._session() as session:
             statuses = await self._period_statuses(session, state, binding.name)
+        # Counted only past the report-name check: a rejected name read nothing.
+        state.catalogue_reads += 1
 
         on_file = sorted(p for p, (s, _e) in statuses.items() if s in DONE_STATUSES)
         failed = sorted(p for p, (s, _e) in statuses.items() if s == "failed")
@@ -731,9 +842,22 @@ class AnalyticsAgent(BaseAgent):
                 session, state, binding, group_columns, start, end, limit
             )
             statuses = await self._period_statuses(session, state, binding.name)
+            unrecorded = [p for p in periods if p not in statuses]
+            # A period with no journal row is only "never collected" if the fact
+            # tables are empty for it too. ``journal.prune`` deletes journal rows
+            # after the retention window while nothing prunes the facts, so the
+            # other case — rows on file, record aged out — is collected history
+            # and must not be reported as absent from totals it is part of.
+            # The extra read is skipped entirely when every period is recorded.
+            with_rows = (
+                await self._periods_with_rows(session, state, binding, start, end)
+                if unrecorded
+                else set()
+            )
 
         columns = [*group_names, *binding.metric_columns]
-        missing = [p for p in periods if p not in statuses]
+        missing = [p for p in unrecorded if p not in with_rows]
+        unjournalled = [p for p in unrecorded if p in with_rows]
         failed = [p for p in periods if statuses.get(p, ("", None))[0] == "failed"]
         # A collected period can still carry a caveat: the collect service writes
         # the vendor's ``degraded`` sentence into ``error`` on an otherwise ``ok``
@@ -752,6 +876,7 @@ class AnalyticsAgent(BaseAgent):
             failed=failed,
             last_error=self._last_error({p: statuses[p] for p in failed if p in statuses}),
             degraded=degraded,
+            unjournalled=unjournalled,
         )
         state.windows.append(window)
 
@@ -852,6 +977,39 @@ class AnalyticsAgent(BaseAgent):
         rows = [list(row) for row in result.all()]
         truncated = len(rows) > limit
         return rows[:limit], truncated
+
+    @staticmethod
+    async def _periods_with_rows(
+        session: AsyncSession,
+        state: _RunState,
+        binding: ReportBinding,
+        start: dt.date,
+        end: dt.date,
+    ) -> set[str]:
+        """Period keys inside the window that have at least one row on file.
+
+        Scoped to the connection exactly like :meth:`_select_rows` — this read
+        decides whether a period is reported as never collected, so another
+        tenant's rows vouching for our coverage would be a false coverage claim
+        as well as a leak. Bounded by the window, which
+        :func:`expected_periods` already caps.
+        """
+        days = (
+            (
+                await session.execute(
+                    select(binding.model.date)
+                    .where(
+                        binding.model.connection_id == state.connection_id,
+                        binding.model.date >= start,
+                        binding.model.date <= end,
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {_period_key(day, binding.grain) for day in days if day is not None}
 
     @staticmethod
     def _run_data_gate(
@@ -999,6 +1157,16 @@ class AnalyticsAgent(BaseAgent):
                 + " at collect time, so the values below are based on a partial "
                 "vendor response: they are real, but lower than the true total."
             )
+        if window.unjournalled:
+            lines.append(
+                "COLLECTION RECORD AGED OUT: "
+                + self._render_periods(window.unjournalled)
+                + " — the record of collecting "
+                + ("these periods" if len(window.unjournalled) > 1 else "this period")
+                + " has been pruned after its retention window, but the collected "
+                "rows are kept and ARE included in the numbers below. This is a gap "
+                "in the record, not in the data — do not report it as uncollected."
+            )
         # Only when nothing above fired: this sentence and any caveat line are a
         # contradiction, and the contradiction is what tells a user a fraction of
         # a number is the number.
@@ -1129,6 +1297,24 @@ class AnalyticsAgent(BaseAgent):
                 "of each, so the numbers are real and are a lower bound — NOT a "
                 "complete measurement."
             )
+        if window.unjournalled:
+            # Third distinct sentence, for the third distinct situation: unlike
+            # a missing period this one is in the totals, and unlike a truncated
+            # one the numbers are not short — only the record of collecting them
+            # is gone. Saying "incomplete" here would be false in both senses.
+            plural = len(window.unjournalled) > 1
+            caveats.append(
+                f"COLLECTION RECORD AGED OUT: report '{window.report}' over "
+                f"{window.start}..{window.end} has no collection record for "
+                + self._render_periods(window.unjournalled)
+                + " — records are pruned after a retention window while the data "
+                "itself is kept. "
+                + ("Those periods ARE" if plural else "That period IS")
+                + " counted in the numbers above; what is no longer on file is "
+                "the record of when "
+                + ("they were" if plural else "it was")
+                + " collected, not the measurements."
+            )
         return caveats
 
     async def _freshness_lines(self, state: _RunState) -> list[str]:
@@ -1136,6 +1322,10 @@ class AnalyticsAgent(BaseAgent):
         reports = list(dict.fromkeys(window.report for window in state.windows))
         if not reports:
             return []
+        # A report whose journal has been pruned away entirely still has rows on
+        # file. "Never collected for this connection" would be the same untruth
+        # the window caveats were built to stop telling, in a different sentence.
+        rows_without_a_record = {window.report for window in state.windows if window.unjournalled}
         lines: list[str] = []
         async with self._session() as session:
             for report in reports:
@@ -1146,6 +1336,13 @@ class AnalyticsAgent(BaseAgent):
                         f"Freshness: report '{report}' is collected through {on_file[-1]}. "
                         "Analytics vendors settle their data with a lag, so the most "
                         "recent day or two is usually still absent by design."
+                    )
+                elif report in rows_without_a_record:
+                    lines.append(
+                        f"Freshness: report '{report}' has no collection record on file — "
+                        "the records have aged out of their retention window — but the "
+                        "rows collected for the window asked about are kept, and are the "
+                        "numbers above."
                     )
                 else:
                     lines.append(
