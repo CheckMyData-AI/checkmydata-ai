@@ -105,6 +105,13 @@ was validated against.
 test, it is a gate that fails at random. Every future run pays either a re-run or a
 wrong decision, and the wrong decision is silent.
 
+**Sharpened by a second run, same day.** The identical suite, *with* the security fix
+applied, passed **5405 / 0 failed in 9m52s**. The failing run took **20m37s** — twice as
+long, because other pytest invocations were running concurrently on the same machine.
+The variable is not the code under test; it is **contention**. That is precisely what a
+CI runner does when jobs share a host, which is why this surfaces there and not on a
+quiet laptop, and why "passes locally" has never been evidence for it.
+
 **Next step:** reproduce under load (`-n auto` or a parallel writer), then decide
 between a real fix and quarantining it off the deploy gate — quarantine being honest
 only if it is recorded, not if the test is simply deleted.
