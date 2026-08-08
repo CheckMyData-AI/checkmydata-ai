@@ -219,3 +219,111 @@ class TestFallbackClassification:
             "postgresql",
         )
         assert err.error_type == QueryErrorType.COLUMN_NOT_FOUND
+
+
+class TestSuppliedErrorType:
+    """A connector that knows what went wrong should not have to spell it in prose.
+
+    `asyncio.wait_for` raises a builtin `TimeoutError` carrying no message, so each
+    connector hand-writes "Query timed out after Ns". The TIMEOUT regexes below match
+    only *vendor* wording, so that self-written string fell through to UNKNOWN with
+    is_retryable=True — and the validation loop then paid an LLM to "repair" a query
+    that was never broken.
+    """
+
+    def setup_method(self):
+        self.clf = ErrorClassifier()
+
+    # The exact strings the four connectors produce today.
+    CONNECTOR_STRINGS = [
+        ("mysql", "Query timed out after 30s"),
+        ("postgresql", "Query timed out after 30s"),
+        ("clickhouse", "Query timed out after 30s"),
+        ("mongodb", "Query timed out after 30s"),
+    ]
+
+    def test_supplied_type_wins_over_the_regex_ladder(self):
+        for db_type, raw in self.CONNECTOR_STRINGS:
+            err = self.clf.classify(raw, db_type, error_type=QueryErrorType.TIMEOUT)
+            assert err.error_type == QueryErrorType.TIMEOUT, db_type
+            assert err.is_retryable, db_type
+            assert err.raw_error == raw, db_type
+
+    def test_without_a_type_the_apps_own_string_is_still_unclassified(self):
+        """Deliberate: the fix is to stop *reading* this string, not to regex it.
+
+        Adding a pattern for it would paper over the real defect — a connector that
+        forgets to set the type would keep silently working, and the next
+        hand-written message would need another pattern.
+        """
+        for db_type, raw in self.CONNECTOR_STRINGS:
+            err = self.clf.classify(raw, db_type)
+            assert err.error_type == QueryErrorType.UNKNOWN, db_type
+
+    def test_vendor_worded_timeouts_still_classify_without_a_type(self):
+        """Regression: the regex ladder is untouched for errors the vendor words."""
+        cases = [
+            ("postgresql", "canceling statement due to statement timeout"),
+            ("mysql", "Lock wait timeout exceeded; try restarting transaction"),
+            ("clickhouse", "Code: 159. TIMEOUT_EXCEEDED"),
+            ("mongodb", "operation exceeded time limit"),
+        ]
+        for db_type, raw in cases:
+            err = self.clf.classify(raw, db_type)
+            assert err.error_type == QueryErrorType.TIMEOUT, (db_type, raw)
+
+    def test_permission_denied_type_stays_non_retryable(self):
+        err = self.clf.classify("nope", "postgresql", error_type=QueryErrorType.PERMISSION_DENIED)
+        assert err.error_type == QueryErrorType.PERMISSION_DENIED
+        assert not err.is_retryable
+
+
+class TestTypeReachesTheClassifierFromAQueryResult:
+    """Wiring, not vocabulary: the type must survive the trip from connector to loop.
+
+    A timeout does not raise — `execute_query` *returns* a QueryResult whose `error`
+    is set, so the classification happens in `post_validator`, and the EXPLAIN dry-run
+    has its own copy of the same call. Wiring only one of them leaves the typed path
+    half-connected, with tests that still look green.
+    """
+
+    def test_post_validator_forwards_the_type(self):
+        from app.connectors.base import QueryResult, SchemaInfo
+        from app.core.post_validator import PostValidator
+        from app.core.query_validation import ValidationConfig
+
+        result = QueryResult(
+            error="Query timed out after 30s",
+            error_type=QueryErrorType.TIMEOUT,
+        )
+        verdict = PostValidator().validate(
+            result, "SELECT 1", SchemaInfo(db_type="postgresql"), ValidationConfig()
+        )
+
+        assert not verdict.is_valid
+        assert verdict.error is not None
+        assert verdict.error.error_type == QueryErrorType.TIMEOUT
+
+    async def test_explain_validator_forwards_the_type(self):
+        """The EXPLAIN dry-run holds its own copy of the same call.
+
+        It is the second of the two places a QueryResult is classified. Wiring only
+        `post_validator` would leave a timeout during EXPLAIN misread as a query
+        defect — the exact failure this change exists to remove, surviving in the
+        one path nobody thought to look at.
+        """
+        from app.connectors.base import QueryResult
+        from app.core.explain_validator import ExplainValidator
+
+        class _Connector:
+            async def execute_query(self, _query: str) -> QueryResult:
+                return QueryResult(
+                    error="Query timed out after 30s",
+                    error_type=QueryErrorType.TIMEOUT,
+                )
+
+        verdict = await ExplainValidator().validate(_Connector(), "SELECT 1", "postgresql")
+
+        assert not verdict.is_valid
+        assert verdict.error is not None
+        assert verdict.error.error_type == QueryErrorType.TIMEOUT

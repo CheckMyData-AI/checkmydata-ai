@@ -223,7 +223,28 @@ class ErrorClassifier:
         self,
         raw_error: str,
         db_type: str,
+        error_type: QueryErrorType | None = None,
     ) -> QueryError:
+        """Turn a raw driver error into a structured one.
+
+        ``error_type`` lets a caller that *already knows* the cause say so instead of
+        writing prose for this method to parse back. A timeout is the case that forced
+        it: ``asyncio.wait_for`` raises a builtin ``TimeoutError`` with no message, so
+        the connector hand-writes one, and the patterns below — which only ever matched
+        vendor wording — sent the application's own sentence to ``UNKNOWN``.
+
+        No pattern was added for that sentence on purpose. The point is to stop reading
+        it: a connector that forgets to set the type should show up as unclassified
+        rather than quietly keep working through a regex nobody maintains.
+        """
+        if error_type is not None:
+            return QueryError(
+                error_type=error_type,
+                message=self._build_message(error_type, None),
+                raw_error=raw_error,
+                is_retryable=error_type not in NON_RETRYABLE_ERRORS,
+            )
+
         patterns = DIALECT_MAP.get(db_type.lower(), [])
 
         for pat in patterns:

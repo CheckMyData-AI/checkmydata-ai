@@ -42,7 +42,7 @@ class ExplainValidator:
             return ValidationResult(is_valid=False, error=classified)
 
         if result.error:
-            classified = _classifier.classify(result.error, db_type)
+            classified = _classifier.classify(result.error, db_type, error_type=result.error_type)
             return ValidationResult(is_valid=False, error=classified)
 
         warnings = self._analyze_plan(result, db_type)
