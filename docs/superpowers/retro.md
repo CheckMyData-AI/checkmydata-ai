@@ -34,6 +34,14 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
    `chat.py:60` builds `ConversationalAgent()` at module level, so one `SQLAgent` serves
    every request in the process. Use the call frame or the existing `run_state`.
 
+9. **Never read an exit code through a pipe.** `pytest ... | tail` reports `tail`'s
+   status, and a run with failures is announced as success. Capture the status of the
+   command you care about, or check its output for the verdict.
+   *(2026-08-08: a full-suite run with `1 failed` was reported as exit code 0.)*
+10. **A flake on the deploy path is a gate that fails at random, not noise.**
+    Reproduce it under the load that exposed it before deciding anything.
+    *(m0 C21: dismissed as noise, then failed a CI run and skipped a deploy.)*
+
 ## Run stamps
 
 | Date | Commit | Diverged? |

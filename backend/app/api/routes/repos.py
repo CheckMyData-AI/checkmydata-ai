@@ -827,6 +827,15 @@ async def add_repository(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # The repo indexer later resolves this key with no ``user_id`` (a trusted
+    # internal lookup), so the reference has to be checked where it is written.
+    # 404 rather than 403: the lookup is owner-strict, so "someone else's" and
+    # "does not exist" answer identically and neither confirms the id.
+    if body.ssh_key_id:
+        owned = await _ssh_key_svc.get(db, body.ssh_key_id, user_id=user["user_id"])
+        if owned is None:
+            raise HTTPException(status_code=404, detail="SSH key not found")
+
     repo = await _repo_svc.create(
         db,
         project_id=project_id,

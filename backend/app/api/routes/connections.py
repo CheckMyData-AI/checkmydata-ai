@@ -505,6 +505,25 @@ class ConnectionResponse(BaseModel):
         return parsed if isinstance(parsed, dict) else None
 
 
+async def _require_owned_ssh_key(db: AsyncSession, ssh_key_id: str, user_id: str) -> None:
+    """Assert *ssh_key_id* exists and belongs to *user_id*.
+
+    Same shape as :func:`_require_owned_credential`, and for the same reason. The
+    resolvers that later decrypt this key -- ``git_agent`` and the repo indexer --
+    call ``SshKeyService.get_decrypted`` with **no** ``user_id``, calling it a
+    trusted internal lookup. That trust is only warranted if the *reference* was
+    checked when it was written, which is what this does.
+
+    404 rather than 403: ``SshKeyService.get`` is owner-strict, so "someone else's"
+    and "does not exist" answer identically and neither confirms the id.
+    """
+    from app.services.ssh_key_service import SshKeyService
+
+    key = await SshKeyService().get(db, ssh_key_id, user_id=user_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="SSH key not found")
+
+
 async def _require_owned_credential(
     db: AsyncSession,
     credential_id: str,
@@ -593,6 +612,9 @@ async def create_connection(
         await _require_owned_credential(
             db, body.vendor_credential_id, body.source_type, user["user_id"]
         )
+
+    if body.ssh_key_id:
+        await _require_owned_ssh_key(db, body.ssh_key_id, user["user_id"])
 
     conn = await _svc.create(db, **body.model_dump())
     logger.info(
@@ -684,6 +706,12 @@ async def update_connection(
         await _require_owned_credential(
             db, merged_credential_id, merged_source_type, user["user_id"]
         )
+
+    # Same invariant for the SSH key, on the merged row for the same reason: a
+    # per-branch check is beaten by splitting the write across two PATCHes.
+    merged_ssh_key_id = updates["ssh_key_id"] if "ssh_key_id" in updates else conn.ssh_key_id
+    if merged_ssh_key_id:
+        await _require_owned_ssh_key(db, merged_ssh_key_id, user["user_id"])
 
     # An analytics source has no host or database to require; every other kind
     # must still end up reachable.

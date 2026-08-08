@@ -133,6 +133,7 @@ human review moves them to `validated`.
 | SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | draft | — |
 | SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
 | SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | draft | — |
+| SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | draft | — |
 
 ## Personas
 
@@ -2009,3 +2010,17 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** two distinct outcomes, never conflated. (a) *Database did not answer* — "The database didn't answer within 30 s — twice in a row. That points at the database rather than at your question. Try again in a few minutes, or check the connection." (b) *Narrowed and succeeded* — the answer carries the existing partial-data caveat saying it covers a narrower range than asked. The SQL, the attempt count and the connection id are logged, never shown. A run killed by the outer request timeout is recorded with `failure_kind`, not as a stub row
 - **Status:** draft
 - **Coverage:** backend/app/core/validation_loop.py; backend/app/core/error_classifier.py; backend/app/agents/sql_agent.py; frontend/src/components/chat/ChatMessage.tsx
+
+### SCN-121: Attaching an SSH key you do not own is refused
+- **Persona:** owner
+- **Feature:** connections
+- **Entry point:** connection create/update, or project update, carrying `ssh_key_id`
+- **Preconditions:** the caller owns the project; the key id belongs to a different tenant
+- **Steps:**
+  1. The request names an `ssh_key_id` the caller does not own
+- **Expected result:** refused with **404 "SSH key not found"**, and nothing is written. The same refusal covers the two-step variant — attach on one request, change other fields on the next — because the check runs on the merged row, not on the payload branch
+- **UI elements:** error toast on the connection/project form
+- **States covered:** error
+- **Errors & recovery:** 404 rather than 403 is deliberate: the lookup is owner-strict, so "someone else's key" and "no such key" answer identically and neither confirms that an id exists. Before this change the reference was accepted unchecked, and `GitAgent` / the repo indexer later decrypted it with no owner filter — so the server would open a tunnel or clone a repository with another tenant's private key. The key itself was never exposed; its *use* was
+- **Status:** draft
+- **Coverage:** backend/app/api/routes/connections.py; backend/app/api/routes/projects.py; backend/app/services/ssh_key_service.py; backend/tests/integration/test_ssh_key_ownership.py

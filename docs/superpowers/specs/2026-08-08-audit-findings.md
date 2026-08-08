@@ -85,3 +85,33 @@ surface · error paths of the analytics collector · dependency CVEs.
 
 A second pass should take one thread at a time, the way this one took ownership — the
 mechanical sweep is cheap and now done, and repeating it adds nothing.
+
+---
+
+## AUD-4 — `test_heartbeat_ticks_during_long_step` fails under full-suite load · **medium, deploy-path**
+
+Observed 2026-08-08 on a full `tests/unit` run (20m37s): `1 failed, 5404 passed`. The
+same test passes in **3.4 s in isolation**, and the branch under test touches only
+`api/routes/{connections,projects,repos}.py` — nothing near `pipeline_runner`.
+
+This is the family recorded in m0 as carry-over **C21**, where the same class of flake
+failed a CI run, skipped a deploy, and — this is the part worth keeping — **was
+dismissed as noise by the operator of that run before being taken seriously**. It was
+then fixed in `c5c6460` (WAL + a 30 s busy timeout, verified 0/30 under load). This
+observation says that fix is **not sufficient** under a suite heavier than the one it
+was validated against.
+
+**Why it ranks above its apparent size:** a flake on the deploy path is not a flaky
+test, it is a gate that fails at random. Every future run pays either a re-run or a
+wrong decision, and the wrong decision is silent.
+
+**Next step:** reproduce under load (`-n auto` or a parallel writer), then decide
+between a real fix and quarantining it off the deploy gate — quarantine being honest
+only if it is recorded, not if the test is simply deleted.
+
+## Method note — a masked exit code
+
+The first full-suite run was reported to me as "exit code 0" while the output said
+`1 failed`. The command was piped to `tail`, so the exit code belonged to `tail`.
+**Never gate a decision on the exit status of a pipeline whose last command is a
+pager.** Worth a standing instruction; added to the retro.

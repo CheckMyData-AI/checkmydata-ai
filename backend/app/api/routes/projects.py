@@ -118,6 +118,21 @@ class ProjectResponse(BaseModel):
     user_role: str | None = None
 
 
+async def _require_owned_ssh_key(db: AsyncSession, ssh_key_id: str, user_id: str) -> None:
+    """Assert *ssh_key_id* exists and belongs to *user_id*.
+
+    ``GitAgent`` and the repo indexer both resolve ``project.ssh_key_id`` with no
+    ``user_id`` -- a trusted internal lookup that is only trustworthy if the
+    reference was checked when it was written. 404 rather than 403: the lookup is
+    owner-strict, so "someone else's" and "does not exist" answer identically.
+    """
+    from app.services.ssh_key_service import SshKeyService
+
+    key = await SshKeyService().get(db, ssh_key_id, user_id=user_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="SSH key not found")
+
+
 @router.post("", response_model=ProjectResponse)
 @limiter.limit("10/minute")
 async def create_project(
@@ -139,6 +154,9 @@ async def create_project(
             status_code=403,
             detail="You are not eligible to create projects. Please request access.",
         )
+
+    if body.ssh_key_id:
+        await _require_owned_ssh_key(db, body.ssh_key_id, user["user_id"])
 
     # T-BILL-2: plan-based paywall on project count (402 + upgrade payload).
     from app.services.entitlement_service import EntitlementService, QuotaExceededError
@@ -279,7 +297,10 @@ async def update_project(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "owner")
-    project = await _svc.update(db, project_id, **body.model_dump(exclude_unset=True))
+    updates = body.model_dump(exclude_unset=True)
+    if updates.get("ssh_key_id"):
+        await _require_owned_ssh_key(db, updates["ssh_key_id"], user["user_id"])
+    project = await _svc.update(db, project_id, **updates)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectResponse(
