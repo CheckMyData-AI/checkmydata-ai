@@ -231,32 +231,48 @@ class TracePersistenceService:
                 trace = result.scalar_one_or_none()
 
                 if trace is not None:
-                    upd = (
-                        update(RequestTrace)
-                        .where(RequestTrace.id == trace.id)
-                        .values(
-                            project_id=project_id,
-                            user_id=user_id,
-                            session_id=session_id,
-                            message_id=message_id,
-                            assistant_message_id=assistant_message_id,
-                            question=_truncate(question, 500) or "",
-                            response_type=response_type,
-                            status=status,
-                            error_message=_truncate(error_message),
-                            failure_kind=failure_kind,
-                            total_duration_ms=total_duration_ms,
-                            total_tokens=total_tokens,
-                            estimated_cost_usd=estimated_cost_usd,
-                            llm_provider=llm_provider,
-                            llm_model=llm_model,
-                            steps_used=steps_used,
-                            steps_total=steps_total,
-                            route=route,
-                            complexity=complexity,
-                            estimated_queries=estimated_queries,
-                        )
-                    )
+                    # The buffer flush at ``pipeline_end`` already wrote this row with
+                    # real numbers (duration, LLM/DB call counts). This UPDATE used to
+                    # overwrite every column unconditionally, so the *defaults of this
+                    # function's own parameters* clobbered them: a run that had taken
+                    # 323 s came out with total_duration_ms=NULL, steps 0/0 and
+                    # route/complexity "unknown" -- exactly the production trace of
+                    # 2026-08-06 11:39:24. Only write what the caller actually supplied.
+                    values: dict[str, Any] = {
+                        "project_id": project_id,
+                        "user_id": user_id,
+                        "response_type": response_type,
+                        "status": status,
+                    }
+                    optional: dict[str, Any] = {
+                        "session_id": session_id,
+                        "message_id": message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "error_message": _truncate(error_message),
+                        "failure_kind": failure_kind,
+                        "total_duration_ms": total_duration_ms,
+                        "estimated_cost_usd": estimated_cost_usd,
+                    }
+                    values.update({k: v for k, v in optional.items() if v is not None})
+                    if question:
+                        values["question"] = _truncate(question, 500)
+                    if total_tokens:
+                        values["total_tokens"] = total_tokens
+                    if steps_used or steps_total:
+                        values["steps_used"] = steps_used
+                        values["steps_total"] = steps_total
+                    if estimated_queries:
+                        values["estimated_queries"] = estimated_queries
+                    for name, supplied in (
+                        ("llm_provider", llm_provider),
+                        ("llm_model", llm_model),
+                        ("route", route),
+                        ("complexity", complexity),
+                    ):
+                        if supplied and supplied != "unknown":
+                            values[name] = supplied
+
+                    upd = update(RequestTrace).where(RequestTrace.id == trace.id).values(**values)
                     await session.execute(upd)
                     await session.commit()
                 else:
