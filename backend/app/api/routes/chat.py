@@ -58,6 +58,30 @@ _chat_svc = ChatService()
 _conn_svc = ConnectionService()
 _project_svc = ProjectService()
 _agent = ConversationalAgent()
+
+
+def _abnormal_trace_id(session_id: str, reason: str) -> str:
+    """Workflow id for a run that died before it could report its own.
+
+    The SSE path captures the real id from the `pipeline_start` event and only falls
+    back when there is genuinely none (chat.py, `_finalize_on_error`). The REST path
+    had no such capture and always passed a synthetic id, which can never match
+    `RequestTrace.workflow_id` -- so `finalize_trace` missed its lookup and wrote a
+    second, empty row beside the real one instead of completing it.
+
+    Until REST captures the real id (carry-over K12), make the fallback visible
+    rather than silent: it is a known gap, and a trace row nobody can join to its
+    spans should say so in the logs.
+    """
+    logger.warning(
+        "Finalizing a trace without the run's workflow id (reason=%s, session=%s); "
+        "this row cannot be joined to its spans",
+        reason,
+        session_id[:8],
+    )
+    return f"unknown-{session_id}"
+
+
 _rag_feedback_svc = RAGFeedbackService()
 _usage_svc = UsageService()
 _membership_svc = MembershipService()
@@ -336,7 +360,7 @@ async def ask(
                 trace_svc = getattr(request.app.state, "trace_persistence_service", None)
                 if trace_svc is not None:
                     await trace_svc.finalize_trace(
-                        f"unknown-{session_id}",
+                        _abnormal_trace_id(session_id, "timeout"),
                         project_id=body.project_id,
                         user_id=user["user_id"],
                         session_id=session_id,
@@ -345,6 +369,7 @@ async def ask(
                         response_type="error",
                         status="failed",
                         error_message="Agent run timed out",
+                        failure_kind="transient",
                     )
             except Exception:
                 logger.warning("Failed to finalize trace after agent timeout", exc_info=True)
@@ -359,7 +384,7 @@ async def ask(
                 trace_svc = getattr(request.app.state, "trace_persistence_service", None)
                 if trace_svc is not None:
                     await trace_svc.finalize_trace(
-                        f"unknown-{session_id}",
+                        _abnormal_trace_id(session_id, "crash"),
                         project_id=body.project_id,
                         user_id=user["user_id"],
                         session_id=session_id,
@@ -368,6 +393,7 @@ async def ask(
                         response_type="error",
                         status="failed",
                         error_message=_exc_msg,
+                        failure_kind="fatal",
                     )
             except Exception:
                 logger.warning("Failed to finalize trace after agent crash", exc_info=True)
