@@ -9,6 +9,7 @@ the table, from one that crashed.
 from __future__ import annotations
 
 import inspect
+from unittest.mock import MagicMock
 
 from app.services.trace_persistence_service import TracePersistenceService
 
@@ -33,34 +34,64 @@ def test_both_abnormal_rest_paths_pass_a_kind_from_the_shared_vocabulary():
     )
 
 
-def test_finalize_does_not_overwrite_real_values_with_its_own_defaults():
+async def test_finalize_does_not_overwrite_real_values_with_its_own_defaults(monkeypatch):
     """The UPDATE must be additive, not a blanket overwrite.
 
     `_persist_workflow` writes the row at `pipeline_end` with real numbers -- the
-    duration it measured and the LLM/DB call counts it derived from spans. The route
-    then calls `finalize_trace` to attach chat metadata. When that UPDATE listed every
-    column unconditionally, the *defaults of finalize_trace's parameters* won:
-    `total_duration_ms=None`, `steps_used=0`, `route="unknown"`.
+    duration it measured and the call counts derived from spans. The route then calls
+    `finalize_trace` to attach chat metadata. When that UPDATE listed every column
+    unconditionally, the *defaults of finalize_trace's parameters* won:
+    total_duration_ms=None erased 323 s, steps went to 0/0, route/complexity to
+    "unknown" -- production trace 2026-08-06 11:39:24, which carried 84 real spans
+    and still looked like a stub.
 
-    Production trace 2026-08-06 11:39:24 is the proof it was not theoretical -- 84
-    spans, `total_llm_calls=7` and `total_db_queries=10` survived (the UPDATE does not
-    list them), while duration, steps and the routing signals did not.
+    Asserted on the emitted statement rather than on the source text: an earlier
+    version of this test read the source, and a planted blanket-overwrite defect
+    sailed straight through it.
     """
-    import inspect
+    from app.models.request_trace import RequestTrace
+    from app.services import trace_persistence_service as tps
 
-    from app.services.trace_persistence_service import TracePersistenceService
+    captured: dict = {}
 
-    source = inspect.getsource(TracePersistenceService.finalize_trace)
-    update_block = source[source.index("if trace is not None:") : source.index("else:")]
+    class _Result:
+        def scalar_one_or_none(self):
+            return RequestTrace(id="t1", workflow_id="wf1", project_id="p", user_id="u")
 
-    assert "values.update(" in update_block, "the UPDATE must be built conditionally"
-    for clobbered in (
-        "total_duration_ms=total_duration_ms",
-        "steps_used=steps_used",
-        "route=route",
-        "complexity=complexity",
-    ):
-        assert clobbered not in update_block, (
-            f"{clobbered} is written unconditionally again — a default would erase "
-            "the value the buffer flush already measured"
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def execute(self, stmt):
+            if stmt.__class__.__name__ == "Update":
+                captured["values"] = {
+                    c.name: getattr(v, "value", v) for c, v in stmt._values.items()
+                }
+            return _Result()
+
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(tps, "async_session_factory", lambda: _Session())
+
+    svc = tps.TracePersistenceService(tracker=MagicMock())
+    await svc.finalize_trace(
+        "wf1",
+        project_id="p",
+        user_id="u",
+        response_type="error",
+        status="failed",
+        failure_kind="transient",
+    )
+
+    written = captured["values"]
+    assert written["response_type"] == "error"
+    assert written["failure_kind"] == "transient"
+    for erased in ("total_duration_ms", "steps_used", "steps_total", "route", "complexity"):
+        assert erased not in written, (
+            f"{erased} was written from a default and would erase what the buffer "
+            "flush already measured"
         )
