@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,7 @@ from app.connectors.base import (
 from app.connectors.registry import get_connector
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
+from app.core.error_types import QueryErrorType
 from app.core.history_trimmer import trim_loop_messages
 from app.core.query_cache import QueryCache
 from app.core.query_repair import QueryRepairer
@@ -105,6 +107,10 @@ class SQLAgentResult(AgentResult):
     rag_sources: list[RAGSource] = field(default_factory=list)
     tool_call_log: list[dict[str, Any]] = field(default_factory=list)
     insights: list[dict[str, Any]] = field(default_factory=list)
+    #: Why the tool loop ended early, when it did: ``timeout_breaker`` (the
+    #: database stopped answering) or ``deadline`` (the request's wall clock is
+    #: spent). ``None`` means the loop ended on its own terms.
+    stop_reason: str | None = None
 
 
 class SQLAgent(BaseAgent):
@@ -168,7 +174,6 @@ class SQLAgent(BaseAgent):
     ) -> SQLAgentResult:
         question = question or context.user_question
         cfg = context.connection_config
-        self._wall_clock_remaining = wall_clock_remaining
 
         if cfg is None:
             raise AgentFatalError("No database connection configured")
@@ -267,7 +272,7 @@ class SQLAgent(BaseAgent):
 
         result = SQLAgentResult()
         tool_call_log: list[dict[str, Any]] = []
-        run_state: dict[str, Any] = {}
+        run_state: dict[str, Any] = {"wall_clock_remaining": wall_clock_remaining}
 
         provider = context.sql_provider or context.preferred_provider
         model = context.sql_model or context.model
@@ -275,7 +280,31 @@ class SQLAgent(BaseAgent):
         sql_loop_budget = self._llm.get_context_window(model)
 
         max_sql_iter = settings.max_sql_iterations
+        # Two stops the loop previously lacked. Both are locals of this call frame,
+        # never attributes: one SQLAgent instance serves every request in the process
+        # (chat.py builds ConversationalAgent() at module level), so state on `self`
+        # would let one tenant's dead database break another tenant's loop.
+        consecutive_timeouts = 0
+        deadline: float | None = None
+        if settings.sql_agent_deadline_enabled and wall_clock_remaining:
+            deadline = time.monotonic() + wall_clock_remaining
+        stop_reason: str | None = None
+
         for iteration in range(max_sql_iter):
+            if deadline is not None and time.monotonic() >= deadline:
+                # The orchestrator's budget is only checked between ITS iterations,
+                # and this whole agent runs inside one of them -- so without this the
+                # loop is bounded by the iteration count alone.
+                stop_reason = "deadline"
+                logger.info("SQL agent stopping at iteration %d: wall clock spent", iteration + 1)
+                await tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    "SQL Agent stopped: time budget for this request is spent",
+                )
+                break
+
             messages, _ = trim_loop_messages(messages, sql_loop_budget)
 
             await tracker.emit(
@@ -379,6 +408,35 @@ class SQLAgent(BaseAgent):
 
                 result_text = _cap_tool_result(tc.name, result_text)
 
+                if tc.name == "execute_query":
+                    if run_state.get("last_error_type") == QueryErrorType.TIMEOUT:
+                        consecutive_timeouts += 1
+                    else:
+                        # Any query that came back resets the evidence: the database
+                        # is answering, so a later timeout is about that query again.
+                        consecutive_timeouts = 0
+
+                    if consecutive_timeouts >= settings.sql_timeout_breaker_threshold:
+                        stop_reason = "timeout_breaker"
+                        logger.warning(
+                            "SQL agent stopping: %d consecutive query timeouts on "
+                            "connection %s -- treating this as the database, not the SQL.",
+                            consecutive_timeouts,
+                            (
+                                context.connection_config.connection_id
+                                if context.connection_config
+                                else "?"
+                            ),
+                        )
+                        await tracker.emit(
+                            wf_id,
+                            "thinking",
+                            "in_progress",
+                            f"SQL Agent stopped: the database did not answer "
+                            f"{consecutive_timeouts} times in a row",
+                        )
+                        break
+
                 tool_call_log.append(
                     {
                         "tool": tc.name,
@@ -396,8 +454,12 @@ class SQLAgent(BaseAgent):
                     )
                 )
 
+            if stop_reason is not None:
+                break
+
         result.token_usage = total_usage
         result.tool_call_log = tool_call_log
+        result.stop_reason = stop_reason
 
         last_query = run_state.get("last_query")
         last_explanation = run_state.get("last_explanation")
@@ -480,7 +542,10 @@ class SQLAgent(BaseAgent):
 
         connector = await self._get_or_create_connector(cfg)
         schema = await self._get_cached_schema(cfg)
-        val_config = self._build_validation_config()
+        # The budget travels in the per-run state, never on `self`: one SQLAgent
+        # instance serves every request in the process (carry-over K10).
+        run_state_in: dict[str, Any] = kwargs.get("run_state") or {}
+        val_config = self._build_validation_config(run_state_in.get("wall_clock_remaining"))
 
         db_idx_ctx = await self._load_db_index_hints(cfg)
         sync_warnings, sync_tips = await self._load_sync_for_repair(cfg)
@@ -565,6 +630,11 @@ class SQLAgent(BaseAgent):
         )
 
         run_state = kwargs.get("run_state", {})
+        run_state["last_error_type"] = (
+            loop_result.final_error.error_type
+            if not loop_result.success and loop_result.final_error
+            else None
+        )
         run_state["last_query"] = loop_result.query
         run_state["last_explanation"] = loop_result.explanation
         run_state["last_result"] = results
@@ -1490,11 +1560,20 @@ class SQLAgent(BaseAgent):
         self._schema_cache.put(key, schema)
         return schema
 
-    def _build_validation_config(self) -> ValidationConfig:
+    def _build_validation_config(
+        self, wall_clock_remaining: float | None = None
+    ) -> ValidationConfig:
+        """Build the per-query validation config for ONE request.
+
+        ``wall_clock_remaining`` is an argument, not instance state, on purpose:
+        ``chat.py`` constructs ``ConversationalAgent()`` at module level, so a single
+        ``SQLAgent`` serves every request in the process and whatever was written to
+        ``self`` last would decide everyone's query timeout (carry-over K10).
+        """
         from app.config import settings as app_settings
 
         timeout = app_settings.query_timeout_seconds
-        remaining = getattr(self, "_wall_clock_remaining", None)
+        remaining = wall_clock_remaining
         if remaining is not None and remaining > 0:
             budget_timeout = int(remaining * 0.5)
             timeout = max(5, min(timeout, budget_timeout))

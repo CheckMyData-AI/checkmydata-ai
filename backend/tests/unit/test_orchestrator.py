@@ -2340,8 +2340,7 @@ class TestSqlAgentTimeBudget:
             vector_store=MagicMock(),
             rules_engine=MagicMock(),
         )
-        agent._wall_clock_remaining = 20.0
-        config = agent._build_validation_config()
+        config = agent._build_validation_config(wall_clock_remaining=20.0)
         assert config.query_timeout_seconds <= 10
 
     def test_timeout_not_capped_when_no_wall_clock(self):
@@ -2352,8 +2351,7 @@ class TestSqlAgentTimeBudget:
             vector_store=MagicMock(),
             rules_engine=MagicMock(),
         )
-        agent._wall_clock_remaining = None
-        config = agent._build_validation_config()
+        config = agent._build_validation_config(wall_clock_remaining=None)
         assert config.query_timeout_seconds == 30
 
     def test_timeout_minimum_floor(self):
@@ -2364,8 +2362,7 @@ class TestSqlAgentTimeBudget:
             vector_store=MagicMock(),
             rules_engine=MagicMock(),
         )
-        agent._wall_clock_remaining = 2.0
-        config = agent._build_validation_config()
+        config = agent._build_validation_config(wall_clock_remaining=2.0)
         assert config.query_timeout_seconds >= 5
 
 

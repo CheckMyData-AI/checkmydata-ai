@@ -309,6 +309,18 @@ class Settings(BaseSettings):
     max_parallel_tool_calls: int = 2
     max_sub_agent_retries: int = 2
     max_sql_iterations: int = 10
+    #: Consecutive timeout-terminated `execute_query` calls, on one connection and
+    #: within one request, before the SQL tool loop stops. A timeout means the
+    #: database is not executing; retrying a different query against it costs another
+    #: full `query_timeout_seconds` and cannot succeed. Reset by any successful query.
+    #: Non-positive is rejected at boot — "0" would read as configured and behave as
+    #: absent. Env: SQL_TIMEOUT_BREAKER_THRESHOLD.
+    sql_timeout_breaker_threshold: int = 2
+    #: Honour the orchestrator's remaining wall clock *inside* the SQL tool loop.
+    #: Without it the loop is bounded only by `max_sql_iterations`: the orchestrator
+    #: checks its own budget between its iterations, and the entire SQL agent runs
+    #: within one of them. Env: SQL_AGENT_DEADLINE_ENABLED.
+    sql_agent_deadline_enabled: bool = True
     max_mcp_iterations: int = 5
     # Per-call wall-clock timeout (seconds) for an external MCP tool invocation.
     # External MCP servers are untrusted and may hang; without this a single
@@ -807,6 +819,17 @@ class Settings(BaseSettings):
             insight_ttl_days_warning=self.insight_ttl_days_warning,
             insight_ttl_days_critical=self.insight_ttl_days_critical,
         )
+
+    @model_validator(mode="after")
+    def _validate_sql_loop_bounds(self) -> "Settings":
+        """A bound that silently means "never" is worse than no bound at all."""
+        if self.sql_timeout_breaker_threshold < 1:
+            raise ValueError(
+                "SQL_TIMEOUT_BREAKER_THRESHOLD must be >= 1 "
+                f"(got {self.sql_timeout_breaker_threshold}). A non-positive value "
+                "would disable the breaker while still reading as configured."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
