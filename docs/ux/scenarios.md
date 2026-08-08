@@ -132,6 +132,7 @@ human review moves them to `validated`.
 | SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | draft | — |
 | SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | draft | — |
 | SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
+| SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | draft | — |
 
 ## Personas
 
@@ -1992,3 +1993,19 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** 422 naming the source as not yet available, rather than creating a connection that would fail silently every day; the credential providers remain selectable so keys can be stored ahead of support landing
 - **Status:** draft
 - **Coverage:** backend/app/services/connection_service.py
+
+### SCN-120: Database does not answer — honest stop instead of a silent grind
+- **Persona:** analyst
+- **Feature:** chat
+- **Entry point:** a data question in chat against a connection whose database is reachable but not executing
+- **Preconditions:** a project with a database connection; the database accepts EXPLAIN but does not return rows within `query_timeout_seconds`
+- **Steps:**
+  1. User asks a data question
+  2. The query times out; the agent retries **once** with a deliberately narrowed query
+  3. The narrowed query also times out
+- **Expected result:** the run stops within roughly two query timeouts and says the database did not answer — naming the environment, not the user's question, as the cause. Before this change the same situation produced ten LLM repair calls and a bare error after ~6 minutes (production trace `2026-08-06 11:39:24`, 84 spans)
+- **UI elements:** in-transcript error bubble (the SCN-046 surface), Retry button — a timeout is retryable
+- **States covered:** running, error, partial (narrowed query succeeded)
+- **Errors & recovery:** two distinct outcomes, never conflated. (a) *Database did not answer* — "The database didn't answer within 30 s — twice in a row. That points at the database rather than at your question. Try again in a few minutes, or check the connection." (b) *Narrowed and succeeded* — the answer carries the existing partial-data caveat saying it covers a narrower range than asked. The SQL, the attempt count and the connection id are logged, never shown. A run killed by the outer request timeout is recorded with `failure_kind`, not as a stub row
+- **Status:** draft
+- **Coverage:** backend/app/core/validation_loop.py; backend/app/core/error_classifier.py; backend/app/agents/sql_agent.py; frontend/src/components/chat/ChatMessage.tsx
