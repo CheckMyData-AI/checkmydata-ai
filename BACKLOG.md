@@ -444,3 +444,24 @@ Full ledger with evidence: `docs/superpowers/specs/2026-08-08-query-timeout-clas
   5 minutes; likely a dead SSH tunnel endpoint. Needs the operator to identify it.
 - **K11** — audit the rest of the singleton agent chain for per-request state on `self`.
 - **K2** — the code graph is not built (`graphify-out/` holds only a detect cache).
+
+
+## Prioritized backlog — audit 2026-08-08
+
+Evidence: `docs/superpowers/specs/2026-08-08-audit-findings.md` and the run ledger
+`2026-08-08-query-timeout-classification-carryover.md`. Ordered by damage-if-ignored,
+not by effort.
+
+| # | Item | Why this rank | Size |
+|---|---|---|---|
+| **P1** | **AUD-1 / K4 — cross-tenant SSH private-key use.** Ownership is unchecked when `ssh_key_id` is written (`connections.py:319,418`; `projects.py:48,93`), and the internal decrypt path runs unfiltered (`git_agent.py:165`, `pipeline_runner.py:214`) | Only item where another tenant's secret is *used* by the server. Chain confirmed end-to-end. Named "recommended next" one run ago and not taken | M |
+| **P2** | **K6 — `sentence-transformers` missing from the production image.** Embedder silently falls back 768-d → 384-d; `reranker_enabled` degrades to a no-op | Silent, permanent quality loss on every retrieval; the deploy note exists and was never executed | S |
+| **P3** | **K14 — verify the timeout fix against a real timeout.** `failure_kind` set, `total_duration_ms`/`route`/`complexity` no longer erased | The fix is deployed and unobserved; until seen, it is an assumption | S |
+| **P4** | **K7 — worker OOM.** `Error R14`, `mem=843M (163%)` sustained | Restarts drop in-flight jobs; masks other failures | M |
+| **P5** | **K9 — a connection points at `127.0.0.1`** and fails its health probe every 5 min | Broken for its owner today; needs the operator to identify which | S |
+| **P6** | **AUD-3 / K11 — audit per-request state on the singleton agent chain** | Same shape as a bug already found and fixed; cross-tenant correctness | M |
+| **P7** | **K8 — `MCP_ALLOWED_HOSTS` empty** (DNS-rebinding validation off, F-MCP-04) | Security hardening; exploitability depends on exposure | S |
+| **P8** | **AUD-2 — triage 52 `except → pass` blocks**, add a log-or-comment rule as a ratchet | Auditability debt, compounding | M |
+| **P9** | **K1 — process-wide circuit breaker** per connection (Redis, half-open) | Efficiency, not correctness; the per-run breaker already caps the damage | M |
+| **P10** | **K2 — build the code graph** (`/graphify .`), never built in this project | Makes every later audit cheaper | S |
+| **P11** | **K5 — m0 leftovers**: C7 (`query_mcp_source` description), C14 (`ANALYTICS_COLLECT_ENABLED` worker gap), C19 (9 unresolvable `Coverage:` paths) | Documentation and small correctness | S |
