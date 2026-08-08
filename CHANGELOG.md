@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Query timeouts stop being treated as broken SQL (2026-08-08)
+
+Found by reading production trace `2026-08-06 11:39:24` (84 spans, `status=failed`).
+Every `execute_query` timed out at exactly 30 000 ms while `explain_check` completed in
+72–466 ms — the database planned instantly and executed never — and the system spent
+**120 280 ms across ten `query_repair` calls** rewriting a query that was never wrong,
+277 831 ms inside the SQL tool, until the route's 360 s ceiling killed the request.
+
+- **A timeout now reaches the classifier as a type, not as prose.** `asyncio.wait_for`
+  raises a builtin `TimeoutError` carrying *no message*, so each connector hand-wrote
+  `"Query timed out after Ns"`; `ErrorClassifier`'s TIMEOUT patterns only ever matched
+  vendor wording, so that self-written sentence fell through to `UNKNOWN`/retryable.
+  `QueryErrorType` moved to the leaf module `app/core/error_types.py` (importable by
+  both layers without a cycle), `QueryResult` gained `error_type`, and all four
+  connectors set it. **No regex was added for the app's own string** — the point is to
+  stop reading it.
+- **One narrowing repair, then transient.** `_MAX_TIMEOUT_REPAIRS = 1`, counted from the
+  attempt log so post-validation, EXPLAIN and execution share one allowance. The repair
+  hint spends it on volume, not logic. `TIMEOUT` stays out of `_TRANSIENT_RETRY_ERRORS`:
+  re-running the same query after a sub-second backoff cannot beat a 30 s timeout.
+- **The SQL tool loop can stop.** Consecutive-timeout breaker
+  (`SQL_TIMEOUT_BREAKER_THRESHOLD`, default 2, reset by any successful query) and a
+  wall-clock deadline (`SQL_AGENT_DEADLINE_ENABLED`). Both are call-frame locals: one
+  `SQLAgent` serves every request in the process, so instance state would leak across
+  tenants. Non-positive threshold raises at boot.
+- **Fixed an existing cross-request leak** uncovered by that constraint:
+  `SQLAgent._wall_clock_remaining` was written by `run()` and read back off `self`, so
+  concurrent requests overwrote each other's query timeout. It is now a parameter.
+- **`finalize_trace` stopped erasing what the run measured.** Its UPDATE listed every
+  column unconditionally, so its own parameter defaults clobbered the buffer flush's
+  real values — `total_duration_ms` to NULL, steps to 0/0, route/complexity to
+  `"unknown"`. The UPDATE is now additive, and it finally accepts `failure_kind`, which
+  it had no parameter for at all.
+
+`docs/ux/scenarios.md` gains **SCN-120**. Suite: 6043 passed / 5 skipped / 1 xfailed,
+coverage **79%** (gate 72%). Deployed as Heroku release **v202** from commit `278b043`.
+Behaviour in production is **not** yet observed — see the run's carry-over ledger, K14.
+
+
 ### Fixed — Audit remediation (2026-07-24)
 
 Remediation of the 2026-07-24 full repository audit (`docs/qa-audit/full-audit-2026-07-24/` — 144 findings; per-finding status and commit mapping in `11-findings-registry.md`). Branch `fix/audit-remediation-2026-07-24`, 8 commits. Post-remediation run: backend 5580 passed / 5 skipped / 1 xfailed / 0 failed, coverage **78.03%** (gate 72%); frontend 546 passed (79 files); ruff check/format + mypy clean.

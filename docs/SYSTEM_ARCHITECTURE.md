@@ -892,7 +892,7 @@ The SQL execution cycle:
 3. **Explain validation** (`ExplainValidator`): Warns on full table scans above row threshold
 4. **Execution**: Runs the query against the user's database
 5. **Post-validation** (`PostValidator`): Result sanity checks
-6. **Error classification** (`ErrorClassifier`): Categorizes failures (table_not_found, column_not_found, syntax_error, timeout, permission_denied)
+6. **Error classification** (`ErrorClassifier`): Categorizes failures (table_not_found, column_not_found, syntax_error, timeout, permission_denied). A caller that already knows the cause passes `error_type=` and the regex ladder is skipped — the connectors do this for timeouts, because `asyncio.wait_for` raises a builtin `TimeoutError` carrying **no message**, so the string they hand upward is one they wrote themselves. Until 2026-08-08 that self-written string matched none of the vendor-worded TIMEOUT patterns and fell through to `UNKNOWN`/retryable, sending dead databases to the query repairer.
 7. **Context enrichment** (`ContextEnricher`): Gathers additional schema info after failures
 8. **Query repair** (`QueryRepairer`): LLM-based query fix using error context
 9. **Retry**: Up to `max_retries` attempts with the repaired query

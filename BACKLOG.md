@@ -419,3 +419,28 @@ program map in [`…-modules.md`](docs/superpowers/specs/2026-08-01-analytics-so
 12. Mark task as `done` in this file
 13. Proceed to next task
 14. After Sprint complete → wait for approval → re-prioritize → next Sprint
+
+
+## Carry-over from the 2026-08-08 query-timeout run
+
+Full ledger with evidence: `docs/superpowers/specs/2026-08-08-query-timeout-classification-carryover.md`.
+
+- **K4 — security, inherited from m0 and still open.** `ssh_key_id` has no ownership
+  check on connection create/update, and `to_config` is called without `user_id` on the
+  chat/SSE/WS paths, so `SshKeyService.get_decrypted(…, user_id=None)` is an unfiltered
+  lookup by id. A tenant who learns another tenant's SSH key id can attach it and have
+  the server tunnel with someone else's private key. **Recommended next.**
+- **K14** — the timeout fix is deployed but its behaviour is unobserved: production has
+  had no chat traffic since the 2026-08-07 04:44 restart. Verify on the next real
+  timeout that `request_traces` shows `failure_kind` set and `total_duration_ms` /
+  `route` / `complexity` no longer erased.
+- **K1** — process-wide circuit breaker per connection (Redis, half-open, cooldown).
+- **K6** — `sentence-transformers` absent from the production image: the embedder
+  silently falls back from `BAAI/bge-base-en-v1.5` (768-d) to `all-MiniLM-L6-v2` (384-d)
+  and `reranker_enabled` degrades to a no-op. Deploy note 3 in `CLAUDE.md`, never executed.
+- **K7** — worker OOM: `Error R14`, `mem=843M (163%)` sustained on 2026-08-07.
+- **K8** — `MCP_ALLOWED_HOSTS` empty in production (F-MCP-04 warns at every boot).
+- **K9** — a connection configured against `127.0.0.1` fails its health probe every
+  5 minutes; likely a dead SSH tunnel endpoint. Needs the operator to identify it.
+- **K11** — audit the rest of the singleton agent chain for per-request state on `self`.
+- **K2** — the code graph is not built (`graphify-out/` holds only a detect cache).
