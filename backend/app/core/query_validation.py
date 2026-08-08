@@ -3,36 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 
 from app.connectors.base import QueryResult
 
+# The vocabulary moved to a leaf module so `app.connectors.base` can name an error
+# type without importing this one (which imports *it*). Re-exported here so every
+# existing `from app.core.query_validation import QueryErrorType` keeps working.
+from app.core.error_types import NON_RETRYABLE_ERRORS, QueryErrorType
 
-class QueryErrorType(StrEnum):
-    COLUMN_NOT_FOUND = "column_not_found"
-    TABLE_NOT_FOUND = "table_not_found"
-    SYNTAX_ERROR = "syntax_error"
-    TYPE_MISMATCH = "type_mismatch"
-    AMBIGUOUS_COLUMN = "ambiguous_column"
-    PERMISSION_DENIED = "permission_denied"
-    CONNECTION_ERROR = "connection_error"
-    TIMEOUT = "timeout"
-    COLLATION_MISMATCH = "collation_mismatch"
-    GROUP_BY_VIOLATION = "group_by_violation"
-    EMPTY_RESULT = "empty_result"
-    EXPLAIN_WARNING = "explain_warning"
-    UNKNOWN = "unknown"
-
-
-NON_RETRYABLE_ERRORS = frozenset(
-    {
-        QueryErrorType.PERMISSION_DENIED,
-    }
-)
-# A connection error is usually transient (DB momentarily unavailable, network
-# blip) — it is NOT a query problem. ValidationLoop retries it by re-running the
-# same query after a backoff (no LLM repair), so it is deliberately retryable
-# rather than listed in NON_RETRYABLE_ERRORS.
+__all__ = [
+    "NON_RETRYABLE_ERRORS",
+    "QueryAttempt",
+    "QueryError",
+    "QueryErrorType",
+    "ValidationConfig",
+    "ValidationLoopResult",
+    "ValidationResult",
+]
 
 
 @dataclass

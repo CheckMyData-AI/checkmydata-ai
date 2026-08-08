@@ -17,6 +17,7 @@ from app.connectors.base import (
     TableInfo,
 )
 from app.connectors.ssh_tunnel import shared_tunnel_manager
+from app.core.error_types import QueryErrorType
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,7 @@ class MySQLConnector(BaseConnector):
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(
                 error=f"Query timed out after {effective_timeout:g}s",
+                error_type=QueryErrorType.TIMEOUT,
                 execution_time_ms=elapsed,
             )
         except Exception as e:

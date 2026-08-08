@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core.error_types import QueryErrorType
+
 _REDACTED = "<redacted>"
 
 
@@ -302,6 +304,11 @@ class QueryResult:
     row_count: int = 0
     execution_time_ms: float = 0.0
     error: str | None = None
+    #: Machine-readable cause, when the adapter knows it. ``error`` stays the
+    #: human-readable detail; this is what the classifier trusts instead of
+    #: pattern-matching prose the application wrote itself. ``None`` means "not
+    #: stated" and the classifier falls back to its regex ladder.
+    error_type: QueryErrorType | None = None
     truncated: bool = False
 
 
