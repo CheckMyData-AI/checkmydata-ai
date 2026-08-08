@@ -35,6 +35,16 @@ _TRANSIENT_RETRY_ERRORS = frozenset({QueryErrorType.CONNECTION_ERROR})
 _TRANSIENT_BACKOFF_BASE_SECONDS = 0.5
 _TRANSIENT_BACKOFF_MAX_SECONDS = 4.0
 
+# How many LLM repairs a *timeout* is worth. Deliberately not in
+# ``_TRANSIENT_RETRY_ERRORS``: that path re-runs the SAME query after a sub-second
+# backoff, which against a 30-second timeout buys another 30 seconds and cannot
+# succeed. But a timeout is not purely environmental either — a genuinely heavy
+# query (missing index, cartesian join) *is* fixable by narrowing, so it earns one
+# attempt. After that the evidence says the database, not the SQL: production trace
+# 2026-08-06 11:39:24 spent 120.3 s across ten repairs rewriting a correct query
+# while even ``MIN/MAX(id)`` on an indexed primary key was timing out.
+_MAX_TIMEOUT_REPAIRS = 1
+
 
 class ValidationLoop:
     """Ties together pre-validation, execution, post-validation, and repair."""
@@ -416,6 +426,23 @@ class ValidationLoop:
         """Attempt to repair. Returns (new_query, new_explanation) or None."""
         if not self._retry.should_retry(error, current_attempt, self._config.max_retries):
             return None
+
+        # Timeout budget, counted from the attempt log rather than a separate
+        # counter so every path that repairs (post-validation, EXPLAIN, execution)
+        # shares one allowance. ``attempts`` already holds the current attempt.
+        if error.error_type == QueryErrorType.TIMEOUT:
+            timeouts_seen = sum(
+                1
+                for a in attempts
+                if a.error is not None and a.error.error_type == QueryErrorType.TIMEOUT
+            )
+            if timeouts_seen > _MAX_TIMEOUT_REPAIRS:
+                logger.info(
+                    "Timeout %d on this query after a narrowing attempt — treating it as "
+                    "an environment fault and stopping instead of repairing again.",
+                    timeouts_seen,
+                )
+                return None
 
         # A3: a transient connection error is an infrastructure fault, not a
         # query defect. Re-run the SAME query after a bounded backoff instead of

@@ -81,4 +81,20 @@ class RetryStrategy:
                 "timestamps alongside aggregates. Do not change the question's intent."
             )
 
+        elif et == QueryErrorType.TIMEOUT:
+            # The query is not malformed — it was too expensive to finish. The loop
+            # allows exactly one attempt at this, so spend it on volume, not on
+            # rewriting logic that was already correct.
+            parts.append(
+                "The query is syntactically valid; it did not finish in time. Do NOT rewrite "
+                "its logic. Reduce the work it asks the database to do, in this order of "
+                "preference: (a) narrow the time range or add the most selective filter "
+                "available; (b) aggregate in SQL instead of returning rows; (c) drop joins "
+                "that no selected column needs; (d) add a LIMIT when the question tolerates "
+                "a sample. Prefer indexed columns for any filter you add. Keep the question's "
+                "intent — a narrower answer that arrives beats a complete one that never does, "
+                "but a different answer is worse than none. If nothing can be narrowed without "
+                "changing what was asked, return the query unchanged."
+            )
+
         return "\n".join(parts)

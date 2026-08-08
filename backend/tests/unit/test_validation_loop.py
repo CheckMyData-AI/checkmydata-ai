@@ -481,3 +481,134 @@ class TestValidationLoop:
 
         assert not result.success
         assert result.total_attempts == 1
+
+
+def _timeout_result() -> QueryResult:
+    """What every connector returns when `asyncio.wait_for` expires."""
+    return QueryResult(
+        error="Query timed out after 30s",
+        error_type=QueryErrorType.TIMEOUT,
+    )
+
+
+class TestTimeoutBudget:
+    """A timeout gets one narrowing attempt, then the loop stops being optimistic.
+
+    Production trace 2026-08-06 11:39:24: ten `query_repair` calls (120.3 s of LLM
+    time) rewriting a query that was never wrong, because the database had stopped
+    executing anything. The repairer cannot fix a database.
+
+    One repair is still worth trying — a genuinely heavy query (missing index,
+    cartesian join) *is* fixable by narrowing. Two is not: at that point the evidence
+    says environment, not SQL.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_gets_exactly_one_repair_then_fails_as_timeout(self):
+        loop = _make_loop(config=_config(max_retries=3))
+        connector = AsyncMock()
+        connector.execute_query = AsyncMock(return_value=_timeout_result())
+
+        result = await loop.execute(
+            initial_query="SELECT * FROM users",
+            initial_explanation="all users",
+            connector=connector,
+            schema=_schema(),
+            question="how many users",
+            project_id="p1",
+            workflow_id="w1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert result.final_error is not None
+        # The failure keeps its identity: `transient`, not "your SQL was wrong".
+        assert result.final_error.error_type == QueryErrorType.TIMEOUT
+        assert loop._repairer.repair.await_count == 1, (
+            "a timeout is worth one narrowing attempt and no more; "
+            f"got {loop._repairer.repair.await_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_non_timeout_error_keeps_its_full_repair_budget(self):
+        """The timeout budget is separate, not a global cap on repairs."""
+        loop = _make_loop(config=_config(max_retries=3))
+        loop._repairer.repair = AsyncMock(
+            side_effect=[
+                {"query": "SELECT a FROM users", "explanation": "try a"},
+                {"query": "SELECT b FROM users", "explanation": "try b"},
+                {"query": "SELECT c FROM users", "explanation": "try c"},
+            ]
+        )
+        connector = AsyncMock()
+        connector.execute_query = AsyncMock(
+            return_value=QueryResult(error='column "nope" does not exist')
+        )
+
+        result = await loop.execute(
+            initial_query="SELECT nope FROM users",
+            initial_explanation="x",
+            connector=connector,
+            schema=_schema(),
+            question="q",
+            project_id="p1",
+            workflow_id="w1",
+            connection_config=_conn_config(),
+        )
+
+        assert not result.success
+        assert loop._repairer.repair.await_count == 2, (
+            "max_retries=3 means two repairs between three attempts; the timeout "
+            "budget must not shrink an unrelated error's allowance"
+        )
+
+    @pytest.mark.asyncio
+    async def test_one_timeout_then_a_real_error_still_repairs(self):
+        """A query that times out once and then fails on a column keeps repairing."""
+        loop = _make_loop(config=_config(max_retries=3))
+        loop._repairer.repair = AsyncMock(
+            side_effect=[
+                {"query": "SELECT a FROM users", "explanation": "narrowed"},
+                {"query": "SELECT b FROM users", "explanation": "fixed column"},
+            ]
+        )
+        connector = AsyncMock()
+        connector.execute_query = AsyncMock(
+            side_effect=[
+                _timeout_result(),
+                QueryResult(error='column "nope" does not exist'),
+                QueryResult(error='column "nope" does not exist'),
+            ]
+        )
+
+        await loop.execute(
+            initial_query="SELECT * FROM users",
+            initial_explanation="x",
+            connector=connector,
+            schema=_schema(),
+            question="q",
+            project_id="p1",
+            workflow_id="w1",
+            connection_config=_conn_config(),
+        )
+
+        assert loop._repairer.repair.await_count == 2
+
+
+class TestTimeoutRepairHint:
+    def test_repair_hints_tell_the_model_to_narrow_scope(self):
+        from app.core.query_validation import QueryError
+        from app.core.retry_strategy import RetryStrategy
+
+        hints = RetryStrategy().get_repair_hints(
+            QueryError(
+                error_type=QueryErrorType.TIMEOUT,
+                message="timed out",
+                raw_error="Query timed out after 30s",
+            ),
+            _schema(),
+        )
+
+        assert hints.strip(), "a timeout must produce guidance, not an empty hint block"
+        lowered = hints.lower()
+        assert "narrow" in lowered or "smaller" in lowered or "reduce" in lowered
