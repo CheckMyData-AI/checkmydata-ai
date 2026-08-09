@@ -465,3 +465,27 @@ not by effort.
 | **P9** | **K1 — process-wide circuit breaker** per connection (Redis, half-open) | Efficiency, not correctness; the per-run breaker already caps the damage | M |
 | **P10** | **K2 — build the code graph** (`/graphify .`), never built in this project | Makes every later audit cheaper | S |
 | **P11** | **K5 — m0 leftovers**: C7 (`query_mcp_source` description), C14 (`ANALYTICS_COLLECT_ENABLED` worker gap), C19 (9 unresolvable `Coverage:` paths) | Documentation and small correctness | S |
+
+
+## Knowledge-layer block — decided 2026-08-09
+
+Origin: an assessment of whether to adopt `zilliztech/claude-context` or graphify as
+product dependencies. **Verdict: neither.** `claude-context` stores in Milvus/Zilliz,
+does hybrid BM25+dense and AST chunking — all of which this project already has — and
+explicitly does **not** keep a persistent code graph, which this project does have
+(`code_graph_symbols` / `code_graph_edges`). Adopting it would trade a capability away
+and add a vendor, a secret and another tenant-isolation surface to a codebase where two
+cross-tenant leaks were found on 2026-08-08. One idea from it is worth taking (KL-2).
+
+Ordered by quality-lost-per-day, not by effort. The bottleneck is **model dimensionality
+and knowledge provenance**, not the vector store.
+
+| # | Item | Why | Size |
+|---|---|---|---|
+| **KL-1** | **Provenance on LLM-derived knowledge.** Stamp every `business_description`, `data_patterns`, `query_hints`, `column_notes_json` and `required_filters_json` with when it was derived and against which git SHA / schema version; render that in the prompt so an inference is visibly an inference | Today an LLM guess from six months ago and a fresh introspected `enum_labels` sit side by side in the prompt looking equally authoritative. This is also the only defect that makes the agent **state a wrong number confidently**: a stale `required_filters_json` (soft-delete removed in code, no re-index) has the agent dutifully adding a filter that no longer exists and silently under-reporting | M |
+| **KL-2** | **Merkle-tree change detection for re-indexing.** Taken from `claude-context`, the one thing it does better | Checkpoints answer "where did I stop"; a Merkle tree answers "what actually changed". Different questions, and the second is currently answered weakly | M |
+| **KL-3** | **Build the code graph for this repository** (`/graphify .`), i.e. close K2 | Agent tooling, not product. During the 2026-08-08 run, "who calls this / what breaks if it moves" was answered by grep and got the call-site list wrong **twice** (the classifier had two sites, not three; `ssh_key_id` had four write sites, not three). Both were caught, but by luck of re-reading | S |
+| **KL-4** | **768-d embeddings** (= P2 / AUD-5, unchanged rank) | The largest single quality win, but it costs dyno memory on a worker already at 163% of quota **and** a full re-index, since 384-d and 768-d vectors are not comparable. Stays behind the operator's spend decision | L |
+
+**Explicitly rejected:** swapping ChromaDB for Milvus/Zilliz, and adding graphify as a
+runtime dependency. Neither addresses the bottleneck; both add surface.
