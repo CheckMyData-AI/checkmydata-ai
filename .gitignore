@@ -73,3 +73,6 @@ service-account*.json
 # Docker
 *.log
 notes.md
+
+# Code graph — rebuilt locally with `graphify . --code-only`; graph.json is ~28 MB
+graphify-out/

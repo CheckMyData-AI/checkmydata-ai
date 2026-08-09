@@ -484,8 +484,40 @@ and knowledge provenance**, not the vector store.
 |---|---|---|---|
 | **KL-1** | **Provenance on LLM-derived knowledge.** Stamp every `business_description`, `data_patterns`, `query_hints`, `column_notes_json` and `required_filters_json` with when it was derived and against which git SHA / schema version; render that in the prompt so an inference is visibly an inference | Today an LLM guess from six months ago and a fresh introspected `enum_labels` sit side by side in the prompt looking equally authoritative. This is also the only defect that makes the agent **state a wrong number confidently**: a stale `required_filters_json` (soft-delete removed in code, no re-index) has the agent dutifully adding a filter that no longer exists and silently under-reporting | M |
 | **KL-2** | **Merkle-tree change detection for re-indexing.** Taken from `claude-context`, the one thing it does better | Checkpoints answer "where did I stop"; a Merkle tree answers "what actually changed". Different questions, and the second is currently answered weakly | M |
-| **KL-3** | **Build the code graph for this repository** (`/graphify .`), i.e. close K2 | Agent tooling, not product. During the 2026-08-08 run, "who calls this / what breaks if it moves" was answered by grep and got the call-site list wrong **twice** (the classifier had two sites, not three; `ssh_key_id` had four write sites, not three). Both were caught, but by luck of re-reading | S |
+| ~~KL-3~~ | ~~**Build the code graph**~~ — **done 2026-08-09, with a caveat that matters (below)** | Agent tooling, not product. During the 2026-08-08 run, "who calls this / what breaks if it moves" was answered by grep and got the call-site list wrong **twice** (the classifier had two sites, not three; `ssh_key_id` had four write sites, not three). Both were caught, but by luck of re-reading | S |
 | **KL-4** | **768-d embeddings** (= P2 / AUD-5, unchanged rank) | The largest single quality win, but it costs dyno memory on a worker already at 163% of quota **and** a full re-index, since 384-d and 768-d vectors are not comparable. Stays behind the operator's spend decision | L |
 
 **Explicitly rejected:** swapping ChromaDB for Milvus/Zilliz, and adding graphify as a
 runtime dependency. Neither addresses the bottleneck; both add surface.
+
+
+### KL-3 outcome — built, and honestly only half useful
+
+`graphify . --code-only` (no API key needed; the plain `graphify .` run **failed** on
+141 doc/image files wanting an LLM key). Result: **18 625 nodes, 50 657 edges, 603
+communities**. `graphify-out/` is gitignored — `graph.json` is ~28 MB and is rebuilt
+locally.
+
+**What it answers well.** `god-nodes` immediately surfaces the architectural hubs:
+`QueryResult` (529 edges), `Project` (384), `AgentContext` (382), `WorkflowTracker`
+(311), `Connection` (276). That is a real map, and `QueryResult` topping it is a useful
+fact on its own — it is the type every connector, validator and agent path passes
+through, which is exactly why adding `error_type` to it on 2026-08-08 was both safe and
+far-reaching.
+
+**What it does NOT answer — the thing it was requested for.**
+`affected "backend_app_core_error_classifier_errorclassifier_classify"` returns
+**"No affected nodes found."** Callers reach it as `self._classifier.classify(...)`, and
+static extraction does not bind `self._classifier` to `ErrorClassifier`. So the reverse
+question — *who calls this method* — comes back empty for **exactly the
+instance-attribute-dispatch pattern that produced both call-site mistakes this project
+made on 2026-08-08** (the classifier's sites, and `ssh_key_id`'s write sites).
+
+**Therefore: the graph does not replace reading the code for reach questions in this
+codebase**, which is dependency-injected almost everywhere. It replaces reading the code
+for *shape* questions — hubs, communities, module boundaries. Claiming otherwise would
+have been the more comfortable report and the wrong one.
+
+**Follow-up worth considering (not scheduled):** a reach query that is reliable here
+would need type inference over constructor assignments (`self._x = ErrorClassifier()`),
+which is a different tool than a static AST graph.
