@@ -53,13 +53,14 @@ class MCPSourceAgent(BaseAgent):
     def set_adapter(self, adapter: MCPClientAdapter) -> None:
         self._adapter = adapter
 
-    def _build_llm_tools(self) -> list[Tool]:
+    def _build_llm_tools(self, adapter: MCPClientAdapter | None = None) -> list[Tool]:
         """Convert discovered MCP tool schemas into LLM Tool objects."""
-        if not self._adapter:
+        _ad = adapter or self._adapter
+        if not _ad:
             return []
 
         tools: list[Tool] = []
-        for schema in self._adapter.get_tool_schemas():
+        for schema in _ad.get_tool_schemas():
             params: list[ToolParameter] = []
             input_schema = schema.get("input_schema", {})
             properties = input_schema.get("properties", {})
@@ -85,13 +86,14 @@ class MCPSourceAgent(BaseAgent):
 
         return tools
 
-    def _build_tool_description_text(self) -> str:
+    def _build_tool_description_text(self, adapter: MCPClientAdapter | None = None) -> str:
         """Build a human-readable list of available tools for the system prompt."""
-        if not self._adapter:
+        _ad = adapter or self._adapter
+        if not _ad:
             return ""
 
         lines: list[str] = []
-        for schema in self._adapter.get_tool_schemas():
+        for schema in _ad.get_tool_schemas():
             desc = schema.get("description", "No description")
             input_schema = schema.get("input_schema", {})
             props = input_schema.get("properties", {})
@@ -117,27 +119,29 @@ class MCPSourceAgent(BaseAgent):
                 answer="Cannot query MCP source: no adapter connected.",
             )
 
-        prev_adapter = self._adapter
-        self._adapter = effective_adapter
-        try:
-            return await self._run_with_adapter(
-                context,
-                question=question,
-                source_name=source_name,
-            )
-        finally:
-            self._adapter = prev_adapter
+        # AUD-6: the adapter travels as an argument, never on ``self``. One
+        # MCPSourceAgent instance serves every request in the process
+        # (``orchestrator.py`` builds it in ``__init__``, beneath the module-level
+        # ``ConversationalAgent``), so stashing it here let a concurrent request read
+        # another tenant's adapter at the ``call_tool`` site -- and the restore in
+        # ``finally`` nulled a live request's adapter out from under it.
+        return await self._run_with_adapter(
+            context,
+            adapter=effective_adapter,
+            question=question,
+            source_name=source_name,
+        )
 
     async def _run_with_adapter(
         self,
         context: AgentContext,
         *,
+        adapter: MCPClientAdapter,
         question: str | None = None,
         source_name: str = "MCP Source",
     ) -> MCPSourceResult:
-        assert self._adapter is not None
         user_question = question or context.user_question
-        tools = self._build_llm_tools()
+        tools = self._build_llm_tools(adapter)
 
         if not tools:
             return MCPSourceResult(
@@ -147,7 +151,7 @@ class MCPSourceAgent(BaseAgent):
 
         system_prompt = build_mcp_source_system_prompt(
             source_name=source_name,
-            tool_descriptions=self._build_tool_description_text(),
+            tool_descriptions=self._build_tool_description_text(adapter),
             current_datetime=get_current_datetime_str(),
         )
 
@@ -211,7 +215,7 @@ class MCPSourceAgent(BaseAgent):
                 timeout_s = settings.mcp_call_timeout_s
                 try:
                     call_result = await asyncio.wait_for(
-                        self._adapter.call_tool(tc.name, tc.arguments),
+                        adapter.call_tool(tc.name, tc.arguments),
                         timeout=timeout_s,
                     )
                     result_text = call_result.text
