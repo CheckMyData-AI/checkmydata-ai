@@ -13,6 +13,7 @@ import json as _json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from app.agents import result_handler, schema_context_builder
@@ -51,6 +52,42 @@ from app.services.project_cache_service import ProjectCacheService
 from app.services.query_failure_service import maybe_record_query_failure
 
 logger = logging.getLogger(__name__)
+
+
+def format_derived_age(derived_at: datetime | None) -> str:
+    """Render how old an *inferred* claim is, for the system prompt.
+
+    `db_index` and `code_db_sync` carry two kinds of content in the same fields:
+    introspected fact (column counts, enum labels) and an LLM's reading of the
+    codebase (data conventions, conversion warnings, required filters). Both used to
+    reach the prompt in the same voice, so a guess from six months ago was
+    indistinguishable from a value read off the database this morning.
+
+    Silent under a week on purpose. A marker printed on every prompt is noise, and
+    noise is what teaches a model to skip the marker on the one occasion it matters.
+
+    The stakes are not cosmetic: a stale `required_filters` entry -- soft-delete
+    removed from the code, no re-index since -- has the agent dutifully adding a
+    filter that no longer exists and under-reporting the answer. Nothing else in this
+    layer produces a confident wrong number.
+    """
+    # Anything that is not a real datetime is treated as "unknown age" and stays
+    # silent. Being liberal here is load-bearing: the caller wraps this in a broad
+    # `except`, so a TypeError raised from a prompt helper would not surface as a
+    # crash -- it would silently empty the critical-warnings block and hand the agent
+    # a prompt with the safety notes missing. Found exactly that way.
+    if not isinstance(derived_at, datetime):
+        return ""
+    # SQLite hands back naive datetimes; treat them as UTC rather than raising.
+    if derived_at.tzinfo is None:
+        derived_at = derived_at.replace(tzinfo=UTC)
+    days = (datetime.now(UTC) - derived_at).days
+    if days < 7:
+        return ""
+    if days >= 90:
+        return f" [inferred {days} days ago — verify before relying on it]"
+    return f" [inferred {days} days ago]"
+
 
 _SQL_TOOL_CAPS: dict[str, int] = {
     "get_query_context": 4000,
@@ -1734,14 +1771,19 @@ class SQLAgent(BaseAgent):
                 entries = await svc.get_sync(session, connection_id)
                 summary = await svc.get_summary(session, connection_id)
 
+            # KL-1: these are the LLM's reading of the codebase, not introspected
+            # fact. Carry their age so the agent can tell the two apart.
             conventions = ""
             if summary and summary.data_conventions:
-                conventions = summary.data_conventions[:500]
+                conventions = summary.data_conventions[:500] + format_derived_age(
+                    getattr(summary, "synced_at", None)
+                )
 
             critical: list[str] = []
             for e in entries:
                 if e.conversion_warnings and e.confidence_score >= 4:
-                    critical.append(f"- {e.table_name}: {e.conversion_warnings}")
+                    age = format_derived_age(getattr(e, "synced_at", None))
+                    critical.append(f"- {e.table_name}: {e.conversion_warnings}{age}")
                     # SYNC-L7 C6: also emit under bare suffix for schema-qualified tables
                     bare = e.table_name.split(".")[-1]
                     if bare != e.table_name:
