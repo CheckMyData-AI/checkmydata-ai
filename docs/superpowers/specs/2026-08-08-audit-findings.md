@@ -156,3 +156,54 @@ and pretending otherwise by quietly adding the dependency would push an already-
 worker further over its quota.
 
 **Blocked on the operator.** Not decided unilaterally: it costs money.
+
+---
+
+## AUD-6 — Cross-tenant MCP adapter swap under concurrency · **security, high — new P0**
+
+Found by the P6 sweep (per-request state on singleton agents). Same shape as K10, worse
+blast radius: this one crosses tenants *while a request is in flight*.
+
+**Why the instance is shared.** `orchestrator.py:367` builds
+`MCPSourceAgent(llm_router=self._llm)` in `__init__`, and the orchestrator itself hangs
+off the module-level `ConversationalAgent()` in `chat.py:60`. One instance, every
+request, `max_concurrent_agent_calls` at a time.
+
+**The mechanism** (`app/agents/mcp_source_agent.py`):
+
+```
+:120   prev_adapter = self._adapter
+:121   self._adapter = effective_adapter
+:123   return await self._run_with_adapter(...)      # <-- awaits
+:128   finally:
+:129       self._adapter = prev_adapter
+```
+
+`_run_with_adapter` does not take the adapter as an argument. It reads it off `self` —
+at `:138` (assert), `:62` and `:94` (tool schemas) and, decisively, at **`:214`
+`self._adapter.call_tool(tc.name, tc.arguments)`**, the real call against a tenant's
+MCP server.
+
+**Interleaving:**
+
+| | Request A | Request B | `self._adapter` |
+|---|---|---|---|
+| 1 | `prev_A = None`; sets A | | `adapter_A` |
+| 2 | awaits inside `_run_with_adapter` | `prev_B = adapter_A`; sets B | `adapter_B` |
+| 3 | resumes → `self._adapter.call_tool(...)` | | **`adapter_B`** |
+
+Request A's question is sent to **tenant B's MCP server**, and B's tool results come back
+into A's answer. The `finally` then restores in the wrong order — B writes back
+`adapter_A`, A writes back `prev_A` — leaving the shared field pointing at whatever the
+loser of the race held.
+
+**Fix shape:** thread the adapter as a parameter through `_run_with_adapter`,
+`_build_llm_tools`, `_build_tool_description_text` and the `call_tool` site; delete the
+save/restore entirely. `self._adapter` stays only as the constructor-time default.
+
+**Rank: above P2.** P2 is a quality regression with a price tag; this is one tenant's
+question reaching another tenant's server. Not exploitable at will — it needs concurrent
+MCP requests — but it needs no attacker, only traffic.
+
+**Not yet fixed.** Recorded before attempting the change so the finding does not depend
+on the fix landing.
