@@ -122,3 +122,37 @@ The first full-suite run was reported to me as "exit code 0" while the output sa
 `1 failed`. The command was piped to `tail`, so the exit code belonged to `tail`.
 **Never gate a decision on the exit status of a pipeline whose last command is a
 pager.** Worth a standing instruction; added to the retro.
+
+---
+
+## AUD-5 / P2 — `sentence-transformers` is absent by design, and the flags lie about it · **operator decision**
+
+`sentence-transformers` appears in **no** dependency list: not in `dependencies`, not in
+the `redis` or `dev` optional groups (`backend/pyproject.toml:56-61`). The code is
+correct about it — `vector_store.py:46-78` probes with `importlib.util.find_spec` and
+degrades, `reranker.py:88` imports lazily — so nothing crashes. What is wrong is the
+**documentation and the defaults**:
+
+- `CHROMA_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5` (768-d) is configured and unreachable;
+  every embedding in production is `all-MiniLM-L6-v2` (384-d).
+- `reranker_enabled` is documented **default on** and is a no-op in production.
+
+**Why this is not a one-line dependency add.** `sentence-transformers` pulls `torch`
+(hundreds of MB installed) plus a cross-encoder model loaded into memory. The worker is
+already **over quota** — `Error R14`, `mem=843M (163%)` on a Standard-1X (512 MB) dyno,
+recorded as K7. Adding a model to that process makes an existing OOM worse, and the slug
+grows toward Heroku's limit.
+
+**So this is a resource decision with a price, not an engineering one**, and it splits:
+
+| Option | What it costs | What it buys |
+|---|---|---|
+| **A — install it, upsize the dynos** | Standard-2X or larger on web *and* worker; slower builds | The retrieval quality the config already claims: 768-d embeddings + a working reranker. Also requires a full re-index, since 384-d and 768-d vectors are not comparable |
+| **B — make the defaults honest** | free | `reranker_enabled` defaults **off**, `CHROMA_EMBEDDING_MODEL` documented as requiring the optional extra, `CLAUDE.md` stops claiming a feature that is off in production. Retrieval quality unchanged from today |
+
+**Recommendation: B now, A as a separate funded piece of work.** B costs nothing and
+removes a false claim today; A is worth doing but it is a spend decision plus a re-index,
+and pretending otherwise by quietly adding the dependency would push an already-OOMing
+worker further over its quota.
+
+**Blocked on the operator.** Not decided unilaterally: it costs money.
