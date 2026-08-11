@@ -698,8 +698,17 @@ class Settings(BaseSettings):
     mcp_mount_path: str = "/mcp"
 
     # Host allow-list for the mounted MCP HTTP endpoint's DNS-rebinding
-    # protection (TransportSecuritySettings.allowed_hosts).  Empty list =
-    # protection disabled (permissive / backwards-compatible default).
+    # protection (TransportSecuritySettings.allowed_hosts). Empty = protection
+    # disabled (permissive, backwards-compatible default).
+    #
+    # F-MCP-04. This MUST name the host the API is *served on* — the value of the
+    # `Host` header an MCP client sends, e.g. `api.checkmydata.ai`. It is deliberately
+    # NOT derived from `cors_origins`: those are browser origins for the SPA, and on
+    # this deployment they are `checkmydata.ai` and the web dyno's herokuapp domain —
+    # neither of which is the API host. Deriving from them would switch protection ON
+    # with a list that excludes the real host and reject every legitimate MCP call.
+    # A guess that breaks the endpoint is worse than a documented gap.
+    #
     # Example: ["api.checkmydata.ai", "localhost:8000"]
     mcp_allowed_hosts: list[str] = []
 

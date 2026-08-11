@@ -96,3 +96,39 @@ Three of the run's own mistakes were caught and are now standing instructions: a
 that passed against its own planted defect, a branch that was green while missing the
 scenario for its own user-facing change, and — three times — an exit code that belonged
 to `tail` rather than to `pytest`.
+
+
+---
+
+## Item 9 closed 2026-08-12 — and its rank in this document was wrong
+
+The row above reads *"K8 — `MCP_ALLOWED_HOSTS` empty · hardening; exploitability
+depends on exposure, which is low pre-launch"*. That was an assumption, and checking it
+took one command: **`MCP_ENABLED=true` and `MCP_MOUNT_ENABLED=true` in production**,
+with `POST /mcp/mcp` answering 200 in the logs. The endpoint was mounted and publicly
+reachable the whole time. "Pre-launch" reduced *user* traffic, not *attack surface*.
+
+**A fix was written, tested green, and reverted before shipping.** Deriving the
+allow-list from `cors_origins` is the obvious move and passed four tests. Then reading
+production's actual value killed it: `CORS_ORIGINS` is
+`["https://checkmydata-web-…herokuapp.com", "https://checkmydata.ai"]` — and the MCP
+endpoint is served on **`api.checkmydata.ai`**, which appears in neither. The derivation
+would have switched protection ON with a list excluding the real host and rejected every
+legitimate MCP call. A guess that breaks the endpoint is worse than a documented gap.
+
+CORS origins answer *"which browser pages may call us"*. A Host allow-list answers
+*"what name are we served under"*. This deployment is exactly the case where those
+differ, and the tests now pin the rejection so the idea is not re-attempted as an
+oversight.
+
+**Shipped instead:** the operator action — `MCP_ALLOWED_HOSTS=["api.checkmydata.ai"]`
+(release v219) — plus the reasoning recorded on the setting itself, where the next
+reader will be standing when they have the idea.
+
+**Verified against the running system, not the config:** correct Host → `401`
+(auth refusal), forged `Host: evil.example` → **`403`**. A different code means the
+validation is live, not merely configured.
+
+**Side note worth keeping:** the singleton-state ratchet installed in item 8 fired on
+this very change — `self.mcp_allowed_hosts = hosts` in a validator — on the first real
+edit after it was installed.
