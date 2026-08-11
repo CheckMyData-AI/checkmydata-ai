@@ -49,19 +49,44 @@ required rather than defaulted on the internal path so a future caller cannot re
 **Provenance:** inherited from the m0 run as carry-over C13, re-recorded as K4, named
 "recommended next" and not taken. This pass confirms it by tracing every call site.
 
-## AUD-2 — 52 `except → pass` blocks, untriaged · **medium**
+## AUD-2 — ~~52 `except → pass` blocks~~ · **triaged 2026-08-10, and the finding was wrong three times over**
 
-`grep -rn --include='*.py' -A1 -E "except [A-Za-z]*.*:$" app/ | grep -c "pass$"` → **52**.
+This entry is kept rather than deleted, because how it was wrong is the useful part.
 
-Many are legitimate best-effort (telemetry, cleanup). Some are not, and the two classes
-are indistinguishable without reading each one. This is a finding about *auditability*:
-a swallowed exception with no log line cannot be investigated after the fact, and this
-codebase's own incident — a six-minute timeout storm — was only diagnosable because the
-spans were persisted.
+**The count was wrong.** `grep -c "pass$"` said 52; parsing the AST says **57**.
+Counting syntax with a regex is the same mistake as asserting on source text, which
+this project already caught itself making once.
 
-**Proposed rule:** every `except: pass` either logs at debug with the exception, or
-carries a one-line comment saying why silence is correct. Enforceable as a ratchet
-(count may shrink, never grow).
+**The danger was assumed, not measured.** The entry claimed "some are not [legitimate]"
+without checking any. The three most suspicious — all on gate paths — were then read by
+hand and are all correct: a narrow `except (ValueError, TypeError)` around a
+date-format loop (`data_gate.py:471`), and two metrics increments where the verdict is
+returned regardless (`result_validation.py:175`, `required_filter_guard.py:190`, the
+latter already carrying the comment *"metrics must never break the guard"*). The
+codebase was more careful than the finding implied.
+
+**The dangerous shape was a different one, and there are more of it.** The incident this
+entry pointed at — a `TypeError` silently emptying the prompt's critical-warnings block
+on 2026-08-09 — was not an `except: pass` at all. It was:
+
+```python
+except Exception:
+    logger.debug("... failed", exc_info=True)
+    return "", ""
+```
+
+Two properties make that poisonous together: **`debug` is invisible at production log
+level**, and **the returned `""` is indistinguishable from "there is no data"**. A crash
+and a legitimate empty result produce identical output. There are **78** broad handlers
+returning a literal degraded value — none of which the original grep would have found.
+
+**Done:** the 11 prompt-feeding loaders in `sql_agent` now log at `warning` and name the
+consequence rather than the fact ("its prompt section will be EMPTY, indistinguishable
+to the agent from 'no data'"). Three ratchets in
+`tests/unit/test_silent_failure_ratchets.py`: silent-pass ≤ 57, broad-degraded-return
+≤ 78, and no prompt loader may hide a crash at debug level. Ratchets rather than bans —
+most of these handlers are correct, and a rule that forbids a legitimate pattern gets
+suppressed instead of obeyed.
 
 ## AUD-3 — Per-request state on process-wide singletons, unaudited · **medium**
 

@@ -1722,7 +1722,11 @@ class SQLAgent(BaseAgent):
                     ids = [str(lrn.id) for lrn in prompt_learnings]
             return prompt, ids
         except Exception:
-            logger.debug("_load_learnings_prompt failed", exc_info=True)
+            logger.warning(
+                "_load_learnings_prompt failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return "", []
 
     async def _load_sync_for_prompt(self, connection_id: str) -> tuple[str, str]:
@@ -1757,7 +1761,11 @@ class SQLAgent(BaseAgent):
 
             return conventions, warnings_text
         except Exception:
-            logger.debug("_load_sync_for_prompt failed", exc_info=True)
+            logger.warning(
+                "_load_sync_for_prompt failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return "", ""
 
     async def _load_notes_prompt(self, connection_id: str) -> str:
@@ -1769,7 +1777,11 @@ class SQLAgent(BaseAgent):
             async with async_session_factory() as session:
                 return await svc.compile_notes_prompt(session, connection_id)
         except Exception:
-            logger.debug("_load_notes_prompt failed", exc_info=True)
+            logger.warning(
+                "_load_notes_prompt failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return ""
 
     async def _load_sync_filters_and_mappings(self, connection_id: str) -> tuple[str, str]:
@@ -1826,7 +1838,11 @@ class SQLAgent(BaseAgent):
 
             return "\n".join(filters_lines), "\n".join(mappings_lines)
         except Exception:
-            logger.debug("_load_sync_filters_and_mappings failed", exc_info=True)
+            logger.warning(
+                "_load_sync_filters_and_mappings failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return "", ""
 
     async def _load_required_filters_by_table(
@@ -1876,7 +1892,11 @@ class SQLAgent(BaseAgent):
 
             return merge_required_filters(sync_filters, index_hints)
         except Exception:
-            logger.debug("_load_required_filters_by_table failed", exc_info=True)
+            logger.warning(
+                "_load_required_filters_by_table failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return {}
 
     async def _resolve_connection_id(self, project_id: str, cfg: ConnectionConfig) -> str | None:
@@ -1908,7 +1928,11 @@ class SQLAgent(BaseAgent):
                 return ""
             return svc.index_to_prompt_context(entries, summary)
         except Exception:
-            logger.debug("_load_db_index_hints failed", exc_info=True)
+            logger.warning(
+                "_load_db_index_hints failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return ""
 
     async def _load_sync_for_repair(self, cfg: ConnectionConfig) -> tuple[str, str]:
@@ -1935,7 +1959,11 @@ class SQLAgent(BaseAgent):
                     tips.append(f"- {e.table_name} (logic): {e.business_logic_notes[:150]}")
             return "\n".join(warnings), "\n".join(tips)
         except Exception:
-            logger.debug("_load_sync_for_repair failed", exc_info=True)
+            logger.warning(
+                "_load_sync_for_repair failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return "", ""
 
     async def _load_rules_for_repair(self, project_id: str) -> str:
@@ -1945,7 +1973,11 @@ class SQLAgent(BaseAgent):
             db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
             return self._rules_engine.rules_to_context(file_rules + db_rules)
         except Exception:
-            logger.debug("_load_rules_for_repair failed", exc_info=True)
+            logger.warning(
+                "_load_rules_for_repair failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return ""
 
     _RULES_PROMPT_MAX_CHARS = 3000
@@ -1963,7 +1995,11 @@ class SQLAgent(BaseAgent):
                 text = text[: self._RULES_PROMPT_MAX_CHARS] + "\n... (truncated)"
             return text
         except Exception:
-            logger.debug("_load_rules_for_prompt failed", exc_info=True)
+            logger.warning(
+                "_load_rules_for_prompt failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return ""
 
     async def _load_distinct_values(self, cfg: ConnectionConfig) -> dict[str, dict[str, list[str]]]:
@@ -1988,7 +2024,11 @@ class SQLAgent(BaseAgent):
                         pass
             return result
         except Exception:
-            logger.debug("_load_distinct_values failed", exc_info=True)
+            logger.warning(
+                "_load_distinct_values failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return {}
 
     async def _load_learnings_for_repair(self, cfg: ConnectionConfig) -> str:
@@ -2014,7 +2054,11 @@ class SQLAgent(BaseAgent):
                 lines.append(f"- [{lrn.category}] {lrn.subject}: {lrn.lesson}")
             return "\n".join(lines)
         except Exception:
-            logger.debug("_load_learnings_for_repair failed", exc_info=True)
+            logger.warning(
+                "_load_learnings_for_repair failed — its prompt section will be EMPTY, "
+                "indistinguishable to the agent from 'no data'",
+                exc_info=True,
+            )
             return ""
 
     async def _load_knowledge(self, project_id: str) -> ProjectKnowledge | None:
