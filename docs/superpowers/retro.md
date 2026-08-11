@@ -5,64 +5,82 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
 
 ## Standing instructions
 
-1. **A test written after its implementation is not a check until it has been seen red.**
-   Plant the defect it claims to catch and watch it fail. *(2026-08-08: the first
-   `finalize_trace` no-clobber test asserted on source text; a blanket-overwrite defect
-   preserved the text it looked for and the test passed green.)*
-2. **Never assert on source text when you can assert on behaviour.** Intercept the
-   statement, the call, the result. Source-text checks pass for the wrong reasons.
-3. **A worktree separates documentation from code as thoroughly as it separates code.**
-   Before merging, verify the branch contains the *docs* the change owes — especially
+1. **A test that has never run is not a check — whether it skipped, or was simply never
+   seen red. And assert on behaviour, not on source text.** Plant the defect it claims
+   to catch and watch it fail. *(2026-08-08: a `finalize_trace` test asserted on source
+   text; a blanket-overwrite defect preserved the text it looked for and passed green.
+   2026-08-12: a worker test would have skipped forever because CI installs only
+   `[dev]` and `app/worker.py` imports `arq` from the `redis` extra — check what CI
+   actually installs before trusting a green.)*
+2. **Before merging, verify the branch contains the docs it owes** — especially
    `docs/ux/scenarios.md`. *(2026-08-08: the branch was green, complete, and had no
-   scenario for its own user-facing change; caught one command before the merge.)*
-4. **When a ledger entry names a root cause, re-derive it from the code before
+   scenario for its own user-facing change; caught one command before the merge. A
+   worktree separates documentation from code as thoroughly as it separates code.)*
+3. **When a ledger entry names a root cause, re-derive it from the code before
    implementing it.** A deferred entry is a hypothesis written under time pressure.
    *(2026-08-08: K12 said "router signals are not stamped"; the defect was
-   `finalize_trace` *erasing* values the buffer had already written. Building what the
-   ledger said would have produced a green test and no production change.)*
-5. **Verify the deploy against the running application, never against a workflow row.**
-   Health, the migration revision in the boot log, and the artefact the change was
-   supposed to alter. *(m0, C22: a workflow-status monitor reported a false success by
-   matching a stale row, then missed a real deploy.)*
-6. **Say which claim is unproven.** A clean boot is not proven behaviour. If the path
-   cannot be exercised, name the check that would prove it and put it in the ledger
-   rather than letting a green stage imply more than it measured.
-7. **`grep` for a call site is not a survey of call sites.** Follow the value.
-   *(2026-08-08: the plan named three `classify` call sites; one classified `str(exc)`
-   where no `QueryResult` exists, and a fourth path would have stayed half-wired.)*
-8. **Per-request state never goes on an agent instance in this codebase.**
-   `chat.py:60` builds `ConversationalAgent()` at module level, so one `SQLAgent` serves
-   every request in the process. Use the call frame or the existing `run_state`.
+   `finalize_trace` *erasing* values already written. 2026-08-12: AUD-2 was wrong three
+   ways at once — the count, the danger, and the location.)*
+4. **Verify against the running application, never against a workflow row or a config
+   value.** *(m0 C22: a monitor reported a false success from a stale row. 2026-08-12:
+   MCP Host validation was proven by a forged `Host` returning 403 where the correct one
+   returns 401 — set is not the same as enforced.)*
+5. **Say which claim is unproven.** A clean boot is not proven behaviour. Name the check
+   that would prove it and put it in the ledger rather than letting a green stage imply
+   more than it measured.
+6. **`grep` for a call site is not a survey of call sites.** Follow the value.
+   *(2026-08-08: three `classify` sites named, two real, and a fourth `ssh_key_id` write
+   site found only after the first sweep declared itself done.)*
+7. **Never read an exit code through a pipe.** `pytest … | tail` reports `tail`'s status.
+   *(2026-08-08 and twice since: a run with `1 failed` announced as exit code 0.)*
+8. **A flake on the deploy path is a gate that fails at random, not noise.** Reproduce it
+   under the load that exposed it. *(2026-08-12: CPU contention did not reproduce it —
+   concurrent pytest processes did, 1 in 10. The earlier fix hardened SQLite locking
+   while the contended resource was the scheduler, and passed its own verification.)*
+9. **Set a ratchet from what the check itself measures.** *(2026-08-12: a floor of 13
+   came from a script counting raw lines while the test counted distinct triples —
+   actual 10. Three of slack silently absorbed a deliberately reintroduced bug during
+   the probe. A ratchet with slack is not a ratchet.)*
+10. **"Wait for X" is not a task.** If X may never arrive, build the check that replaces
+    it. *(2026-08-12: K14 said "verify on the next real timeout in production" — with no
+    users there is no next real timeout, so it became a stalled-database test instead.
+    K7 was parked behind a spend decision and, once measured, turned out to be that
+    decision's precondition.)*
 
-9. **Never read an exit code through a pipe.** `pytest ... | tail` reports `tail`'s
-   status, and a run with failures is announced as success. Capture the status of the
-   command you care about, or check its output for the verdict.
-   *(2026-08-08: a full-suite run with `1 failed` was reported as exit code 0.)*
-10. **A flake on the deploy path is a gate that fails at random, not noise.**
-    Reproduce it under the load that exposed it before deciding anything.
-    *(m0 C21: dismissed as noise, then failed a CI run and skipped a deploy.)*
+**Retired this prune, with reasons:**
 
-## Standing instruction candidates (2026-08-12)
-
-The list is at its cap of ten. These two earned a place and are held here until the
-next prune decides what they replace:
-
-- **Set a ratchet from what the check itself measures.** A floor taken from a side
-  script counted raw lines while the test counted distinct triples — three of slack,
-  which silently absorbed a deliberately reintroduced bug during its own probe. A
-  ratchet with slack is not a ratchet.
-- **A sweep for long-lived objects must follow construction, not just module level.**
-  Every per-request-state bug found in this project sat on a class built inside another
-  class's `__init__`. A sweep that only looks at module-level instantiation misses all
-  of them.
+- *"Per-request state never goes on an agent instance"* → **became a check**
+  (`tests/unit/test_no_per_request_state_on_singletons.py`, ratchet at 10).
+- *"A sweep for long-lived objects must follow construction"* → **became the same
+  check**; the reachability walk is implemented inside it.
+- *"Never assert on source text"* → **merged into #1**; it was one idea about what makes
+  a test a check, split across two entries.
 
 ## Run stamps
 
 | Date | Commit | Diverged? |
 |---|---|---|
 | 2026-08-08 | `b4a6ca0` | yes — entries 1, 2, 3, 4, 7 written from this run |
+| 2026-08-12 | `0162e2a` | yes — pruned to 10; #9 and #10 earned here, three entries retired |
 
 ## Recent log
+
+**2026-08-12 — audit, re-plan, and ten backlog items.** The operator's answer that the
+product is *pre-launch* inverted several rankings: what was justified by "users are
+hitting this" lost its place, what makes the product correct before anyone arrives
+gained it. Shipped: honest retrieval defaults, the deploy-gate flake fixed at its real
+cause, the timeout path exercised against a stalled database, provenance on both halves
+of the knowledge layer, prompt-loader failures made visible, a health probe that heals
+a dead tunnel instead of watching it, MCP Host validation enabled and proven, and the
+singleton-state sweep finished and turned into a ratchet.
+
+**Four findings were disproved rather than fixed**, and that was the more useful
+outcome: AUD-2's count, danger and location were all wrong; KL-2's Merkle trees are
+already provided by git and by per-table fingerprints; C7 was already done; and C14's
+obvious fix was rejected by a test that had never run. Two changes were written, tested
+green, and reverted before shipping — the MCP allow-list derivation would have excluded
+the API's own host, and the analytics master-switch guard would have let a stale worker
+refuse legitimate work.
 
 **2026-08-08 — query-timeout classification.** Four defects fixed (typed timeout,
 one-narrowing-repair budget, loop breaker + deadline, trace finalization) plus a
