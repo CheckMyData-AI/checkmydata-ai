@@ -34,6 +34,7 @@ async def session(monkeypatch: pytest.MonkeyPatch) -> AsyncSession:
         SimpleNamespace(heartbeat_interval_seconds=0.05),
     )
     s = sm()
+    s.info["sessionmaker"] = sm
     try:
         yield s
     finally:
@@ -69,14 +70,37 @@ async def test_heartbeat_ticks_during_long_step(session: AsyncSession):
     session.add(run)
     await session.commit()
 
+    sm_probe = session.info["sessionmaker"]
     runner = _make_runner()
     runner._cp_svc.get_completed_steps = AsyncMock(return_value=set())
 
     async def _slow_steps(**kwargs) -> PipelineResult:
-        # Simulates an emit-less step (e.g. code_symbol_embed) exceeding one
-        # heartbeat interval while the run stays alive.
-        await asyncio.sleep(0.3)
-        return PipelineResult(status="completed")
+        """Stay inside the step until the heartbeat has *actually* been written.
+
+        This used to `sleep(0.3)` and trust that a 0.05 s beat had fired in the
+        meantime. That is a wall-clock wait for someone else's scheduling, and it
+        failed roughly 1 run in 10 when other pytest processes shared the machine --
+        the failure that skipped a deploy in m0 (C21) and again on 2026-08-08. Tuning
+        SQLite (WAL + busy timeout, c5c6460) could not fix it, because the contended
+        resource was the scheduler and the disk, not a database lock.
+
+        Waiting on the condition instead removes the race entirely: the step ends when
+        the heartbeat has moved, or the test fails on a ceiling generous enough that
+        only a genuinely broken heartbeat can hit it.
+        """
+        deadline = asyncio.get_running_loop().time() + 10.0
+        while asyncio.get_running_loop().time() < deadline:
+            async with sm_probe() as probe:
+                current = await probe.get(IndexingRun, run.id)
+                if current is not None:
+                    beat = current.heartbeat_at
+                    if beat is not None and beat.replace(tzinfo=UTC) > stale_hb:
+                        return PipelineResult(status="completed")
+            await asyncio.sleep(0.01)
+        raise AssertionError(
+            "the heartbeat never advanced within 10s -- this is the real defect the "
+            "test exists to catch, not a timing artefact"
+        )
 
     runner._run_steps = AsyncMock(side_effect=_slow_steps)
 

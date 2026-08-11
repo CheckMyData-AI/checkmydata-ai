@@ -112,7 +112,23 @@ The variable is not the code under test; it is **contention**. That is precisely
 CI runner does when jobs share a host, which is why this surfaces there and not on a
 quiet laptop, and why "passes locally" has never been evidence for it.
 
-**Next step:** reproduce under load (`-n auto` or a parallel writer), then decide
+**RESOLVED 2026-08-10.** Reproduced first, as the retro requires: CPU contention alone
+did **not** reproduce it (0/12), which ruled out the obvious theory. Running three other
+pytest processes concurrently did — **1 failure in 10**, matching the shape of the run
+that failed (20m37s under concurrent invocations vs 9m52s alone).
+
+Root cause: the test slept 0.3 s and asserted that a 0.05 s background heartbeat had
+fired in the meantime. That is a wall-clock wait on someone else's scheduling. It
+explains why `c5c6460` (WAL + busy timeout) could not fix it — the contended resource
+was the scheduler and the disk, not a database lock, so the earlier fix treated the
+wrong subsystem and passed its own verification honestly.
+
+Fixed by waiting on the condition instead: the simulated step polls until the heartbeat
+has actually advanced, with a 10 s ceiling only a genuinely broken heartbeat can hit.
+**0 failures in 20** under the same harness that produced 1/10. Probed by breaking the
+heartbeat mechanism and confirming the test still goes red.
+
+~~**Next step:** reproduce under load~~ (`-n auto` or a parallel writer), then decide
 between a real fix and quarantining it off the deploy gate — quarantine being honest
 only if it is recorded, not if the test is simply deleted.
 
