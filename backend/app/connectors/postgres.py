@@ -241,6 +241,13 @@ class PostgresConnector(BaseConnector):
             elapsed = (time.monotonic() - start) * 1000
             return QueryResult(error=str(e), execution_time_ms=elapsed)
 
+    async def reconnect(self) -> bool:
+        """Public form of :meth:`_reconnect` for the health monitor (see base)."""
+        if not self._config:
+            return False
+        await self._reconnect()
+        return True
+
     async def _reconnect(self) -> None:
         """Close the stale pool and reconnect (picks up a new tunnel port)."""
         logger.info("Postgres: reconnecting after connection loss")

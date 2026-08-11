@@ -521,3 +521,30 @@ have been the more comfortable report and the wrong one.
 **Follow-up worth considering (not scheduled):** a reach query that is reliable here
 would need type inference over constructor assignments (`self._x = ErrorClassifier()`),
 which is a different tool than a static AST graph.
+
+
+## Closed 2026-08-10 — health probe now heals a dead tunnel (K9 / P5, item 6)
+
+`db-esim` is **correctly configured**: `ssh_host = 64.188.10.62`, and `127.0.0.1` is
+the tunnel's local endpoint. There was never a bad host value to fix.
+
+The defect was that the *health path* could only observe. `_health_check_loop` →
+`all_connectors()` → `check_connection` → `connector.test_connection()`, and
+`test_connection` uses the pool built at first connect — over a tunnel, that pool
+points at a local port that dies with the tunnel. Meanwhile
+`SSHTunnelManager.get_or_create` already reconnects with retries, and
+`MySQLConnector._reconnect` already "picks up a new tunnel port" per its own docstring.
+Both sat one call away and nothing on the health path asked.
+
+Only a user query healed it, because that path goes through `get_or_create` — and with
+no traffic there is no user query. That is how the connection stayed down from 03:07 to
+the 04:44 restart on 2026-08-07.
+
+Now: `BaseConnector.reconnect()` is a public contract defaulting to `False`
+("no recovery to attempt"); mysql and postgres expose the recovery they already had;
+the monitor attempts it once on failure and re-probes. Best-effort by construction — a
+repair that fails or raises leaves the verdict untouched, so this can never turn a real
+outage into a green light. Pinned by four tests, probed by removing the healing.
+
+**Still open for clickhouse and mongodb**, which have no `_reconnect` today and
+therefore inherit the `False` default: they are reported down exactly as before.

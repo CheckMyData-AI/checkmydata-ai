@@ -86,6 +86,44 @@ class ConnectionHealthMonitor:
                 state.status = "healthy"
 
         except Exception as exc:
+            # Heal, do not merely observe. A tunnelled connector's pool points at a
+            # local port that dies with the tunnel, and `test_connection` will keep
+            # failing against it forever while the repair sits one call away. Only a
+            # user query used to fix it -- and with no traffic there is no user query,
+            # which is exactly how `db-esim` stayed down for over an hour on
+            # 2026-08-07. Best-effort: a repair that fails or raises leaves the verdict
+            # untouched, so this can never turn a real outage into a green light.
+            healed = False
+            try:
+                if await connector.reconnect():
+                    healed = bool(
+                        await asyncio.wait_for(
+                            connector.test_connection(),
+                            timeout=CHECK_TIMEOUT_SECONDS,
+                        )
+                    )
+            except Exception:
+                logger.warning(
+                    "Health check: reconnect attempt failed for %s",
+                    connection_id,
+                    exc_info=True,
+                )
+
+            if healed:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                state.latency_ms = latency_ms
+                state.last_check = datetime.now(UTC)
+                state.last_error = None
+                state.consecutive_failures = 0
+                state.status = "degraded" if latency_ms > DEGRADED_LATENCY_MS else "healthy"
+                logger.info(
+                    "Health check: %s recovered after reconnect (was: %s)",
+                    connection_id,
+                    exc,
+                )
+                self._health_state.set(connection_id, state)
+                return state.to_dict()
+
             latency_ms = int((time.monotonic() - t0) * 1000)
             state.latency_ms = latency_ms
             state.last_check = datetime.now(UTC)

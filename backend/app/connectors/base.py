@@ -383,6 +383,21 @@ class DataSourceAdapter(ABC):
     async def disconnect(self) -> None:
         """Close the connection."""
 
+    async def reconnect(self) -> bool:
+        """Rebuild this connector's pool/client and report whether it worked.
+
+        Exists so a *monitor* can repair as well as observe. The health loop probes
+        `test_connection()`, which uses the pool built at first connect — over an SSH
+        tunnel that pool points at a local port that dies with the tunnel. Production
+        2026-08-07: `db-esim` reported down every five minutes for over an hour while
+        `SSHTunnelManager.get_or_create` and the connectors' own reconnect logic sat
+        one call away, because nothing on the health path asked for them.
+
+        Default is `False` — "no recovery to attempt" — so an adapter that cannot
+        rebuild itself is reported down exactly as before, with no extra probing.
+        """
+        return False
+
     @abstractmethod
     async def test_connection(self) -> bool:
         """Test if the connection is alive."""
