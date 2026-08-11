@@ -548,3 +548,34 @@ outage into a green light. Pinned by four tests, probed by removing the healing.
 
 **Still open for clickhouse and mongodb**, which have no `_reconnect` today and
 therefore inherit the `False` default: they are reported down exactly as before.
+
+
+## KL-2 closed 2026-08-10 — NOT implemented, and that is the finding
+
+Merkle-tree change detection was the one idea taken from `claude-context`. Reading this
+codebase before writing any showed the precondition does not hold here, on either path.
+
+**The repository path already uses a Merkle tree — git's own.** `GitTracker.get_changed_files`
+diffs `from_sha` against `to_sha` (`git_tracker.py:128,158`), it is called from
+`pipeline_runner.py:261`, and the result is persisted so a resumed run reads it back via
+`CheckpointService.get_changed_files` (`checkpoint_service.py:256`). Git's object model
+*is* a content-addressed Merkle tree; `claude-context` builds one because it indexes
+arbitrary directories that may not be repositories. Building a second one over a git
+checkout would re-derive what git already guarantees, and then have to be kept in sync
+with it.
+
+**The schema path already fingerprints per table.** `schema.fingerprint()` produces a
+column-signature map, `_build_reuse_map` (`db_index_pipeline.py:395`) reuses the stored
+LLM analysis for every table whose signature is unchanged, and the map is persisted as
+`schema_fingerprint`. That is the leaf layer of the same idea, and the leaf layer is
+where the saving lives: it avoids the LLM call, which is what re-indexing actually costs.
+
+**What a real tree would add**, honestly: one root hash, so "nothing changed anywhere"
+short-circuits without comparing every leaf. At a few hundred tables and a few thousand
+files, comparing leaves costs milliseconds against minutes of embedding and LLM work.
+
+Both mechanisms were checked for being *called*, not merely present — the failure mode
+this project has hit twice (a mechanism that exists, is documented, and never runs).
+
+**Rejected, with the reason recorded**, so the next reader does not re-open it as an
+oversight.
