@@ -42,6 +42,20 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
     Reproduce it under the load that exposed it before deciding anything.
     *(m0 C21: dismissed as noise, then failed a CI run and skipped a deploy.)*
 
+## Standing instruction candidates (2026-08-12)
+
+The list is at its cap of ten. These two earned a place and are held here until the
+next prune decides what they replace:
+
+- **Set a ratchet from what the check itself measures.** A floor taken from a side
+  script counted raw lines while the test counted distinct triples — three of slack,
+  which silently absorbed a deliberately reintroduced bug during its own probe. A
+  ratchet with slack is not a ratchet.
+- **A sweep for long-lived objects must follow construction, not just module level.**
+  Every per-request-state bug found in this project sat on a class built inside another
+  class's `__init__`. A sweep that only looks at module-level instantiation misses all
+  of them.
+
 ## Run stamps
 
 | Date | Commit | Diverged? |

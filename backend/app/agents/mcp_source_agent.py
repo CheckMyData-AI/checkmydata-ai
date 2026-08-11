@@ -50,9 +50,6 @@ class MCPSourceAgent(BaseAgent):
     def name(self) -> str:
         return "mcp_source"
 
-    def set_adapter(self, adapter: MCPClientAdapter) -> None:
-        self._adapter = adapter
-
     def _build_llm_tools(self, adapter: MCPClientAdapter | None = None) -> list[Tool]:
         """Convert discovered MCP tool schemas into LLM Tool objects."""
         _ad = adapter or self._adapter

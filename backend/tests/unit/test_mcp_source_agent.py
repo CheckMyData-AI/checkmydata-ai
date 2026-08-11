@@ -340,17 +340,6 @@ class TestMCPSourceAgent:
         assert mock_llm.complete.await_count == MAX_MCP_ITERATIONS
         assert len(result.tool_calls_made) == MAX_MCP_ITERATIONS
 
-    # 9. set_adapter updates the adapter ---------------------------------
-
-    def test_set_adapter(self, mock_llm):
-        agent = MCPSourceAgent(llm_router=mock_llm, adapter=None)
-        assert agent._adapter is None
-
-        new_adapter = MagicMock(spec=MCPClientAdapter)
-        agent.set_adapter(new_adapter)
-
-        assert agent._adapter is new_adapter
-
     # 10. token usage accumulated across LLM calls -----------------------
 
     @pytest.mark.asyncio
