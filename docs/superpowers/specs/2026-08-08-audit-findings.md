@@ -248,3 +248,44 @@ MCP requests — but it needs no attacker, only traffic.
 
 **Not yet fixed.** Recorded before attempting the change so the finding does not depend
 on the fix landing.
+
+
+---
+
+## AUD-7 / K7 re-measured 2026-08-12 — worse than recorded, and mis-ordered in the plan
+
+**The reading is worse.** Not `R14 (Memory quota exceeded)` at 843M but
+**`R15 (Memory quota *vastly* exceeded)` at 1031M — 200.7 %** of a Standard-1X
+(512 MB) worker. R15 is the level at which Heroku kills the dyno.
+
+**Located, not guessed.** Two wrong readings were discarded on the way:
+
+1. *"It OOMs having run zero jobs, so it is the import footprint."* Wrong — the
+   `0 jobs complete` line came from a **later restart**, not from the instance that
+   OOMed. This is the same mismatched-line error that produced a false "deploy success"
+   in m0 (C22), made again and caught by checking timestamps.
+2. Measured locally anyway: the whole import graph — `app.config`, `chromadb`,
+   `vector_store`, `app.worker` — costs **79 MB**. Imports are not the problem.
+
+**What actually happens:** at 22:00:01 the daily-knowledge-sync cron fires
+(`run_daily_project_knowledge_sync`), reaches `repo_index`, opens the SSH tunnel to
+`64.188.10.62`, and memory climbs to 1031 MB over the next six minutes. It is
+**repository indexing**, on a schedule, with no user traffic involved.
+
+**The plan had this backwards.** K7 was ranked *after* the 768-d embedding decision,
+reasoning "option A will change the memory picture anyway, re-measure then". The
+opposite is true: **K7 is a precondition for option A.** `sentence-transformers` pulls
+torch and a cross-encoder into a process that is already killed at 200 % of quota. The
+embedding upgrade cannot be evaluated, let alone shipped, until indexing fits.
+
+**Where the peak lives (next step, not done here):** `IndexingPipelineState.parsed_files`
+is a `dict[str, ParsedFile]` held for the whole run — every parsed file with its symbols
+retained across stages so `_run_graph_build` and the symbol-embed stage can read them
+(`pipeline_runner.py:88,549,566`). That is the obvious accumulation to bound, by
+streaming or batching rather than holding the repository in memory. Not attempted here
+because a memory refactor needs measurement per stage to be honest, and this session has
+the diagnosis, not the budget for the cure.
+
+**Two options, both real:** bound the indexer's peak (free, correct), or move the worker
+to a larger dyno (money, and still worth measuring first so the size is chosen rather
+than guessed).
