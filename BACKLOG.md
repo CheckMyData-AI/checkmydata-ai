@@ -579,3 +579,33 @@ this project has hit twice (a mechanism that exists, is documented, and never ru
 
 **Rejected, with the reason recorded**, so the next reader does not re-open it as an
 oversight.
+
+
+## Item 12 (m0 leftovers) — 2026-08-12
+
+**C7 — already fixed, ledger row stale.** `query_mcp_source`'s description now reads
+"Google Analytics, App Store Connect and Google Play have first-class connectors, so
+prefer query_analytics_source for those". An earlier run closed it and left the row
+open. An open row that is actually done costs the next reader the same attention as a
+real one.
+
+**C14 — the obvious fix was implemented and rejected by a test that had never run.**
+Adding the master-switch check to the ARQ executor looked right. `arq` lives in the
+optional `redis` extra and CI installs only `[dev]`, so **`app/worker.py` could not be
+imported by any test** — the module had zero coverage and
+`test_analytics_cron.py::TestWorkerJob` had been silently skipping. Adding `arq` to the
+dev extra un-skipped it, and it failed the change immediately.
+
+It was right to. The job is only enqueued by a dispatcher that already gates on the
+flag; re-checking inside the worker reads the setting a second time **in a different
+process** whose config was loaded at its own start-up. Closes a window of seconds,
+opens one lasting as long as two processes disagree — during which the worker silently
+refuses work it was correctly given. Reverted, with a test pinning the rejection.
+
+**What C14 actually complained about is still open** and is a *legibility* defect: the
+flag is read once at start-up, so a change without a restart leaves collection dormant
+while the status reads `never_collected` — indistinguishable from "nothing configured".
+The fix belongs in whatever renders that status.
+
+**Kept regardless: `arq` moved into the `dev` extra.** Worth it on its own — an entire
+module was untestable, which is how a skipping test survived long enough to be useful.

@@ -66,6 +66,11 @@ redis = [
     "arq>=0.26.0",
 ]
 dev = [
+    # arq is a runtime dependency of `app.worker` and lives in the `redis` extra,
+    # which CI does not install. Consequence: `app/worker.py` could not be imported
+    # by any test, so the whole module had zero coverage and a test touching it
+    # would skip forever -- decoration rather than a check. Pure-python and small.
+    "arq>=0.26.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
