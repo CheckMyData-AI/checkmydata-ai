@@ -312,8 +312,18 @@ class DbIndexService:
         parts: list[str] = []
 
         if summary and summary.indexed_at:
+            # KL-1: the date says *since when*; the marker says *how stale, and that
+            # these are inferences*. `business_description` / `query_hints` /
+            # `data_patterns` are an LLM's reading of the schema (written from
+            # `analysis.*` in db_index_pipeline), unlike `column_count` or
+            # `enum_labels` which are introspected. Same helper as the sync side, so a
+            # reader learns one convention rather than two.
+            from app.core.provenance import format_derived_age
+
             parts.append(
-                f"## Database Index (analyzed {summary.indexed_at.strftime('%Y-%m-%d %H:%M')})\n"
+                f"## Database Index (analyzed "
+                f"{summary.indexed_at.strftime('%Y-%m-%d %H:%M')})"
+                f"{format_derived_age(summary.indexed_at)}\n"
             )
         else:
             parts.append("## Database Index\n")
