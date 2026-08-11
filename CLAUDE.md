@@ -112,8 +112,8 @@ Embedding-config changes (`CHROMA_EMBEDDING_MODEL` / `EMBEDDER_MAX_TOKENS`) are 
 **2. `code_graph_enabled` + `lineage_enabled` now default-on — ensure ≥2 worker cores**
 Both flags flip to `True` in this release. Code-graph indexing is CPU-intensive. To defer: set env `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false`.
 
-**3. `reranker_enabled` now default-on — update production image**
-Requires `sentence-transformers` + a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) in the image. Degrades gracefully (no-op reranker) if absent — retrieval still works without reranking.
+**3. `reranker_enabled` is default-OFF — and so is the 768-d embedder**
+`sentence-transformers` is not in the production image and never was; it now lives in the optional `ml` extra. Consequences while it is absent: the reranker is a no-op, and `CHROMA_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5` (768-d) is silently ignored — Chroma embeds at 384-d with `all-MiniLM-L6-v2`. Turning the extra on requires more dyno memory (the worker already runs over quota) **and a full re-index**, because 384-d and 768-d vectors are not comparable.
 
 ## High-level architecture
 
@@ -292,7 +292,7 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 | `lineage_enabled` | **on** | Requires code graph; enabled together with `code_graph_enabled` (W6) |
 | `clustering_enabled` | off | Louvain communities |
 | `cluster_llm_label_enabled` | on | Only matters when clustering on |
-| `reranker_enabled` | **on** | Cross-encoder; needs `sentence-transformers` + cross-encoder model in deploy image (default ON as of W2) |
+| `reranker_enabled` | **off** | Cross-encoder. **Corrected 2026-08-10**: this was documented as default-on while `sentence-transformers` was in no dependency list, so it was a no-op in every deployment that ever ran. Install the optional extra (`pip install -e '.[ml]'`) to enable it for real |
 | `context_planner_enabled` | **on** | Query-aware ContextPack lazy loading; mode `heuristic` (zero-cost) or `llm` (default ON as of W2) |
 
 **Agent / quality:**

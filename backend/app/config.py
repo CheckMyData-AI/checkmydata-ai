@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -91,7 +91,16 @@ class Settings(BaseSettings):
 
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
-    chroma_embedding_model: str = "BAAI/bge-base-en-v1.5"
+    chroma_embedding_model: str = Field(
+        default="BAAI/bge-base-en-v1.5",
+        description=(
+            "Embedding model for ChromaDB (768-d). Requires the optional "
+            "`sentence-transformers` extra: `pip install -e '.[ml]'`. Without it "
+            "this value is silently ignored and Chroma embeds at 384-d with its "
+            "built-in all-MiniLM-L6-v2. The two are NOT comparable -- switching "
+            "requires a full re-index."
+        ),
+    )
     # Real tokenizer context window of ``chroma_embedding_model`` (tokens). Chunking
     # sizes to this, not chars/4. Changing the model requires a full re-embed (W2).
     embedder_max_tokens: int = 512
@@ -562,10 +571,16 @@ class Settings(BaseSettings):
     hybrid_k: int = 20
 
     # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
-    # ON by default as of W2 (gated on retrieval-eval + reranker tests).
-    # Degrades to a no-op when the library/model is unavailable at runtime.
-    # Requires `sentence-transformers` + cross-encoder model in the deploy image.
-    reranker_enabled: bool = True
+    #
+    # OFF by default since 2026-08-10, and the change is a correction rather than a
+    # regression: `sentence-transformers` has never been in any dependency list, so
+    # this defaulted to True while degrading to a no-op in every deployment that has
+    # ever run. A flag that advertises a capability the image does not carry is worse
+    # than one that is off -- it is read as configuration and behaves as absence.
+    #
+    # To turn it on for real: `pip install -e '.[ml]'` (see optional-dependencies),
+    # which also unlocks the 768-d embedder named by `chroma_embedding_model`.
+    reranker_enabled: bool = False
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_candidates: int = 30
 

@@ -54,6 +54,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Retrieval quality extras. NOT installed in the production image today: this pulls
+# torch, and the worker already runs over its memory quota. Installing it turns on the
+# 768-d embedder and the cross-encoder reranker -- and requires a FULL RE-INDEX, since
+# 384-d and 768-d vectors are not comparable.
+ml = [
+    "sentence-transformers>=3.0.0",
+]
 redis = [
     "redis[hiredis]>=5.0.0",
     "arq>=0.26.0",
