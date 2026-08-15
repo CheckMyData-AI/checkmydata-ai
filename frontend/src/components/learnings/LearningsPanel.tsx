@@ -350,7 +350,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                           <div className="flex gap-1.5">
                             <button
                               onClick={() => handleSaveEdit(l.id)}
-                              className="text-xs px-3 py-1 rounded bg-accent text-white hover:bg-accent-hover"
+                              className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92"
                             >
                               Save
                             </button>

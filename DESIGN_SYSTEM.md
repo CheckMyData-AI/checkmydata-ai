@@ -1,137 +1,168 @@
 # CheckMyData.ai — Design System
 
-Single source of truth for all visual design decisions.
-Implementation lives in `frontend/src/app/globals.css` (`@theme` block) and `frontend/src/components/ui/`.
+The product UI runs on **`ledger`**, a style pack from
+[sheleg-design](https://github.com/ssheleg/sheleg-design-skill) 1.35.0, extracted
+from `basedash.com` on 2026-08-15 by reading its live computed styles and its two
+shipped stylesheets.
+
+**The pack is the source of truth for values; this document is the source of truth
+for how they are used here.** Every colour, radius, duration and curve below is a
+measurement from that reference, not a preference — so the way to change one is to
+change the pack and re-copy its token layer, never to edit a hex in this repo.
+
+| Where | What it holds |
+|---|---|
+| `plugins/sheleg-design/skills/sheleg-design/styles/ledger.md` (in the skill) | the pack: palette, type, texture, components, hero, responsive, bans, traps |
+| `frontend/src/app/globals.css` | that pack's `tokens/ledger.css` **copied byte for byte**, then this project's alias layer |
+| `frontend/src/components/shadcn/` | shadcn/ui primitives, re-themed onto the pack |
+| `frontend/src/components/ui/` | this project's own components, built on those primitives |
+
+Three checks keep the document and the code from drifting apart, and each was
+watched failing against a planted defect:
+`frontend/src/__tests__/theme-tokens.test.ts` (the token contract),
+`frontend/src/__tests__/pack-bans.test.ts` (the pack's two bans),
+`frontend/src/__tests__/theme-store.test.ts` (both theme selectors).
 
 ---
 
 ## 1. Foundations
 
-### 1.1 Color System
+### 1.1 The one rule
 
-The app uses a **dark-only** theme. All colors are defined as semantic tokens in the `@theme` block of `globals.css`. Every component must use these tokens — never raw Tailwind palette classes.
+**The accent never fills a control.** The primary button is filled in **ink**;
+the terracotta labels, marks, strokes a chart and rules a selected edge. On the
+pack's reference, of eleven accent-coloured elements on the page, five are a 10px
+monospace uppercase label and **none** is a button. One accent-filled button and
+the orange stops meaning "look here" everywhere else — which is why it is a test
+(`pack-bans.test.ts`) and not a paragraph.
 
-#### Surfaces
+### 1.2 Colour
 
-| Token | Hex | Tailwind class | Usage |
-|-------|-----|----------------|-------|
-| `--color-surface-0` | `#09090b` | `bg-surface-0` | Page background, root shell |
-| `--color-surface-1` | `#18181b` | `bg-surface-1` | Cards, panels, sidebar, form inputs |
-| `--color-surface-2` | `#27272a` | `bg-surface-2` | Hover states on surface-1 elements, nested panels |
-| `--color-surface-3` | `#3f3f46` | `bg-surface-3` | Tooltips, elevated chips, scrollbar thumbs |
+Light is the default register; dark is a first-class twin from the same tokens,
+and it is **not** the light theme inverted — its alpha ramp is a different set of
+steps, its accent a different hex, its warning a different amber.
 
-#### Borders
+| Token | Light | Dark | Role |
+|---|---|---|---|
+| `--bg` | `#fcf9f5` | `#080706` | the page |
+| `--panel` | `#fffdfa` | `#0c0b0a` | the raised card |
+| `--panel-2` | `#ffffff` | `#171513` | the data plane: tables, menus, popovers |
+| `--ink` | `#14100c` | `#fffcf8` | primary text, and the primary button's fill |
+| `--ink-2` | ink 72% | ink 70% | secondary prose |
+| `--muted` | ink 55% | ink 50% | column heads, axis ticks, row numbers |
+| `--faint` | ink 22% | ink 20% | disabled, hairline ticks |
+| `--border` | ink 12% | ink 10% | **the elevation device** |
+| `--border-strong` | ink 22% | ink 20% | the hover edge |
+| `--accent` | `#c2410c` | `#f49556` | THE accent — labels and marks, never a fill |
+| `--accent-mark` | `#e8792f` | `#e8792f` | the accent as a fill or a stroke |
+| `--on-ink` | `#fcf9f5` | `#14100c` | text **on** `--ink`; it flips with the theme |
+| `--ok` | `#2fa86b` | `#2fa86b` | positive delta, healthy |
+| `--warn` | amber-500 | amber-300 | needs a human, ambiguous |
+| `--danger` | `#f84747` | `#f84747` | negative delta, failed |
+| `--info` | `#0891b2` | `#22d3ee` | verified, running |
+| `--chart-1…5` | `#ea863f` `#4679f2` `#2fa86b` `#f47bd0` `#4ebcfc` | same | chart series, named for shadcn's `ChartConfig` |
 
-| Token | Hex | Tailwind class | Usage |
-|-------|-----|----------------|-------|
-| `--color-border-subtle` | `#27272a` | `border-border-subtle` | Default card/panel borders, dividers |
-| `--color-border-default` | `#3f3f46` | `border-border-default` | Stronger borders, modal panels, tooltips |
+**Status is never by colour alone.** Four of the five semantic colours sit under
+4.5:1 on the light field and two under 3:1, so in light mode the colour is
+reinforcement and the *word or the sign* is the message: `+23.9%` carries its
+plus, a seal carries its word, a failed run says "failed". The values are the
+reference's own and are not re-stepped here — a colour invented in this repo
+would be exactly what a measured pack exists to prevent.
 
-#### Text
+**`--muted` is 4.13:1 on the field, under AA by 0.37.** It is correct for column
+heads, axis ticks and row numbers, where position repeats the word. A label a
+decision rests on takes `--ink-2` (7.47:1). Do not darken the token: it paints
+every surface, not just this one.
 
-| Token | Hex | Tailwind class | Usage |
-|-------|-----|----------------|-------|
-| `--color-text-primary` | `#fafafa` | `text-text-primary` | Headings, primary body text, active labels |
-| `--color-text-secondary` | `#a1a1aa` | `text-text-secondary` | Secondary labels, descriptions |
-| `--color-text-tertiary` | `#84848e` | `text-text-tertiary` | Tertiary captions, timestamps |
-| `--color-text-muted` | `#52525b` | `text-text-muted` | Placeholders, disabled text, idle icons |
+Three vocabularies resolve to those tokens, and two names collide across them —
+the pack wins both, because it is the half that is measured. In this repo
+`--accent` is the brand terracotta (**not** shadcn's hover surface, which is
+`--surface-hover`), and `--muted` is muted ink (**not** shadcn's muted surface,
+which is `--inset`).
 
-#### Accent
-
-| Token | Hex | Tailwind class | Usage |
-|-------|-----|----------------|-------|
-| `--color-accent` | `#3b82f6` | `bg-accent` / `text-accent` | Primary CTA, links, active tab indicators, focus rings |
-| `--color-accent-hover` | `#60a5fa` | `bg-accent-hover` / `text-accent-hover` | Hover state for accent elements |
-| `--color-accent-muted` | `#3b82f620` | `bg-accent-muted` | Faint accent tint for ghost-accent hover backgrounds |
-
-#### Semantic Status
-
-| Token | Hex | Tailwind class | Usage |
-|-------|-----|----------------|-------|
-| `--color-success` | `#34d399` | `text-success` / `bg-success` | Connected status, success messages |
-| `--color-success-muted` | `#34d39920` | `bg-success-muted` | Success toast backgrounds |
-| `--color-warning` | `#fbbf24` | `text-warning` / `bg-warning` | Warnings, loading indicators |
-| `--color-warning-muted` | `#fbbf2420` | `bg-warning-muted` | Warning backgrounds |
-| `--color-error` | `#f87171` | `text-error` / `bg-error` | Error messages, destructive indicators |
-| `--color-error-muted` | `#f8717120` | `bg-error-muted` | Error backgrounds, destructive hover tint |
-| `--color-info` | `#60a5fa` | `text-info` / `bg-info` | Info messages |
-| `--color-info-muted` | `#60a5fa20` | `bg-info-muted` | Info backgrounds |
-
-#### Brand Chrome
-
-| Context | Value |
-|---------|-------|
-| PWA `theme-color` | `#3b82f6` (accent) |
-| PWA `background_color` | `#09090b` (surface-0) |
-| App icon gradient | `bg-gradient-to-br from-accent to-blue-700` |
-
-### 1.2 Typography
-
-Two typefaces loaded via `next/font/google` with `display: "swap"`:
+### 1.3 Typography
 
 | Family | CSS variable | Tailwind class | Role |
-|--------|-------------|----------------|------|
-| **DM Sans** | `--font-sans` | `font-sans` | All UI text: headings, body, labels, buttons |
-| **JetBrains Mono** | `--font-mono` | `font-mono` | Code blocks, SQL, data tables, monospaced values |
-| **Space Grotesk** | `--font-display` | `font-display` | Marketing headlines only (landing + subpages). Never in product UI. |
+|---|---|---|---|
+| **Inter** | `--font-ui-webfont` | `font-sans` | all product UI |
+| **system monospace** (`ui-monospace, SFMono-Regular, Menlo, …`) | `--font-data` | `font-mono` | **all data**: ids, metrics, timestamps, row numbers, SQL, chips, logs — zero webfont bytes |
+| **Space Grotesk** | `--font-display-webfont` | `font-display` | marketing headlines only. Never in product UI |
 
-#### Type Scale
+The pack's own display face is licensed and self-hosted by its reference; per the
+pack, a project without that licence points the product display at the UI face,
+which is what `--font-display` resolves to here.
 
-| Role | Classes | Example |
-|------|---------|---------|
-| Page title | `text-2xl font-bold tracking-tight` | Auth screen heading |
-| Section heading | `text-lg font-semibold` | Card titles, modal titles |
-| Subsection heading | `text-base font-semibold` | Panel sub-headers |
-| Body | `text-sm` | Chat messages, form labels, descriptions |
-| Caption | `text-xs` | Error messages, timestamps, toast text, secondary actions |
-| Micro | `text-[11px]` | Legal links, footnotes |
-| Micro smallest | `text-[10px]` | Tooltip text, inline labels on icon buttons, validation hints |
+The ramp ships as tokens, so "no ad-hoc font size in the diff" is checkable:
 
-#### Line Height and Tracking
+| Utility | Size | Use |
+|---|---|---|
+| `text-kicker` | 10px | the mono kicker and the seal — uppercase, `tracking-kicker` (+0.1em) |
+| `text-meta` | 12px | labels, column heads, row numbers |
+| `text-body` | 14px | dense UI, table cells, buttons |
+| `text-prose` | 15px | running text |
+| `text-card` | 18px | card titles, weight 500 |
+| `text-title` | 34px | page titles and the big figure on a stat tile — weight 400, `tracking-title` (−0.03em) |
 
-- Default `leading-normal` for body text.
-- `leading-relaxed` for multi-line descriptions and detail paragraphs in modals.
-- `tracking-tight` on page titles (`text-2xl`).
-- `tracking-wider` + `uppercase` for divider labels (e.g., "or" separator).
+The large figure on a stat tile is the **UI face**, not the monospace: the
+reference sets `$4.40M` in Inter and keeps the monospace for the rows under it.
+Weights are 400 / 500 / 600 only — 700 exists in the reference's theme and is
+never used on its page.
 
-### 1.3 Spacing
+### 1.4 Texture, radius and spacing
 
-Consistent use of Tailwind's spacing scale. Preferred values by context:
+**Elevation is a 1px hairline at 12% ink, and no card casts a shadow.** 103 of
+the reference's surfaces are exactly that: transparent or `--panel` fill, 1px
+`--border`, `--r-card`. Depth comes from the fill step (`--bg` → `--panel` →
+`--panel-2`) and from the line. One shadow token, `--shadow-1`, exists for true
+overlays — dialogs, popovers, menus — and there is no second one to reach for.
 
-| Context | Padding | Gap | Margin |
-|---------|---------|-----|--------|
-| Icon button (xs) | `p-1` | — | — |
-| Icon button (sm) | `p-1.5` | `gap-1` | — |
-| Icon button (md) | `p-2` | `gap-1` | — |
-| Form input | `px-3.5 py-2.5` | — | — |
-| Text button / CTA | `px-4 py-1.5` (small) / `py-2.5` (full-width) | — | — |
-| Card / panel interior | `p-5` or `p-6` | `space-y-4` | — |
-| Section margin | — | — | `mb-4` / `mb-8` |
-| Stacked form fields | — | `space-y-4` | — |
-| Sidebar items | `px-2 py-1` to `px-3 py-2` | `gap-2` | — |
-| Page-level padding | `p-4` | — | — |
+Radii are the reference's ×1.25 ramp, and Tailwind's own scale is remapped onto
+it so existing markup inherits it: `rounded-sm` 5 · `rounded-md` 7.5 ·
+`rounded-lg` 10 · `rounded-xl` 15 · `rounded-2xl` 20. Named aliases:
+`rounded-inset` 7.5 · `rounded-control` 10 · `rounded-card` 15 · `rounded-panel` 20.
 
-### 1.4 Border Radius
+**Nesting is concentric**: an inner radius is the outer radius minus the padding
+between them. A 15px track with 4px of padding holds a 10px thumb, never a second
+15 — two identical radii nested inside one another is the tell of a
+stuck-together interface.
 
-| Class | Use case |
-|-------|----------|
-| `rounded` | Small inline elements, icon buttons (xs/sm), status dots |
-| `rounded-md` | Icon buttons (md), code blocks, tags |
-| `rounded-lg` | Inputs, text buttons, modals, toasts, skip-link |
-| `rounded-xl` | Cards, panels, auth form containers |
-| `rounded-2xl` | Brand logo container, large decorative elements |
-| `rounded-full` | Spinners, status dots, avatar circles |
+Grid is 4px: 4 / 8 / 12 / 16 / 20 / 24 / 32. Buttons pad 8×20, cards 20, table
+cells 0×8, a segmented track 4. Fixed heights: data row **32px**, control 30px,
+field 38px.
 
-### 1.5 Shadows
+### 1.5 Motion
 
-| Class | Use case |
-|-------|----------|
-| `shadow-lg` | Toasts, dropdowns |
-| `shadow-xl` | Modals, popover panels |
+One curve carries the interface: `--ease` = `cubic-bezier(0.22, 1, 0.36, 1)`,
+the reference's own default timing function. `--ease-out` for things entering,
+`--ease-in-out` for movement on screen. **`ease-in` is banned in UI.**
 
-No shadows on cards or sidebar — elevation is conveyed through surface color difference and borders.
+Durations are `--dur-xs` 75ms · `--dur-sm` 0.1s · `--dur` 0.15s (the default) ·
+`--dur-lg` 0.2s · `--dur-xl` 0.3s, and nothing runs longer than 0.3s. Press
+feedback is `scale(0.97)` on controls and nothing else moves.
 
-### 1.6 Icons
+**Exactly three loops are legal**, all of them state and all stopping when the
+state does: the typing cursor while tokens stream, the thinking dots while a run
+works, and a 1.4s heartbeat on a live indicator. `prefers-reduced-motion: reduce`
+zeroes every duration token and the press scale, and stops all three.
+
+Nothing on the 100+/day path animates: the command palette opens instantly, tab
+switches are instant, the segmented control responds on the keypress.
+
+### 1.6 The seal — the one element this product is remembered by
+
+Every answer that states a figure carries a seal saying **how it is known**:
+`Verified` (a query the reader can open), `Inferred` (derived by a step the system
+can name), `Unverified` (it cannot say). It is `Seal.tsx`, its state comes from
+`sealStateFor()` — derived from the answer's own evidence, never from a second
+guess — and the scenario is SCN-122.
+
+Three rules decide whether it is honest rather than decorative: every state must
+be reachable, the label must be derivable from something real, and it seals a
+**card**, not a screen. The badge it replaced was fed
+`response_type === "sql_result" ? "unverified" : undefined`, so two of its three
+words were unreachable and it told the reader the same thing about every answer.
+
+### 1.7 Icons
 
 Custom `Icon` component (`frontend/src/components/ui/Icon.tsx`) rendering inline SVGs with Lucide-style paths.
 
@@ -162,9 +193,15 @@ Do not import external icon packages. Add new icons to the `PATHS` record in `Ic
 #### Primary (full-width CTA)
 
 ```
-w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold
-hover:bg-accent-hover disabled:opacity-50 transition-colors
+w-full py-2.5 bg-primary text-primary-foreground rounded-control text-body font-semibold
+hover:bg-primary/92 disabled:opacity-50 transition-colors
 ```
+
+`--primary` is **ink**, and `--primary-foreground` is `--on-ink`, so the button
+inverts with the theme: near-black on cream in light, cream on coal in dark.
+Filling it with the accent is the pack's one ban and `pack-bans.test.ts` fails on
+it. Prefer the primitive — `<Button>` in `components/ui/Button.tsx`, which wraps
+`components/shadcn/button.tsx` — over hand-written classes.
 
 Used for main form submissions (Sign In, Create Account, Save).
 
@@ -181,10 +218,13 @@ Used for Cancel actions in modals and secondary choices.
 #### Destructive (filled)
 
 ```
-px-4 py-1.5 text-xs text-white rounded transition-colors
-bg-red-600 hover:bg-red-500
+px-3 h-[30px] text-meta rounded-control border border-danger text-danger
+bg-transparent hover:bg-danger-weak transition-colors
 disabled:opacity-40 disabled:cursor-not-allowed
 ```
+
+The destructive control is a **bordered ghost that fills only on hover**: a red
+slab makes the decision for the reader before they have made it.
 
 Used for destructive confirmations (delete, disconnect).
 
@@ -509,7 +549,7 @@ In `layout.tsx`:
 </a>
 ```
 
-Visible only on keyboard focus. Uses `bg-blue-600 text-white rounded-lg text-sm`.
+Visible only on keyboard focus. Uses `bg-primary text-primary-foreground rounded-control text-body`.
 
 ### 4.3 Reduced Motion
 
@@ -570,9 +610,9 @@ Some components still use raw Tailwind palette classes. The table below maps the
 | `border-zinc-600` | `border-border-default` | |
 | `text-red-400` | `text-error` | |
 | `text-yellow-400` | `text-warning` | |
-| `bg-blue-600` | `bg-accent` | Skip-link only |
+| `bg-blue-600` | `bg-primary` | Skip-link; the fill is ink, never the accent |
 | `hover:bg-zinc-700` | `hover:bg-surface-2` | |
-| `ring-zinc-500/40` | `ring-accent/40` | Use accent for focus rings |
+| `ring-zinc-500/40` | `outline-ring` | Focus is a 2px `--accent` ring at 2px offset — an outline, not a ring utility |
 
 ### 5.2 Components Needing Migration
 
@@ -582,9 +622,8 @@ Known optional/tokenization follow-ups (acceptable as-is, not blocking):
 
 | Area | File | Note |
 |------|------|------|
-| Chart palette | `components/viz/ChartRenderer.tsx` | Chart.js color/grid/tick hex values duplicate theme colors; could be driven from CSS variables. |
-| Logo gradient | `components/ui/Logo.tsx` | SVG gradient stops hardcode brand hex; could read from `@theme`. |
-| On-accent text | various CTAs | `text-white` on accent buttons has no dedicated token; a `--color-on-accent` token could formalize it. |
+| Chart palette | `components/viz/ChartRenderer.tsx` | Chart.js colour/grid/tick hex values duplicate theme colours. The pack ships `--chart-1…5` under the names a shadcn `ChartConfig` reads, and `components/shadcn/chart.tsx` is installed — this renderer has **not** been moved onto either. |
+| Chat panel and feature screens | `components/chat/`, and ~120 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
 
 When touching these files, prefer migrating to CSS-variable-driven values.
 

@@ -428,7 +428,7 @@ export default async function LandingPage() {
             >
               <Link
                 href="/login"
-                className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center"
+                className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors text-center"
               >
                 Get Started Free
               </Link>
@@ -915,7 +915,7 @@ export default async function LandingPage() {
                   href={GITHUB_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-6 py-3 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors inline-flex items-center gap-2"
+                  className="px-6 py-3 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors inline-flex items-center gap-2"
                 >
                   <GitHubIcon />
                   Star on GitHub
@@ -975,7 +975,7 @@ export default async function LandingPage() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
               href="/login"
-              className="px-10 py-3.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
+              className="px-10 py-3.5 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors"
             >
               Get Started Free
             </Link>

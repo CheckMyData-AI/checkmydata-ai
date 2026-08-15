@@ -134,6 +134,8 @@ human review moves them to `validated`.
 | SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
 | SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | draft | — |
 | SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | draft | — |
+| SCN-122 | Every answer says how it is known — the seal | chat | analyst | draft | — |
+| SCN-123 | The interface reads as one design in light and in dark | settings | analyst | draft | — |
 
 ## Personas
 
@@ -2024,3 +2026,33 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** 404 rather than 403 is deliberate: the lookup is owner-strict, so "someone else's key" and "no such key" answer identically and neither confirms that an id exists. Before this change the reference was accepted unchecked, and `GitAgent` / the repo indexer later decrypted it with no owner filter — so the server would open a tunnel or clone a repository with another tenant's private key. The key itself was never exposed; its *use* was
 - **Status:** draft
 - **Coverage:** backend/app/api/routes/connections.py; backend/app/api/routes/projects.py; backend/app/services/ssh_key_service.py; backend/tests/integration/test_ssh_key_ownership.py
+
+### SCN-122: Every answer says how it is known — the seal
+- **Persona:** analyst
+- **Feature:** chat
+- **Entry point:** any assistant answer in the chat transcript
+- **Preconditions:** a project with at least one connection; the user has asked a question
+- **Steps:**
+  1. User asks a question and the agent answers
+  2. The answer carries a seal beside its response-type chip: **Verified**, **Inferred** or **Unverified**
+  3. User clicks the seal
+- **Expected result:** the seal states how *this* answer was obtained, and clicking it opens the proof — the SQL panel where a query was run, the source list where the answer came from retrieval. **Verified** means a query the reader can open produced the figure; **Inferred** means the system derived it by a step it can name (retrieval, or a query whose schema index the backend reported stale); **Unverified** means it cannot say — a run that failed, exhausted its step budget, or answered from neither a query nor a source.
+- **UI elements:** the seal (10px monospace, uppercase, in the state's own colour, **always with its word** — the colour never carries the meaning alone), the SQL details panel, the sources list
+- **States covered:** verified, inferred, unverified
+- **Errors & recovery:** a failed or budget-exhausted run seals **Unverified** even when a query is attached to it, because a partial run's evidence proves nothing about the answer. The seal it replaced was fed `response_type === "sql_result" ? "unverified" : undefined` — two of its three words were unreachable, so it told the reader the same thing about every answer
+- **Status:** draft
+- **Coverage:** frontend/src/components/ui/Seal.tsx; frontend/src/components/chat/ChatMessage.tsx; frontend/src/__tests__/components/Seal.test.tsx
+
+### SCN-123: The interface reads as one design in light and in dark
+- **Persona:** analyst
+- **Feature:** settings
+- **Entry point:** the theme control (SCN-096), or the OS preference under `system`
+- **Preconditions:** none
+- **Steps:**
+  1. User switches between light, dark and system
+- **Expected result:** the whole interface changes together. The product runs on the `ledger` style pack: a warm cream field under near-black ink in light, a warm coal field under cream ink in dark, elevation drawn as a 1px hairline at 12% ink with **no shadow on any card**, and one terracotta accent that **labels and marks but never fills a control** — the primary button is ink in light and cream in dark, and its text inverts with it. Nothing keeps a colour from the other theme
+- **UI elements:** every surface; the theme toggle
+- **States covered:** light, dark, system
+- **Errors & recovery:** the theme is applied as **both** a `.dark` class and a `data-theme` attribute, because Tailwind's dark variant keys off the class while the pack's token layer switches on the attribute. Setting only one leaves half the app in the other theme, which reads as a rendering bug rather than a missing line — `theme-store.test.ts` fails if either stops being set
+- **Status:** draft
+- **Coverage:** frontend/src/app/globals.css; frontend/src/stores/theme-store.ts; frontend/src/__tests__/theme-tokens.test.ts; frontend/src/__tests__/pack-bans.test.ts

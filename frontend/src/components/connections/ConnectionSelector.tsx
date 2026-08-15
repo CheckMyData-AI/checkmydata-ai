@@ -1461,7 +1461,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         <button
           onClick={editingId ? handleUpdate : handleCreate}
           disabled={saving}
-          className="flex-1 px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-1 px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {saving && <span className="w-3.5 h-3.5 border-2 border-text-primary/30 border-t-text-primary rounded-full animate-spin" />}
           {saving ? "Saving…" : editingId ? "Save Changes" : "Create Connection"}

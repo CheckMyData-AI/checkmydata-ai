@@ -49,7 +49,7 @@ export function HomeAsk() {
           type="button"
           onClick={submit}
           disabled={!canAsk || !value.trim()}
-          className="shrink-0 px-3.5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="shrink-0 px-3.5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/92 disabled:opacity-40 disabled:cursor-not-allowed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           Ask
         </button>

@@ -314,7 +314,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
           <button
             onClick={handleRun}
             disabled={isRunning || queries.every((q) => !q.sql.trim())}
-            className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 transition-colors disabled:opacity-40"
           >
             {isRunning ? (
               <>
@@ -408,7 +408,7 @@ function NotePicker({ notes, onSelect, onClose }: NotePickerProps) {
         <button
           onClick={handleAdd}
           disabled={selected.size === 0}
-          className="text-[11px] px-4 py-1.5 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-40"
+          className="text-[11px] px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-40"
         >
           Add {selected.size > 0 ? `(${selected.size})` : ""}
         </button>

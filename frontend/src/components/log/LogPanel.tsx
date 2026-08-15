@@ -146,7 +146,7 @@ export function LogToggleButton() {
       <Icon name="activity" size={12} />
       Live Activity
       {unreadCount > 0 && (
-        <span className="bg-accent text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+        <span className="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       )}
@@ -173,7 +173,7 @@ export function PersistentLogToggle() {
         <Icon name="activity" size={11} />
         <span>Log</span>
         {unreadCount > 0 && (
-          <span className="bg-accent text-white text-[10px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
+          <span className="bg-primary text-primary-foreground text-[10px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}

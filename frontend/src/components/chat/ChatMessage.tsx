@@ -18,7 +18,7 @@ import { InsightCards, type Insight } from "./InsightCards";
 import { SessionContinuationBanner } from "./SessionContinuationBanner";
 import { SQLExplainer } from "./SQLExplainer";
 import { SQLResultSection } from "./SQLResultSection";
-import { VerificationBadge } from "./VerificationBadge";
+import { Seal, sealStateFor } from "@/components/ui/Seal";
 
 interface AttemptInfo {
   attempt: number;
@@ -150,6 +150,9 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
   }
 
   const responseType = message.responseType || metadata?.response_type || "text";
+  // The retrieval hits behind an answer — the step the system can name when it
+  // says a figure was inferred rather than computed.
+  const ragSourceCount = metadata?.rag_sources?.length ?? 0;
   const isSqlResult = responseType === "sql_result";
   const isClarification = responseType === "clarification_request";
   const hasViz = !!message.visualization;
@@ -311,7 +314,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[95%] md:max-w-[80%] min-w-0 overflow-hidden rounded-xl px-3 py-2.5 md:px-4 md:py-3 ${
-          isUser ? "bg-accent text-white" : "bg-surface-2 text-text-primary"
+          isUser ? "bg-primary text-primary-foreground" : "bg-surface-2 text-text-primary"
         }`}
       >
         {message.stalenessWarning && (
@@ -342,9 +345,26 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                 ? "Partial Result"
                 : "Knowledge"}
             </span>
-            {isSqlResult && message.verificationStatus && (
-              <VerificationBadge status={message.verificationStatus} />
-            )}
+            {/* The pack's signature element. Its three states are DERIVED from
+                the answer's own evidence — the query it ran, the staleness the
+                backend reported, whether the run reached a verdict at all — so
+                every state is reachable. The badge it replaced was fed
+                `response_type === "sql_result" ? "unverified" : undefined`,
+                which could only ever say one of its three words. */}
+            <Seal
+              state={sealStateFor({
+                responseType,
+                query: message.query,
+                stalenessWarning: message.stalenessWarning,
+                error: message.error,
+                sourceCount: ragSourceCount,
+              })}
+              onOpenProof={
+                message.query || ragSourceCount > 0
+                  ? () => (message.query ? setShowDetails(true) : setShowSources(true))
+                  : undefined
+              }
+            />
           </div>
         )}
 
@@ -582,7 +602,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
             </p>
             <button
               onClick={() => onContinueAnalysis(message.continuationContext ?? null)}
-              className="text-xs px-3 py-1.5 rounded-md bg-accent text-white font-medium hover:bg-accent-hover transition-colors"
+              className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/92 transition-colors"
             >
               Continue analysis
             </button>

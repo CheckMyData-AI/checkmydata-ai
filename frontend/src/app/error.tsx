@@ -19,7 +19,7 @@ export default function Error({
         <div className="flex gap-3">
           <button
             onClick={reset}
-            className="px-4 py-2.5 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
+            className="px-4 py-2.5 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/92 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
             autoFocus
           >
             Try again

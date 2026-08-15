@@ -27,7 +27,7 @@ const DB_TYPE_LABELS: Record<string, string> = {
 };
 
 const btnPrimary =
-  "px-5 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  "px-5 py-2 rounded-lg bg-primary hover:bg-primary/92 text-primary-foreground text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
 const btnSecondary =
   "px-5 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-text-secondary text-sm font-medium transition-colors border border-border-subtle";

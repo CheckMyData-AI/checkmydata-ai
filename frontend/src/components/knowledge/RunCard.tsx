@@ -100,7 +100,7 @@ export function RunCard({
                 .retry(task.runId)
                 .catch(() => toast("Failed to retry run", "error"))
             }
-            className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover"
+            className="text-[10px] px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92"
           >
             Retry
           </button>
@@ -109,7 +109,7 @@ export function RunCard({
             aria-label={triggerLabel}
             onClick={onTrigger}
             disabled={triggerDisabled}
-            className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-[10px] px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {triggerLabel}
           </button>

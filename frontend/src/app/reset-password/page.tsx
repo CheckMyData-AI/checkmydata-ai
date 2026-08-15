@@ -41,7 +41,7 @@ function ResetPasswordContent() {
           </p>
           <Link
             href="/forgot-password"
-            className="mt-2 w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors"
+            className="mt-2 w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 transition-colors"
           >
             Request a new link
           </Link>
@@ -147,7 +147,7 @@ function ResetPasswordContent() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Resetting…" : "Reset password"}
         </button>

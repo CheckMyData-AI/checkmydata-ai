@@ -254,7 +254,7 @@ function PasswordForm({ onDone }: { onDone: () => void }) {
         <button
           type="submit"
           disabled={loading}
-          className="flex-1 py-1.5 text-xs text-white bg-accent rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="flex-1 py-1.5 text-xs text-primary-foreground bg-primary rounded hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           {loading ? "Saving..." : "Save"}
         </button>

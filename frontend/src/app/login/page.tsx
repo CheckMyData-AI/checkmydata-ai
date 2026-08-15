@@ -291,7 +291,7 @@ function LoginPageContent() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
           >
             {isLoading
               ? mode === "login"

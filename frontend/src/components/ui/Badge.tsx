@@ -8,20 +8,24 @@ export interface BadgeProps {
   className?: string;
 }
 
+/* The pack's chip is a transparent fill with a 1px border of its own colour
+   at 30% alpha. A status tone keeps the word in --ink and lets the border
+   carry the hue: four of the five semantic colours sit under 4.5:1 on the
+   light field, so the word is the message and the colour reinforces it. */
 const TONE: Record<NonNullable<BadgeProps["tone"]>, string> = {
-  neutral: "bg-surface-2 text-text-secondary border-border-subtle",
-  accent: "bg-accent-muted text-accent border-accent/30",
-  success: "bg-success-muted text-success border-success/30",
-  warning: "bg-warning-muted text-warning border-warning/30",
-  error: "bg-error-muted text-error border-error/30",
-  info: "bg-info-muted text-info border-info/30",
+  neutral: "text-text-secondary border-border-strong",
+  accent: "text-accent border-accent-line",
+  success: "text-ink border-ok/40 bg-ok-weak",
+  warning: "text-ink border-warn/40 bg-warn-weak",
+  error: "text-ink border-danger/40 bg-danger-weak",
+  info: "text-ink border-info/40 bg-info-weak",
 };
 
 export function Badge({ children, tone = "neutral", className }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium",
+        "inline-flex items-center rounded-control border px-2 py-0.5 font-mono text-kicker tracking-kicker uppercase",
         TONE[tone],
         className,
       )}

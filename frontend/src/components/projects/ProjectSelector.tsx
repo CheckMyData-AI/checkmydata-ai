@@ -643,7 +643,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       <div className="flex gap-2 pt-1">
         <button
           onClick={editingId ? handleUpdate : handleCreate}
-          className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover transition-colors"
+          className="flex-1 px-3 py-2 bg-primary text-primary-foreground text-xs font-medium rounded-lg hover:bg-primary/92 transition-colors"
         >
           {editingId ? "Save Changes" : "Create"}
         </button>

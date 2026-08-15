@@ -92,7 +92,7 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>
@@ -113,7 +113,7 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>

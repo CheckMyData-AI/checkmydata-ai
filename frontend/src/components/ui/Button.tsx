@@ -1,7 +1,17 @@
 "use client";
 
+import { Button as ShadcnButton } from "@/components/shadcn/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * The project's button API, now a thin wrapper over the shadcn primitive so the
+ * ~80 call sites keep working while the base becomes one system.
+ *
+ * The pack's rule this component enforces for the whole app: **the primary
+ * button is filled in INK, never in the accent.** The accent labels and marks;
+ * it never fills a control. One accent-filled button anywhere and the orange
+ * stops meaning "look here" everywhere else.
+ */
 export type ButtonVariant = "primary" | "secondary" | "destructive" | "ghost";
 export type ButtonSize = "sm" | "md";
 
@@ -10,21 +20,14 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: ButtonSize;
 }
 
-const VARIANT: Record<ButtonVariant, string> = {
-  primary:
-    "bg-accent text-white hover:bg-accent-hover disabled:opacity-50 border border-transparent",
-  secondary:
-    "bg-transparent text-text-secondary border border-border-default hover:text-text-primary hover:border-border-default",
-  destructive:
-    "bg-error text-white hover:bg-error-hover disabled:opacity-40 disabled:cursor-not-allowed border border-transparent",
-  ghost:
-    "bg-transparent text-text-secondary hover:text-text-primary hover:bg-surface-2 border border-transparent",
-};
+const VARIANT = {
+  primary: "default",
+  secondary: "outline",
+  destructive: "destructive",
+  ghost: "ghost",
+} as const satisfies Record<ButtonVariant, "default" | "outline" | "destructive" | "ghost">;
 
-const SIZE: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-xs font-medium rounded-md",
-  md: "px-4 py-2 text-sm font-semibold rounded-lg",
-};
+const SIZE = { sm: "sm", md: "default" } as const satisfies Record<ButtonSize, "sm" | "default">;
 
 export function Button({
   variant = "primary",
@@ -34,13 +37,15 @@ export function Button({
   ...props
 }: ButtonProps) {
   return (
-    <button
+    <ShadcnButton
       type={type}
+      variant={VARIANT[variant]}
+      size={SIZE[size]}
       className={cn(
-        "ui-pressable inline-flex items-center justify-center transition-colors duration-150",
-        "focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0",
-        VARIANT[variant],
-        SIZE[size],
+        // The pack's destructive control is a bordered ghost that fills only on
+        // hover — a red slab is a decision made for the reader.
+        variant === "destructive" &&
+          "border border-danger bg-transparent text-danger hover:bg-danger-weak hover:text-danger",
         className,
       )}
       {...props}

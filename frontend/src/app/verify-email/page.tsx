@@ -91,7 +91,7 @@ function VerifyEmailContent() {
               </p>
               <Link
                 href="/app"
-                className="mt-2 w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors"
+                className="mt-2 w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 transition-colors"
               >
                 Continue to app
               </Link>
@@ -118,7 +118,7 @@ function VerifyEmailContent() {
                   onClick={handleResend}
                   disabled={resending || resent}
                   aria-label="Resend verification email"
-                  className="mt-2 w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+                  className="mt-2 w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
                 >
                   {resent
                     ? "Email sent"

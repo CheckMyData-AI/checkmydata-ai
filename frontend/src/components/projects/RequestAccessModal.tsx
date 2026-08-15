@@ -67,7 +67,7 @@ export function RequestAccessModal({ open, onClose }: RequestAccessModalProps) {
           </div>
           <button
             onClick={handleClose}
-            className="px-5 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+            className="px-5 py-2 rounded-lg bg-primary hover:bg-primary/92 text-primary-foreground text-sm font-medium transition-colors"
           >
             Got it
           </button>
@@ -126,7 +126,7 @@ export function RequestAccessModal({ open, onClose }: RequestAccessModalProps) {
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="w-full px-5 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full px-5 py-2 rounded-lg bg-primary hover:bg-primary/92 text-primary-foreground text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {submitting ? "Sending..." : "Send request"}
           </button>

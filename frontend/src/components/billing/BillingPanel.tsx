@@ -153,7 +153,7 @@ export function BillingPanel() {
         ) : (
           <Link
             href="/pricing"
-            className="flex-1 px-2.5 py-1.5 text-[11px] font-semibold text-center text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
+            className="flex-1 px-2.5 py-1.5 text-[11px] font-semibold text-center text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors"
           >
             Upgrade
           </Link>

@@ -21,7 +21,7 @@ export function LogsDateFilter({ days, onChange }: Props) {
           onClick={() => onChange(opt.value)}
           className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
             days === opt.value
-              ? "bg-accent text-white"
+              ? "bg-primary text-primary-foreground"
               : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
           }`}
         >

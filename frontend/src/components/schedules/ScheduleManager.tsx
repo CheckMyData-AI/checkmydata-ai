@@ -505,7 +505,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onClick={() => setCronMode("preset")}
                 className={`text-[10px] px-2 py-0.5 rounded ${
                   cronMode === "preset"
-                    ? "bg-accent text-white"
+                    ? "bg-primary text-primary-foreground"
                     : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
@@ -515,7 +515,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onClick={() => setCronMode("custom")}
                 className={`text-[10px] px-2 py-0.5 rounded ${
                   cronMode === "custom"
-                    ? "bg-accent text-white"
+                    ? "bg-primary text-primary-foreground"
                     : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
@@ -618,7 +618,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             <button
               onClick={handleSave}
               disabled={saving || !title.trim() || !sqlQuery.trim()}
-              className="text-[10px] px-2.5 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+              className="text-[10px] px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50"
             >
               {saving ? "Saving..." : editingId ? "Update" : "Create"}
             </button>

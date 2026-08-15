@@ -38,7 +38,6 @@ interface ChatMessage {
     options?: string[];
     context?: string;
   } | null;
-  verificationStatus?: "verified" | "unverified" | "flagged" | null;
   isRetryable?: boolean;
   stepsUsed?: number;
   stepsTotal?: number;

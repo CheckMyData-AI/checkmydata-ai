@@ -204,7 +204,7 @@ export function InviteManager({ projectId, onClose }: Props) {
         <button
           onClick={handleInvite}
           disabled={loading || !email.trim()}
-          className="px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:bg-accent-hover disabled:opacity-50 whitespace-nowrap transition-colors"
+          className="px-3 py-1.5 bg-primary text-primary-foreground text-xs rounded-lg hover:bg-primary/92 disabled:opacity-50 whitespace-nowrap transition-colors"
         >
           Invite
         </button>

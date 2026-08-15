@@ -273,7 +273,7 @@ function DashboardPageContent() {
           {canEditDashboard && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/92 transition-colors"
             >
               <Icon name="edit" size={12} />
               Edit

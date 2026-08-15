@@ -291,7 +291,7 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
                   onClick={() => setFilter(s)}
                   className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
                     filter === s
-                      ? "bg-accent text-white"
+                      ? "bg-primary text-primary-foreground"
                       : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                   }`}
                 >

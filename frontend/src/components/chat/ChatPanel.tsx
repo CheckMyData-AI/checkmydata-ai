@@ -549,7 +549,6 @@ export function ChatPanel() {
             rawResult: rawResult ?? undefined,
             timestamp: Date.now(),
             clarificationData: result.clarification_data ?? undefined,
-            verificationStatus: result.response_type === "sql_result" ? "unverified" : undefined,
             stepsUsed: result.steps_used ?? undefined,
             stepsTotal: result.steps_total ?? undefined,
             continuationContext: result.continuation_context ?? undefined,
@@ -756,7 +755,7 @@ export function ChatPanel() {
         <p>No database connection configured.</p>
         <button
           onClick={() => useAppStore.getState().setChatMode("knowledge_only")}
-          className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover transition-colors"
+          className="px-4 py-2 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/92 transition-colors"
           aria-label="Chat with Knowledge Base"
         >
           Chat with Knowledge Base

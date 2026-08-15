@@ -94,7 +94,7 @@ export function PendingInvites() {
                 onClick={() => handleAccept(inv.id)}
                 disabled={busy}
                 aria-label={`Accept invitation to ${projectLabel}`}
-                className="px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+                className="px-2 py-1 bg-primary text-primary-foreground text-[10px] rounded hover:bg-primary/92 disabled:opacity-50 transition-colors"
               >
                 {accepting === inv.id ? "..." : "Accept"}
               </button>

@@ -263,7 +263,7 @@ export function NoteCard({ note }: NoteCardProps) {
               </button>
               <button
                 onClick={handleSaveComment}
-                className="text-[10px] px-2 py-0.5 rounded bg-accent text-white hover:bg-accent-hover"
+                className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/92"
               >
                 Save
               </button>

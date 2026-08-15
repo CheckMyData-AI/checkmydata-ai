@@ -242,7 +242,7 @@ export function McpTokenManager() {
             type="button"
             onClick={handleCreate}
             disabled={creating || !newName.trim()}
-            className="w-full px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="w-full px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 disabled:opacity-50 transition-colors"
           >
             {creating ? "Creating…" : "Create token"}
           </button>
@@ -277,7 +277,7 @@ export function McpTokenManager() {
             <button
               type="button"
               onClick={() => setJustIssued(null)}
-              className="w-full px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors"
+              className="w-full px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 transition-colors"
             >
               I&apos;ve saved it
             </button>

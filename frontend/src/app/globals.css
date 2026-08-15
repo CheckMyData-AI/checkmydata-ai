@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -6,12 +7,17 @@ html, body {
   /* `clip` (not `hidden`): hidden turns body into a scroll container,
      which silently breaks position:sticky (pinned hero story). */
   overflow-x: clip;
-  background-color: var(--surface-0);
+  background-color: var(--bg);
+  color: var(--ink);
 }
 
+/* The pack's focus contract: 2px accent ring at 2px offset on everything.
+   It is the one place this design overrules its reference, which answers
+   focus by swapping a border colour and so leaves a borderless control
+   with no focus state at all. */
 :focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring) solid var(--accent);
+  outline-offset: var(--focus-offset);
 }
 
 input:focus-visible,
@@ -30,15 +36,410 @@ select:focus-visible {
   }
 }
 
-@theme inline {
-  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-mono), ui-monospace, monospace;
-  --font-display: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+/* ═══════════════════════════════════════════════════════════════════════
+   SHELEG Design — Ledger token layer.
 
+   Copied BYTE FOR BYTE from sheleg-design 1.35.0,
+   `plugins/sheleg-design/skills/sheleg-design/styles/tokens/ledger.css`.
+   Do not edit a value here: edit the pack and re-copy, or the app and the
+   pack drift and only one of them is measured.
+
+   The pack switches themes on `[data-theme="dark"]`; this app's Tailwind
+   dark variant keys off the `.dark` class. Rather than modify the copy,
+   `theme-store.ts` sets BOTH on <html>, and there is a test that fails if
+   it stops doing so.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* SHELEG Design — Ledger token layer (light default + dark twin).
+   Copy verbatim; consume only var(--…) in components.
+   Theme switch: set data-theme="dark" on :root.
+
+   Origin: basedash.com, read from its computed styles and its two shipped
+   stylesheets (_astro/index.*.css, _astro/Section.*.css) on 2026-08-15. Every
+   colour, radius, duration and curve below is that measurement unless the
+   declaration says otherwise; four declarations say otherwise and each carries
+   its reason inline.
+
+   The neutral ramp is alpha over the ink, exactly as the reference builds it —
+   so one ramp works on the field, on a card and on a table row. Each step ships
+   the literal first and the relative-colour derivation second: a browser without
+   Baseline-2024 relative colour drops the second declaration and keeps a correct
+   literal, a newer one tracks --ink when a theme moves it. */
+
+:root {
+  /* ── field and surfaces ──────────────────────────────────────────────── */
+  --bg: #fcf9f5;      /* the page; reference --color-background-1 (light) */
+  --panel: #fffdfa;   /* the raised card; reference --color-background-2 */
+  --panel-2: #ffffff; /* the data plane — tables, menus, popovers */
+
+  --ink: #14100c;     /* reference --color-neutral-1 (light) */
+
+  /* @role non-text: --inset — a fill, never a text colour: 1.03:1 on --bg by
+     construction (5% ink over the field). It is the segmented track and the
+     quiet tile, and anything written on it is --ink or --muted. */
+  --inset: rgba(20, 16, 12, 0.05);
+  --inset: rgb(from var(--ink) r g b / 0.05);
+
+  --ink-2: rgba(20, 16, 12, 0.72); /* --color-neutral-2 — secondary prose; composites to 7.47:1 */
+  --ink-2: rgb(from var(--ink) r g b / 0.72);
+  /* --muted composites to 4.13:1 on the field and 4.18:1 on --panel-2 — under
+     AA by 0.37. It carries column heads, axis ticks and row numbers, where the
+     word is repeated by position; a label a decision rests on takes --ink-2. */
+  --muted: rgba(20, 16, 12, 0.55); /* --color-neutral-3 */
+  --muted: rgb(from var(--ink) r g b / 0.55);
+  --faint: rgba(20, 16, 12, 0.22); /* --color-neutral-4 — disabled, hairline ticks */
+  --faint: rgb(from var(--ink) r g b / 0.22);
+  --border: rgba(20, 16, 12, 0.12); /* --color-neutral-5 — THE elevation device */
+  --border: rgb(from var(--ink) r g b / 0.12);
+  --border-strong: rgba(20, 16, 12, 0.22); /* --color-neutral-4 — the hover edge */
+  --border-strong: rgb(from var(--ink) r g b / 0.22);
+
+  --row-hover: #f7f7f7; /* reference --hero-table-row-hover (light) */
+
+  /* ── the one accent ──────────────────────────────────────────────────── */
+  /* It marks and it labels; it never fills a control. The control is --ink.
+     --accent is the reference's --color-theme-1-text, which is the value the
+     site actually paints text in; --accent-mark is --color-theme-1 itself, the
+     fill used for chart ink and the icon tile. */
+  --accent: #c2410c;      /* 4.93:1 on --bg — text-safe */
+  --accent-mark: #e8792f; /* @role non-text: --accent-mark — 2.78:1 on --bg, a fill and a stroke */
+  --accent-line: rgba(194, 65, 12, 0.30); /* --color-theme-1-line (light) */
+  --accent-line: rgb(from var(--accent) r g b / 0.30);
+  --accent-weak: rgba(232, 121, 47, 0.06); /* --color-theme-1-wash (light) */
+  --accent-weak: rgb(from var(--accent-mark) r g b / 0.06);
+
+  --on-ink: #fcf9f5; /* text ON --ink — 18.04:1; the primary button's own colour */
+
+  /* ── status ──────────────────────────────────────────────────────────── */
+  /* @role non-text: --ok, --danger, --info, --warn — measured on the reference at
+     2.89 / 3.34 / 3.51 / 2.06 against --bg, all below the 4.5 text floor and two of
+     them below 3. They are dots, fills, bars and chart ink here; the word beside
+     them is --ink. Status is never by colour alone in this pack, which is the rule
+     that carries the meaning where the ratio cannot. */
+  --ok: #2fa86b;      /* the site's positive delta and chart member 7 */
+  --ok-weak: rgba(47, 168, 107, 0.10);
+  --ok-weak: rgb(from var(--ok) r g b / 0.10);
+  --danger: #f84747;  /* the site's negative delta */
+  --danger-weak: rgba(248, 71, 71, 0.10);
+  --danger-weak: rgb(from var(--danger) r g b / 0.10);
+  --info: #0891b2;    /* --color-theme-2 (light) — the "Verified" seal */
+  --info-weak: rgba(8, 145, 178, 0.10);
+  --info-weak: rgb(from var(--info) r g b / 0.10);
+  /* --warn is DERIVED, not measured in use: the reference declares amber-500 in
+     its own theme layer and never paints a warning anywhere on the page. The step
+     is this pack's choice, taken because it is the one amber that clears the hard
+     separation floor against a terracotta accent in both themes (23.8 light,
+     16.2 dark at full colour). */
+  --warn: oklch(76.9% 0.188 70.08);
+  --warn-weak: rgba(240, 160, 32, 0.12);
+  --warn-weak: rgb(from var(--warn) r g b / 0.12);
+
+  /* ── chart ramp ──────────────────────────────────────────────────────── */
+  /* Measured off the reference's own dashboard mock, in its stacking order.
+     Names match shadcn/ui's chart contract so a Recharts series can read them
+     directly. Two of the five are one hue apart under protanopia — see the
+     pack's Bans: a series is labelled at its own mark, never by legend alone. */
+  --chart-1: #ea863f; /* --color-chart-member-3 */
+  --chart-2: #4679f2;
+  --chart-3: #2fa86b; /* --color-chart-member-7 */
+  --chart-4: #f47bd0;
+  --chart-5: #4ebcfc; /* --color-chart-member-6 */
+
+  /* ── radii ───────────────────────────────────────────────────────────── */
+  /* The reference overrides the whole Tailwind ramp by ×1.25: 2.5 / 5 / 7.5 /
+     10 / 15 / 20 / 30. Nesting is concentric — inner = outer − the padding
+     between them, which is why a 15px track with 4px of padding holds a 10px
+     thumb rather than a second 15. */
+  --r-inset: 7.5px;  /* --radius / --radius-md */
+  --r-control: 10px; /* --radius-lg — buttons, chips, the segmented thumb */
+  --r-card: 15px;    /* --radius-xl — every card and every track */
+  --r-panel: 20px;   /* --radius-2xl — dialogs and the outermost frame */
+  --r-pill: 999px;
+
+  /* ── elevation ───────────────────────────────────────────────────────── */
+  /* One shadow, for true overlays only. Cards are drawn with --border. */
+  --shadow-1: 0 1px 2px #11111108, 0 8px 24px #1111110a; /* --hero-demo-shadow (light) */
+
+  /* ── type ────────────────────────────────────────────────────────────── */
+  /* The display face is licensed and the reference self-hosts it. A project
+     without that licence sets --font-display to --font-ui and loses nothing
+     structural: the display face appears on one line per page. */
+  --font-display: "Alpha Lyrae", var(--font-ui);
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-data: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  --t-display: 48px; /* the one display line; line-height 1.1 */
+  --t-title: 34px;   /* page and section titles; --track-title */
+  --t-card: 18px;    /* card titles, weight 500 */
+  --t-prose: 15px;   /* running text, in --ink-2 or --muted */
+  --t-body: 14px;    /* dense UI and table cells */
+  --t-meta: 12px;    /* labels, column heads, row numbers */
+  --t-kicker: 10px;  /* the mono kicker; uppercase, --track-kicker, --accent */
+
+  --track-title: -0.03em; /* −1.02px at 34px, as measured */
+  --track-kicker: 0.1em;  /* +1px at 10px, as measured */
+
+  --w-normal: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+
+  /* ── grid ────────────────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --h-row: 32px;     /* data row, measured */
+  --h-control: 30px; /* segmented thumb, measured */
+  --h-field: 38px;   /* segmented track and input, measured */
+
+  /* ── motion ──────────────────────────────────────────────────────────── */
+  /* One curve does the work: --ease is the reference's own default timing
+     function. --ease-out and --ease-in-out are its other two, kept for enters
+     and for on-screen movement. Its --ease-in is deliberately NOT carried over:
+     MOTION_DOCTRINE bans ease-in in UI and this pack has no exception to it. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.17, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.66, 0, 0.34, 1);
+
+  --dur-xs: 75ms;
+  --dur-sm: 0.1s;
+  --dur: 0.15s; /* the reference's default transition duration */
+  --dur-lg: 0.2s;
+  --dur-xl: 0.3s;
+
+  --press-scale: 0.97; /* the measured :active feedback, on controls only */
+
+  /* Focus is DERIVED. The reference answers focus-visible by swapping a
+     border colour, which leaves a borderless control with no focus state at
+     all. A 2px ring in --accent at 2px offset measures 4.93:1 against --bg,
+     clearing the 3:1 non-text floor with room. */
+  --focus-ring: 2px;
+  --focus-offset: 2px;
+}
+
+[data-theme="dark"] {
+  --bg: #080706;      /* the reference's html field; :root/:host carries #0c0b0a */
+  --panel: #0c0b0a;
+  --panel-2: #171513; /* --color-background-2 (dark) */
+
+  --ink: #fffcf8;     /* --color-neutral-1 (dark) */
+
+  /* The dark ramp is a different set of alphas, not the light one inverted —
+     70 / 50 / 20 / 10 / 4 against the light theme's 72 / 55 / 22 / 12 / 5. */
+  --inset: rgba(255, 252, 248, 0.04);
+  --inset: rgb(from var(--ink) r g b / 0.04);
+  --ink-2: rgba(255, 252, 248, 0.70);
+  --ink-2: rgb(from var(--ink) r g b / 0.70);
+  --muted: rgba(255, 252, 248, 0.50);
+  --muted: rgb(from var(--ink) r g b / 0.50);
+  --faint: rgba(255, 252, 248, 0.20);
+  --faint: rgb(from var(--ink) r g b / 0.20);
+  --border: rgba(255, 252, 248, 0.10);
+  --border: rgb(from var(--ink) r g b / 0.10);
+  --border-strong: rgba(255, 252, 248, 0.20);
+  --border-strong: rgb(from var(--ink) r g b / 0.20);
+
+  --row-hover: #212121; /* --hero-table-row-hover (dark) */
+
+  --accent: #f49556;      /* --color-theme-1-text (dark) — 8.89:1 on --bg */
+  --accent-mark: #e8792f; /* the fill is the same hue in both themes */
+  --accent-line: rgba(232, 121, 47, 0.35);
+  --accent-line: rgb(from var(--accent-mark) r g b / 0.35);
+  --accent-weak: rgba(232, 121, 47, 0.08);
+  --accent-weak: rgb(from var(--accent-mark) r g b / 0.08);
+
+  --on-ink: #14100c; /* the ink button inverts with the theme, so its text does too */
+
+  --info: #22d3ee; /* --color-theme-2 (dark) */
+  --info-weak: rgba(34, 211, 238, 0.10);
+  --info-weak: rgb(from var(--info) r g b / 0.10);
+  /* Derived, and a different step from the light theme's: at amber-500 the dark
+     accent and the warning are 7.1 apart at full colour — one colour with two
+     meanings. amber-300 is 16.2 apart and clears every dichromacy. */
+  --warn: oklch(87.9% 0.169 91.605);
+  --warn-weak: rgba(250, 204, 100, 0.12);
+  --warn-weak: rgb(from var(--warn) r g b / 0.12);
+
+  --shadow-1: 0 0 0 1px #ffffff0a, 0 30px 90px #00000080; /* --hero-demo-shadow (dark) */
+}
+
+/* Motion is a state change here, never an entrance for its own sake. Reduced
+   motion zeroes the durations and stops the three loops this pack allows (the
+   typing cursor, the thinking dots, the live heartbeat) — the same answer the
+   reference gives, which turns its transitions off rather than slowing them. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-xs: 0s;
+    --dur-sm: 0s;
+    --dur: 0s;
+    --dur-lg: 0s;
+    --dur-xl: 0s;
+    --press-scale: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Compatibility layer — every other name in this app resolves to a pack
+   token above. Three vocabularies, one source of truth:
+
+     1. the pack's own names        --bg / --panel / --ink / --accent …
+     2. this project's semantic set --surface-* / --text-* / --error …
+     3. shadcn/ui's contract        --background / --primary / --ring …
+
+   Two names collide across vocabularies and the pack wins both, because
+   it is the half that is measured:
+     · `--accent` is the brand terracotta here, NOT shadcn's hover surface.
+       shadcn components in this repo use `--surface-hover` for that role.
+     · `--muted` is muted INK here, NOT shadcn's muted surface. Components
+       use `--inset` for the surface and `--muted-foreground` for the text.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 2. the project's semantic set ── */
+  --surface-0: var(--bg);
+  --surface-1: var(--panel);
+  --surface-2: var(--inset);
+  --surface-3: var(--panel-2);
+  --surface-hover: var(--inset);
+
+  --border-subtle: var(--border);
+  --border-default: var(--border-strong);
+
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink-2);
+  --text-tertiary: var(--muted);
+  --text-muted: var(--faint);
+
+  --accent-hover: var(--accent-mark);
+  --accent-strong: var(--accent);
+  --accent-muted: var(--accent-weak);
+
+  --success: var(--ok);
+  --success-muted: var(--ok-weak);
+  --warning: var(--warn);
+  --warning-muted: var(--warn-weak);
+  --error: var(--danger);
+  --error-hover: var(--danger);
+  --error-muted: var(--danger-weak);
+  --info-muted: var(--info-weak);
+
+  /* ── 3. shadcn/ui's contract ──
+     `--primary` is INK, not the accent: the pack forbids the accent from
+     filling a control, which is what keeps the orange meaningful where it
+     does land. */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--panel);
+  --card-foreground: var(--ink);
+  --popover: var(--panel-2);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--on-ink);
+  --secondary: var(--inset);
+  --secondary-foreground: var(--ink);
+  --muted-foreground: var(--muted);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--on-ink);
+  --input: var(--border);
+  --ring: var(--accent);
+  --radius: var(--r-card);
+
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--ink);
+  --sidebar-primary-foreground: var(--on-ink);
+  --sidebar-accent: var(--inset);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
+
+  /* The substitution the pack itself prescribes for its licensed display
+     face, declared here rather than edited into the verbatim copy above.
+     Inside the product this resolves to the UI face; the marketing layer
+     supplies `--font-display-webfont` and keeps its own. */
+  --font-display: var(--font-display-webfont), var(--font-ui-webfont), var(--font-ui);
+
+  /* Kept for the marketing layer's easings, which are not the pack's. */
+  --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@theme inline {
+  /* Faces. The display face the pack names is licensed and self-hosted by
+     its reference; per the pack's own instruction we point it at the UI
+     face inside the product, and the marketing layer keeps its own. */
+  --font-sans: var(--font-ui-webfont), var(--font-ui);
+  --font-mono: var(--font-data);
+  --font-display: var(--font-display-webfont), var(--font-ui-webfont), var(--font-ui);
+
+  /* The pack's type ramp as utilities: text-kicker … text-display. */
+  --text-kicker: var(--t-kicker);
+  --text-meta: var(--t-meta);
+  --text-body: var(--t-body);
+  --text-prose: var(--t-prose);
+  --text-card: var(--t-card);
+  --text-title: var(--t-title);
+  --text-display: var(--t-display);
+
+  --tracking-kicker: var(--track-kicker);
+  --tracking-title: var(--track-title);
+
+  /* The reference overrides the whole radius ramp by ×1.25, so Tailwind's
+     own scale is remapped rather than shadowed: `rounded-xl` is the card
+     radius here, and nothing has to be rewritten to get it. */
+  --radius-xs: 2.5px;
+  --radius-sm: 5px;
+  --radius-md: 7.5px;
+  --radius-lg: 10px;
+  --radius-xl: 15px;
+  --radius-2xl: 20px;
+  --radius-3xl: 30px;
+  --radius-inset: var(--r-inset);
+  --radius-control: var(--r-control);
+  --radius-card: var(--r-card);
+  --radius-panel: var(--r-panel);
+
+  /* Pack colours as utilities. */
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-inset: var(--inset);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-faint: var(--faint);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-row-hover: var(--row-hover);
+  --color-accent-mark: var(--accent-mark);
+  --color-accent-line: var(--accent-line);
+  --color-accent-weak: var(--accent-weak);
+  --color-on-ink: var(--on-ink);
+  --color-ok: var(--ok);
+  --color-ok-weak: var(--ok-weak);
+  --color-warn: var(--warn);
+  --color-warn-weak: var(--warn-weak);
+  --color-danger: var(--danger);
+  --color-danger-weak: var(--danger-weak);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Project semantic names, unchanged so the un-migrated screens keep
+     working while the modules land one at a time. */
   --color-surface-0: var(--surface-0);
   --color-surface-1: var(--surface-1);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-surface-hover: var(--surface-hover);
 
   --color-border-subtle: var(--border-subtle);
   --color-border-default: var(--border-default);
@@ -63,67 +464,47 @@ select:focus-visible {
   --color-info: var(--info);
   --color-info-muted: var(--info-muted);
 
+  /* shadcn's contract as utilities. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Motion. The pack's single curve is the app-wide default; the three
+     below it are the marketing layer's and stay separate. */
+  --ease-pack: var(--ease);
   --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-:root {
-  /* LIGHT — airy default for new users (spec D1) */
-  --surface-0: #fafafa;
-  --surface-1: #ffffff;
-  --surface-2: #f4f4f5;
-  --surface-3: #e4e4e7;
-  --border-subtle: #e4e4e7;
-  --border-default: #d4d4d8;
-  --text-primary: #18181b;
-  --text-secondary: #52525b;
-  --text-tertiary: #71717a;
-  --text-muted: #a1a1aa;
-  --accent: #2563eb;
-  --accent-hover: #3b82f6;
-  --accent-strong: #1d4ed8;
-  --accent-muted: #2563eb14;
-  --success: #059669;
-  --success-muted: #05966914;
-  --warning: #d97706;
-  --warning-muted: #d9770614;
-  --error: #dc2626;
-  --error-hover: #ef4444;
-  --error-muted: #dc262614;
-  --info: #2563eb;
-  --info-muted: #2563eb14;
-
-  --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
-  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.dark {
-  /* DARK — current values preserved verbatim */
-  --surface-0: #09090b;
-  --surface-1: #18181b;
-  --surface-2: #27272a;
-  --surface-3: #3f3f46;
-  --border-subtle: #27272a;
-  --border-default: #3f3f46;
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #84848e;
-  --text-muted: #52525b;
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-strong: #1d4ed8;
-  --accent-muted: #3b82f620;
-  --success: #34d399;
-  --success-muted: #34d39920;
-  --warning: #fbbf24;
-  --warning-muted: #fbbf2420;
-  --error: #f87171;
-  --error-hover: #fca5a5;
-  --error-muted: #f8717120;
-  --info: #60a5fa;
-  --info-muted: #60a5fa20;
+/* The pack's kicker: 10px mono, uppercase, +0.1em, in the accent. It is a
+   shape rather than a component wherever a heading needs one inline. */
+.lg-kicker {
+  color: var(--accent);
+  font-family: var(--font-data);
+  font-size: var(--t-kicker);
+  letter-spacing: var(--track-kicker);
+  text-transform: uppercase;
 }
 
 .ease-out-quart {
@@ -511,17 +892,17 @@ select:focus-visible {
 }
 .sidebar-scroll::-webkit-scrollbar-thumb,
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--faint);
   border-radius: 2px;
 }
 .sidebar-scroll::-webkit-scrollbar-thumb:hover,
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: var(--muted);
 }
 
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent;
+  scrollbar-color: var(--faint) transparent;
 }
 
 .chat-scroll::-webkit-scrollbar {
@@ -531,15 +912,15 @@ select:focus-visible {
   background: transparent;
 }
 .chat-scroll::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 .chat-scroll::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: var(--faint);
 }
 .chat-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #27272a transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .chat-markdown pre::-webkit-scrollbar {
@@ -549,7 +930,7 @@ select:focus-visible {
   background: transparent;
 }
 .chat-markdown pre::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--faint);
   border-radius: 2px;
 }
 
@@ -560,7 +941,7 @@ select:focus-visible {
   background: transparent;
 }
 .chat-markdown table::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--faint);
   border-radius: 2px;
 }
 
@@ -572,15 +953,15 @@ select:focus-visible {
   background: transparent;
 }
 .data-table-scroll::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--faint);
   border-radius: 2px;
 }
 .data-table-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent;
+  scrollbar-color: var(--faint) transparent;
   background:
-    linear-gradient(to right, #18181b 30%, transparent) left center,
-    linear-gradient(to left, #18181b 30%, transparent) right center;
+    linear-gradient(to right, var(--panel) 30%, transparent) left center,
+    linear-gradient(to left, var(--panel) 30%, transparent) right center;
   background-repeat: no-repeat;
   background-size: 14px 100%;
   background-attachment: local;
