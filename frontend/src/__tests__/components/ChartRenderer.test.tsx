@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ChartRenderer } from "@/components/viz/ChartRenderer";
 
 /**
@@ -12,6 +12,8 @@ import { ChartRenderer } from "@/components/viz/ChartRenderer";
  * the responsive wrapper renders nothing without a size. The observer below is
  * the minimum that makes the chart body real in a test.
  */
+let restoreLayout: (() => void) | undefined;
+
 beforeAll(() => {
   class ResizeObserverStub {
     callback: ResizeObserverCallback;
@@ -27,9 +29,31 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   }
+  const previousRO = globalThis.ResizeObserver;
+  const previousWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  const previousHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 640 });
   Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 320 });
+
+  // These are patches to a SHARED prototype. Vitest reuses one jsdom per worker,
+  // so leaving them in place makes every element in every later file report
+  // 640×320 and gives them all a ResizeObserver that fires once with a fixed
+  // rect. That is what nineteen unrelated tests failing (and a count that
+  // changed between runs, 16 then 19, with file order) actually was — not a
+  // regression in the code they were testing.
+  restoreLayout = () => {
+    globalThis.ResizeObserver = previousRO;
+    if (previousWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", previousWidth);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    if (previousHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", previousHeight);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+  };
+});
+
+afterAll(() => {
+  restoreLayout?.();
 });
 
 const labels = ["Jan", "Feb", "Mar"];

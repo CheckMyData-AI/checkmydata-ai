@@ -100,7 +100,10 @@ describe("ledger pack bans", () => {
     const offenders = shadcn.flatMap(({ path, lines }) =>
       lines
         .map((line, i) => ({ line, i }))
-        .filter(({ line }) => /\b(bg-accent|text-accent-foreground|bg-muted)\b/.test(line))
+        // `(?!-)` matters: `bg-accent-weak` is the pack's OWN selected-row tint
+        // and `\b` alone flags it, which is a false positive that would push an
+        // author to break the pack in order to satisfy the check.
+        .filter(({ line }) => /\b(bg-accent(?!-)|text-accent-foreground|bg-muted(?!-))\b/.test(line))
         .map(({ i }) => `${path}:${i + 1}`),
     );
     expect(offenders).toEqual([]);

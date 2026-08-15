@@ -1803,12 +1803,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User opens Runs (filter by kind) or Errors (filter source/status)
   2. In Errors, user cycles a row's status open → ack → resolved
-- **Expected result:** runs / error rows listed; error status cycles
-- **UI elements:** kind select + Refresh (Runs), source/status selects + Refresh + status-cycle button (Errors)
+- **Expected result:** runs / error rows listed on the same 32px ledger geometry the result table uses (SCN-124) — a 12px muted header over a hairline, hairline dividers, counts and timestamps in the data face with tabular figures; error status cycles. **A status shows a dot AND its word**: the dot carries the hue and the word stays in the primary ink, because every status colour in this design sits under AA on the light field
+- **UI elements:** kind select + Refresh (Runs), source/status selects + Refresh + status-cycle chip (Errors)
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** Runs/Errors fetch failures render an inline error message + Retry (shared `ListError`, matching the Queries tab banner), distinct from the empty state; Errors status-cycle failure toasts the error (`RunsTab.tsx:17-29,63`, `ErrorsTab.tsx:25-41,97`)
 - **Status:** implemented
-- **Coverage:** components/logs/RunsTab.tsx:35-59; components/logs/ErrorsTab.tsx:57-129; components/ui/ListError.tsx
+- **Coverage:** components/logs/RunsTab.tsx; components/logs/ErrorsTab.tsx; components/shadcn/table.tsx; components/ui/StatusDot.tsx; components/ui/ListError.tsx
 
 ### SCN-108: Live activity log stream
 - **Persona:** analyst

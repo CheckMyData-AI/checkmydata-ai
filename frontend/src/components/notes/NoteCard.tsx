@@ -356,11 +356,11 @@ export function NoteCard({ note }: NoteCardProps) {
           </button>
           {showResult && (
             <div className="px-2 pb-2 overflow-x-auto">
-              <table className="text-kicker border-collapse w-full">
+              <table className="w-full border-collapse text-meta">
                 <thead>
-                  <tr className="border-b border-border-subtle">
+                  <tr className="border-b border-border">
                     {result.columns.map((col) => (
-                      <th key={col} className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
+                      <th key={col} className="h-7 whitespace-nowrap px-1.5 text-left text-meta font-normal text-text-tertiary">
                         {col}
                       </th>
                     ))}
@@ -368,9 +368,9 @@ export function NoteCard({ note }: NoteCardProps) {
                 </thead>
                 <tbody>
                   {result.rows.slice(0, 20).map((row, i) => (
-                    <tr key={i} className="border-b border-border-subtle/50">
+                    <tr key={i} className="border-b border-border last:border-0">
                       {row.map((cell, j) => (
-                        <td key={j} className="px-1.5 py-0.5 text-text-secondary whitespace-nowrap max-w-[150px] truncate">
+                        <td key={j} className="h-7 max-w-[150px] truncate whitespace-nowrap px-1.5 font-mono text-text-primary">
                           {cell == null ? <span className="text-text-muted italic">null</span> : String(cell)}
                         </td>
                       ))}
