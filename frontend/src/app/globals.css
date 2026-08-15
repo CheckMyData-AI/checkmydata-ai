@@ -497,6 +497,14 @@ select:focus-visible {
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* The scrim behind every overlay: the INK at 45%, never black. A black wash
+   over a cream field reads as another product's modal; over a near-black field
+   it does nothing at all. Nine surfaces had their own `bg-black/40…60` before
+   this existed, and `pack-bans.test.ts` fails if a tenth appears. */
+.lg-scrim {
+  background-color: color-mix(in oklab, var(--ink) 45%, transparent);
+}
+
 /* The pack's kicker: 10px mono, uppercase, +0.1em, in the accent. It is a
    shape rather than a component wherever a heading needs one inline. */
 .lg-kicker {

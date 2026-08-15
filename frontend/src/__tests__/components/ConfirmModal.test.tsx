@@ -143,10 +143,13 @@ describe("ConfirmModal component", () => {
       severity: "warning",
       resolve: vi.fn(),
     });
-    const { container } = render(<ConfirmModal />);
-    const svg = container.querySelector("svg");
+    render(<ConfirmModal />);
+    // Radix portals the dialog to document.body, so `container` is empty by
+    // construction — the query moves to the document rather than the icon
+    // having gone anywhere.
+    const svg = document.querySelector("[data-slot='dialog-content'] svg");
     expect(svg).toBeTruthy();
-    expect(svg?.className.baseVal).toContain("text-warning");
+    expect((svg as SVGElement).getAttribute("class")).toContain("text-warning");
   });
 
   it("shows critical icon when severity=critical", () => {
@@ -156,9 +159,13 @@ describe("ConfirmModal component", () => {
       severity: "critical",
       resolve: vi.fn(),
     });
-    const { container } = render(<ConfirmModal />);
-    const svg = container.querySelector("svg");
-    expect(svg?.className.baseVal).toContain("text-error");
+    render(<ConfirmModal />);
+    // Portalled, as above. Asserting on a possibly-null node with `?.` would
+    // have passed against a dialog that rendered nothing at all, so the
+    // existence check is explicit.
+    const svg = document.querySelector("[data-slot='dialog-content'] svg");
+    expect(svg).toBeTruthy();
+    expect((svg as SVGElement).getAttribute("class")).toContain("text-error");
   });
 
   it("Confirm disabled when confirmText required and not typed", () => {
@@ -196,7 +203,12 @@ describe("ConfirmModal component", () => {
     });
     render(<ConfirmModal />);
     const btn = screen.getByText("Confirm");
-    expect(btn.className).toContain("bg-error");
+    // CHANGED with the ledger redesign: the destructive control is a bordered
+    // ghost that fills only on hover, not a red slab. A filled red button makes
+    // the decision for the reader before they have made it.
+    expect(btn.className).toContain("border-danger");
+    expect(btn.className).toContain("text-danger");
+    expect(btn.className).toContain("bg-transparent");
   });
 
   it("non-destructive mode shows accent confirm button", () => {
@@ -208,6 +220,10 @@ describe("ConfirmModal component", () => {
     });
     render(<ConfirmModal />);
     const btn = screen.getByText("Confirm");
-    expect(btn.className).toContain("bg-accent");
+    // CHANGED with the ledger redesign: the pack forbids the accent from
+    // filling any control, so the affirmative confirm is INK. If this ever
+    // reads `bg-accent` again the pack's one ban is gone.
+    expect(btn.className).toContain("bg-primary");
+    expect(btn.className).not.toMatch(/(^|\s)bg-accent(\s|$)/);
   });
 });

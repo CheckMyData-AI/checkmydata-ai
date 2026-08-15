@@ -100,7 +100,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center lg-scrim"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose?.();
       }}

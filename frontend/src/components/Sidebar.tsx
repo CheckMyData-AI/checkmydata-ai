@@ -437,7 +437,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
       <>
         {/* Backdrop */}
         <div
-          className={`fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 ${
+          className={`fixed inset-0 z-50 lg-scrim transition-opacity duration-200 ${
             isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           onClick={onClose}

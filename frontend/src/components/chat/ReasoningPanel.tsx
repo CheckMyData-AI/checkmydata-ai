@@ -249,7 +249,7 @@ export function ReasoningPanel() {
       <>
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          className="fixed inset-0 z-40 lg-scrim md:hidden"
           aria-label="Close reasoning panel"
           onClick={closePanel}
         />

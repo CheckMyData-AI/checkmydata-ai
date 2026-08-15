@@ -155,7 +155,7 @@ export function WrongDataModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center lg-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default/50 shadow-xl max-h-[80vh] overflow-y-auto focus:outline-none animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border-subtle">

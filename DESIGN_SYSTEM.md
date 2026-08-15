@@ -130,6 +130,24 @@ Grid is 4px: 4 / 8 / 12 / 16 / 20 / 24 / 32. Buttons pad 8×20, cards 20, table
 cells 0×8, a segmented track 4. Fixed heights: data row **32px**, control 30px,
 field 38px.
 
+### 1.4a Overlays
+
+A dialog is one of the two places this design permits a shadow, and there is
+exactly one token to reach for: `--shadow-1`. A dialog sits on `--panel` at
+`--r-panel` (20px); a popover, select or menu sits on `--panel-2`.
+
+**The scrim is `.lg-scrim` — the ink at 45%, never black.** A black wash over a
+cream field reads as another product's modal, and over a near-black field it
+does nothing at all. Nine surfaces carried their own `bg-black/40…60` before the
+class existed; `pack-bans.test.ts` fails if a tenth appears.
+
+`FormModal` and `ConfirmModal` run on Radix through `components/shadcn/dialog.tsx`.
+Their hand-rolled focus traps — a `keydown` listener on `window` plus a
+`querySelectorAll` per Tab, maintained in two files that had drifted — are gone,
+and with them two gaps neither version covered: inert background content, and
+focus restored to whatever opened the dialog. Both keep their `open`/`onClose`
+API, so call sites did not move.
+
 ### 1.5 Motion
 
 One curve carries the interface: `--ease` = `cubic-bezier(0.22, 1, 0.36, 1)`,
@@ -623,7 +641,7 @@ Known optional/tokenization follow-ups (acceptable as-is, not blocking):
 | Area | File | Note |
 |------|------|------|
 | ~~Chart palette~~ | `components/viz/ChartRenderer.tsx` | **Done.** Runs on Recharts through `components/shadcn/chart.tsx`; series colour is `--chart-1…5`, and past the fifth series the ramp repeats darkened toward the ink — a derived rule, because the reference never shows more than five. chart.js and react-chartjs-2 are uninstalled. |
-| Chat panel and feature screens | `components/chat/`, and ~115 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
+| Chat panel and feature screens | `components/chat/`, and ~110 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
 
 When touching these files, prefer migrating to CSS-variable-driven values.
 

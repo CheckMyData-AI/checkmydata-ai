@@ -64,7 +64,7 @@ export function MobileMenu({ links }: { links: readonly NavLink[] }) {
       {open && (
         <>
           <div
-            className="fixed inset-0 z-30 bg-black/40 sm:hidden"
+            className="fixed inset-0 z-30 lg-scrim sm:hidden"
             onClick={close}
             aria-hidden="true"
           />

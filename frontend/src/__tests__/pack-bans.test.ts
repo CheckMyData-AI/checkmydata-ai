@@ -90,6 +90,27 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("paints no surface in raw black or white — a scrim follows the theme too", () => {
+    // The defect: `bg-black/50` on the dialog overlay. Over a cream field it
+    // reads as another product's modal, and over a near-black one it does
+    // nothing at all. A planted revert of it went undetected until this check
+    // existed, because nothing else looks at the shadcn layer's surfaces.
+    //
+    // Deliberately narrow — SURFACES only. `text-white` on `bg-destructive` is
+    // shadcn's own default for a variant this project overrides anyway, and the
+    // red it sits on is the same hex in both themes, so white is correct there.
+    // `[stroke='#ccc']` in chart.tsx is an attribute SELECTOR matching
+    // Recharts' defaults in order to override them, not a colour being painted.
+    const offenders = FILES.filter((f) => f.path.startsWith("components/")).flatMap(
+      ({ path, lines }) =>
+        lines
+          .map((line, i) => ({ line, i }))
+          .filter(({ line }) => /\b(bg-black|bg-white)(\/\d+)?\b/.test(line))
+          .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps the shadcn layer off shadcn's own accent and muted SURFACES", () => {
     // In this project `--accent` is the brand terracotta and `--muted` is muted
     // ink; shadcn means a hover surface and a surface fill by those names. A

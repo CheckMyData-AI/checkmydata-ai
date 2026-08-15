@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { Icon } from "./Icon";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/shadcn/dialog";
+import { cn } from "@/lib/utils";
 
 interface FormModalProps {
   open: boolean;
@@ -11,6 +16,21 @@ interface FormModalProps {
   maxWidth?: string;
 }
 
+/**
+ * The form dialog, now on Radix through the shadcn primitive.
+ *
+ * What this replaced: ~35 lines of hand-rolled focus trap — a `keydown`
+ * listener on `window`, a `querySelectorAll` for focusables re-run on every
+ * Tab, and a `requestAnimationFrame` to move initial focus. It worked, and it
+ * had to be maintained in two files that had drifted apart. Radix brings the
+ * trap, the scroll lock, the `aria-modal` wiring, inert background content and
+ * focus restore on close — the last two of which neither hand-rolled version
+ * had.
+ *
+ * The API is unchanged, so every call site keeps working: `open`/`onClose`
+ * rather than Radix's `onOpenChange`, because inverting that would touch two
+ * dozen call sites for no gain.
+ */
 export function FormModal({
   open,
   onClose,
@@ -18,77 +38,19 @@ export function FormModal({
   children,
   maxWidth = "max-w-lg",
 }: FormModalProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key === "Tab" && panelRef.current) {
-        const focusable = panelRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener("keydown", handleKeyDown);
-    requestAnimationFrame(() => {
-      panelRef.current
-        ?.querySelector<HTMLElement>("input, textarea, select, button")
-        ?.focus();
-    });
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
-
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="form-modal-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        ref={panelRef}
-        className={`bg-surface-1 border border-border-default rounded-lg shadow-xl ${maxWidth} w-full mx-4 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]`}
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        className={cn("max-h-[85vh] gap-0 overflow-hidden p-0", maxWidth)}
+        aria-labelledby="form-modal-title"
       >
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
-          <h2
-            id="form-modal-title"
-            className="text-lg font-semibold text-text-primary"
-          >
+        <DialogHeader className="shrink-0 px-5 pt-5 pb-3">
+          <DialogTitle id="form-modal-title" className="text-card font-medium text-text-primary">
             {title}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-surface-3 text-text-muted hover:text-text-primary transition-colors"
-            aria-label="Close"
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-        <div className="px-5 pb-5 overflow-y-auto">{children}</div>
-      </div>
-    </div>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="overflow-y-auto px-5 pb-5">{children}</div>
+      </DialogContent>
+    </Dialog>
   );
 }
